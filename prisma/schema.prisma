@@ -8,186 +8,176 @@ datasource db {
 }
 
 model Institution {
-  id                String            @id @default(cuid())
-  name              String            @unique
-  email             String            @unique
+  id                String                    @id @default(cuid())
+  name              String                    @unique
+  email             String                    @unique
   phone             String?
   address           String?
-  taxNo             String?           @unique
+  taxNo             String?                   @unique
   registryNo        String?
   website           String?
   logo              String?
-  subscriptionPlan  SubscriptionPlan  @default(TEMEL)
-  smsBalance        Int               @default(0)
-  isActive          Boolean           @default(true)
-  serviceMode       ServiceMode       @default(NORMAL)
-  serviceNote       String?
-  throttleMs        Int               @default(0)
-  maxActiveUsers    Int?
+  subscriptionPlan  SubscriptionPlan          @default(TEMEL)
+  smsBalance        Int                       @default(0)
+  isActive          Boolean                   @default(true)
+  ownerId           String?                   @unique
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+  adIntensity       AdIntensity               @default(MEDIUM)
+  adsEnabled        Boolean                   @default(false)
   maxActiveDoctors  Int?
-  adsEnabled        Boolean           @default(false)
-  adIntensity       AdIntensity       @default(MEDIUM)
+  maxActiveUsers    Int?
   paymentGraceUntil DateTime?
+  serviceMode       ServiceMode               @default(NORMAL)
+  serviceNote       String?
   suspendedUntil    DateTime?
-  ownerId           String?           @unique
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-
-  owner             User?             @relation("InstitutionOwner", fields: [ownerId], references: [id])
-  users             User[]
-  settings          Setting?
-  invoices          Invoice[]
-  smsTransactions   SmsTransaction[]
+  throttleMs        Int                       @default(0)
+  owner             User?                     @relation("InstitutionOwner", fields: [ownerId], references: [id])
   adAssignments     InstitutionAdAssignment[]
+  invoices          Invoice[]
+  settings          Setting?
+  smsTransactions   SmsTransaction[]
+  users             User[]
 }
 
 model Advertisement {
-  id               String   @id @default(cuid())
-  title            String
-  content          String
-  imageUrl         String?
-  ctaText          String?
-  ctaUrl           String?
-  sponsorName      String?
-  priority         Int      @default(100)
-  isActive         Boolean  @default(true)
-  startAt          DateTime?
-  endAt            DateTime?
-  maxImpressions   Int?
-  dailyCap         Int?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  assignments      InstitutionAdAssignment[]
+  id             String                    @id @default(cuid())
+  title          String
+  content        String
+  imageUrl       String?
+  ctaText        String?
+  ctaUrl         String?
+  sponsorName    String?
+  priority       Int                       @default(100)
+  isActive       Boolean                   @default(true)
+  startAt        DateTime?
+  endAt          DateTime?
+  maxImpressions Int?
+  dailyCap       Int?
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+  assignments    InstitutionAdAssignment[]
 
   @@index([isActive, priority])
 }
 
 model InstitutionAdAssignment {
-  id               String   @id @default(cuid())
-  institutionId    String
-  advertisementId  String
-  isActive         Boolean  @default(true)
-  weight           Int      @default(100)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  institution      Institution   @relation(fields: [institutionId], references: [id])
-  advertisement    Advertisement @relation(fields: [advertisementId], references: [id])
+  id              String        @id @default(cuid())
+  institutionId   String
+  advertisementId String
+  isActive        Boolean       @default(true)
+  weight          Int           @default(100)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  advertisement   Advertisement @relation(fields: [advertisementId], references: [id])
+  institution     Institution   @relation(fields: [institutionId], references: [id])
 
   @@unique([institutionId, advertisementId])
   @@index([institutionId, isActive])
 }
 
 model SmsPackage {
-  id                String   @id @default(cuid())
-  name              String
-  smsCount          Int
-  price             Decimal  @db.Decimal(10, 2)
-  description       String?
-  isActive          Boolean  @default(true)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  transactions      SmsTransaction[]
-
-  @@unique([smsCount])
+  id           String           @id @default(cuid())
+  name         String
+  smsCount     Int              @unique
+  price        Decimal          @db.Decimal(10, 2)
+  description  String?
+  isActive     Boolean          @default(true)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  transactions SmsTransaction[]
 }
 
 model SmsTransaction {
-  id                String   @id @default(cuid())
-  institutionId     String
-  smsPackageId      String
-  quantity          Int      @default(1)
-  totalPrice        Decimal  @db.Decimal(10, 2)
-  balanceBefore     Int
-  balanceAfter      Int
-  status            String   @default("COMPLETED")
-  createdAt         DateTime @default(now())
-
-  institution       Institution @relation(fields: [institutionId], references: [id])
-  smsPackage        SmsPackage  @relation(fields: [smsPackageId], references: [id])
+  id            String      @id @default(cuid())
+  institutionId String
+  smsPackageId  String
+  quantity      Int         @default(1)
+  totalPrice    Decimal     @db.Decimal(10, 2)
+  balanceBefore Int
+  balanceAfter  Int
+  status        String      @default("COMPLETED")
+  createdAt     DateTime    @default(now())
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  smsPackage    SmsPackage  @relation(fields: [smsPackageId], references: [id])
 
   @@index([institutionId])
   @@index([createdAt])
 }
 
 model PlatformSmsWallet {
-  id                Int                  @id @default(autoincrement())
-  availableBalance  Int                  @default(0)
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @updatedAt
-
-  purchases         PlatformSmsPurchase[]
+  id               Int                   @id @default(autoincrement())
+  availableBalance Int                   @default(0)
+  createdAt        DateTime              @default(now())
+  updatedAt        DateTime              @updatedAt
+  purchases        PlatformSmsPurchase[]
 }
 
 model PlatformSmsPurchase {
-  id                String   @id @default(cuid())
-  walletId          Int
-  quantity          Int
-  unitCost          Decimal? @db.Decimal(10, 2)
-  totalCost         Decimal? @db.Decimal(10, 2)
-  provider          String?
-  note              String?
-  createdAt         DateTime @default(now())
-
-  wallet            PlatformSmsWallet @relation(fields: [walletId], references: [id])
+  id        String            @id @default(cuid())
+  walletId  Int
+  quantity  Int
+  unitCost  Decimal?          @db.Decimal(10, 2)
+  totalCost Decimal?          @db.Decimal(10, 2)
+  provider  String?
+  note      String?
+  createdAt DateTime          @default(now())
+  wallet    PlatformSmsWallet @relation(fields: [walletId], references: [id])
 }
 
 model SmsTemplate {
-  id                String   @id @default(cuid())
-  code              String   @unique
-  title             String
-  content           String
-  isActive          Boolean  @default(true)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id        String   @id @default(cuid())
+  code      String   @unique
+  title     String
+  content   String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model SmsProviderConfig {
-  id                String   @id @default(cuid())
-  code              String   @unique
-  name              String
-  isActive          Boolean  @default(false)
-  priority          Int      @default(100)
-  sendUrl           String?
-  balanceUrl        String?
-  httpMethod        String   @default("POST")
-  username          String?
-  password          String?
-  apiKey            String?
-  sender            String?
-  headersJson       String?
-  bodyTemplate      String?
-  successPattern    String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  id             String   @id @default(cuid())
+  code           String   @unique
+  name           String
+  isActive       Boolean  @default(false)
+  priority       Int      @default(100)
+  sendUrl        String?
+  balanceUrl     String?
+  httpMethod     String   @default("POST")
+  username       String?
+  password       String?
+  apiKey         String?
+  sender         String?
+  headersJson    String?
+  bodyTemplate   String?
+  successPattern String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 
 model MockSmsLog {
-  id                String   @id @default(cuid())
-  phone             String
-  message           String
-  sender            String?
-  status            String   @default("SENT")
-  responseData      String?
-  createdAt         DateTime @default(now())
+  id           String   @id @default(cuid())
+  phone        String
+  message      String
+  sender       String?
+  status       String   @default("SENT")
+  responseData String?
+  createdAt    DateTime @default(now())
 }
 
 model Invoice {
-  id                String          @id @default(cuid())
-  institutionId     String
-  invoiceNo         String          @unique
-  amount            Decimal         @db.Decimal(10, 2)
-  description       String?
-  status            InvoiceStatus   @default(PENDING)
-  dueDate           DateTime?
-  paidAt            DateTime?
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
-
-  institution       Institution @relation(fields: [institutionId], references: [id])
-  reminders         InvoiceReminder[]
+  id            String            @id @default(cuid())
+  institutionId String
+  invoiceNo     String            @unique
+  amount        Decimal           @db.Decimal(10, 2)
+  description   String?
+  status        InvoiceStatus     @default(PENDING)
+  dueDate       DateTime?
+  paidAt        DateTime?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  institution   Institution       @relation(fields: [institutionId], references: [id])
+  reminders     InvoiceReminder[]
 
   @@index([institutionId])
   @@index([status])
@@ -196,63 +186,530 @@ model Invoice {
 }
 
 model InvoiceReminder {
-  id           String   @id @default(cuid())
-  invoiceId    String
-  channel      String   // "SMS" | "EMAIL"
-  sentTo       String   // phone or email
-  status       String   // "SENT" | "FAILED"
-  message      String?
-  errorDetail  String?
-  sentAt       DateTime @default(now())
-
-  invoice      Invoice  @relation(fields: [invoiceId], references: [id])
+  id          String   @id @default(cuid())
+  invoiceId   String
+  channel     String
+  sentTo      String
+  status      String
+  message     String?
+  errorDetail String?
+  sentAt      DateTime @default(now())
+  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
 
   @@index([invoiceId])
 }
 
 model SmtpConfig {
-  id           Int      @id @default(1)
-  host         String   @default("")
-  port         Int      @default(587)
-  secure       Boolean  @default(false)
-  username     String   @default("")
-  password     String   @default("")
-  fromName     String   @default("Klinik Modern")
-  fromEmail    String   @default("noreply@klinikmodern.com")
-  isActive     Boolean  @default(false)
-  updatedAt    DateTime @updatedAt
+  id        Int      @id @default(1)
+  host      String   @default("")
+  port      Int      @default(587)
+  secure    Boolean  @default(false)
+  username  String   @default("")
+  password  String   @default("")
+  fromName  String   @default("Klinik Modern")
+  fromEmail String   @default("noreply@klinikmodern.com")
+  isActive  Boolean  @default(false)
+  updatedAt DateTime @updatedAt
 }
 
 model SiteContent {
-  id               Int      @id @default(1)
-  heroBadge        String   @default("Dis Hekimi Klinikleri Icin Uretildi")
-  heroTitle        String   @default("Randevudan kasaya, tum surecler tek bir profesyonel sistemde.")
-  heroDescription  String   @default("KlinikModern; hasta kayıt, randevu planlama, tedavi takibi, ödeme yönetimi, SMS/e-posta hatırlatma ve raporlama modüllerini bir arada sunar.")
-  primaryCtaLabel  String   @default("Hemen Giris Yap")
-  primaryCtaUrl    String   @default("/klinik/giris")
-  secondaryCtaLabel String  @default("Fiyatlari Incele")
-  secondaryCtaUrl  String   @default("#fiyatlar")
-  promoTitle       String   @default("Program Demo ve Tanitim Talebi")
-  promoDescription String   @default("Kliniğinize özel senaryo üzerinden canlı tanıtım alarak modülleri gerçek kullanım akışında görebilirsiniz.")
-  promoVideoUrl    String?
-  heroImageUrl     String?
-  featureCards     Json
-  pricingCards     Json
-  statsCards       Json
-  moduleCards      Json
-  galleryImages    Json
-  showAnimations   Boolean  @default(true)
-  updatedAt        DateTime @updatedAt
+  id                Int      @id @default(1)
+  heroBadge         String   @default("Dis Hekimi Klinikleri Icin Uretildi")
+  heroTitle         String   @default("Randevudan kasaya, tum surecler tek bir profesyonel sistemde.")
+  heroDescription   String   @default("KlinikModern; hasta kayıt, randevu planlama, tedavi takibi, ödeme yönetimi, SMS/e-posta hatırlatma ve raporlama modüllerini bir arada sunar.")
+  primaryCtaLabel   String   @default("Hemen Giris Yap")
+  primaryCtaUrl     String   @default("/klinik/giris")
+  secondaryCtaLabel String   @default("Fiyatlari Incele")
+  secondaryCtaUrl   String   @default("#fiyatlar")
+  promoTitle        String   @default("Program Demo ve Tanitim Talebi")
+  promoDescription  String   @default("Kliniğinize özel senaryo üzerinden canlı tanıtım alarak modülleri gerçek kullanım akışında görebilirsiniz.")
+  promoVideoUrl     String?
+  heroImageUrl      String?
+  featureCards      Json
+  pricingCards      Json
+  statsCards        Json
+  moduleCards       Json
+  galleryImages     Json
+  showAnimations    Boolean  @default(true)
+  updatedAt         DateTime @updatedAt
 }
 
+model User {
+  id                   String                @id @default(cuid())
+  identityNo           String                @unique
+  fullName             String
+  email                String?               @unique
+  passwordHash         String
+  role                 Role                  @default(DOKTOR)
+  isActive             Boolean               @default(true)
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  institutionId        String?
+  genelYuzde           Decimal?              @db.Decimal(5, 2)
+  kkYuzde              Decimal?              @db.Decimal(5, 2)
+  maasYuzde            Decimal?              @db.Decimal(5, 2)
+  appointments         Appointment[]
+  logs                 AuditLog[]
+  examinations         Examination[]
+  ownedInstitution     Institution?          @relation("InstitutionOwner")
+  labOrders            LabOrder[]            @relation("LabOrderDoctor")
+  messages             Message[]
+  profile              Profile?
+  stockMovements       StockMovement[]       @relation("StockMovementUser")
+  superadminPermission SuperadminPermission?
+  supportTickets       SupportTicket[]
+  taksitPlanlari       TaksitPlan[]          @relation("TaksitPlanDoctor")
+  treatmentPlans       TreatmentPlan[]       @relation("TreatmentPlanDoctor")
+  institution          Institution?          @relation(fields: [institutionId], references: [id])
+
+  @@unique([institutionId, identityNo])
+}
+
+model SuperadminPermission {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  modules   Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Profile {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  photoUrl      String?
+  workStart     String   @default("08:30")
+  workEnd       String   @default("18:00")
+  hideAsDoctor  Boolean  @default(false)
+  educationMode Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id])
+}
+
+model Patient {
+  id             String          @id @default(cuid())
+  tcNo           String          @unique
+  fullName       String
+  phone          String
+  address        String?
+  gender         String
+  birthDate      DateTime?
+  insurance      String?
+  discountRate   Int             @default(0)
+  notes          String?
+  hasAllergy     Boolean         @default(false)
+  hasHepatitis   Boolean         @default(false)
+  hasKidney      Boolean         @default(false)
+  hasDiabetes    Boolean         @default(false)
+  hasHeart       Boolean         @default(false)
+  hasBloodIssue  Boolean         @default(false)
+  surgeries      String?
+  medications    String?
+  otherDiseases  String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  bloodType      String?
+  toothChart     String?
+  referrer       String?
+  appointments   Appointment[]
+  examinations   Examination[]
+  labOrders      LabOrder[]
+  payments       Payment[]
+  prescriptions  Prescription[]
+  reminders      Reminder[]
+  taksitPlanlari TaksitPlan[]
+  treatmentPlans TreatmentPlan[]
+
+  @@index([fullName])
+  @@index([phone])
+}
+
+model Appointment {
+  id          String          @id @default(cuid())
+  patientId   String
+  doctorId    String
+  startAt     DateTime
+  endAt       DateTime
+  colorCode   String          @default("#2a9d8f")
+  type        AppointmentType @default(STANDART)
+  note        String?
+  smsInfo     Boolean         @default(true)
+  smsReminder Boolean         @default(false)
+  smsSurvey   Boolean         @default(false)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  status      String          @default("BEKLIYOR")
+  doctor      User            @relation(fields: [doctorId], references: [id])
+  patient     Patient         @relation(fields: [patientId], references: [id])
+
+  @@index([doctorId])
+  @@index([patientId])
+  @@index([startAt])
+  @@index([doctorId, startAt])
+}
+
+model Examination {
+  id            String   @id @default(cuid())
+  patientId     String
+  doctorId      String
+  treatmentName String
+  toothNo       String?
+  amount        Decimal  @db.Decimal(10, 2)
+  status        String
+  diagnosedAt   DateTime
+  note          String?
+  createdAt     DateTime @default(now())
+  doctor        User     @relation(fields: [doctorId], references: [id])
+  patient       Patient  @relation(fields: [patientId], references: [id])
+
+  @@index([patientId])
+  @@index([doctorId])
+}
+
+model Payment {
+  id          String        @id @default(cuid())
+  patientId   String?
+  doctorId    String?
+  method      PaymentMethod @default(NAKIT)
+  amount      Decimal       @db.Decimal(10, 2)
+  description String?
+  createdAt   DateTime      @default(now())
+  posId       String?
+  patient     Patient?      @relation(fields: [patientId], references: [id])
+  pos         PosDevice?    @relation(fields: [posId], references: [id])
+
+  @@index([patientId])
+  @@index([posId])
+  @@index([createdAt])
+}
+
+model PriceItem {
+  id         String   @id @default(cuid())
+  code       String
+  treatment  String
+  amount     Decimal  @db.Decimal(10, 2)
+  isFavorite Boolean  @default(false)
+  isCustom   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([code, treatment])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String
+  action    String
+  detail    String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Setting {
+  id                  String      @id @default(cuid())
+  institutionName     String
+  institutionAddress  String?
+  institutionPhone    String?
+  institutionWebsite  String?
+  openingTime         String      @default("08:30")
+  closingTime         String      @default("23:00")
+  appointmentDuration Int         @default(15)
+  holidayDays         String      @default("[]")
+  smsEnabled          Boolean     @default(true)
+  smsDefaultInfo      Boolean     @default(true)
+  smsDefaultReminder  Boolean     @default(false)
+  smsDefaultSurvey    Boolean     @default(false)
+  updatedAt           DateTime    @updatedAt
+  institutionId       String      @unique
+  activePriceList     String      @default("standard")
+  institution         Institution @relation(fields: [institutionId], references: [id])
+}
+
+model SupportTicket {
+  id        String   @id @default(cuid())
+  userId    String?
+  subject   String
+  message   String
+  answer    String?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  userId    String
+  text      String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id])
+}
+
+model Announcement {
+  id        String   @id @default(cuid())
+  text      String
+  createdAt DateTime @default(now())
+}
+
+model Prescription {
+  id        String   @id @default(cuid())
+  patientId String
+  doctorId  String?
+  drugs     String
+  note      String?
+  createdAt DateTime @default(now())
+  patient   Patient  @relation(fields: [patientId], references: [id])
+}
+
+model TreatmentPlan {
+  id        String              @id @default(cuid())
+  patientId String
+  doctorId  String
+  title     String
+  status    TreatmentPlanStatus @default(PLANLANDI)
+  totalCost Decimal?            @db.Decimal(10, 2)
+  notes     String?
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+  doctor    User                @relation("TreatmentPlanDoctor", fields: [doctorId], references: [id])
+  patient   Patient             @relation(fields: [patientId], references: [id])
+  steps     TreatmentStep[]
+
+  @@index([patientId])
+  @@index([doctorId])
+}
+
+model TreatmentStep {
+  id            String        @id @default(cuid())
+  planId        String
+  order         Int
+  treatmentName String
+  toothNo       String?
+  amount        Decimal       @db.Decimal(10, 2)
+  status        String        @default("BEKLIYOR")
+  doneAt        DateTime?
+  note          String?
+  createdAt     DateTime      @default(now())
+  plan          TreatmentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+}
+
+model LabOrder {
+  id        String         @id @default(cuid())
+  patientId String
+  doctorId  String
+  labName   String
+  labType   String
+  teeth     String?
+  notes     String?
+  status    LabOrderStatus @default(DEVAM_EDIYOR)
+  price     Decimal?       @db.Decimal(10, 2)
+  invoiceNo String?
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  doctor    User           @relation("LabOrderDoctor", fields: [doctorId], references: [id])
+  patient   Patient        @relation(fields: [patientId], references: [id])
+  trips     LabTrip[]
+
+  @@index([patientId])
+  @@index([doctorId])
+}
+
+model LabTrip {
+  id           String    @id @default(cuid())
+  labOrderId   String
+  order        Int
+  description  String
+  sentAt       DateTime  @default(now())
+  expectedAt   DateTime?
+  receivedAt   DateTime?
+  sentNote     String?
+  receivedNote String?
+  createdAt    DateTime  @default(now())
+  labOrder     LabOrder  @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
+
+  @@index([labOrderId])
+}
+
+model StockItem {
+  id          String          @id @default(cuid())
+  name        String
+  category    String          @default("SARF")
+  unit        String          @default("adet")
+  quantity    Int             @default(0)
+  minQuantity Int             @default(5)
+  unitPrice   Decimal?        @db.Decimal(10, 2)
+  supplier    String?
+  isActive    Boolean         @default(true)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  movements   StockMovement[]
+}
+
+model StockMovement {
+  id          String    @id @default(cuid())
+  stockItemId String
+  type        String
+  quantity    Int
+  note        String?
+  userId      String
+  createdAt   DateTime  @default(now())
+  stockItem   StockItem @relation(fields: [stockItemId], references: [id])
+  user        User      @relation("StockMovementUser", fields: [userId], references: [id])
+}
+
+model TaksitPlan {
+  id           String           @id @default(cuid())
+  patientId    String
+  doctorId     String
+  baslik       String?
+  toplamBorc   Decimal          @db.Decimal(10, 2)
+  pesnat       Decimal          @default(0) @db.Decimal(10, 2)
+  taksitSayisi Int
+  period       TaksitPeriod     @default(AYLIK)
+  startDate    DateTime
+  notes        String?
+  status       TaksitPlanStatus @default(AKTIF)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  reminders    Reminder[]
+  taksitler    Taksit[]
+  doctor       User             @relation("TaksitPlanDoctor", fields: [doctorId], references: [id])
+  patient      Patient          @relation(fields: [patientId], references: [id])
+
+  @@index([patientId])
+  @@index([doctorId])
+  @@index([status])
+}
+
+model Taksit {
+  id        String        @id @default(cuid())
+  planId    String
+  siraNo    Int
+  vadeDate  DateTime
+  tutar     Decimal       @db.Decimal(10, 2)
+  odenen    Decimal       @default(0) @db.Decimal(10, 2)
+  kalan     Decimal       @db.Decimal(10, 2)
+  status    TaksitStatus  @default(BEKLIYOR)
+  note      String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  plan      TaksitPlan    @relation(fields: [planId], references: [id], onDelete: Cascade)
+  odemeler  TaksitOdeme[]
+
+  @@index([planId])
+  @@index([vadeDate])
+  @@index([status])
+}
+
+model TaksitOdeme {
+  id        String        @id @default(cuid())
+  taksitId  String
+  tarih     DateTime      @default(now())
+  tutar     Decimal       @db.Decimal(10, 2)
+  yontem    PaymentMethod @default(NAKIT)
+  posId     String?
+  note      String?
+  createdAt DateTime      @default(now())
+  pos       PosDevice?    @relation(fields: [posId], references: [id])
+  taksit    Taksit        @relation(fields: [taksitId], references: [id], onDelete: Cascade)
+
+  @@index([taksitId])
+}
+
+model PosDevice {
+  id             String        @id @default(cuid())
+  name           String        @unique
+  isActive       Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  payments       Payment[]
+  taksitOdemeler TaksitOdeme[]
+}
+
+model ExpenseCategory {
+  id        String    @id @default(cuid())
+  name      String    @unique
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  expenses  Expense[]
+}
+
+model Expense {
+  id              String           @id @default(cuid())
+  tarih           DateTime
+  categoryId      String?
+  category        String
+  description     String?
+  tutar           Decimal          @db.Decimal(10, 2)
+  yontem          PaymentMethod    @default(NAKIT)
+  faturaNo        String?
+  kdvOrani        Int              @default(0)
+  status          String           @default("AKTIF")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  expenseCategory ExpenseCategory? @relation(fields: [categoryId], references: [id])
+
+  @@index([tarih])
+  @@index([status])
+}
+
+model Firma {
+  id        String       @id @default(cuid())
+  name      String       @unique
+  phone     String?
+  iban      String?
+  ibanName  String?
+  notes     String?
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  islemler  FirmaIslem[]
+}
+
+model FirmaIslem {
+  id         String         @id @default(cuid())
+  firmaId    String
+  tarih      DateTime
+  islemTipi  FirmaIslemTipi @default(ALIM)
+  urunHizmet String?
+  aciklama   String?
+  tutar      Decimal        @db.Decimal(10, 2)
+  faturaNo   String?
+  yontem     PaymentMethod?
+  kdvOrani   Int            @default(0)
+  status     String         @default("AKTIF")
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  firma      Firma          @relation(fields: [firmaId], references: [id])
+
+  @@index([firmaId])
+  @@index([tarih])
+}
+
+model Reminder {
+  id           String         @id @default(cuid())
+  patientId    String?
+  planId       String?
+  note         String
+  reminderDate DateTime
+  status       ReminderStatus @default(AKTIF)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  patient      Patient?       @relation(fields: [patientId], references: [id])
+  plan         TaksitPlan?    @relation(fields: [planId], references: [id])
+
+  @@index([reminderDate])
+  @@index([status])
+}
 
 enum Role {
-  SUPERADMIN
   YONETICI
   DOKTOR
   ASISTAN
   BANKO
   MUHASEBE
+  SUPERADMIN
 }
 
 enum SubscriptionPlan {
@@ -291,359 +748,13 @@ enum PaymentMethod {
   NAKIT
   KREDI_KARTI
   HAVALE_EFT
-  MAIL_ORDER
   DIGER
+  MAIL_ORDER
 }
 
 enum ReminderStatus {
   AKTIF
   TAMAMLANDI
-}
-
-model User {
-  id              String      @id @default(cuid())
-  identityNo      String      @unique
-  institutionId   String?
-  fullName        String
-  email           String?     @unique
-  passwordHash    String
-  role            Role        @default(DOKTOR)
-  isActive        Boolean     @default(true)
-  kkYuzde         Decimal?    @db.Decimal(5, 2)
-  genelYuzde      Decimal?    @db.Decimal(5, 2)
-  maasYuzde       Decimal?    @db.Decimal(5, 2)
-  createdAt       DateTime    @default(now())
-  updatedAt       DateTime    @updatedAt
-
-  institution     Institution? @relation(fields: [institutionId], references: [id])
-  ownedInstitution Institution? @relation("InstitutionOwner")
-  appointments    Appointment[]
-  examinations    Examination[]
-  logs            AuditLog[]
-  profile         Profile?
-  supportTickets  SupportTicket[]
-  messages        Message[]
-  superadminPermission SuperadminPermission?
-  treatmentPlans  TreatmentPlan[]  @relation("TreatmentPlanDoctor")
-  labOrders       LabOrder[]       @relation("LabOrderDoctor")
-  stockMovements  StockMovement[]  @relation("StockMovementUser")
-  taksitPlanlari  TaksitPlan[]     @relation("TaksitPlanDoctor")
-
-  @@unique([institutionId, identityNo])
-}
-
-model SuperadminPermission {
-  id         String   @id @default(cuid())
-  userId     String   @unique
-  modules    Json
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model Profile {
-  id              String   @id @default(cuid())
-  userId           String   @unique
-  photoUrl         String?
-  workStart        String   @default("08:30")
-  workEnd          String   @default("18:00")
-  hideAsDoctor     Boolean  @default(false)
-  educationMode    Boolean  @default(false)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  user User @relation(fields: [userId], references: [id])
-}
-
-model Patient {
-  id             String        @id @default(cuid())
-  tcNo           String        @unique
-  fullName       String
-  phone          String
-  address        String?
-  gender         String
-  birthDate      DateTime?
-  insurance      String?
-  referrer       String?
-  discountRate   Int           @default(0)
-  notes          String?
-  hasAllergy     Boolean       @default(false)
-  hasHepatitis   Boolean       @default(false)
-  hasKidney      Boolean       @default(false)
-  hasDiabetes    Boolean       @default(false)
-  hasHeart       Boolean       @default(false)
-  hasBloodIssue  Boolean       @default(false)
-  surgeries      String?
-  medications    String?
-  otherDiseases  String?
-  bloodType      String?       
-  toothChart     String?       
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
-
-  appointments   Appointment[]
-  examinations   Examination[]
-  payments       Payment[]
-  prescriptions  Prescription[]
-  treatmentPlans TreatmentPlan[]
-  labOrders      LabOrder[]
-  taksitPlanlari TaksitPlan[]
-  reminders      Reminder[]
-
-  @@index([fullName])
-  @@index([phone])
-}
-
-model Appointment {
-  id           String          @id @default(cuid())
-  patientId    String
-  doctorId     String
-  startAt      DateTime
-  endAt        DateTime
-  colorCode    String          @default("#2a9d8f")
-  type         AppointmentType @default(STANDART)
-  status       String          @default("BEKLIYOR")
-  note         String?
-  smsInfo      Boolean         @default(true)
-  smsReminder  Boolean         @default(false)
-  smsSurvey    Boolean         @default(false)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
-
-  patient      Patient @relation(fields: [patientId], references: [id])
-  doctor       User    @relation(fields: [doctorId], references: [id])
-
-  @@index([doctorId])
-  @@index([patientId])
-  @@index([startAt])
-  @@index([doctorId, startAt])
-}
-
-model Examination {
-  id            String   @id @default(cuid())
-  patientId     String
-  doctorId      String
-  treatmentName String
-  toothNo       String?
-  amount        Decimal  @db.Decimal(10, 2)
-  status        String
-  diagnosedAt   DateTime
-  note          String?
-  createdAt     DateTime @default(now())
-
-  patient Patient @relation(fields: [patientId], references: [id])
-  doctor  User    @relation(fields: [doctorId], references: [id])
-
-  @@index([patientId])
-  @@index([doctorId])
-}
-
-model Payment {
-  id            String        @id @default(cuid())
-  patientId      String?
-  doctorId       String?
-  posId          String?
-  method         PaymentMethod @default(NAKIT)
-  amount         Decimal       @db.Decimal(10, 2)
-  description    String?
-  createdAt      DateTime      @default(now())
-
-  patient Patient? @relation(fields: [patientId], references: [id])
-  pos     PosDevice? @relation(fields: [posId], references: [id])
-
-  @@index([patientId])
-  @@index([posId])
-  @@index([createdAt])
-}
-
-model PriceItem {
-  id           String   @id @default(cuid())
-  code         String
-  treatment    String
-  amount       Decimal  @db.Decimal(10, 2)
-  isFavorite   Boolean  @default(false)
-  isCustom     Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-
-  @@unique([code, treatment])
-}
-
-model AuditLog {
-  id          String   @id @default(cuid())
-  userId      String
-  action      String
-  detail      String?
-  createdAt   DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id])
-
-  @@index([userId])
-  @@index([createdAt])
-}
-
-model Setting {
-  id                    String   @id @default(cuid())
-  institutionId         String   @unique
-  institutionName       String
-  institutionAddress    String?
-  institutionPhone      String?
-  institutionWebsite    String?
-  activePriceList       String   @default("standard")
-  openingTime           String   @default("08:30")
-  closingTime           String   @default("23:00")
-  appointmentDuration   Int      @default(15)
-  holidayDays           String   @default("[]")
-  smsEnabled            Boolean  @default(true)
-  smsDefaultInfo        Boolean  @default(true)
-  smsDefaultReminder    Boolean  @default(false)
-  smsDefaultSurvey      Boolean  @default(false)
-  updatedAt             DateTime @updatedAt
-
-  institution           Institution @relation(fields: [institutionId], references: [id])
-}
-
-model SupportTicket {
-  id          String   @id @default(cuid())
-  userId      String?
-  subject     String
-  message     String
-  answer      String?
-  createdAt   DateTime @default(now())
-
-  user User? @relation(fields: [userId], references: [id])
-}
-
-model Message {
-  id        String   @id @default(cuid())
-  userId    String
-  text      String
-  createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id])
-}
-
-model Announcement {
-  id        String   @id @default(cuid())
-  text      String
-  createdAt DateTime @default(now())
-}
-
-model Prescription {
-  id          String   @id @default(cuid())
-  patientId   String
-  doctorId    String?
-  drugs       String
-  note        String?
-  createdAt   DateTime @default(now())
-
-  patient Patient @relation(fields: [patientId], references: [id])
-}
-
-// ── Tedavi Planı ────────────────────────────────────────────────────────────
-model TreatmentPlan {
-  id        String              @id @default(cuid())
-  patientId String
-  doctorId  String
-  title     String
-  status    TreatmentPlanStatus @default(PLANLANDI)
-  totalCost Decimal?            @db.Decimal(10, 2)
-  notes     String?
-  createdAt DateTime            @default(now())
-  updatedAt DateTime            @updatedAt
-
-  patient   Patient             @relation(fields: [patientId], references: [id])
-  doctor    User                @relation("TreatmentPlanDoctor", fields: [doctorId], references: [id])
-  steps     TreatmentStep[]
-
-  @@index([patientId])
-  @@index([doctorId])
-}
-
-model TreatmentStep {
-  id            String        @id @default(cuid())
-  planId        String
-  order         Int
-  treatmentName String
-  toothNo       String?
-  amount        Decimal       @db.Decimal(10, 2)
-  status        String        @default("BEKLIYOR")
-  doneAt        DateTime?
-  note          String?
-  createdAt     DateTime      @default(now())
-
-  plan          TreatmentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-}
-
-// ── Lab Takip ────────────────────────────────────────────────────────────────
-model LabOrder {
-  id         String         @id @default(cuid())
-  patientId  String
-  doctorId   String
-  labName    String
-  labType    String
-  teeth      String?
-  notes      String?
-  status     LabOrderStatus @default(DEVAM_EDIYOR)
-  price      Decimal?       @db.Decimal(10, 2)
-  invoiceNo  String?
-  createdAt  DateTime       @default(now())
-  updatedAt  DateTime       @updatedAt
-
-  patient    Patient        @relation(fields: [patientId], references: [id])
-  doctor     User           @relation("LabOrderDoctor", fields: [doctorId], references: [id])
-  trips      LabTrip[]
-
-  @@index([patientId])
-  @@index([doctorId])
-}
-
-model LabTrip {
-  id           String    @id @default(cuid())
-  labOrderId   String
-  order        Int
-  description  String
-  sentAt       DateTime  @default(now())
-  expectedAt   DateTime?
-  receivedAt   DateTime?
-  sentNote     String?
-  receivedNote String?
-  createdAt    DateTime  @default(now())
-
-  labOrder     LabOrder  @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
-
-  @@index([labOrderId])
-}
-
-// ── Stok Yönetimi ────────────────────────────────────────────────────────────
-model StockItem {
-  id          String          @id @default(cuid())
-  name        String
-  category    String          @default("SARF")
-  unit        String          @default("adet")
-  quantity    Int             @default(0)
-  minQuantity Int             @default(5)
-  unitPrice   Decimal?        @db.Decimal(10, 2)
-  supplier    String?
-  isActive    Boolean         @default(true)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-
-  movements   StockMovement[]
-}
-
-model StockMovement {
-  id          String    @id @default(cuid())
-  stockItemId String
-  type        String
-  quantity    Int
-  note        String?
-  userId      String
-  createdAt   DateTime  @default(now())
-
-  stockItem   StockItem @relation(fields: [stockItemId], references: [id])
-  user        User      @relation("StockMovementUser", fields: [userId], references: [id])
 }
 
 enum TreatmentPlanStatus {
@@ -657,69 +768,6 @@ enum LabOrderStatus {
   DEVAM_EDIYOR
   HASTAYA_TAKILDI
   IPTAL
-}
-
-// ── Taksit Yönetimi ──────────────────────────────────────────────────────────
-model TaksitPlan {
-  id           String           @id @default(cuid())
-  patientId    String
-  doctorId     String
-  baslik       String?
-  toplamBorc   Decimal          @db.Decimal(10, 2)
-  pesnat       Decimal          @default(0) @db.Decimal(10, 2)
-  taksitSayisi Int
-  period       TaksitPeriod     @default(AYLIK)
-  startDate    DateTime
-  notes        String?
-  status       TaksitPlanStatus @default(AKTIF)
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
-
-  patient      Patient          @relation(fields: [patientId], references: [id])
-  doctor       User             @relation("TaksitPlanDoctor", fields: [doctorId], references: [id])
-  taksitler    Taksit[]
-  reminders    Reminder[]
-
-  @@index([patientId])
-  @@index([doctorId])
-  @@index([status])
-}
-
-model Taksit {
-  id        String        @id @default(cuid())
-  planId    String
-  siraNo    Int
-  vadeDate  DateTime
-  tutar     Decimal       @db.Decimal(10, 2)
-  odenen    Decimal       @default(0) @db.Decimal(10, 2)
-  kalan     Decimal       @db.Decimal(10, 2)
-  status    TaksitStatus  @default(BEKLIYOR)
-  note      String?
-  createdAt DateTime      @default(now())
-  updatedAt DateTime      @updatedAt
-
-  plan      TaksitPlan    @relation(fields: [planId], references: [id], onDelete: Cascade)
-  odemeler  TaksitOdeme[]
-
-  @@index([planId])
-  @@index([vadeDate])
-  @@index([status])
-}
-
-model TaksitOdeme {
-  id        String        @id @default(cuid())
-  taksitId  String
-  tarih     DateTime      @default(now())
-  tutar     Decimal       @db.Decimal(10, 2)
-  yontem    PaymentMethod @default(NAKIT)
-  posId     String?
-  note      String?
-  createdAt DateTime      @default(now())
-
-  taksit    Taksit        @relation(fields: [taksitId], references: [id], onDelete: Cascade)
-  pos       PosDevice?    @relation(fields: [posId], references: [id])
-
-  @@index([taksitId])
 }
 
 enum TaksitPeriod {
@@ -746,103 +794,8 @@ enum TaksitStatus {
   IPTAL
 }
 
-// ── POS Cihaz ────────────────────────────────────────────────────────────────
-model PosDevice {
-  id           String        @id @default(cuid())
-  name         String        @unique
-  isActive     Boolean       @default(true)
-  createdAt    DateTime      @default(now())
-
-  payments      Payment[]
-  taksitOdemeler TaksitOdeme[]
-}
-
-// ── Gider Takip ──────────────────────────────────────────────────────────────
-model ExpenseCategory {
-  id        String    @id @default(cuid())
-  name      String    @unique
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-
-  expenses  Expense[]
-}
-
-model Expense {
-  id           String    @id @default(cuid())
-  tarih        DateTime
-  categoryId   String?
-  category     String
-  description  String?
-  tutar        Decimal   @db.Decimal(10, 2)
-  yontem       PaymentMethod @default(NAKIT)
-  faturaNo     String?
-  kdvOrani     Int       @default(0)
-  status       String    @default("AKTIF")
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
-
-  expenseCategory ExpenseCategory? @relation(fields: [categoryId], references: [id])
-
-  @@index([tarih])
-  @@index([status])
-}
-
-// ── Firma / Tedarikçi ────────────────────────────────────────────────────────
-model Firma {
-  id        String       @id @default(cuid())
-  name      String       @unique
-  phone     String?
-  iban      String?
-  ibanName  String?
-  notes     String?
-  isActive  Boolean      @default(true)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-
-  islemler  FirmaIslem[]
-}
-
-model FirmaIslem {
-  id          String          @id @default(cuid())
-  firmaId     String
-  tarih       DateTime
-  islemTipi   FirmaIslemTipi  @default(ALIM)
-  urunHizmet  String?
-  aciklama    String?
-  tutar       Decimal         @db.Decimal(10, 2)
-  faturaNo    String?
-  yontem      PaymentMethod?
-  kdvOrani    Int             @default(0)
-  status      String          @default("AKTIF")
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-
-  firma       Firma           @relation(fields: [firmaId], references: [id])
-
-  @@index([firmaId])
-  @@index([tarih])
-}
-
 enum FirmaIslemTipi {
   ALIM
   HIZMET
   ODEME
-}
-
-// ── Hatırlatmalar ────────────────────────────────────────────────────────────
-model Reminder {
-  id           String         @id @default(cuid())
-  patientId    String?
-  planId       String?
-  note         String
-  reminderDate DateTime
-  status       ReminderStatus @default(AKTIF)
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-
-  patient      Patient?       @relation(fields: [patientId], references: [id])
-  plan         TaksitPlan?    @relation(fields: [planId], references: [id])
-
-  @@index([reminderDate])
-  @@index([status])
 }
