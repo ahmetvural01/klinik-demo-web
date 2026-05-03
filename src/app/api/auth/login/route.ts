@@ -1,0 +1,108 @@
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { loginSchema } from "@/lib/validators";
+import { setAuthCookie, signToken, verifyPassword } from "@/lib/auth";
+import { writeAudit } from "@/lib/api";
+
+type AttemptState = { count: number; blockedUntil?: number };
+
+const attemptStore = new Map<string, AttemptState>();
+const MAX_ATTEMPT = 5;
+const BLOCK_MINUTES = 15;
+
+function getClientIp(request: NextRequest) {
+  const forwarded = request.headers.get("x-forwarded-for");
+  if (forwarded) return forwarded.split(",")[0].trim();
+  return request.headers.get("x-real-ip") || "unknown";
+}
+
+function getAttemptKey(request: NextRequest, identityNo: string) {
+  return `${getClientIp(request)}:${identityNo}`;
+}
+
+function isBlocked(key: string) {
+  const state = attemptStore.get(key);
+  if (!state?.blockedUntil) return false;
+  if (state.blockedUntil < Date.now()) {
+    attemptStore.delete(key);
+    return false;
+  }
+  return true;
+}
+
+function failAttempt(key: string) {
+  const current = attemptStore.get(key) || { count: 0 };
+  const nextCount = current.count + 1;
+  if (nextCount >= MAX_ATTEMPT) {
+    attemptStore.set(key, {
+      count: nextCount,
+      blockedUntil: Date.now() + BLOCK_MINUTES * 60 * 1000,
+    });
+    return;
+  }
+  attemptStore.set(key, { count: nextCount });
+}
+
+function clearAttempt(key: string) {
+  attemptStore.delete(key);
+}
+
+export async function POST(request: NextRequest) {
+  const body = await request.json();
+  const parsed = loginSchema.safeParse(body);
+
+  if (!parsed.success) {
+    return NextResponse.json({ message: "Geçersiz giriş verisi" }, { status: 400 });
+  }
+
+  const institutionInput = parsed.data.institution.toLowerCase();
+  if (institutionInput === "admin" || institutionInput === "superadmin") {
+    return NextResponse.json({ message: "Kurum bulunamadı" }, { status: 404 });
+  }
+
+  // Regular clinic user login
+  const institution = await prisma.institution.findFirst({
+    where: {
+      name: { contains: parsed.data.institution, mode: "insensitive" }
+    }
+  });
+
+  if (!institution) {
+    return NextResponse.json({ message: "Kurum bulunamadı" }, { status: 404 });
+  }
+
+  const user = await prisma.user.findFirst({
+    where: {
+      institutionId: institution.id,
+      identityNo: parsed.data.identityNo,
+      isActive: true
+    }
+  });
+
+  if (!user) {
+    return NextResponse.json({ message: "Kullanıcı bulunamadı" }, { status: 404 });
+  }
+
+  const isValid = await verifyPassword(parsed.data.password, user.passwordHash);
+
+  if (!isValid) {
+    return NextResponse.json({ message: "Şifre hatalı" }, { status: 401 });
+  }
+
+  const token = signToken({
+    userId: user.id,
+    role: user.role,
+    institutionId: user.institutionId,
+    fullName: user.fullName,
+  });
+
+  setAuthCookie(token);
+  await writeAudit(user.id, "LOGIN", "Kullanıcı sisteme giriş yaptı");
+
+  return NextResponse.json({
+    id: user.id,
+    fullName: user.fullName,
+    role: user.role,
+    institutionId: user.institutionId
+  });
+}

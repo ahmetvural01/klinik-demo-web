@@ -1,0 +1,189 @@
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireAuth, writeAudit } from "@/lib/api";
+import { sendSms } from "@/lib/sms";
+
+function renderTemplate(template: string, vars: Record<string, string>) {
+  return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
+}
+
+// GET - Randevuları SMS durumuyla birlikte getir + istatistikler
+export async function GET(request: NextRequest) {
+  const auth = await requireAuth("*");
+  if (auth.error) return auth.error;
+
+  if (!auth.user.institutionId) {
+    return NextResponse.json({ message: "Sadece klinik kullanicilari SMS ekranini kullanabilir" }, { status: 403 });
+  }
+
+  const type = request.nextUrl.searchParams.get("type") || "upcoming";
+  const now = new Date();
+
+  let whereFilter = {};
+  if (type === "upcoming") {
+    whereFilter = { startAt: { gte: now } };
+  } else if (type === "past") {
+    whereFilter = { startAt: { lt: now } };
+  }
+
+  const [appointments, settings, smsSentCount] = await Promise.all([
+    prisma.appointment.findMany({
+      where: {
+        ...whereFilter,
+        doctor: { institutionId: auth.user.institutionId },
+      },
+      include: {
+        patient: { select: { fullName: true, phone: true } },
+        doctor: { select: { fullName: true } },
+      },
+      orderBy: { startAt: "asc" },
+      take: 100,
+    }),
+    prisma.setting.findUnique({ where: { institutionId: auth.user.institutionId } }),
+    prisma.auditLog.count({
+      where: {
+        user: { institutionId: auth.user.institutionId },
+        action: { startsWith: "SMS_" },
+      },
+    }),
+  ]);
+
+  return NextResponse.json({
+    appointments,
+    settings: {
+      smsEnabled: settings?.smsEnabled ?? true,
+      smsDefaultInfo: settings?.smsDefaultInfo ?? true,
+      smsDefaultReminder: settings?.smsDefaultReminder ?? false,
+      smsDefaultSurvey: settings?.smsDefaultSurvey ?? false,
+    },
+    smsSentCount,
+  });
+}
+
+// POST - Secili randevulara gercek SMS gonder
+export async function POST(request: NextRequest) {
+  const auth = await requireAuth("*");
+  if (auth.error) return auth.error;
+
+  if (!auth.user.institutionId) {
+    return NextResponse.json({ message: "Sadece klinik kullanicilari SMS gonderebilir" }, { status: 403 });
+  }
+
+  const body = await request.json() as { appointmentIds?: string[]; smsType?: string };
+  const { appointmentIds = [], smsType = "BILGI" } = body;
+
+  if (!appointmentIds.length) {
+    return NextResponse.json({ message: "En az bir randevu secin" }, { status: 400 });
+  }
+
+  const [settings, institution] = await Promise.all([
+    prisma.setting.findUnique({ where: { institutionId: auth.user.institutionId } }),
+    prisma.institution.findUnique({ where: { id: auth.user.institutionId } }),
+  ]);
+
+  if (!settings?.smsEnabled) {
+    return NextResponse.json({ message: "SMS servisi pasif durumda" }, { status: 400 });
+  }
+
+  if (!institution) {
+    return NextResponse.json({ message: "Klinik bulunamadi" }, { status: 404 });
+  }
+
+  const appointments = await prisma.appointment.findMany({
+    where: {
+      id: { in: appointmentIds },
+      doctor: { institutionId: auth.user.institutionId },
+    },
+    include: {
+      patient: { select: { fullName: true, phone: true } },
+      doctor: { select: { fullName: true } },
+    },
+  });
+
+  if (!appointments.length) {
+    return NextResponse.json({ message: "Randevu bulunamadi" }, { status: 404 });
+  }
+
+  if (institution.smsBalance < appointments.length) {
+    return NextResponse.json({
+      message: `Yetersiz SMS kredisi. Gerekli: ${appointments.length}, Mevcut: ${institution.smsBalance}`,
+    }, { status: 400 });
+  }
+
+  const updateData: Record<string, boolean> = {};
+  if (smsType === "BILGI") updateData.smsInfo = true;
+  else if (smsType === "HATIRLATMA") updateData.smsReminder = true;
+  else if (smsType === "ANKET") updateData.smsSurvey = true;
+
+  const smsTemplate = await prisma.smsTemplate.findFirst({
+    where: { code: smsType, isActive: true },
+  });
+
+  let sent = 0;
+  const failedRecipients: { appointmentId: string; phone: string; reason: string }[] = [];
+
+  for (const appt of appointments) {
+    const dateText = new Date(appt.startAt).toLocaleString("tr-TR");
+    const institutionName = settings.institutionName || institution.name;
+    const fallbackMessage = smsType === "BILGI"
+      ? `${institutionName}: Sayin ${appt.patient.fullName}, randevunuz olusturuldu. Tarih: ${dateText}.`
+      : smsType === "HATIRLATMA"
+        ? `${institutionName}: Sayin ${appt.patient.fullName}, randevu hatirlatmasi. Tarih: ${dateText}, Doktor: ${appt.doctor.fullName}.`
+        : `${institutionName}: Randevunuz tamamlandi. Degerlendirmeniz bizim icin cok degerli.`;
+
+    const message = smsTemplate
+      ? renderTemplate(smsTemplate.content, {
+          institutionName,
+          patientName: appt.patient.fullName,
+          doctorName: appt.doctor.fullName,
+          dateTime: dateText,
+        })
+      : fallbackMessage;
+
+    const sendResult = await sendSms(appt.patient.phone, message);
+
+    if (sendResult.success) {
+      sent += 1;
+
+      await prisma.appointment.update({
+        where: { id: appt.id },
+        data: updateData,
+      });
+
+      await writeAudit(
+        auth.user.id,
+        `SMS_${smsType}`,
+        `${appt.patient.fullName} (${appt.patient.phone}) - ProviderMsgId: ${sendResult.providerMessageId || "-"}`
+      );
+    } else {
+      failedRecipients.push({
+        appointmentId: appt.id,
+        phone: appt.patient.phone,
+        reason: sendResult.error || sendResult.providerRaw,
+      });
+
+      await writeAudit(
+        auth.user.id,
+        `SMS_${smsType}_FAILED`,
+        `${appt.patient.fullName} (${appt.patient.phone}) - ${sendResult.error || sendResult.providerRaw}`
+      );
+    }
+  }
+
+  if (sent > 0) {
+    await prisma.institution.update({
+      where: { id: institution.id },
+      data: { smsBalance: { decrement: sent } },
+    });
+  }
+
+  const refreshedInstitution = await prisma.institution.findUnique({ where: { id: institution.id } });
+
+  return NextResponse.json({
+    sent,
+    failed: failedRecipients.length,
+    failedRecipients,
+    remainingBalance: refreshedInstitution?.smsBalance ?? institution.smsBalance,
+    message: `${sent} hastaya ${smsType === "BILGI" ? "bilgi" : smsType === "HATIRLATMA" ? "hatirlatma" : "anket"} SMS'i gonderildi${failedRecipients.length ? `, ${failedRecipients.length} gonderim basarisiz` : ""}`,
+  });
+}

@@ -1,0 +1,77 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --sidebar-width: 240px;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(135deg, #dbeafe 0%, #f0f4ff 45%, #ede9fe 100%);
+  color: #0f172a;
+  font-family: "Inter", ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Panel body */
+.panel-body {
+  background: #f0f4ff;
+  color: #0f172a;
+}
+
+/* Custom scrollbar — thin & elegant */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+
+/* Smooth animation defaults */
+* {
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Stat card gradient helpers */
+.grad-blue   { background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%); }
+.grad-violet { background: linear-gradient(135deg, #7c3aed 0%, #8b5cf6 100%); }
+.grad-green  { background: linear-gradient(135deg, #16a34a 0%, #22c55e 100%); }
+.grad-amber  { background: linear-gradient(135deg, #d97706 0%, #f59e0b 100%); }
+.grad-red    { background: linear-gradient(135deg, #dc2626 0%, #ef4444 100%); }
+.grad-teal   { background: linear-gradient(135deg, #0891b2 0%, #06b6d4 100%); }
+
+/* Status badge base */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 9999px;
+  padding: 2px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.panel-grid {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  min-height: 100vh;
+}
+
+@media (max-width: 960px) {
+  .panel-grid {
+    grid-template-columns: 1fr;
+  }
+}
