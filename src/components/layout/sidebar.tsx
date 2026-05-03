@@ -31,92 +31,162 @@ const ICONS: Record<string, JSX.Element> = {
   taksit:        I('<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 14h2M10 14h2"/>'),
   gider:         I('<path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/><line x1="4" y1="22" x2="20" y2="2" strokeWidth="1.5"/>'),
   firma:         I('<path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>'),
+  recete:        I('<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h2m2 0h2M9 16h6"/><path d="M13 12v4"/>'),
+  kasa:          I('<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2M12 12v3M8 12h8"/>'),
+  rapor:         I('<path d="M18 20V10M12 20V4M6 20v-6"/>'),
+  hakediş:       I('<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'),
+};
+
+const ROLE_LABELS: Record<string, string> = {
+  YONETICI:  "Yönetici",
+  DOKTOR:    "Doktor",
+  ASISTAN:   "Asistan",
+  BANKO:     "Banko",
+  MUHASEBE:  "Muhasebe",
+  SUPERADMIN:"Süper Admin",
 };
 
 type NavItem = { href: string; label: string; icon: string; badge?: string };
 type NavGroup = { label: string; items: NavItem[] };
 
-const navGroups: NavGroup[] = [
-  {
-    label: "Klinik",
-    items: [
-      { href: "/anasayfa",      label: "Genel Bakış",        icon: "home" },
-      { href: "/randevu",       label: "Randevular",         icon: "calendar" },
-      { href: "/hasta",         label: "Hastalar",           icon: "users" },
-      { href: "/hasta-takip",   label: "Hasta Takip",        icon: "follow" },
-    ],
-  },
-  {
-    label: "Tedavi",
-    items: [
-      { href: "/tedavi-plani",  label: "Tedavi Planı",       icon: "clipboard" },
-      { href: "/lab",           label: "Lab Takip",          icon: "flask" },
-    ],
-  },
-  {
-    label: "Muhasebe",
-    items: [
-      { href: "/muhasebe",      label: "Muhasebe Merkezi",   icon: "finance" },
-      { href: "/finans",        label: "Doktor Hakedişi",    icon: "chart" },
-      { href: "/rapor",         label: "Raporlar",           icon: "chart" },
-    ],
-  },
-  {
-    label: "Stok & Tedarik",
-    items: [
-      { href: "/firma",         label: "Tedarikçiler",       icon: "firma" },
-      { href: "/stok",          label: "Stok Yönetimi",      icon: "box" },
-    ],
-  },
-  {
-    label: "Yönetim",
-    items: [
-      { href: "/personel",      label: "Personeller",        icon: "person" },
-      { href: "/fiyat",         label: "Fiyat Listesi",      icon: "price" },
-      { href: "/sms",           label: "SMS Modülü",         icon: "sms" },
-    ],
-  },
-  {
-    label: "Sistem",
-    items: [
-      { href: "/ayar",          label: "Sistem Ayarları",    icon: "settings" },
-      { href: "/log",           label: "İşlem Kayıtları",    icon: "log" },
-      { href: "/profil",        label: "Profilim",           icon: "profile" },
-      { href: "/destek",        label: "Destek",             icon: "support" },
-    ],
-  },
-];
+// ── Rol bazlı menü tanımları ──────────────────────────────────────────────
+function buildNavGroups(role: string): NavGroup[] {
+  const isYonetici  = role === "YONETICI" || role === "SUPERADMIN";
+  const isDoktor    = role === "DOKTOR";
+  const isAsistan   = role === "ASISTAN";
+  const isBanko     = role === "BANKO";
+  const isMuhasebe  = role === "MUHASEBE";
 
-export function Sidebar() {
+  const groups: NavGroup[] = [];
+
+  // ── KLİNİK ──
+  if (isYonetici || isDoktor || isAsistan || isBanko) {
+    groups.push({
+      label: "Klinik",
+      items: [
+        ...(isYonetici || isDoktor || isAsistan ? [{ href: "/anasayfa", label: "Genel Bakış", icon: "home" }] : []),
+        { href: "/randevu",     label: "Randevular",  icon: "calendar" },
+        { href: "/hasta",       label: "Hastalar",    icon: "users" },
+        ...(isYonetici || isDoktor || isAsistan ? [{ href: "/hasta-takip", label: "Hasta Takip", icon: "follow" }] : []),
+      ],
+    });
+  }
+
+  // ── TEDAVİ ──
+  if (isYonetici || isDoktor || isAsistan) {
+    groups.push({
+      label: "Tedavi",
+      items: [
+        { href: "/tedavi-plani", label: "Tedavi Planı", icon: "clipboard" },
+        { href: "/lab",          label: "Laboratuvar",  icon: "flask" },
+      ],
+    });
+  }
+
+  // ── FİNANS ──
+  if (isYonetici || isBanko || isMuhasebe) {
+    groups.push({
+      label: "Finans",
+      items: [
+        { href: "/muhasebe",    label: "Muhasebe Merkezi",  icon: "finance" },
+        { href: "/kasa",        label: "Kasa / Banka",      icon: "kasa" },
+        { href: "/taksit",      label: "Taksit Takibi",     icon: "taksit" },
+        ...(isYonetici || isMuhasebe
+          ? [
+              { href: "/gider", label: "Giderler",          icon: "gider" },
+              { href: "/rapor", label: "Raporlar",           icon: "rapor" },
+            ]
+          : []),
+      ],
+    });
+  }
+
+  // ── DOKTOR: kendi hakedişleri ──
+  if (isDoktor) {
+    groups.push({
+      label: "Finans",
+      items: [
+        { href: "/finans", label: "Doktor Hakedişim", icon: "hakediş" },
+      ],
+    });
+  }
+
+  // ── STOK & TEDARİK ──
+  if (isYonetici || isMuhasebe) {
+    groups.push({
+      label: "Stok & Tedarik",
+      items: [
+        { href: "/stok",  label: "Stok Yönetimi", icon: "box" },
+        { href: "/firma", label: "Tedarikçiler",   icon: "firma" },
+      ],
+    });
+  }
+
+  // ── YÖNETİM (sadece Yönetici) ──
+  if (isYonetici) {
+    groups.push({
+      label: "Yönetim",
+      items: [
+        { href: "/personel", label: "Personeller",   icon: "person" },
+        { href: "/fiyat",    label: "Fiyat Listesi", icon: "price" },
+        { href: "/sms",      label: "SMS Modülü",    icon: "sms" },
+        { href: "/ayar",     label: "Sistem Ayarları", icon: "settings" },
+      ],
+    });
+  }
+
+  // ── KİŞİSEL ──
+  groups.push({
+    label: "Kişisel",
+    items: [
+      { href: "/profil",  label: "Profilim", icon: "profile" },
+      ...(isYonetici ? [{ href: "/log", label: "İşlem Kayıtları", icon: "log" }] : []),
+      { href: "/destek",  label: "Destek",   icon: "support" },
+    ],
+  });
+
+  return groups;
+}
+
+export function Sidebar({ user }: { user: { fullName: string; role: string } }) {
   const pathname = usePathname();
   const [alerts, setAlerts] = useState<{ taksit: number; stok: number; lab: number }>({ taksit: 0, stok: 0, lab: 0 });
+
+  const userRole = user.role;
+  const userName = user.fullName;
+  const navGroups = buildNavGroups(userRole);
+
+  // Hangi uyarılar bu rol için gerekli
+  const needsTaksit = ["YONETICI", "BANKO", "MUHASEBE", "SUPERADMIN"].includes(userRole);
+  const needsStok   = ["YONETICI", "MUHASEBE", "SUPERADMIN"].includes(userRole);
+  const needsLab    = ["YONETICI", "DOKTOR", "ASISTAN", "SUPERADMIN"].includes(userRole);
 
   useEffect(() => {
     const load = async () => {
       try {
-        const [tRes, sRes, lRes] = await Promise.allSettled([
-          fetch("/api/taksit-plani?status=GECIKTI"),
-          fetch("/api/stock"),
-          fetch("/api/lab-orders?status=BEKLIYOR"),
+        const fetches = await Promise.allSettled([
+          needsTaksit ? fetch("/api/taksit-plani?status=GECIKTI") : Promise.resolve(null),
+          needsStok   ? fetch("/api/stock")                       : Promise.resolve(null),
+          needsLab    ? fetch("/api/lab-orders?status=BEKLIYOR")  : Promise.resolve(null),
         ]);
-        const tData = tRes.status === "fulfilled" && tRes.value.ok ? await tRes.value.json() : null;
-        const sData = sRes.status === "fulfilled" && sRes.value.ok ? await sRes.value.json() : null;
-        const lData = lRes.status === "fulfilled" && lRes.value.ok ? await lRes.value.json() : null;
+        const tRes = fetches[0]; const sRes = fetches[1]; const lRes = fetches[2];
+        const tData = tRes.status === "fulfilled" && tRes.value?.ok ? await tRes.value.json() : null;
+        const sData = sRes.status === "fulfilled" && sRes.value?.ok ? await sRes.value.json() : null;
+        const lData = lRes.status === "fulfilled" && lRes.value?.ok ? await lRes.value.json() : null;
 
-        // Gecikmiş taksit: plan içinde gecikmiş taksit kalemi sayısı
         const overdueCount = Array.isArray(tData)
           ? tData.reduce((sum: number, plan: any) =>
               sum + (plan.taksitler || []).filter((t: any) => t.status === "GECIKTI").length, 0)
           : 0;
         const lowStock = Array.isArray(sData) ? sData.filter((i: any) => i.quantity < i.minQuantity).length : 0;
-        const labCount = Array.isArray(lData) ? lData.length : (lData?.total ?? lData?.length ?? 0);
+        const labCount = Array.isArray(lData) ? lData.length : (lData?.total ?? 0);
         setAlerts({ taksit: overdueCount, stok: lowStock, lab: labCount });
       } catch { /* sessiz hata */ }
     };
     load();
     const timer = setInterval(load, 60_000); // Her dakika yenile
     return () => clearInterval(timer);
-  }, []);
+  }, [needsTaksit, needsStok, needsLab]);
 
   const isActive = (href: string) =>
     href === "/anasayfa"
@@ -144,6 +214,19 @@ export function Sidebar() {
           <p className="text-[10px] font-medium text-slate-500">Diş Kliniği Yönetimi</p>
         </div>
       </div>
+
+      {/* Kullanıcı bilgisi */}
+      {userName && (
+        <div className="mx-3 mb-2 flex items-center gap-2.5 rounded-lg bg-white/5 px-3 py-2.5">
+          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-600 text-[11px] font-bold text-white">
+            {userName.charAt(0).toUpperCase()}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[12px] font-semibold text-white">{userName}</p>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wide">{ROLE_LABELS[userRole] ?? userRole}</p>
+          </div>
+        </div>
+      )}
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-3 pb-3">

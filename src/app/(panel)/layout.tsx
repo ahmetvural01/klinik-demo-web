@@ -12,7 +12,7 @@ export default function PanelLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
-      <Sidebar />
+      <Sidebar user={{ fullName: user.fullName, role: user.role }} />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Topbar user={{ fullName: user.fullName, role: user.role }} />
         <main className="flex-1 overflow-y-auto p-5">

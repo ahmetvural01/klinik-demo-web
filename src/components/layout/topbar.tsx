@@ -6,44 +6,51 @@ import { useState, useEffect, useRef } from "react";
 type Props = { user: { fullName: string; role: string } };
 
 const roleLabel: Record<string, string> = {
-  YONETICI: "Yönetici",
-  DOKTOR: "Diş Hekimi",
-  ASISTAN: "Asistan",
-  BANKO: "Banko Görevlisi",
-  MUHASEBE: "Muhasebe",
+  YONETICI:   "Yönetici",
+  DOKTOR:     "Diş Hekimi",
+  ASISTAN:    "Asistan",
+  BANKO:      "Banko Görevlisi",
+  MUHASEBE:   "Muhasebe",
+  SUPERADMIN: "Süper Admin",
 };
 
 const roleBg: Record<string, string> = {
-  YONETICI: "bg-violet-100 text-violet-700",
-  DOKTOR: "bg-cyan-100 text-cyan-700",
-  ASISTAN: "bg-emerald-100 text-emerald-700",
-  BANKO: "bg-amber-100 text-amber-700",
-  MUHASEBE: "bg-blue-100 text-blue-700",
+  YONETICI:   "bg-violet-100 text-violet-700",
+  DOKTOR:     "bg-cyan-100 text-cyan-700",
+  ASISTAN:    "bg-emerald-100 text-emerald-700",
+  BANKO:      "bg-amber-100 text-amber-700",
+  MUHASEBE:   "bg-blue-100 text-blue-700",
+  SUPERADMIN: "bg-red-100 text-red-700",
 };
 
 const PAGE_TITLES: Record<string, string> = {
-  "/anasayfa": "Anasayfa",
-  "/muhasebe": "Muhasebe Merkezi",
-  "/randevu": "Randevu",
-  "/hasta": "Hastalar",
-  "/hasta-ekle": "Yeni Hasta",
-  "/tedavi-plani": "Tedavi Planı",
-  "/lab": "Laboratuvar",
-  "/kasa": "Kasa",
-  "/finans": "Doktor Hakedişi",
-  "/taksit": "Taksit Takibi",
-  "/gider": "Giderler",
-  "/rapor": "Raporlar",
-  "/firma": "Firmalar",
-  "/stok": "Stok",
-  "/personel": "Personel",
-  "/hasta-takip": "Hasta Takip",
-  "/fiyat": "Fiyat Listesi",
-  "/sms": "SMS",
-  "/ayar": "Ayarlar",
-  "/log": "Log Kayıtları",
-  "/profil": "Profilim",
-  "/destek": "Destek",
+  "/anasayfa":      "Anasayfa",
+  "/muhasebe":      "Muhasebe Merkezi",
+  "/randevu":       "Randevular",
+  "/hasta":         "Hastalar",
+  "/hasta-ekle":    "Yeni Hasta Kaydı",
+  "/hasta-takip":   "Hasta Takip Paneli",
+  "/hasta-detay":   "Hasta Detayı",
+  "/tedavi-plani":  "Tedavi Planları",
+  "/lab":           "Laboratuvar Takibi",
+  "/recete":        "Reçete Görüntüleme",
+  "/muayene":       "Muayene",
+  "/kasa":          "Kasa / Banka",
+  "/finans":        "Doktor Hakedişim",
+  "/taksit":        "Taksit Takibi",
+  "/gider":         "Giderler",
+  "/rapor":         "Raporlar",
+  "/firma":         "Tedarikçiler",
+  "/stok":          "Stok Yönetimi",
+  "/personel":      "Personeller",
+  "/personel-ekle": "Yeni Personel",
+  "/fiyat":         "Fiyat Listesi",
+  "/sms":           "SMS Modülü",
+  "/ayar":          "Sistem Ayarları",
+  "/log":           "İşlem Kayıtları",
+  "/profil":        "Profilim",
+  "/destek":        "Destek",
+  "/dashboard":     "Dashboard",
 };
 
 type AlertCounts = { taksit: number; stok: number; lab: number };
@@ -60,11 +67,10 @@ function Clock() {
   return <span className="tabular-nums text-sm font-semibold text-slate-700">{time}</span>;
 }
 
-export function Topbar({ user: initialUser }: Props) {
+export function Topbar({ user }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const [q, setQ] = useState("");
-  const [user, setUser] = useState(initialUser);
   const [alerts, setAlerts] = useState<AlertCounts>({ taksit: 0, stok: 0, lab: 0 });
   const [showAlerts, setShowAlerts] = useState(false);
   const alertRef = useRef<HTMLDivElement>(null);
@@ -72,15 +78,6 @@ export function Topbar({ user: initialUser }: Props) {
 
   // Sayfa başlığı
   const pageTitle = PAGE_TITLES[pathname ?? ""] ?? "";
-
-  useEffect(() => {
-    fetch("/api/auth/me")
-      .then((r) => r.ok ? r.json() : null)
-      .then((d) => {
-        if (d?.fullName) setUser({ fullName: d.fullName, role: d.role || initialUser.role });
-      })
-      .catch(() => {});
-  }, []);
 
   useEffect(() => {
     async function loadAlerts() {
