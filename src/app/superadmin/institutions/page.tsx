@@ -51,6 +51,12 @@ export default function InstitutionsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const router = useRouter();
 
+  // Ghost giriş modal state
+  const [ghostTarget, setGhostTarget] = useState<Institution | null>(null);
+  const [ghostPassword, setGhostPassword] = useState("");
+  const [ghostLoading, setGhostLoading] = useState(false);
+  const [ghostError, setGhostError] = useState<string | null>(null);
+
   const load = async () => {
     setLoading(true);
     const res = await fetch("/api/superadmin/institutions");
@@ -113,6 +119,27 @@ export default function InstitutionsPage() {
     setShowNew(false);
     setForm(emptyForm);
     void load();
+  };
+
+  const enterAsGhost = async () => {
+    if (!ghostTarget || !ghostPassword) return;
+    setGhostLoading(true);
+    setGhostError(null);
+    const res = await fetch("/api/auth/superadmin/impersonate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ institutionId: ghostTarget.id, password: ghostPassword }),
+    });
+    setGhostLoading(false);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: "Hata" }));
+      setGhostError(err.message || "Giriş başarısız");
+      return;
+    }
+    // Ghost token set edildi, klinik paneline yönlendir
+    window.open("/anasayfa", "_blank");
+    setGhostTarget(null);
+    setGhostPassword("");
   };
 
   return (
@@ -199,18 +226,19 @@ export default function InstitutionsPage() {
                 <th className="px-4 py-3 text-left">Plan</th>
                 <th className="px-4 py-3 text-right">SMS</th>
                 <th className="px-4 py-3 text-center">Durum</th>
+                <th className="px-4 py-3 text-center">İşlem</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
+                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
                     Yukleniyor...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-8 text-center text-slate-400">
+                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
                     Klinik bulunamadi
                   </td>
                 </tr>
@@ -233,12 +261,61 @@ export default function InstitutionsPage() {
                         {inst.isActive ? "Aktif" : "Pasif"}
                       </span>
                     </td>
+                    <td className="px-4 py-3 text-center">
+                      <button
+                        onClick={() => { setGhostTarget(inst); setGhostPassword(""); setGhostError(null); }}
+                        className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700"
+                        title="Kliniğe gizli giriş yap"
+                      >
+                        Kliniğe Gir
+                      </button>
+                    </td>
                   </tr>
                 ))
               )}
             </tbody>
           </table>
         </section>
+
+        {/* Ghost giriş şifre modal */}
+        {ghostTarget && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl border space-y-4">
+              <h3 className="text-lg font-black text-slate-900">Kliniğe Gizli Giriş</h3>
+              <p className="text-sm text-slate-600">
+                <span className="font-semibold text-indigo-700">{ghostTarget.name}</span> kliniğine giriş yapmak için superadmin şifrenizi girin.
+              </p>
+              <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 border border-amber-200">
+                Bu giriş hiçbir log kaydına yansımaz.
+              </p>
+              <input
+                type="password"
+                placeholder="Superadmin şifresi"
+                value={ghostPassword}
+                onChange={(e) => setGhostPassword(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void enterAsGhost()}
+                className="w-full rounded-xl border px-3 py-2.5 text-sm"
+                autoFocus
+              />
+              {ghostError && <p className="text-sm text-rose-600">{ghostError}</p>}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => void enterAsGhost()}
+                  disabled={ghostLoading || !ghostPassword}
+                  className="flex-1 rounded-xl bg-indigo-600 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  {ghostLoading ? "Giriliyor..." : "Giriş Yap"}
+                </button>
+                <button
+                  onClick={() => { setGhostTarget(null); setGhostPassword(""); }}
+                  className="flex-1 rounded-xl border py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                >
+                  İptal
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </main>
   );

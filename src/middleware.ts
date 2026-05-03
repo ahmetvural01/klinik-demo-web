@@ -10,6 +10,7 @@ const PUBLIC_PREFIXES = [
   "/superadmin",
   "/api/auth/login",
   "/api/auth/superadmin/login",
+  "/api/auth/superadmin/impersonate",
   "/api/auth/logout",
 ];
 

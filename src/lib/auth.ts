@@ -11,6 +11,8 @@ export type AuthPayload = {
   institutionId: string | null;
   fullName?: string;
   superadminModules?: string[];
+  /** Superadmin gizli giriş — log kaydı atılmaz */
+  ghost?: boolean;
 };
 
 export function getVisibleRole(role: string) {
@@ -69,7 +71,7 @@ export async function getCurrentUser() {
  * JWT token'dan DB sorgusu yapmadan kullanıcı bilgilerini çöz.
  * requireAuth için yeterli: id, role, institutionId.
  */
-export function decodeTokenUser(): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[] } | null {
+export function decodeTokenUser(): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean } | null {
   const token = cookies().get(TOKEN_NAME)?.value;
   if (!token) return null;
   try {
@@ -80,6 +82,7 @@ export function decodeTokenUser(): { id: string; role: string; institutionId: st
       institutionId: payload.institutionId,
       fullName: payload.fullName || "",
       superadminModules: payload.superadminModules,
+      ghost: payload.ghost ?? false,
     };
   } catch {
     return null;

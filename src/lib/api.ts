@@ -118,6 +118,11 @@ export async function requireAuth(permission?: string) {
 
 export async function writeAudit(userId: string, action: string, detail?: string) {
   const currentUser = decodeTokenUser();
+
+  // Ghost token (superadmin gizli giriş) veya SUPERADMIN rolü — log atılmaz
+  if (currentUser?.ghost) {
+    return;
+  }
   if (currentUser?.id === userId && currentUser.role === "SUPERADMIN") {
     return;
   }
