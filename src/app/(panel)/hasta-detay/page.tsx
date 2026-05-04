@@ -399,13 +399,14 @@ function HastaDetayContent() {
       body: JSON.stringify({
         patientId: id,
         doctorId: currentUserId,
-        baslik: `${installmentForm.taksitSayisi} Taksitli Ödeme - ${new Date().toLocaleDateString("tr-TR")}`,
+        baslik: `${installmentPreview.length} Taksitli Ödeme - ${new Date().toLocaleDateString("tr-TR")}`,
         toplamBorc: totalDebt,
         pesnat: downPayment,
-        taksitSayisi: Number(installmentForm.taksitSayisi),
+        taksitSayisi: installmentPreview.length,
         period: installmentForm.period,
         startDate: installmentForm.startDate,
-        notes: installmentForm.notes || undefined
+        notes: installmentForm.notes || undefined,
+        taksitler: installmentPreview.map((p, i) => ({ siraNo: i + 1, date: p.date, amount: p.amount }))
       })
     });
 
@@ -691,12 +692,12 @@ function HastaDetayContent() {
   const addPayment = async () => {
     const amount = Number(payAmount);
     if (!Number.isFinite(amount) || amount <= 0) return showToast("error", "Geçerli bir tutar girin");
-    if (!payDoctorId && !currentUserId) return showToast("error", "Lütfen bir doktor seçin");
+    if (!payDoctorId) return showToast("error", "Lütfen bir doktor seçin");
     setPayLoading(true);
     const res = await fetch("/api/payments", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ patientId: id, method: payMethod, amount, description: payDesc, doctorId: payDoctorId || currentUserId || undefined, ...(payPosId && { posId: payPosId }) })
+      body: JSON.stringify({ patientId: id, method: payMethod, amount, description: payDesc, doctorId: payDoctorId, ...(payPosId && { posId: payPosId }) })
     });
     if (res.ok) {
       setPayAmount("");
@@ -1350,9 +1351,18 @@ function HastaDetayContent() {
                       <div className="grid grid-cols-2 gap-4">
                         <div>
                           <label className="block text-sm font-semibold text-slate-700 mb-2">Taksit Sayısı</label>
-                          <select value={installmentForm.taksitSayisi} onChange={e=>{setInstallmentForm({...installmentForm, taksitSayisi:e.target.value}); setTimeout(generateInstallmentPreview, 0);}} className="w-full rounded-lg border border-slate-300 px-4 py-2 font-semibold focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
-                            {Array.from({length: 24}, (_, i) => i + 2).map(n => <option key={n} value={n}>{n} Taksit</option>)}
-                          </select>
+                          <input
+                            type="number"
+                            min="1"
+                            max="60"
+                            value={installmentForm.taksitSayisi}
+                            onChange={e => {
+                              const v = e.target.value;
+                              setInstallmentForm(f => ({...f, taksitSayisi: v}));
+                              setTimeout(generateInstallmentPreview, 0);
+                            }}
+                            className="w-full rounded-lg border border-slate-300 px-4 py-2 font-semibold focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+                          />
                         </div>
                         <div>
                           <label className="block text-sm font-semibold text-slate-700 mb-2">Periyod</label>
@@ -1378,16 +1388,46 @@ function HastaDetayContent() {
                       </div>
 
                       {installmentPreview.length > 0 && (
-                        <div className="rounded-lg border border-slate-200 p-3 max-h-48 overflow-y-auto">
-                          <p className="text-xs font-semibold text-slate-700 mb-2">Taksit Takvimi Önizlemesi</p>
-                          <div className="space-y-1 text-xs">
+                        <div className="rounded-lg border border-slate-200 overflow-hidden">
+                          <div className="flex items-center justify-between bg-slate-50 px-3 py-2 border-b">
+                            <p className="text-xs font-semibold text-slate-700">Taksit Takvimi <span className="text-blue-600">(düzenlenebilir)</span></p>
+                            <button type="button" onClick={() => generateInstallmentPreview()} className="text-xs text-blue-600 hover:underline">↺ Yeniden Oluştur</button>
+                          </div>
+                          <div className="divide-y max-h-64 overflow-y-auto">
                             {installmentPreview.map((item, i) => (
-                              <div key={i} className="flex justify-between text-slate-600">
-                                <span>{i + 1}. Taksit:</span>
-                                <span>{new Date(item.date).toLocaleDateString("tr-TR")} - ₺{item.amount.toLocaleString("tr-TR", {maximumFractionDigits: 2})}</span>
+                              <div key={i} className="grid grid-cols-[auto_1fr_1fr] items-center gap-2 px-3 py-1.5 text-xs">
+                                <span className="font-semibold text-slate-500 w-6">{i + 1}.</span>
+                                <input
+                                  type="date"
+                                  value={item.date}
+                                  onChange={e => setInstallmentPreview(prev => prev.map((p, j) => j === i ? {...p, date: e.target.value} : p))}
+                                  className="rounded border border-slate-300 px-2 py-1 text-xs focus:border-blue-400 focus:outline-none"
+                                />
+                                <div className="relative">
+                                  <span className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400">₺</span>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={item.amount}
+                                    onChange={e => setInstallmentPreview(prev => prev.map((p, j) => j === i ? {...p, amount: Number(e.target.value)} : p))}
+                                    className="w-full rounded border border-slate-300 pl-5 pr-2 py-1 text-xs focus:border-blue-400 focus:outline-none"
+                                  />
+                                </div>
                               </div>
                             ))}
                           </div>
+                          {(() => {
+                            const sumAmounts = installmentPreview.reduce((s, p) => s + (p.amount || 0), 0);
+                            const expected = Number(installmentForm.toplamBorc || 0) - Number(installmentForm.pesnat || 0);
+                            const diff = Math.abs(sumAmounts - expected);
+                            return (
+                              <div className={`flex justify-between px-3 py-2 text-xs font-semibold border-t ${diff > 0.02 ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
+                                <span>Toplam: ₺{sumAmounts.toLocaleString("tr-TR", {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                                <span>{diff > 0.02 ? `⚠ Beklenen: ₺${expected.toLocaleString("tr-TR", {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '✓ Tutar eşleşiyor'}</span>
+                              </div>
+                            );
+                          })()}
                         </div>
                       )}
                     </div>
@@ -1401,8 +1441,8 @@ function HastaDetayContent() {
                           <div className="flex justify-between"><span>Toplam Borç:</span><span className="font-bold">₺{Number(installmentForm.toplamBorc || 0).toLocaleString("tr-TR")}</span></div>
                           {Number(installmentForm.pesnat) > 0 && <div className="flex justify-between text-slate-700"><span>Peşinat:</span><span>₺{Number(installmentForm.pesnat).toLocaleString("tr-TR")}</span></div>}
                           <div className="flex justify-between border-t pt-2 font-semibold text-green-700"><span>Taksitlendirilecek:</span><span>₺{(Number(installmentForm.toplamBorc || 0) - Number(installmentForm.pesnat || 0)).toLocaleString("tr-TR")}</span></div>
-                          <div className="flex justify-between"><span>Taksit Sayısı:</span><span className="font-bold">{installmentForm.taksitSayisi}x</span></div>
-                          <div className="flex justify-between"><span>Taksit Tutarı:</span><span className="font-bold">₺{((Number(installmentForm.toplamBorc || 0) - Number(installmentForm.pesnat || 0)) / Number(installmentForm.taksitSayisi || 1)).toLocaleString("tr-TR", {maximumFractionDigits: 2})}</span></div>
+                          <div className="flex justify-between"><span>Taksit Sayısı:</span><span className="font-bold">{installmentPreview.length}x</span></div>
+                          <div className="flex justify-between"><span>Taksit Tutarı:</span><span className="font-bold">₺{installmentPreview.length > 0 ? (installmentPreview.reduce((s,p)=>s+p.amount,0)/installmentPreview.length).toLocaleString("tr-TR", {maximumFractionDigits: 2}) : "—"}</span></div>
                           <div className="flex justify-between"><span>Başlangıç Tarihi:</span><span>{new Date(installmentForm.startDate).toLocaleDateString("tr-TR")}</span></div>
                         </div>
                       </div>

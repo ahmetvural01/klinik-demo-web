@@ -55,47 +55,66 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const {
       patientId, doctorId, baslik, toplamBorc, pesnat = 0,
-      taksitSayisi, period = "AYLIK", startDate, notes
+      taksitSayisi, period = "AYLIK", startDate, notes,
+      taksitler: customTaksitler
     } = body;
 
-    if (!patientId || !doctorId || !toplamBorc || !taksitSayisi || !startDate) {
+    if (!patientId || !doctorId || !toplamBorc) {
+      return NextResponse.json({ error: "Gerekli alanlar eksik" }, { status: 400 });
+    }
+    if (!customTaksitler?.length && (!taksitSayisi || !startDate)) {
       return NextResponse.json({ error: "Gerekli alanlar eksik" }, { status: 400 });
     }
 
     const kalan = Number(toplamBorc) - Number(pesnat);
-    const taksitTutar = kalan / Number(taksitSayisi);
 
-    // Periyot gün sayıları
-    const periodDays: Record<string, number> = {
-      HAFTALIK: 7, IKIHALFTALIK: 14, AYLIK: 30,
-      IKIAYLIK: 60, UCAYLIK: 90, ALTIAYLIK: 180, YILLIK: 365
-    };
-    const days = periodDays[period] ?? 30;
+    let taksitlerCreate: { siraNo: number; vadeDate: Date; tutar: number; odenen: number; kalan: number; status: string }[];
 
-    const start = new Date(startDate);
+    if (Array.isArray(customTaksitler) && customTaksitler.length > 0) {
+      taksitlerCreate = customTaksitler.map((t: { date: string; amount: number }, i: number) => ({
+        siraNo: i + 1,
+        vadeDate: new Date(t.date),
+        tutar: Number(Number(t.amount).toFixed(2)),
+        odenen: 0,
+        kalan: Number(Number(t.amount).toFixed(2)),
+        status: "BEKLIYOR"
+      }));
+    } else {
+      const taksitTutar = kalan / Number(taksitSayisi);
+      const periodDays: Record<string, number> = {
+        HAFTALIK: 7, IKIHALFTALIK: 14, AYLIK: 30,
+        IKIAYLIK: 60, UCAYLIK: 90, ALTIAYLIK: 180, YILLIK: 365
+      };
+      const days = periodDays[period] ?? 30;
+      const start = new Date(startDate);
+      taksitlerCreate = Array.from({ length: Number(taksitSayisi) }, (_, i) => {
+        const vadeDate = new Date(start);
+        vadeDate.setDate(vadeDate.getDate() + days * (i + 1));
+        return {
+          siraNo: i + 1,
+          vadeDate,
+          tutar: Number(taksitTutar.toFixed(2)),
+          odenen: 0,
+          kalan: Number(taksitTutar.toFixed(2)),
+          status: "BEKLIYOR"
+        };
+      });
+    }
+
+    const effectiveTaksitSayisi = Array.isArray(customTaksitler) && customTaksitler.length > 0
+      ? customTaksitler.length
+      : Number(taksitSayisi);
+    const effectiveStartDate = taksitlerCreate[0]?.vadeDate ?? new Date(startDate);
 
     const plan = await (prisma as any).taksitPlan.create({
       data: {
         patientId, doctorId, baslik: baslik || null,
         toplamBorc: Number(toplamBorc),
         pesnat: Number(pesnat),
-        taksitSayisi: Number(taksitSayisi),
-        period, startDate: start, notes: notes || null,
+        taksitSayisi: effectiveTaksitSayisi,
+        period: period || "AYLIK", startDate: effectiveStartDate, notes: notes || null,
         status: "AKTIF",
-        taksitler: {
-          create: Array.from({ length: Number(taksitSayisi) }, (_, i) => {
-            const vadeDate = new Date(start);
-            vadeDate.setDate(vadeDate.getDate() + days * (i + 1));
-            return {
-              siraNo: i + 1,
-              vadeDate,
-              tutar: Number(taksitTutar.toFixed(2)),
-              odenen: 0,
-              kalan: Number(taksitTutar.toFixed(2)),
-              status: "BEKLIYOR"
-            };
-          })
-        }
+        taksitler: { create: taksitlerCreate }
       },
       include: {
         patient: { select: { id: true, fullName: true } },
