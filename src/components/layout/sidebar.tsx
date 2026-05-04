@@ -143,15 +143,34 @@ function buildNavGroups(role: string): NavGroup[] {
   return groups;
 }
 
+const PREVIEW_ROLES = [
+  { key: "YONETICI",  label: "Yönetici",  color: "bg-violet-600" },
+  { key: "DOKTOR",    label: "Doktor",    color: "bg-emerald-600" },
+  { key: "ASISTAN",   label: "Asistan",   color: "bg-sky-600" },
+  { key: "BANKO",     label: "Banko",     color: "bg-amber-600" },
+  { key: "MUHASEBE",  label: "Muhasebe",  color: "bg-rose-600" },
+];
+
 export function Sidebar({ user }: { user: { fullName: string; role: string } }) {
   const pathname = usePathname();
   const [alerts, setAlerts] = useState<{ taksit: number; stok: number; lab: number }>({ taksit: 0, stok: 0, lab: 0 });
   const [collapsed, setCollapsed] = useState(false);
+  const [previewRole, setPreviewRole] = useState<string | null>(null);
+  const [rolePickerOpen, setRolePickerOpen] = useState(false);
+
+  const isSuperAdmin = user.role === "SUPERADMIN";
 
   useEffect(() => {
     const saved = localStorage.getItem("sidebar-collapsed");
     if (saved === "true") setCollapsed(true);
   }, []);
+
+  useEffect(() => {
+    if (isSuperAdmin) {
+      const saved = sessionStorage.getItem("dev-preview-role");
+      if (saved) setPreviewRole(saved);
+    }
+  }, [isSuperAdmin]);
 
   const toggleCollapsed = () => {
     setCollapsed(prev => {
@@ -160,14 +179,28 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
     });
   };
 
+  const handlePreviewRole = (role: string | null) => {
+    if (role) {
+      sessionStorage.setItem("dev-preview-role", role);
+    } else {
+      sessionStorage.removeItem("dev-preview-role");
+    }
+    setPreviewRole(role);
+    setRolePickerOpen(false);
+  };
+
   const userRole = user.role;
   const userName = user.fullName;
-  const navGroups = buildNavGroups(userRole);
+  // SuperAdmin ise seçili preview rolü, yoksa gerçek rol
+  const effectiveRole = (isSuperAdmin && previewRole) ? previewRole : userRole;
+  const navGroups = buildNavGroups(effectiveRole);
+
+  const activePreview = PREVIEW_ROLES.find(r => r.key === previewRole);
 
   // Hangi uyarılar bu rol için gerekli
-  const needsTaksit = ["YONETICI", "BANKO", "MUHASEBE", "SUPERADMIN"].includes(userRole);
-  const needsStok   = ["YONETICI", "MUHASEBE", "SUPERADMIN"].includes(userRole);
-  const needsLab    = ["YONETICI", "DOKTOR", "ASISTAN", "SUPERADMIN"].includes(userRole);
+  const needsTaksit = ["YONETICI", "BANKO", "MUHASEBE", "SUPERADMIN"].includes(effectiveRole);
+  const needsStok   = ["YONETICI", "MUHASEBE", "SUPERADMIN"].includes(effectiveRole);
+  const needsLab    = ["YONETICI", "DOKTOR", "ASISTAN", "SUPERADMIN"].includes(effectiveRole);
 
   useEffect(() => {
     const load = async () => {
@@ -212,6 +245,16 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
 
   return (
     <aside className={`flex h-screen ${w} shrink-0 flex-col bg-[#0f172a] transition-all duration-200`}>
+      {/* Dev Mode Banner — preview aktifken göster */}
+      {isSuperAdmin && activePreview && (
+        <div className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold text-white ${activePreview.color} shrink-0`}>
+          <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+          </svg>
+          {!collapsed && <span>DEV: {activePreview.label} görünümü</span>}
+        </div>
+      )}
+
       {/* Logo + toggle */}
       <div className={`flex items-center ${collapsed ? "justify-center px-0 py-4" : "justify-between px-4 py-4"}`}>
         {!collapsed && (
@@ -246,7 +289,118 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
           {!collapsed && (
             <div className="min-w-0 flex-1">
               <p className="truncate text-[12px] font-semibold text-white">{userName}</p>
-              <p className="text-[10px] uppercase tracking-wide text-slate-500">{ROLE_LABELS[userRole] ?? userRole}</p>
+              <p className="text-[10px] uppercase tracking-wide text-slate-500">
+                {activePreview ? activePreview.label : (ROLE_LABELS[userRole] ?? userRole)}
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Rol Önizleyici (sadece SUPERADMIN) ─────────────────────────────── */}
+      {isSuperAdmin && (
+        <div className="mx-2 mb-2 shrink-0">
+          {!collapsed ? (
+            <div>
+              <button
+                onClick={() => setRolePickerOpen(prev => !prev)}
+                className="flex w-full items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-semibold text-slate-400 transition hover:bg-white/10 hover:text-slate-200"
+              >
+                {/* dev icon */}
+                <svg className="h-3.5 w-3.5 shrink-0 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+                </svg>
+                <span className="flex-1 text-left">
+                  {previewRole ? `Önizleme: ${activePreview?.label}` : "Rol Önizleyici"}
+                </span>
+                <svg className={`h-3 w-3 shrink-0 transition-transform ${rolePickerOpen ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 12 15 18 9"/>
+                </svg>
+              </button>
+              {rolePickerOpen && (
+                <div className="mt-1 rounded-lg border border-white/10 bg-[#1e2d45] p-1.5">
+                  <p className="mb-1.5 px-1 text-[9px] font-bold uppercase tracking-widest text-slate-600">Rol seç</p>
+                  <div className="flex flex-col gap-0.5">
+                    {PREVIEW_ROLES.map(r => (
+                      <button
+                        key={r.key}
+                        onClick={() => handlePreviewRole(previewRole === r.key ? null : r.key)}
+                        className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${
+                          previewRole === r.key
+                            ? `${r.color} text-white`
+                            : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                        }`}
+                      >
+                        <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${r.color}`} />
+                        {r.label}
+                        {previewRole === r.key && (
+                          <span className="ml-auto text-[9px] opacity-70">aktif</span>
+                        )}
+                      </button>
+                    ))}
+                    {previewRole && (
+                      <button
+                        onClick={() => handlePreviewRole(null)}
+                        className="mt-0.5 flex items-center gap-2 rounded-md px-2 py-1.5 text-[11px] font-medium text-slate-500 hover:bg-white/10 hover:text-slate-300 transition"
+                      >
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                        Önizlemeyi kapat
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            /* Collapsed: dev icon + tooltip */
+            <div className="relative group">
+              <button
+                onClick={() => setRolePickerOpen(prev => !prev)}
+                className={`flex h-9 w-full items-center justify-center rounded-lg transition ${
+                  previewRole ? "bg-violet-600/30 text-violet-400" : "text-slate-600 hover:bg-white/10 hover:text-slate-400"
+                }`}
+                title="Rol Önizleyici"
+              >
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+                </svg>
+              </button>
+              {/* Collapsed tooltip ile mini picker */}
+              {rolePickerOpen && (
+                <div className="absolute left-full top-0 z-50 ml-2 min-w-[140px] rounded-lg border border-white/10 bg-[#1e2d45] p-1.5 shadow-xl">
+                  <p className="mb-1 px-1 text-[9px] font-bold uppercase tracking-widest text-slate-600">Rol seç</p>
+                  {PREVIEW_ROLES.map(r => (
+                    <button
+                      key={r.key}
+                      onClick={() => handlePreviewRole(previewRole === r.key ? null : r.key)}
+                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${
+                        previewRole === r.key
+                          ? `${r.color} text-white`
+                          : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${r.color}`} />
+                      {r.label}
+                    </button>
+                  ))}
+                  {previewRole && (
+                    <button
+                      onClick={() => handlePreviewRole(null)}
+                      className="mt-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[11px] text-slate-500 hover:bg-white/10 hover:text-slate-300 transition"
+                    >
+                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                      Kapat
+                    </button>
+                  )}
+                </div>
+              )}
+              <div className="pointer-events-none absolute left-full top-1/2 z-40 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1 text-[12px] font-medium text-slate-100 opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+                Rol Önizleyici
+              </div>
             </div>
           )}
         </div>

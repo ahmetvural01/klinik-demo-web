@@ -90,7 +90,7 @@ export function decodeTokenUser(): { id: string; role: string; institutionId: st
 }
 
 /** JWT'den DB sorgusu yapmadan kullanıcı bilgilerini al (layout için hızlı) */
-export function getCurrentUserFast(): { id: string; role: string; institution: string; fullName: string } | null {
+export function getCurrentUserFast(): { id: string; role: string; rawRole: string; institution: string; fullName: string } | null {
   const token = cookies().get(TOKEN_NAME)?.value;
   if (!token) return null;
   try {
@@ -98,6 +98,7 @@ export function getCurrentUserFast(): { id: string; role: string; institution: s
     return {
       id: payload.userId,
       role: getVisibleRole(payload.role),
+      rawRole: payload.role,
       institution: payload.institutionId ?? "",
       fullName: payload.fullName || "",
     };

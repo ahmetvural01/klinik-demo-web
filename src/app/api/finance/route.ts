@@ -7,7 +7,9 @@ export async function GET(request: NextRequest) {
   const auth = await requireAuth("finance:read");
   if (auth.error) return auth.error;
 
-  const doctorId = request.nextUrl.searchParams.get("doctorId") || undefined;
+  // DOKTOR rolü: sadece kendi verilerini görebilir, doctorId parametresi kendi ID'si ile değiştirilir
+  const rawDoctorId = request.nextUrl.searchParams.get("doctorId") || undefined;
+  const doctorId = auth.user.role === "DOKTOR" ? auth.user.id : rawDoctorId;
   const fromRaw = request.nextUrl.searchParams.get("from");
   const toRaw = request.nextUrl.searchParams.get("to");
   const fromDate = fromRaw ? new Date(fromRaw + "T00:00:00.000Z") : undefined;

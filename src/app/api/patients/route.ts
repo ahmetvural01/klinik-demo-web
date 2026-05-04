@@ -42,7 +42,13 @@ export async function GET(request: NextRequest) {
       prisma.patient.count({ where }),
     ]);
 
-    return NextResponse.json({ patients, total, skip, take });
+    // DOKTOR ve ASISTAN telefon numaralarını göremez
+    const hidePhone = auth.user.role === "DOKTOR" || auth.user.role === "ASISTAN";
+    const masked = hidePhone
+      ? patients.map(p => ({ ...p, phone: "***" }))
+      : patients;
+
+    return NextResponse.json({ patients: masked, total, skip, take });
   } catch (error) {
     console.error("GET /api/patients failed:", error);
     return NextResponse.json({ message: "Hastalar alınırken sunucu hatası oluştu" }, { status: 500 });

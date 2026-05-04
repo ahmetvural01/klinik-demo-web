@@ -138,6 +138,11 @@ export async function GET(_: NextRequest, { params }: Params) {
     return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });
   }
 
+  // DOKTOR ve ASISTAN telefon numaralarını göremez
+  if (auth.user.role === "DOKTOR" || auth.user.role === "ASISTAN") {
+    return NextResponse.json({ ...patient, phone: "***" });
+  }
+
   return NextResponse.json(patient);
 }
 

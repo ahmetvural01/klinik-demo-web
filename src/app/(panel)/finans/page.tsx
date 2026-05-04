@@ -26,7 +26,10 @@ export default function FinansPage() {
         const doctors = s.filter((x: Doctor) => x.role === "DOKTOR" || x.role === "YONETICI");
         setStaff(doctors);
       });
-    fetch("/api/auth/me").then(r=>r.json()).then(d=>setUserRole(d.role||"")).catch(()=>{});
+    fetch("/api/auth/me").then(r=>r.json()).then(d=>{
+      if (d?.role) setUserRole(d.role);
+      if (d?.role === "DOKTOR" && d?.id) setSelectedDoctor(d.id);
+    }).catch(()=>{});
   }, []);
 
   const loadFinance = () => {
@@ -61,14 +64,20 @@ export default function FinansPage() {
           <p className="mt-0.5 text-xs text-slate-500">Doktor bazlı muayene cirosu, tahsilat ve hakediş takibi</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <select
-            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-            value={selectedDoctor}
-            onChange={(e) => setSelectedDoctor(e.target.value)}
-          >
-            <option value="">Doktor seçin</option>
-            {staff.map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
-          </select>
+          {userRole === "DOKTOR" ? (
+            <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+              {staff.find(s => s.id === selectedDoctor)?.fullName || "Yükleniyor..."}
+            </span>
+          ) : (
+            <select
+              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              value={selectedDoctor}
+              onChange={(e) => setSelectedDoctor(e.target.value)}
+            >
+              <option value="">Doktor seçin</option>
+              {staff.map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
+            </select>
+          )}
           <input type="date" className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" value={fromDate} onChange={e => setFromDate(e.target.value)} title="Başlangıç tarihi" />
           <input type="date" className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" value={toDate} onChange={e => setToDate(e.target.value)} title="Bitiş tarihi" />
           <button onClick={loadFinance} disabled={!selectedDoctor} className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90 disabled:opacity-50">

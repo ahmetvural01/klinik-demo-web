@@ -82,6 +82,7 @@ function HastaDetayContent() {
   const [payDoctorId, setPayDoctorId] = useState("");
   const [payLoading, setPayLoading] = useState(false);
   const [currentUserId, setCurrentUserId] = useState("");
+  const [currentUserRole, setCurrentUserRole] = useState("");
   const [posDevices, setPosDevices] = useState<{ id: string; name: string; isActive: boolean }[]>([]);
   const [editForm, setEditForm] = useState<Partial<Patient & { birthDate: string }>>({});
   const [editLoading, setEditLoading] = useState(false);
@@ -269,6 +270,7 @@ function HastaDetayContent() {
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         setCurrentUserId(d?.id || "");
+        if (d?.role) setCurrentUserRole(d.role);
         if (d?.id) setTreatDoctorId(d.id);
       })
       .catch(() => {});
@@ -854,7 +856,7 @@ function HastaDetayContent() {
           </div>
           <div className="flex-1">
             <h2 className="text-xl font-bold text-slate-900">{data.fullName}</h2>
-            <p className="text-sm text-slate-500">TC: {data.tcNo} · {data.phone}</p>
+            <p className="text-sm text-slate-500">TC: {data.tcNo}{(currentUserRole !== "DOKTOR" && currentUserRole !== "ASISTAN") ? ` · ${data.phone}` : ""}</p>
           </div>
         </div>
 
@@ -876,7 +878,7 @@ function HastaDetayContent() {
             <h3 className="mb-3 font-semibold text-gray-700">Hasta Bilgileri</h3>
             <table className="w-full text-sm">
               <tbody>
-                {[["Ad Soyad",data.fullName],["TC No",data.tcNo],["Telefon",data.phone],["Cinsiyet",data.gender==="ERKEK"||data.gender==="Erkek"?"Erkek":"Kadın"],["Doğum Tarihi",data.birthDate?new Date(data.birthDate).toLocaleDateString("tr-TR"):"-"],["Anlaşmalı Kurum",data.insurance||"-"],["Referans Eden",(data.referrer || "-")],["İndirim","%"+data.discountRate],["Adres",data.address||"-"],["Kan Grubu",(data as any).bloodType||"-"]].map(([lbl,val])=>(
+                {[["Ad Soyad",data.fullName],["TC No",data.tcNo],...(currentUserRole !== "DOKTOR" && currentUserRole !== "ASISTAN" ? [["Telefon",data.phone]] : []),["Cinsiyet",data.gender==="ERKEK"||data.gender==="Erkek"?"Erkek":"Kadın"],["Doğum Tarihi",data.birthDate?new Date(data.birthDate).toLocaleDateString("tr-TR"):"-"],["Anlaşmalı Kurum",data.insurance||"-"],["Referans Eden",(data.referrer || "-")],["İndirim","%"+data.discountRate],["Adres",data.address||"-"],["Kan Grubu",(data as any).bloodType||"-"]].map(([lbl,val])=>(
                   <tr key={lbl} className="border-b">
                     <td className="py-1.5 pr-4 text-gray-500 font-medium whitespace-nowrap">{lbl}:</td>
                     <td className="py-1.5">{val}</td>
@@ -1774,7 +1776,9 @@ function HastaDetayContent() {
           <div className="grid gap-3 md:grid-cols-2">
             <div><label className="text-xs text-gray-600">Ad Soyad</label><input value={editForm.fullName||""} onChange={e=>setEditForm({...editForm,fullName:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" /></div>
             <div><label className="text-xs text-gray-600">TC Kimlik No</label><input value={editForm.tcNo||""} onChange={e=>setEditForm({...editForm,tcNo:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" /></div>
-            <div><PhoneInput label="Telefon" value={editForm.phone||""} onChange={phone=>setEditForm({...editForm,phone})} /></div>
+            {currentUserRole !== "DOKTOR" && currentUserRole !== "ASISTAN" && (
+              <div><PhoneInput label="Telefon" value={editForm.phone||""} onChange={phone=>setEditForm({...editForm,phone})} /></div>
+            )}
             <div><label className="text-xs text-gray-600">Cinsiyet</label><select value={editForm.gender||""} onChange={e=>setEditForm({...editForm,gender:e.target.value})} className="mt-1 w-full rounded border px-3 py-2"><option value="ERKEK">Erkek</option><option value="KADIN">Kadın</option></select></div>
             <div><label className="text-xs text-gray-600">Doğum Tarihi</label><input type="date" value={(editForm.birthDate as string)||""} onChange={e=>setEditForm({...editForm,birthDate:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" /></div>
             <div><label className="text-xs text-gray-600">Kan Grubu</label><select value={(editForm as any).bloodType||""} onChange={e=>setEditForm({...editForm,...{bloodType:e.target.value}})} className="mt-1 w-full rounded border px-3 py-2"><option value="">Bilinmiyor</option>{["A+","A-","B+","B-","AB+","AB-","0+","0-"].map(g=><option key={g} value={g}>{g}</option>)}</select></div>

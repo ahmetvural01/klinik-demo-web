@@ -24,13 +24,21 @@ function HastaContent() {
   const [pageSize, setPageSize] = useState(10);
   const [sortKey, setSortKey] = useState<keyof Patient | "">("fullName");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [userRole, setUserRole] = useState("");
+
+  const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/patients?q=${encodeURIComponent(query)}`);
+      const [res, meRes] = await Promise.all([
+        fetch(`/api/patients?q=${encodeURIComponent(query)}`),
+        fetch("/api/auth/me"),
+      ]);
       const json = await res.json();
+      const me = await meRes.json().catch(() => ({}));
+      if (me?.role) setUserRole(me.role);
       if (!res.ok) {
         if (res.status === 401) {
           window.location.href = "/giris";
@@ -159,7 +167,7 @@ function HastaContent() {
                   <th className="w-10 px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-400">#</th>
                   <SortTh col="fullName" label="Adı Soyadı" />
                   <SortTh col="tcNo" label="TC Kimlik" />
-                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">Telefon</th>
+                  {!hidePhone && <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">Telefon</th>}
                   <SortTh col="gender" label="Cinsiyet" />
                   <SortTh col="birthDate" label="Doğum Tarihi" />
                   <SortTh col="insurance" label="Sigorta" />
@@ -169,7 +177,7 @@ function HastaContent() {
               <tbody className="divide-y divide-slate-50">
                 {viewRows.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="py-12 text-center">
+                    <td colSpan={hidePhone ? 7 : 8} className="py-12 text-center">
                       <div className="flex flex-col items-center gap-2 text-slate-400">
                         <svg className="h-10 w-10 text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
                           <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
@@ -188,7 +196,7 @@ function HastaContent() {
                       </Link>
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-slate-500">{p.tcNo}</td>
-                    <td className="px-4 py-3 text-slate-600">{p.phone || "—"}</td>
+                    {!hidePhone && <td className="px-4 py-3 text-slate-600">{p.phone || "—"}</td>}
                     <td className="px-4 py-3">
                       {p.gender ? (
                         <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
