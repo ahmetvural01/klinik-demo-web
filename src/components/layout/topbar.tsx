@@ -194,7 +194,7 @@ export function Topbar({ user }: Props) {
               </div>
               <div className="divide-y divide-slate-50 py-1">
                 {alerts.taksit > 0 ? (
-                  <a href="/taksit" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition">
+                  <a href="/muhasebe?tab=taksit" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition">
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-red-100">
                       <svg className="h-4 w-4 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                         <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>

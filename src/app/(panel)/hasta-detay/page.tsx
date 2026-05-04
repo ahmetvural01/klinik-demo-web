@@ -79,6 +79,7 @@ function HastaDetayContent() {
   const [payAmount, setPayAmount] = useState("");
   const [payDesc, setPayDesc] = useState("");
   const [payPosId, setPayPosId] = useState("");
+  const [payDoctorId, setPayDoctorId] = useState("");
   const [payLoading, setPayLoading] = useState(false);
   const [currentUserId, setCurrentUserId] = useState("");
   const [posDevices, setPosDevices] = useState<{ id: string; name: string; isActive: boolean }[]>([]);
@@ -690,16 +691,18 @@ function HastaDetayContent() {
   const addPayment = async () => {
     const amount = Number(payAmount);
     if (!Number.isFinite(amount) || amount <= 0) return showToast("error", "Geçerli bir tutar girin");
+    if (!payDoctorId && !currentUserId) return showToast("error", "Lütfen bir doktor seçin");
     setPayLoading(true);
     const res = await fetch("/api/payments", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ patientId: id, method: payMethod, amount, description: payDesc, ...(payPosId && { posId: payPosId }) })
+      body: JSON.stringify({ patientId: id, method: payMethod, amount, description: payDesc, doctorId: payDoctorId || currentUserId || undefined, ...(payPosId && { posId: payPosId }) })
     });
     if (res.ok) {
       setPayAmount("");
       setPayDesc("");
       setPayPosId("");
+      setPayDoctorId("");
       showToast("success", "Ödeme kaydedildi");
       void load();
     } else {
@@ -1218,44 +1221,85 @@ function HastaDetayContent() {
             <button onClick={openPaymentPrint} className="rounded border border-slate-300 px-3 py-1 text-xs text-slate-600 hover:bg-slate-50">🖨 Ödeme Geçmişi</button>
           </div>
 
-          <div className="rounded-lg border bg-white p-4">
-            <h3 className="mb-3 font-semibold">Ödeme Ekle</h3>
-            <div className="grid gap-2 md:grid-cols-4">
-              <select className="rounded border px-3 py-2 text-sm" value={payMethod} onChange={e=>{setPayMethod(e.target.value);setPayPosId("");}}>
-                <option value="NAKIT">Nakit</option>
-                <option value="KREDI_KARTI">Kredi Kartı</option>
-                <option value="HAVALE_EFT">Havale/EFT</option>
-                <option value="MAIL_ORDER">Mail Order</option>
-                <option value="DIGER">Diğer</option>
-              </select>
-              {(payMethod==="KREDI_KARTI"||payMethod==="MAIL_ORDER") && posDevices.length > 0 && (
-                <select className="rounded border px-3 py-2 text-sm" value={payPosId} onChange={e=>setPayPosId(e.target.value)}>
-                  <option value="">— POS Seçin —</option>
-                  {posDevices.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
+            <h3 className="mb-4 text-sm font-black text-slate-900">Ödeme Ekle</h3>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar (₺) *</label>
+                <input type="number" placeholder="0.00" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-lg font-bold focus:border-emerald-400 focus:outline-none" value={payAmount} onChange={e=>setPayAmount(e.target.value)} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor <span className="text-red-500">*</span></label>
+                <select className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" value={payDoctorId} onChange={e=>setPayDoctorId(e.target.value)}>
+                  <option value="">— Doktor seçin —</option>
+                  {doctorOptions.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
                 </select>
-              )}
-              <input type="number" placeholder="Tutar (TL)" className="rounded border px-3 py-2 text-sm" value={payAmount} onChange={e=>setPayAmount(e.target.value)} />
-              <input placeholder="Açıklama" className="rounded border px-3 py-2 text-sm" value={payDesc} onChange={e=>setPayDesc(e.target.value)} />
-              <button onClick={addPayment} disabled={payLoading} className="rounded bg-primary px-4 py-2 text-sm text-white disabled:opacity-50">{payLoading?"Ödeme kaydediliyor...":"Ödeme Ekle"}</button>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="mb-2 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
+                <div className="flex flex-wrap gap-2">
+                  {(["NAKIT","KREDI_KARTI","HAVALE_EFT","MAIL_ORDER","DIGER"] as const).map(m => (
+                    <button key={m} type="button" onClick={() => { setPayMethod(m); setPayPosId(""); }}
+                      className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${payMethod === m ? "bg-emerald-600 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+                      {m === "NAKIT" ? "💵 Nakit" : m === "KREDI_KARTI" ? "💳 Kart" : m === "HAVALE_EFT" ? "🏦 Havale" : m === "MAIL_ORDER" ? "📧 Mail Order" : "📌 Diğer"}
+                    </button>
+                  ))}
+                </div>
+                {(payMethod === "KREDI_KARTI" || payMethod === "MAIL_ORDER") && (
+                  <select className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" value={payPosId} onChange={e=>setPayPosId(e.target.value)}>
+                    <option value="">— POS Cihazı Seçin —</option>
+                    {posDevices.length === 0
+                      ? <option disabled>Kayıtlı POS cihazı yok</option>
+                      : posDevices.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                )}
+              </div>
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
+                <input placeholder="Tedavi türü, notlar…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" value={payDesc} onChange={e=>setPayDesc(e.target.value)} />
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button onClick={addPayment} disabled={payLoading} className="rounded-xl bg-emerald-600 px-6 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
+                {payLoading ? "Kaydediliyor…" : "Ödeme Kaydet"}
+              </button>
             </div>
           </div>
 
-          <div className="rounded-lg border bg-white overflow-hidden">
+          <div className="rounded-xl border border-slate-100 bg-white shadow-sm overflow-hidden">
+            <div className="border-b border-slate-100 px-5 py-3">
+              <p className="text-sm font-black text-slate-900">Ödeme Geçmişi</p>
+            </div>
+            <div className="grid grid-cols-2 divide-x divide-slate-100 border-b border-slate-100 sm:grid-cols-4">
+              {(["NAKIT","KREDI_KARTI","HAVALE_EFT","MAIL_ORDER"] as const).map(m => {
+                const LABELS: Record<string,string> = { NAKIT:"Nakit", KREDI_KARTI:"Kredi Kartı", HAVALE_EFT:"Havale/EFT", MAIL_ORDER:"Mail Order" };
+                const total = data.payments.filter((p: {method:string}) => p.method === m).reduce((s: number, p: {amount: string|number}) => s + Number(p.amount), 0);
+                return (
+                  <div key={m} className="px-4 py-3">
+                    <p className="text-[10px] font-bold uppercase text-slate-500">{LABELS[m]}</p>
+                    <p className="mt-0.5 text-base font-black text-slate-800">{"₺" + new Intl.NumberFormat("tr-TR",{minimumFractionDigits:2}).format(total)}</p>
+                  </div>
+                );
+              })}
+            </div>
             <table className="w-full text-sm">
-              <thead className="bg-gray-50 border-b text-xs uppercase text-gray-500">
+              <thead className="bg-slate-50 border-b text-xs uppercase text-gray-500">
                 <tr><th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Yöntem</th><th className="px-3 py-2 text-left">Açıklama</th><th className="px-3 py-2 text-right">Tutar</th><th className="px-3 py-2 text-center">Sil</th></tr>
               </thead>
               <tbody>
                 {data.payments.length === 0 && <tr><td colSpan={5} className="px-3 py-4 text-center text-gray-400">Ödeme yok</td></tr>}
-                {data.payments.map(p=>(
-                  <tr key={p.id} className="border-b hover:bg-gray-50">
-                    <td className="px-3 py-2 text-xs">{new Date(p.createdAt).toLocaleDateString("tr-TR")}</td>
-                    <td className="px-3 py-2"><span className="rounded bg-gray-100 px-2 py-0.5 text-xs">{p.method}</span></td>
-                    <td className="px-3 py-2">{p.description||"-"}</td>
-                    <td className="px-3 py-2 text-right font-semibold text-green-600">{Number(p.amount).toFixed(2)} TL</td>
-                    <td className="px-3 py-2 text-center"><button onClick={async()=>{if(!window.confirm("Ödeme silinsin mi?"))return;const res = await fetch("/api/payments/"+p.id,{method:"DELETE"});if(!res.ok){const err = await res.json().catch(() => ({}));showToast("error", err.message || "Ödeme silinemedi");return;}showToast("success", "Ödeme silindi");void load();}} className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-600">Sil</button></td>
-                  </tr>
-                ))}
+                {data.payments.map((p: {id:string; createdAt:string; method:string; description?:string|null; amount:string|number}) => {
+                  const ML: Record<string,string> = { NAKIT:"Nakit", KREDI_KARTI:"Kredi Kartı", HAVALE_EFT:"Havale/EFT", MAIL_ORDER:"Mail Order", DIGER:"Diğer" };
+                  return (
+                    <tr key={p.id} className="border-b hover:bg-slate-50">
+                      <td className="px-3 py-2 text-xs">{new Date(p.createdAt).toLocaleDateString("tr-TR")}</td>
+                      <td className="px-3 py-2"><span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">{ML[p.method] || p.method}</span></td>
+                      <td className="px-3 py-2 text-xs">{p.description||"—"}</td>
+                      <td className="px-3 py-2 text-right font-semibold text-emerald-700">{"₺" + Number(p.amount).toLocaleString("tr-TR",{minimumFractionDigits:2})}</td>
+                      <td className="px-3 py-2 text-center"><button onClick={async()=>{if(!window.confirm("Ödeme silinsin mi?"))return;const res=await fetch("/api/payments/"+p.id,{method:"DELETE"});if(!res.ok){const err=await res.json().catch(()=>({}));showToast("error",err.message||"Ödeme silinemedi");return;}showToast("success","Ödeme silindi");void load();}} className="rounded-lg bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600 hover:bg-red-200">Sil</button></td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1380,7 +1424,7 @@ function HastaDetayContent() {
           <div className="rounded-lg border bg-white p-4">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="font-semibold">Ödeme Planları</h3>
-              <Link href="/taksit" className="text-xs text-primary hover:underline">Tüm Planlar →</Link>
+              <Link href="/muhasebe?tab=taksit" className="text-xs text-primary hover:underline">Tüm Planlar →</Link>
             </div>
             {(!data.taksitPlanlari || data.taksitPlanlari.length === 0) ? (
               <p className="py-4 text-center text-sm text-slate-500">Bu hasta için ödeme planı bulunmuyor.</p>

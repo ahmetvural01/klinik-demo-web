@@ -321,7 +321,7 @@ export default function RaporPage() {
           <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-800">Gider Kategorileri</h3>
-              <Link href="/gider" className="text-xs text-primary hover:underline">Tümü →</Link>
+              <Link href="/muhasebe?tab=gider" className="text-xs text-primary hover:underline">Tümü →</Link>
             </div>
             {stats.expenseByCategory.length > 0 ? (
               <div className="space-y-3">

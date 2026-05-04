@@ -146,7 +146,7 @@ export default function LabPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h1 className="text-lg font-bold text-slate-900">Lab Takip</h1>
+          <h1 className="text-lg font-bold text-slate-900">Laboratuvar Takibi</h1>
           <p className="text-xs text-slate-500">Gidiş · Bekleme · Geliş — her aşamanın eksiksiz kaydı</p>
         </div>
         <button onClick={()=>{setShowNew(true);setOForm(emptyOrder);}} className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white shadow-sm shadow-blue-200 hover:bg-blue-700 transition">

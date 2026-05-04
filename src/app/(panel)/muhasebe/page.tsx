@@ -1,9 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 
-// ── Types ──────────────────────────────────────────────────────────────────
+// ─── Types ────────────────────────────────────────────────────────────────────
 type Payment = {
   id: string; createdAt: string; amount: number; method: string;
   description?: string | null;
@@ -11,199 +12,526 @@ type Payment = {
 };
 type Expense = {
   id: string; tarih: string; category: string; description?: string | null;
-  tutar: number; yontem?: string | null;
+  tutar: number; yontem?: string | null; faturaNo?: string | null; kdvOrani?: number | null;
 };
-type FirmaData = { id: string; name: string; phone?: string; borc: number; odenen: number; bakiye: number };
-type TaksitItem = { id: string; siraNo: number; vadeDate: string; tutar: number; kalan: number; status: string };
+type GiderKategori = { id: string; name: string; isActive: boolean };
+type PatientOption = { id: string; fullName: string };
+type PosDevice = { id: string; name: string; isActive: boolean };
+type FirmaData = { id: string; name: string; borc: number; odenen: number; bakiye: number };
+type TaksitItem = {
+  id: string; siraNo: number; vadeDate: string;
+  tutar: number; odenen: number; kalan: number; status: string;
+};
 type TaksitPlan = {
-  id: string; baslik?: string | null; toplamBorc: number; pesnat: number; status: string;
-  patient?: { id: string; fullName: string; phone?: string } | null;
-  doctor?: { id: string; fullName: string } | null;
+  id: string; baslik?: string | null; toplamBorc: number; pesnat: number;
+  taksitSayisi: number; period: string; startDate: string;
+  notes?: string | null; status: string; createdAt: string;
+  patient: { id: string; fullName: string; phone: string };
+  doctor: { id: string; fullName: string };
   taksitler: TaksitItem[];
 };
-type StockItem = { id: string; name: string; quantity: number; minQuantity: number; unitPrice?: number | null; supplier?: string | null };
+type Reminder = {
+  id: string; note: string; reminderDate: string; status: string;
+  patient?: { fullName: string } | null;
+};
 type Doctor = { id: string; fullName: string; role: string };
+type StockItem = { id: string; quantity: number; minQuantity: number };
+type TrendMonth = { label: string; gelir: number; gider: number };
+type AlacakRow = { id: string; fullName: string; phone: string; brutTedavi: number; indirim: number; netTedavi: number; odenen: number; bakiye: number; discountRate: number; };
 
-// ── Formatters ─────────────────────────────────────────────────────────────
+// ─── Constants ────────────────────────────────────────────────────────────────
 const MONEY = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 2 });
-const fmtMoney = (n: number | string | null | undefined) => MONEY.format(Number(n) || 0);
+const fmt = (n: number | string | null | undefined) => MONEY.format(Number(n) || 0);
 const fmtDate = (d: string) => { try { return new Date(d).toLocaleDateString("tr-TR"); } catch { return d; } };
 
 const METHOD_LABELS: Record<string, string> = {
   NAKIT: "Nakit", KREDI_KARTI: "Kredi Kartı", HAVALE_EFT: "Havale/EFT",
   MAIL_ORDER: "Mail Order", DIGER: "Diğer",
 };
+const KDV_OPTIONS = [
+  { value: "0",  label: "%0  — KDV Yok" },
+  { value: "10", label: "%10" },
+  { value: "20", label: "%20" },
+];
+const PERIODS: Record<string, string> = {
+  HAFTALIK: "Haftalık", IKIHALFTALIK: "2 Haftalık",
+  AYLIK: "Aylık", IKIAYLIK: "2 Aylık",
+  UCAYLIK: "3 Aylık", ALTIAYLIK: "6 Aylık", YILLIK: "Yıllık",
+};
+const TAKSIT_STATUS_BADGE: Record<string, string> = {
+  AKTIF: "bg-blue-100 text-blue-700",
+  DEVAM_EDIYOR: "bg-amber-100 text-amber-700",
+  TAMAMLANDI: "bg-emerald-100 text-emerald-700",
+  IPTAL: "bg-red-100 text-red-700",
+  BEKLIYOR: "bg-slate-100 text-slate-700",
+  ODENDI: "bg-emerald-100 text-emerald-700",
+  GECIKTI: "bg-red-100 text-red-700",
+};
+
+const INP = "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-blue-400 focus:bg-white focus:outline-none";
 
 const TABS = [
-  { id: "genel",       label: "Genel Durum" },
-  { id: "tahsilatlar", label: "Tahsilatlar" },
-  { id: "giderler",    label: "Giderler" },
-  { id: "cari",        label: "Cari Borçlar" },
-  { id: "kasa",        label: "Kasa / Banka" },
-  { id: "taksit",      label: "Taksit / Alacak" },
-  { id: "hakediş",     label: "Doktor Hakedişleri" },
+  { id: "genel",    label: "📊 Genel Bakış"       },
+  { id: "gelir",    label: "💰 Gelir / Tahsilat"   },
+  { id: "gider",    label: "💸 Gider"              },
+  { id: "taksit",   label: "📋 Taksit / Alacak"   },
+  { id: "alacak",   label: "👤 Hasta Alacakları"  },
+  { id: "cari",     label: "🏭 Tedarikçi / Cari"  },
+  { id: "hakedis",  label: "👨‍⚕️ Hakedişler"       },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
+// ─────────────────────────────────────────────────────────────────────────────
 export default function MuhasebePage() {
-  const [activeTab, setActiveTab] = useState<TabId>("genel");
+  const router       = useRouter();
+  const searchParams = useSearchParams();
 
-  // Summary state
-  const [loading, setLoading] = useState(true);
-  const [kasaToday, setKasaToday] = useState<{ total: number; byMethod: Record<string, number>; payments: Payment[] }>({ total: 0, byMethod: {}, payments: [] });
-  const [expenseToday, setExpenseToday] = useState<{ total: number; expenses: Expense[] }>({ total: 0, expenses: [] });
-  const [expenseMonth, setExpenseMonth] = useState<{ total: number; expenses: Expense[] }>({ total: 0, expenses: [] });
-  const [firmas, setFirmas] = useState<FirmaData[]>([]);
-  const [plans, setPlans] = useState<TaksitPlan[]>([]);
-  const [stockItems, setStockItems] = useState<StockItem[]>([]);
+  // URL ?tab= parametresinden başlangıç tab'ı belirle
+  const initialTab = (): TabId => {
+    const t = searchParams.get("tab") as TabId | null;
+    return t && TABS.some(x => x.id === t) ? t : "genel";
+  };
 
-  // Tab-specific state
-  const [allPayments, setAllPayments] = useState<Payment[]>([]);
-  const [allExpenses, setAllExpenses] = useState<Expense[]>([]);
-  const [doctors, setDoctors] = useState<Doctor[]>([]);
-  const [tabLoading, setTabLoading] = useState(false);
-  const [selectedDoctorId, setSelectedDoctorId] = useState("");
-  const [doctorFinance, setDoctorFinance] = useState<Record<string, unknown> | null>(null);
-  const [doctorFinanceLoading, setDoctorFinanceLoading] = useState(false);
+  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
 
-  // Filters
-  const [paymentSearch, setPaymentSearch]     = useState("");
-  const [paymentDateFrom, setPaymentDateFrom] = useState("");
-  const [paymentDateTo, setPaymentDateTo]     = useState("");
-  const [expenseSearch, setExpenseSearch]     = useState("");
-  const [expenseDateFrom, setExpenseDateFrom] = useState("");
-  const [expenseDateTo, setExpenseDateTo]     = useState("");
-  const [taksitFilter, setTaksitFilter]       = useState("HEPSI");
-  const [cariSearch, setCariSearch]           = useState("");
-
-  // Quick action modals
-  const [quickAction, setQuickAction] = useState<"tahsilat" | "gider" | null>(null);
-  const [tahsilatForm, setTahsilatForm] = useState({ method: "NAKIT", amount: "", description: "" });
-  const [giderForm, setGiderForm] = useState({ tarih: new Date().toISOString().split("T")[0], category: "", description: "", tutar: "", yontem: "NAKIT" });
-
-  // Toast
+  // Tab değişiminde URL'yi güncelle (push değil replace, back history kirlenmez)
+  const changeTab = useCallback((tab: TabId) => {
+    setActiveTab(tab);
+    router.replace(`/muhasebe?tab=${tab}`, { scroll: false });
+  }, [router]);
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const showToast = useCallback((type: "success" | "error", text: string) => {
-    setToast({ type, text });
-    setTimeout(() => setToast(null), 3500);
+    setToast({ type, text }); setTimeout(() => setToast(null), 3500);
   }, []);
 
-  // ── Load summary ──────────────────────────────────────────────────────────
-  const refreshSummary = useCallback(() => {
+  // ── Summary state ─────────────────────────────────────────────────────────
+  const [loading,       setLoading]       = useState(true);
+  const [kasaToday,     setKasaToday]     = useState<{ total: number; byMethod: Record<string, number>; payments: Payment[] }>({ total: 0, byMethod: {}, payments: [] });
+  const [expenseToday,  setExpenseToday]  = useState<{ total: number }>({ total: 0 });
+  const [expenseMonth,  setExpenseMonth]  = useState<{ total: number; expenses: Expense[] }>({ total: 0, expenses: [] });
+  const [firmas,        setFirmas]        = useState<FirmaData[]>([]);
+  const [stockItems,    setStockItems]    = useState<StockItem[]>([]);
+  const [taksitOverdue, setTaksitOverdue] = useState<{ count: number; amount: number }>({ count: 0, amount: 0 });
+
+  const refreshSummary = useCallback(async () => {
     const today = new Date().toISOString().split("T")[0];
     const ms = new Date(); ms.setDate(1);
     const monthStart = ms.toISOString().split("T")[0];
-    return Promise.all([
-      fetch(`/api/kasa?date=${today}`).then(r => r.json()),
-      fetch(`/api/gider?from=${today}&to=${today}`).then(r => r.json()),
-      fetch(`/api/gider?from=${monthStart}&to=${today}`).then(r => r.json()),
-      fetch("/api/firma").then(r => r.json()),
-      fetch("/api/taksit-plani?status=GECIKTI").then(r => r.json()),
-      fetch("/api/stock").then(r => r.json()),
-    ]).then(([k, gt, gm, fr, tr, sr]) => {
-      setKasaToday({ total: Number(k?.total || 0), byMethod: k?.byMethod || {}, payments: Array.isArray(k?.payments) ? k.payments : [] });
-      setExpenseToday({ total: Number(gt?.total || 0), expenses: Array.isArray(gt?.expenses) ? gt.expenses : [] });
-      setExpenseMonth({ total: Number(gm?.total || 0), expenses: Array.isArray(gm?.expenses) ? gm.expenses : [] });
-      setFirmas(Array.isArray(fr) ? fr : []);
-      setPlans(Array.isArray(tr) ? tr : []);
-      setStockItems(Array.isArray(sr) ? sr : []);
-    });
+    const [k, gt, gm, fr, sr, tr] = await Promise.all([
+      fetch(`/api/kasa?date=${today}`).then(r => r.json()).catch(() => ({})),
+      fetch(`/api/gider?from=${today}&to=${today}`).then(r => r.json()).catch(() => ({})),
+      fetch(`/api/gider?from=${monthStart}&to=${today}`).then(r => r.json()).catch(() => ({})),
+      fetch("/api/firma").then(r => r.json()).catch(() => []),
+      fetch("/api/stock").then(r => r.json()).catch(() => []),
+      fetch("/api/taksit-plani?status=GECIKTI").then(r => r.json()).catch(() => []),
+    ]);
+    setKasaToday({ total: Number(k?.total || 0), byMethod: k?.byMethod || {}, payments: Array.isArray(k?.payments) ? k.payments : [] });
+    setExpenseToday({ total: Number(gt?.total || 0) });
+    setExpenseMonth({ total: Number(gm?.total || 0), expenses: Array.isArray(gm?.expenses) ? gm.expenses : [] });
+    setFirmas(Array.isArray(fr) ? fr : []);
+    setStockItems(Array.isArray(sr) ? sr : []);
+    if (Array.isArray(tr)) {
+      const items = (tr as TaksitPlan[]).flatMap(p => (p.taksitler || []).filter(t => t.status === "GECIKTI"));
+      setTaksitOverdue({ count: items.length, amount: items.reduce((s, t) => s + Number(t.kalan || 0), 0) });
+    }
+  }, []);
+
+  const supplierDebt  = useMemo(() => firmas.reduce((s, f) => s + Number(f.bakiye || 0), 0), [firmas]);
+  const criticalStock = useMemo(() => stockItems.filter(i => Number(i.quantity) < Number(i.minQuantity)), [stockItems]);
+  const todayNet      = kasaToday.total - expenseToday.total;
+
+  // ── Trend (aylık 6 ay) ───────────────────────────────────────────────────
+  const [trendData, setTrendData] = useState<TrendMonth[]>([]);
+  const loadTrend = useCallback(async () => {
+    const r = await fetch("/api/muhasebe/trend").catch(() => null);
+    if (r?.ok) { const d = await r.json(); if (Array.isArray(d)) setTrendData(d); }
   }, []);
 
   useEffect(() => {
-    // Vadesi geçmiş taksitleri otomatik GECIKTI yap — sayfa açılışında tetikle
     fetch("/api/taksit-plani/mark-gecikti", { method: "POST" }).catch(() => null);
     refreshSummary().finally(() => setLoading(false));
-  }, [refreshSummary]);
+    loadTrend();
+  }, [refreshSummary, loadTrend]);
 
-  // ── Load tab-specific data ────────────────────────────────────────────────
-  const loadTabData = useCallback(async (tab: TabId) => {
-    if ((tab === "tahsilatlar" || tab === "kasa") && allPayments.length === 0) {
-      setTabLoading(true);
-      try { const r = await fetch("/api/payments"); const d = await r.json(); setAllPayments(Array.isArray(d) ? d : []); }
-      finally { setTabLoading(false); }
-    }
-    if (tab === "giderler" && allExpenses.length === 0) {
-      setTabLoading(true);
-      const m3 = new Date(); m3.setMonth(m3.getMonth() - 3);
-      const from = m3.toISOString().split("T")[0]; const to = new Date().toISOString().split("T")[0];
-      try { const r = await fetch(`/api/gider?from=${from}&to=${to}`); const d = await r.json(); setAllExpenses(Array.isArray(d?.expenses) ? d.expenses : []); }
-      finally { setTabLoading(false); }
-    }
-    if (tab === "hakediş" && doctors.length === 0) {
-      setTabLoading(true);
-      try { const r = await fetch("/api/staff"); const d = await r.json(); setDoctors(Array.isArray(d) ? d : []); }
-      finally { setTabLoading(false); }
-    }
-  }, [allPayments.length, allExpenses.length, doctors.length]);
+  // ── Hasta Alacakları ─────────────────────────────────────────────────────
+  const [alacaklar,      setAlacaklar]      = useState<AlacakRow[]>([]);
+  const [alacakTotal,    setAlacakTotal]    = useState(0);
+  const [alacakLoading,  setAlacakLoading]  = useState(false);
+  const [alacakSearch,   setAlacakSearch]   = useState("");
 
-  useEffect(() => { loadTabData(activeTab); }, [activeTab, loadTabData]);
-
-  const loadDoctorFinance = useCallback(async (doctorId: string) => {
-    if (!doctorId) { setDoctorFinance(null); return; }
-    setDoctorFinanceLoading(true);
-    try {
-      const ms = new Date(); ms.setDate(1);
-      const from = ms.toISOString().split("T")[0]; const to = new Date().toISOString().split("T")[0];
-      const r = await fetch(`/api/finance?doctorId=${doctorId}&from=${from}&to=${to}`);
-      setDoctorFinance(await r.json());
-    } finally { setDoctorFinanceLoading(false); }
+  const loadAlacaklar = useCallback(async () => {
+    setAlacakLoading(true);
+    const r = await fetch("/api/muhasebe/alacaklar").catch(() => null);
+    if (r?.ok) { const d = await r.json(); setAlacaklar(d.rows || []); setAlacakTotal(d.toplamAlacak || 0); }
+    setAlacakLoading(false);
   }, []);
 
-  useEffect(() => { if (selectedDoctorId) loadDoctorFinance(selectedDoctorId); }, [selectedDoctorId, loadDoctorFinance]);
+  const filteredAlacaklar = useMemo(() => {
+    if (!alacakSearch) return alacaklar;
+    const q = alacakSearch.toLowerCase();
+    return alacaklar.filter(a => a.fullName.toLowerCase().includes(q) || a.phone.includes(q));
+  }, [alacaklar, alacakSearch]);
 
-  // ── Computed totals ───────────────────────────────────────────────────────
-  const totals = useMemo(() => {
-    const supplierDebt = firmas.reduce((s, f) => s + Number(f.bakiye || 0), 0);
-    const criticalStock = stockItems.filter(i => Number(i.quantity) < Number(i.minQuantity));
-    const overdueInstallments = plans.reduce((s, p) => s + (p.taksitler || []).filter(t => t.status === "GECIKTI").length, 0);
-    const overdueAmount = plans.reduce((s, p) => s + (p.taksitler || []).filter(t => t.status === "GECIKTI").reduce((inner, t) => inner + Number(t.kalan || 0), 0), 0);
-    return { supplierDebt, criticalStock, overdueInstallments, overdueAmount, todayNet: Number(kasaToday.total) - Number(expenseToday.total) };
-  }, [firmas, plans, stockItems, kasaToday.total, expenseToday.total]);
+  // ── Shared: patients & pos ────────────────────────────────────────────────
+  const [patients,   setPatients]   = useState<PatientOption[]>([]);
+  const [posDevices, setPosDevices] = useState<PosDevice[]>([]);
+
+  const ensurePatients = useCallback(() => {
+    if (patients.length === 0)
+      fetch("/api/patients").then(r => r.json()).then(d => setPatients(Array.isArray(d) ? d : (d.patients || []))).catch(() => {});
+  }, [patients.length]);
+
+  const ensurePos = useCallback(() => {
+    fetch("/api/pos-devices").then(r => r.ok ? r.json() : []).then((devs: PosDevice[]) => setPosDevices((devs || []).filter(d => d.isActive))).catch(() => {});
+  }, []);
+
+  // Sayfa açılınca hemen yükle — form açıkken boş dropdown sorununu önler
+  useEffect(() => {
+    ensurePatients();
+    ensurePos();
+    fetch("/api/staff").then(r => r.json()).then(d => setTaksitDoctors((Array.isArray(d) ? d : []).filter((u: Doctor) => u.role === "DOKTOR"))).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ── TAB: Gelir / Tahsilat ─────────────────────────────────────────────────
+  const [allPayments,  setAllPayments]  = useState<Payment[]>([]);
+  const [showTahForm,  setShowTahForm]  = useState(false);
+  const [tahForm,      setTahForm]      = useState({ patientId: "", doctorId: "", method: "NAKIT", amount: "", description: "", posId: "" });
+  const [tahSaving,    setTahSaving]    = useState(false);
+  const [pmtSearch,    setPmtSearch]    = useState("");
+  const [pmtFrom,      setPmtFrom]      = useState("");
+  const [pmtTo,        setPmtTo]        = useState("");
+
+  const loadPayments = useCallback(async () => {
+    const r = await fetch("/api/payments").catch(() => null);
+    if (r?.ok) { const d = await r.json(); setAllPayments(Array.isArray(d) ? d : []); }
+  }, []);
+
+  const submitTahsilat = async () => {
+    if (!tahForm.amount || Number(tahForm.amount) <= 0) { showToast("error", "Geçerli bir tutar giriniz"); return; }
+    if (!tahForm.doctorId) { showToast("error", "Lütfen bir doktor seçin"); return; }
+    setTahSaving(true);
+    const payload: Record<string, unknown> = { ...tahForm, amount: Number(tahForm.amount) };
+    if (!payload.patientId) delete payload.patientId;
+    if (!payload.posId)     delete payload.posId;
+    const r = await fetch("/api/payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).catch(() => null);
+    setTahSaving(false);
+    if (r?.ok) {
+      showToast("success", "Tahsilat kaydedildi");
+      setShowTahForm(false);
+      setTahForm({ patientId: "", doctorId: "", method: "NAKIT", amount: "", description: "", posId: "" });
+      loadPayments(); refreshSummary();
+    } else {
+      const e = await r?.json().catch(() => ({}));
+      showToast("error", e?.error || e?.message || "Tahsilat kaydedilemedi");
+    }
+  };
 
   const filteredPayments = useMemo(() => allPayments.filter(p => {
-    if (paymentSearch && !p.patient?.fullName?.toLowerCase().includes(paymentSearch.toLowerCase()) && !p.description?.toLowerCase().includes(paymentSearch.toLowerCase())) return false;
-    if (paymentDateFrom && p.createdAt < paymentDateFrom) return false;
-    if (paymentDateTo && p.createdAt > paymentDateTo + "T23:59:59") return false;
+    if (pmtSearch && !p.patient?.fullName?.toLowerCase().includes(pmtSearch.toLowerCase()) && !p.description?.toLowerCase().includes(pmtSearch.toLowerCase())) return false;
+    const pDate = p.createdAt.substring(0, 10);
+    if (pmtFrom && pDate < pmtFrom) return false;
+    if (pmtTo   && pDate > pmtTo)   return false;
     return true;
-  }), [allPayments, paymentSearch, paymentDateFrom, paymentDateTo]);
+  }), [allPayments, pmtSearch, pmtFrom, pmtTo]);
+
+  // ── TAB: Gider ────────────────────────────────────────────────────────────
+  const [allExpenses,   setAllExpenses]   = useState<Expense[]>([]);
+  const [giderKats,     setGiderKats]     = useState<GiderKategori[]>([]);
+  const [showGiderForm, setShowGiderForm] = useState(false);
+  const [showCatMgr,    setShowCatMgr]    = useState(false);
+  const [newCatName,    setNewCatName]    = useState("");
+  const [giderForm,     setGiderForm]     = useState({
+    tarih: new Date().toISOString().split("T")[0],
+    categoryId: "", category: "", description: "",
+    tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0",
+  });
+  const [giderSaving, setGiderSaving] = useState(false);
+  const [expSearch,   setExpSearch]   = useState("");
+  const [expFrom,     setExpFrom]     = useState("");
+  const [expTo,       setExpTo]       = useState("");
+
+  const loadExpenses = useCallback(async () => {
+    const m3 = new Date(); m3.setMonth(m3.getMonth() - 3);
+    const from = m3.toISOString().split("T")[0];
+    const to   = new Date().toISOString().split("T")[0];
+    const r = await fetch(`/api/gider?from=${from}&to=${to}`).catch(() => null);
+    if (r?.ok) { const d = await r.json(); setAllExpenses(Array.isArray(d?.expenses) ? d.expenses : []); }
+  }, []);
+
+  const loadGiderKats = useCallback(async () => {
+    const r = await fetch("/api/gider-kategorileri").catch(() => null);
+    if (r?.ok) { const d = await r.json(); setGiderKats(Array.isArray(d) ? d : []); }
+  }, []);
+
+  const submitGider = async () => {
+    const isManualCat = giderForm.categoryId === "__manual" || giderForm.categoryId === "";
+    const catValid    = isManualCat ? giderForm.category.trim() !== "" : true;
+    if (!giderForm.tarih || !giderForm.tutar || Number(giderForm.tutar) <= 0 || !catValid) {
+      showToast("error", "Tarih, geçerli tutar ve kategori zorunlu"); return;
+    }
+    setGiderSaving(true);
+    const realCatId = (giderForm.categoryId && giderForm.categoryId !== "__manual") ? giderForm.categoryId : null;
+    const cat = realCatId
+      ? giderKats.find(c => c.id === realCatId)?.name || giderForm.category
+      : giderForm.category.trim();
+    const r = await fetch("/api/gider", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tarih: giderForm.tarih, categoryId: realCatId,
+        category: cat, description: giderForm.description || null,
+        tutar: Number(giderForm.tutar), yontem: giderForm.yontem,
+        faturaNo: giderForm.faturaNo || null, kdvOrani: Number(giderForm.kdvOrani),
+      }),
+    }).catch(() => null);
+    setGiderSaving(false);
+    if (r?.ok) {
+      showToast("success", "Gider kaydedildi");
+      setShowGiderForm(false);
+      setGiderForm({ tarih: new Date().toISOString().split("T")[0], categoryId: "", category: "", description: "", tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0" });
+      loadExpenses(); refreshSummary();
+    } else {
+      const e = await r?.json().catch(() => ({}));
+      showToast("error", e?.error || "Gider kaydedilemedi");
+    }
+  };
+
+  const deleteGider = async (id: string) => {
+    if (!confirm("Bu gider kaydını silmek istediğinizden emin misiniz?")) return;
+    const r = await fetch(`/api/gider/${id}`, { method: "DELETE" }).catch(() => null);
+    if (r?.ok) { showToast("success", "Gider silindi"); loadExpenses(); refreshSummary(); }
+    else showToast("error", "Silme işlemi başarısız");
+  };
+
+  const handleAddCategory = async () => {
+    if (!newCatName.trim()) return;
+    await fetch("/api/gider-kategorileri", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: newCatName.trim() }),
+    });
+    setNewCatName(""); loadGiderKats();
+  };
 
   const filteredExpenses = useMemo(() => allExpenses.filter(e => {
-    if (expenseSearch && !e.category?.toLowerCase().includes(expenseSearch.toLowerCase()) && !e.description?.toLowerCase().includes(expenseSearch.toLowerCase())) return false;
-    if (expenseDateFrom && e.tarih < expenseDateFrom) return false;
-    if (expenseDateTo && e.tarih > expenseDateTo + "T23:59:59") return false;
+    if (expSearch && !e.category?.toLowerCase().includes(expSearch.toLowerCase()) && !e.description?.toLowerCase().includes(expSearch.toLowerCase())) return false;
+    if (expFrom && e.tarih < expFrom) return false;
+    if (expTo   && e.tarih > expTo + "T23:59:59") return false;
     return true;
-  }), [allExpenses, expenseSearch, expenseDateFrom, expenseDateTo]);
+  }), [allExpenses, expSearch, expFrom, expTo]);
 
+  // ── TAB: Taksit / Alacak ──────────────────────────────────────────────────
+  const [taksitPlans,   setTaksitPlans]   = useState<TaksitPlan[]>([]);
+  const [taksitSubTab,  setTaksitSubTab]  = useState<"liste" | "olustur" | "hatirlatma">("liste");
+  const [taksitLoading, setTaksitLoading] = useState(false);
+  const [taksitSearch,  setTaksitSearch]  = useState("");
+  const [taksitStatus,  setTaksitStatus]  = useState("HEPSI");
+  const [selectedPlan,  setSelectedPlan]  = useState<TaksitPlan | null>(null);
+  const [planDetail,    setPlanDetail]    = useState<TaksitPlan | null>(null);
+  const [showOdeModal,  setShowOdeModal]  = useState<TaksitItem | null>(null);
+  const [odeForm,       setOdeForm]       = useState({ tutar: "", yontem: "NAKIT", note: "" });
+  const [taksitDoctors, setTaksitDoctors] = useState<Doctor[]>([]);
+  const [newPlanForm,   setNewPlanForm]   = useState({
+    patientId: "", doctorId: "", baslik: "", toplamBorc: "", pesnat: "0",
+    taksitSayisi: "6", period: "AYLIK", startDate: new Date().toISOString().split("T")[0], notes: "",
+  });
+  const [reminders,    setReminders]    = useState<Reminder[]>([]);
+  const [showRemModal, setShowRemModal] = useState(false);
+  const [remForm,      setRemForm]      = useState({ patientId: "", note: "", reminderDate: new Date().toISOString().split("T")[0] });
+
+  const loadTaksitPlans = useCallback(async () => {
+    setTaksitLoading(true);
+    try {
+      const qs = taksitStatus !== "HEPSI" ? `?status=${taksitStatus}` : "";
+      const r = await fetch(`/api/taksit-plani${qs}`); const d = await r.json();
+      setTaksitPlans(Array.isArray(d) ? d : []);
+    } finally { setTaksitLoading(false); }
+  }, [taksitStatus]);
+
+  const loadReminders = useCallback(async () => {
+    const r = await fetch("/api/reminder?status=HEPSI"); const d = await r.json();
+    setReminders(Array.isArray(d) ? d : []);
+  }, []);
+
+  const loadPlanDetail = async (id: string) => {
+    const r = await fetch(`/api/taksit-plani/${id}`); const d = await r.json();
+    setPlanDetail(d); setSelectedPlan(d);
+  };
+
+  const handleCreatePlan = async () => {
+    if (!newPlanForm.patientId || !newPlanForm.doctorId) {
+      showToast("error", "Hasta ve doktor seçimi zorunlu"); return;
+    }
+    if (!newPlanForm.toplamBorc || Number(newPlanForm.toplamBorc) <= 0) {
+      showToast("error", "Geçerli bir toplam borç tutarı giriniz"); return;
+    }
+    if (!newPlanForm.taksitSayisi || Number(newPlanForm.taksitSayisi) <= 0 || Number(newPlanForm.taksitSayisi) > 120) {
+      showToast("error", "Taksit sayısı 1–120 arasında olmalı"); return;
+    }
+    if (Number(newPlanForm.pesnat) < 0) {
+      showToast("error", "Peşinat negatif olamaz"); return;
+    }
+    if (Number(newPlanForm.pesnat) >= Number(newPlanForm.toplamBorc)) {
+      showToast("error", "Peşinat toplam borçtan küçük olmalı"); return;
+    }
+    const r = await fetch("/api/taksit-plani", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        patientId: newPlanForm.patientId, doctorId: newPlanForm.doctorId,
+        baslik: newPlanForm.baslik || null,
+        toplamBorc: Number(newPlanForm.toplamBorc), pesnat: Number(newPlanForm.pesnat || 0),
+        taksitSayisi: Number(newPlanForm.taksitSayisi), period: newPlanForm.period,
+        startDate: newPlanForm.startDate, notes: newPlanForm.notes || null,
+      }),
+    });
+    if (r.ok) {
+      showToast("success", "Taksit planı oluşturuldu");
+      setNewPlanForm({ patientId: "", doctorId: "", baslik: "", toplamBorc: "", pesnat: "0", taksitSayisi: "6", period: "AYLIK", startDate: new Date().toISOString().split("T")[0], notes: "" });
+      setTaksitSubTab("liste"); loadTaksitPlans(); refreshSummary();
+    } else {
+      const e = await r.json(); showToast("error", e.error || "Hata");
+    }
+  };
+
+  const handleOde = async () => {
+    if (!showOdeModal || !selectedPlan) return;
+    if (!odeForm.tutar || Number(odeForm.tutar) <= 0) { showToast("error", "Geçerli bir tahsilat tutarı giriniz"); return; }
+    if (Number(odeForm.tutar) > Number(showOdeModal.kalan) + 0.01) { showToast("error", `Kalan tutardan fazla girilemez (Kalan: ${fmt(showOdeModal.kalan)})`); return; }
+    const r = await fetch(`/api/taksit-plani/${selectedPlan.id}/taksitler/${showOdeModal.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tutar: Number(odeForm.tutar), yontem: odeForm.yontem, note: odeForm.note || null }),
+    });
+    if (r.ok) {
+      setShowOdeModal(null); setOdeForm({ tutar: "", yontem: "NAKIT", note: "" });
+      loadPlanDetail(selectedPlan.id); loadTaksitPlans(); refreshSummary();
+      showToast("success", "Taksit tahsil edildi");
+    } else {
+      const e = await r.json(); showToast("error", e.error || "Hata");
+    }
+  };
+
+  const handleAddReminder = async () => {
+    if (!remForm.note.trim()) { showToast("error", "Not alanı zorunlu"); return; }
+    if (!remForm.reminderDate) { showToast("error", "Tarih zorunlu"); return; }
+    const r = await fetch("/api/reminder", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ patientId: remForm.patientId || null, note: remForm.note.trim(), reminderDate: remForm.reminderDate }),
+    }).catch(() => null);
+    if (r?.ok) {
+      showToast("success", "Hatırlatma eklendi");
+      setShowRemModal(false);
+      setRemForm({ patientId: "", note: "", reminderDate: new Date().toISOString().split("T")[0] });
+      loadReminders();
+    } else {
+      showToast("error", "Hatırlatma eklenemedi");
+    }
+  };
+
+  const completeReminder = async (id: string) => {
+    const r = await fetch(`/api/reminder/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "TAMAMLANDI" }) }).catch(() => null);
+    if (r?.ok) { showToast("success", "Hatırlatma tamamlandı"); loadReminders(); }
+    else showToast("error", "Güncelleme başarısız");
+  };
+
+  const cancelPlan = async (id: string) => {
+    if (!confirm("Bu planı iptal etmek istediğinizden emin misiniz?")) return;
+    const r = await fetch(`/api/taksit-plani/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "IPTAL" }) }).catch(() => null);
+    if (r?.ok) {
+      showToast("success", "Plan iptal edildi");
+      loadTaksitPlans();
+      if (selectedPlan?.id === id) { setSelectedPlan(null); setPlanDetail(null); }
+    } else {
+      showToast("error", "İptal işlemi başarısız");
+    }
+  };
+
+  const taksitKPIs = useMemo(() => {
+    const geciken     = taksitPlans.filter(p => p.taksitler.some(t => t.status === "GECIKTI")).length;
+    const toplamKalan = taksitPlans.filter(p => p.status !== "TAMAMLANDI" && p.status !== "IPTAL").flatMap(p => p.taksitler).reduce((s, t) => s + Number(t.kalan), 0);
+    const bekleyen    = taksitPlans.flatMap(p => p.taksitler).filter(t => t.status === "BEKLIYOR").length;
+    const bugunVade   = taksitPlans.flatMap(p => p.taksitler).filter(t => {
+      const v = new Date(t.vadeDate); const now = new Date();
+      return t.status === "BEKLIYOR" && v.toDateString() === now.toDateString();
+    }).length;
+    return { geciken, toplamKalan, bekleyen, bugunVade };
+  }, [taksitPlans]);
+
+  const filteredTaksitPlans = useMemo(() => taksitPlans.filter(p => {
+    if (!taksitSearch) return true;
+    const q = taksitSearch.toLowerCase();
+    return p.patient.fullName.toLowerCase().includes(q) || p.doctor.fullName.toLowerCase().includes(q) || (p.baslik || "").toLowerCase().includes(q);
+  }), [taksitPlans, taksitSearch]);
+
+  // ── TAB: Tedarikçi / Cari ─────────────────────────────────────────────────
+  const [cariSearch, setCariSearch] = useState("");
   const filteredFirmas = useMemo(() => firmas.filter(f => !cariSearch || f.name.toLowerCase().includes(cariSearch.toLowerCase())), [firmas, cariSearch]);
 
-  const todoItems = useMemo(() => {
-    const items: { type: "danger" | "warning" | "info"; label: string; detail: string; href: string }[] = [];
-    if (totals.overdueInstallments > 0) items.push({ type: "danger", label: `${totals.overdueInstallments} gecikmiş taksit`, detail: `${fmtMoney(totals.overdueAmount)} tahsil edilmeli`, href: "/muhasebe" });
-    const topFirma = [...firmas].filter(f => f.bakiye > 0).sort((a, b) => b.bakiye - a.bakiye)[0];
-    if (topFirma) items.push({ type: "warning", label: `${topFirma.name} — ödeme bekliyor`, detail: fmtMoney(topFirma.bakiye), href: "/firma" });
-    if (totals.criticalStock.length > 0) items.push({ type: "info", label: `${totals.criticalStock.length} stok kalemi kritik seviyede`, detail: "Yeniden sipariş gerekli", href: "/stok" });
-    return items;
-  }, [totals, firmas]);
+  // ── TAB: Hakedişler ──────────────────────────────────────────────────────
+  const [hakDoctors,     setHakDoctors]     = useState<Doctor[]>([]);
+  const [selectedDoctor, setSelectedDoctor] = useState("");
+  const [doctorFinance,  setDoctorFinance]  = useState<Record<string, unknown> | null>(null);
+  const [hakLoading,     setHakLoading]     = useState(false);
+  const [showHakOdeModal, setShowHakOdeModal] = useState(false);
+  const [hakOdeForm,      setHakOdeForm]      = useState({ tutar: "", aciklama: "" });
+  const [hakOdeSaving,    setHakOdeSaving]    = useState(false);
 
-  // ── Quick actions ─────────────────────────────────────────────────────────
-  const handleTahsilat = async () => {
-    if (!tahsilatForm.amount) { showToast("error", "Tutar zorunludur"); return; }
-    const r = await fetch("/api/kasa", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...tahsilatForm, amount: Number(tahsilatForm.amount) }) });
-    if (r.ok) { showToast("success", "Tahsilat kaydedildi"); setQuickAction(null); setTahsilatForm({ method: "NAKIT", amount: "", description: "" }); setAllPayments([]); refreshSummary(); }
-    else { const e = await r.json(); showToast("error", e.error || "Hata"); }
+  const loadDoctorFinance = useCallback(async (id: string) => {
+    if (!id) { setDoctorFinance(null); return; }
+    setHakLoading(true);
+    const ms = new Date(); ms.setDate(1);
+    const from = ms.toISOString().split("T")[0]; const to = new Date().toISOString().split("T")[0];
+    const r = await fetch(`/api/finance?doctorId=${id}&from=${from}&to=${to}`);
+    setDoctorFinance(await r.json()); setHakLoading(false);
+  }, []);
+
+  const handleHakOde = async () => {
+    if (!selectedDoctor) return;
+    if (!hakOdeForm.tutar || Number(hakOdeForm.tutar) <= 0) { showToast("error", "Geçerli bir tutar giriniz"); return; }
+    setHakOdeSaving(true);
+    const r = await fetch("/api/payments", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ doctorId: selectedDoctor, amount: Number(hakOdeForm.tutar), description: hakOdeForm.aciklama || "Hakediş ödemesi" }),
+    }).catch(() => null);
+    setHakOdeSaving(false);
+    if (r?.ok) {
+      showToast("success", "Hakediş ödemesi kaydedildi");
+      setShowHakOdeModal(false);
+      setHakOdeForm({ tutar: "", aciklama: "" });
+      loadDoctorFinance(selectedDoctor);
+    } else {
+      showToast("error", "Ödeme kaydedilemedi");
+    }
   };
 
-  const handleGider = async () => {
-    if (!giderForm.category || !giderForm.tutar) { showToast("error", "Kategori ve tutar zorunlu"); return; }
-    const r = await fetch("/api/gider", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...giderForm, tutar: Number(giderForm.tutar) }) });
-    if (r.ok) { showToast("success", "Gider kaydedildi"); setQuickAction(null); setGiderForm({ tarih: new Date().toISOString().split("T")[0], category: "", description: "", tutar: "", yontem: "NAKIT" }); setAllExpenses([]); refreshSummary(); }
-    else { const e = await r.json(); showToast("error", e.error || "Hata"); }
-  };
+  useEffect(() => { if (selectedDoctor) loadDoctorFinance(selectedDoctor); }, [selectedDoctor, loadDoctorFinance]);
 
-  // ── Render ────────────────────────────────────────────────────────────────
+  // ── Lazy tab data loading ─────────────────────────────────────────────────
+  useEffect(() => {
+    if (activeTab === "gelir") {
+      if (allPayments.length === 0) loadPayments();
+    }
+    if (activeTab === "gider") {
+      if (allExpenses.length === 0) loadExpenses();
+      if (giderKats.length === 0) loadGiderKats();
+    }
+    if (activeTab === "taksit") {
+      if (taksitPlans.length === 0) loadTaksitPlans();
+      ensurePatients();
+    }
+    if (activeTab === "alacak") {
+      if (alacaklar.length === 0) loadAlacaklar();
+    }
+    if (activeTab === "hakedis" && hakDoctors.length === 0)
+      fetch("/api/staff").then(r => r.json()).then(d => setHakDoctors((Array.isArray(d) ? d : []).filter((u: Doctor) => u.role === "DOKTOR"))).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  useEffect(() => { if (taksitSubTab === "hatirlatma") loadReminders(); }, [taksitSubTab, loadReminders]);
+  useEffect(() => { if (activeTab === "taksit") loadTaksitPlans(); }, [activeTab, loadTaksitPlans]);
+
+  // ─── RENDER ──────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-5">
+
       {/* Toast */}
       {toast && (
         <div className={`fixed right-5 top-5 z-[100] flex items-center gap-2.5 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${toast.type === "success" ? "bg-emerald-500" : "bg-red-500"}`}>
@@ -211,462 +539,1080 @@ export default function MuhasebePage() {
         </div>
       )}
 
-      {/* Quick action: Tahsilat */}
-      {quickAction === "tahsilat" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
-            <h3 className="mb-4 text-base font-black text-slate-900">Hızlı Tahsilat</h3>
-            <div className="space-y-3">
-              <select value={tahsilatForm.method} onChange={e => setTahsilatForm(p => ({ ...p, method: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400">
-                {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-              </select>
-              <input type="number" placeholder="Tutar (TL)" value={tahsilatForm.amount} onChange={e => setTahsilatForm(p => ({ ...p, amount: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400" />
-              <input placeholder="Açıklama" value={tahsilatForm.description} onChange={e => setTahsilatForm(p => ({ ...p, description: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400" />
-            </div>
-            <div className="mt-4 flex gap-2">
-              <button onClick={() => setQuickAction(null)} className="flex-1 rounded-xl border border-slate-200 py-2 text-sm font-semibold text-slate-700">İptal</button>
-              <button onClick={handleTahsilat} className="flex-1 rounded-xl bg-emerald-600 py-2 text-sm font-bold text-white hover:bg-emerald-700">Kaydet</button>
-            </div>
-          </div>
+      {/* Page Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-blue-700">Entegre Muhasebe Sistemi</p>
+          <h1 className="mt-0.5 text-2xl font-black text-slate-900">Muhasebe Merkezi</h1>
+          <p className="mt-1 text-sm text-slate-500">Gelir, gider, taksit, cari hesap, hakediş — tüm finansal işlemler tek ekrandan.</p>
         </div>
-      )}
-
-      {/* Quick action: Gider */}
-      {quickAction === "gider" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl">
-            <h3 className="mb-4 text-base font-black text-slate-900">Gider Ekle</h3>
-            <div className="space-y-3">
-              <input type="date" value={giderForm.tarih} onChange={e => setGiderForm(p => ({ ...p, tarih: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400" />
-              <input placeholder="Kategori (örn: Elektrik)" value={giderForm.category} onChange={e => setGiderForm(p => ({ ...p, category: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400" />
-              <input placeholder="Açıklama" value={giderForm.description} onChange={e => setGiderForm(p => ({ ...p, description: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400" />
-              <input type="number" placeholder="Tutar (TL)" value={giderForm.tutar} onChange={e => setGiderForm(p => ({ ...p, tutar: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400" />
-              <select value={giderForm.yontem} onChange={e => setGiderForm(p => ({ ...p, yontem: e.target.value }))} className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400">
-                {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-              </select>
-            </div>
-            <div className="mt-4 flex gap-2">
-              <button onClick={() => setQuickAction(null)} className="flex-1 rounded-xl border border-slate-200 py-2 text-sm font-semibold text-slate-700">İptal</button>
-              <button onClick={handleGider} className="flex-1 rounded-xl bg-red-600 py-2 text-sm font-bold text-white hover:bg-red-700">Kaydet</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Header */}
-      <div>
-        <p className="text-xs font-black uppercase tracking-[0.24em] text-blue-700">Entegre Muhasebe</p>
-        <h1 className="mt-1 text-2xl font-black text-slate-900">Muhasebe Merkezi</h1>
-        <p className="mt-1 text-sm text-slate-500">Para ile ilgili her iş tek panelde — tahsilat, gider, cari borç, kasa, taksit ve hakediş.</p>
+        <Link href="/rapor" className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+          Raporlar
+        </Link>
       </div>
 
-      {/* Summary Cards */}
-      <div className="rounded-3xl border border-slate-200 bg-gradient-to-br from-white via-blue-50/30 to-emerald-50/20 p-5 shadow-sm">
-        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-          {[
-            { label: "Bugünkü Tahsilat", value: fmtMoney(kasaToday.total), tone: "text-emerald-700", bg: "bg-emerald-50/60" },
-            { label: "Bugünkü Gider",    value: fmtMoney(expenseToday.total), tone: "text-red-700",     bg: "bg-red-50/60" },
-            { label: "Net Nakit",         value: fmtMoney(totals.todayNet),   tone: totals.todayNet >= 0 ? "text-blue-700" : "text-red-700", bg: "bg-blue-50/60" },
-            { label: "Aylık Gider",       value: fmtMoney(expenseMonth.total), tone: "text-slate-800",  bg: "bg-slate-50/60" },
-            { label: "Tedarikçi Borcu",   value: fmtMoney(totals.supplierDebt), tone: "text-amber-700", bg: "bg-amber-50/60" },
-            { label: "Gecikmiş Taksit",   value: `${totals.overdueInstallments} adet`, tone: "text-violet-700", bg: "bg-violet-50/60" },
-          ].map(c => (
-            <article key={c.label} className={`${c.bg} rounded-2xl border border-white/70 p-4 backdrop-blur`}>
-              <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{c.label}</p>
-              <p className={`mt-1 text-xl font-black ${c.tone}`}>{c.value}</p>
-            </article>
-          ))}
-        </div>
-      </div>
-
-      {/* Yapılacaklar */}
-      {!loading && todoItems.length > 0 && (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <svg className="h-4 w-4 shrink-0 text-amber-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-            <h3 className="text-sm font-black text-amber-800">Yapılacak Finansal İşler</h3>
-          </div>
-          <div className="space-y-2">
-            {todoItems.map((item, i) => (
-              <div key={i} className={`flex items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-sm ${item.type === "danger" ? "bg-red-100 text-red-800" : item.type === "warning" ? "bg-amber-100 text-amber-800" : "bg-blue-100 text-blue-800"}`}>
-                <div>
-                  <span className="font-semibold">{item.label}</span>
-                  <span className="ml-2 text-xs opacity-70">{item.detail}</span>
-                </div>
-                <a href={item.href} className="shrink-0 rounded-lg bg-white/70 px-2.5 py-1 text-xs font-bold hover:bg-white">Git →</a>
-              </div>
+      {/* KPI Summary */}
+      {loading
+        ? <div className="h-28 animate-pulse rounded-2xl bg-slate-100" />
+        : (
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+            {[
+              { label: "Bugün Gelir",     value: fmt(kasaToday.total),       tone: "text-emerald-700", bg: "bg-emerald-50",  border: "border-emerald-100" },
+              { label: "Bugün Gider",     value: fmt(expenseToday.total),    tone: "text-red-700",     bg: "bg-red-50",      border: "border-red-100"     },
+              { label: "Bugün Net",       value: fmt(todayNet),              tone: todayNet >= 0 ? "text-blue-700" : "text-red-700", bg: "bg-blue-50", border: "border-blue-100" },
+              { label: "Aylık Gider",     value: fmt(expenseMonth.total),    tone: "text-slate-800",   bg: "bg-slate-50",    border: "border-slate-100"   },
+              { label: "Tedarikçi Borcu", value: fmt(supplierDebt),          tone: "text-amber-700",   bg: "bg-amber-50",    border: "border-amber-100"   },
+              { label: "Gecikmiş Taksit", value: `${taksitOverdue.count} adet`, tone: "text-violet-700", bg: "bg-violet-50", border: "border-violet-100" },
+            ].map(c => (
+              <article key={c.label} className={`${c.bg} ${c.border} rounded-2xl border p-4`}>
+                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{c.label}</p>
+                <p className={`mt-1 text-xl font-black ${c.tone}`}>{c.value}</p>
+              </article>
             ))}
           </div>
+        )
+      }
+
+      {/* Alerts */}
+      {!loading && (taksitOverdue.count > 0 || supplierDebt > 0 || criticalStock.length > 0) && (
+        <div className="space-y-1.5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <p className="mb-2 text-xs font-black uppercase tracking-wide text-amber-800">⚠ Dikkat Gerektiren İşler</p>
+          {taksitOverdue.count > 0 && (
+            <div className="flex items-center justify-between rounded-xl bg-red-100 px-3 py-2 text-sm text-red-800">
+              <span><b>{taksitOverdue.count}</b> gecikmiş taksit — {fmt(taksitOverdue.amount)} tahsil edilmeli</span>
+              <button onClick={() => changeTab("taksit")} className="rounded-lg bg-white/70 px-2.5 py-1 text-xs font-bold hover:bg-white">Taksit →</button>
+            </div>
+          )}
+          {supplierDebt > 0 && (
+            <div className="flex items-center justify-between rounded-xl bg-amber-100 px-3 py-2 text-sm text-amber-800">
+              <span>Toplam <b>{fmt(supplierDebt)}</b> tedarikçi borcu bekliyor</span>
+              <button onClick={() => changeTab("cari")} className="rounded-lg bg-white/70 px-2.5 py-1 text-xs font-bold hover:bg-white">Cari →</button>
+            </div>
+          )}
+          {criticalStock.length > 0 && (
+            <div className="flex items-center justify-between rounded-xl bg-blue-100 px-3 py-2 text-sm text-blue-800">
+              <span><b>{criticalStock.length}</b> stok kalemi kritik seviyede</span>
+              <Link href="/stok" className="rounded-lg bg-white/70 px-2.5 py-1 text-xs font-bold hover:bg-white">Stok →</Link>
+            </div>
+          )}
         </div>
       )}
-
-      {/* Quick Action Bar */}
-      <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <span className="mr-1 self-center text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">Hızlı İşlem</span>
-        <button onClick={() => setQuickAction("tahsilat")} className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-emerald-700">
-          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Tahsilat Ekle
-        </button>
-        <button onClick={() => setQuickAction("gider")} className="flex items-center gap-1.5 rounded-xl bg-red-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-red-700">
-          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Gider Ekle
-        </button>
-        <Link href="/firma" className="flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-700">Satın Alma Gir</Link>
-        <Link href="/firma" className="flex items-center gap-1.5 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2 text-xs font-bold text-amber-800 hover:bg-amber-100">Firma Ödemesi Yap</Link>
-        <Link href="/taksit" className="flex items-center gap-1.5 rounded-xl border border-violet-200 bg-violet-50 px-3.5 py-2 text-xs font-bold text-violet-800 hover:bg-violet-100">Taksit Tahsil Et</Link>
-      </div>
 
       {/* Tab Navigation */}
       <div className="flex gap-1 overflow-x-auto rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
         {TABS.map(tab => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+          <button key={tab.id} onClick={() => changeTab(tab.id)}
             className={`shrink-0 rounded-xl px-4 py-2 text-xs font-bold transition ${activeTab === tab.id ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"}`}>
             {tab.label}
           </button>
         ))}
       </div>
 
-      {/* ── TAB: Genel Durum ─────────────────────────────────────────────── */}
+      {/* ════════════════════════════════════════════════════════════════════
+          TAB: GENEL BAKIŞ
+      ════════════════════════════════════════════════════════════════════ */}
       {activeTab === "genel" && (
-        <div className="grid gap-5 xl:grid-cols-[1.2fr,0.8fr]">
+        <div className="space-y-5">
+          {/* 6 Aylık Trend */}
+          {trendData.length > 0 && (() => {
+            const maxVal = Math.max(...trendData.map(t => Math.max(t.gelir, t.gider)), 1);
+            return (
+              <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+                <div className="mb-4 flex items-center justify-between">
+                  <h2 className="text-sm font-black text-slate-900">6 Aylık Gelir / Gider Trendi</h2>
+                  <div className="flex gap-4 text-[10px] text-slate-500">
+                    <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400" />Gelir</span>
+                    <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-red-400" />Gider</span>
+                  </div>
+                </div>
+                <div className="flex items-end gap-3">
+                  {trendData.map((m, i) => {
+                    const gelirH = Math.max(4, Math.round((m.gelir / maxVal) * 120));
+                    const giderH = Math.max(4, Math.round((m.gider / maxVal) * 120));
+                    const net = m.gelir - m.gider;
+                    return (
+                      <div key={i} className="group relative flex flex-1 flex-col items-center gap-1">
+                        {/* Tooltip */}
+                        <div className="pointer-events-none absolute bottom-full mb-2 hidden w-40 rounded-xl border border-slate-100 bg-white p-2.5 shadow-xl group-hover:block z-10 text-[10px]">
+                          <p className="font-bold text-slate-800 mb-1">{m.label}</p>
+                          <p className="text-emerald-600">Gelir: {fmt(m.gelir)}</p>
+                          <p className="text-red-600">Gider: {fmt(m.gider)}</p>
+                          <p className={`font-bold ${net >= 0 ? "text-blue-700" : "text-red-700"}`}>Net: {fmt(net)}</p>
+                        </div>
+                        <div className="flex w-full items-end justify-center gap-0.5">
+                          <div className="w-[45%] rounded-t-md bg-emerald-400 transition-all" style={{ height: `${gelirH}px` }} />
+                          <div className="w-[45%] rounded-t-md bg-red-400 transition-all" style={{ height: `${giderH}px` }} />
+                        </div>
+                        <span className="text-[9px] font-semibold text-slate-500">{m.label}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })()}
+
+          <div className="grid gap-5 xl:grid-cols-[1.2fr,0.8fr]">
           <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-            <h2 className="mb-4 text-sm font-black text-slate-900">Bugünün Finans Akışı</h2>
-            <div className="mb-4 grid gap-3 md:grid-cols-3">
-              {Object.entries(METHOD_LABELS).map(([k, v]) => (
+            <h2 className="mb-4 text-sm font-black text-slate-900">Bugünün Gelir Akışı</h2>
+            <div className="mb-4 grid grid-cols-3 gap-3">
+              {(["NAKIT","KREDI_KARTI","HAVALE_EFT"] as const).map(k => (
                 <div key={k} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
-                  <p className="text-[10px] font-bold uppercase text-slate-500">{v}</p>
-                  <p className="mt-1 text-base font-black text-slate-800">{fmtMoney(kasaToday.byMethod?.[k] || 0)}</p>
+                  <p className="text-[10px] font-bold uppercase text-slate-500">{METHOD_LABELS[k]}</p>
+                  <p className="mt-1 text-base font-black text-slate-800">{fmt(kasaToday.byMethod?.[k] || 0)}</p>
                 </div>
               ))}
             </div>
-            <div className="overflow-hidden rounded-2xl border border-slate-100">
+            <div className="overflow-hidden rounded-xl border border-slate-100">
               <table className="w-full text-xs">
                 <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                  <th className="px-3 py-2 text-left">Kanal</th><th className="px-3 py-2 text-left">Hasta</th><th className="px-3 py-2 text-right">Tutar</th>
+                  <th className="px-3 py-2 text-left">Yöntem</th>
+                  <th className="px-3 py-2 text-left">Hasta</th>
+                  <th className="px-3 py-2 text-right">Tutar</th>
                 </tr></thead>
                 <tbody>
-                  {loading ? <tr><td colSpan={3} className="px-3 py-8 text-center text-slate-400">Yükleniyor...</td></tr>
-                  : kasaToday.payments.length === 0 ? <tr><td colSpan={3} className="px-3 py-8 text-center text-slate-400">Bugün tahsilat yok</td></tr>
-                  : kasaToday.payments.slice(0, 8).map(p => (
-                    <tr key={p.id} className="border-t border-slate-100">
-                      <td className="px-3 py-2">{METHOD_LABELS[p.method] || p.method}</td>
-                      <td className="px-3 py-2 text-slate-600">{p.patient?.fullName || p.description || "—"}</td>
-                      <td className="px-3 py-2 text-right font-bold text-emerald-700">{fmtMoney(p.amount)}</td>
-                    </tr>
-                  ))}
+                  {kasaToday.payments.length === 0
+                    ? <tr><td colSpan={3} className="px-3 py-8 text-center text-slate-400">Bugün tahsilat yok</td></tr>
+                    : kasaToday.payments.slice(0, 8).map(p => (
+                      <tr key={p.id} className="border-t border-slate-100">
+                        <td className="px-3 py-2">{METHOD_LABELS[p.method] || p.method}</td>
+                        <td className="px-3 py-2 text-slate-600">{p.patient?.fullName || p.description || "—"}</td>
+                        <td className="px-3 py-2 text-right font-bold text-emerald-700">{fmt(p.amount)}</td>
+                      </tr>
+                    ))
+                  }
                 </tbody>
               </table>
             </div>
+            {kasaToday.payments.length > 8 && (
+              <button onClick={() => changeTab("gelir")} className="mt-3 w-full rounded-xl border border-slate-200 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">
+                Tümünü Gör ({kasaToday.payments.length} kayıt) →
+              </button>
+            )}
           </section>
+
           <div className="space-y-4">
             <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
               <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-sm font-black text-slate-900">En Yüksek Tedarikçi Borcu</h2>
-                <Link href="/firma" className="text-xs font-semibold text-blue-700">Tedarikçilere Git</Link>
+                <h2 className="text-sm font-black text-slate-900">Bu Ay Giderler</h2>
+                <button onClick={() => changeTab("gider")} className="text-xs font-semibold text-blue-700 hover:underline">Tümü →</button>
               </div>
               <div className="space-y-2">
-                {[...firmas].filter(f => f.bakiye > 0).sort((a, b) => b.bakiye - a.bakiye).slice(0, 4).map(f => (
+                {expenseMonth.expenses.length === 0
+                  ? <p className="py-4 text-center text-xs text-slate-400">Bu ay gider kaydı yok</p>
+                  : expenseMonth.expenses.slice(0, 5).map(e => (
+                    <div key={e.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5">
+                      <div>
+                        <p className="text-sm font-semibold text-slate-800">{e.category}</p>
+                        <p className="text-[11px] text-slate-500">{e.description || "—"}</p>
+                      </div>
+                      <span className="text-sm font-black text-red-700">{fmt(e.tutar)}</span>
+                    </div>
+                  ))
+                }
+              </div>
+            </section>
+            <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+              <div className="mb-3 flex items-center justify-between">
+                <h2 className="text-sm font-black text-slate-900">Tedarikçi Bakiyeleri</h2>
+                <button onClick={() => changeTab("cari")} className="text-xs font-semibold text-blue-700 hover:underline">Tümü →</button>
+              </div>
+              <div className="space-y-2">
+                {firmas.filter(f => f.bakiye > 0).sort((a, b) => b.bakiye - a.bakiye).slice(0, 4).map(f => (
                   <div key={f.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5">
                     <p className="text-sm font-semibold text-slate-800">{f.name}</p>
-                    <span className="text-sm font-black text-amber-700">{fmtMoney(f.bakiye)}</span>
+                    <span className="text-sm font-black text-amber-700">{fmt(f.bakiye)}</span>
                   </div>
                 ))}
                 {firmas.filter(f => f.bakiye > 0).length === 0 && <p className="py-4 text-center text-xs text-slate-400">Açık tedarikçi borcu yok</p>}
               </div>
             </section>
-            <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-              <h2 className="mb-3 text-sm font-black text-slate-900">Bu Ay Son Giderler</h2>
-              <div className="space-y-2">
-                {expenseMonth.expenses.slice(0, 4).map(e => (
-                  <div key={e.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5">
-                    <div><p className="text-sm font-semibold text-slate-800">{e.category}</p><p className="text-[11px] text-slate-500">{e.description || "—"}</p></div>
-                    <span className="text-sm font-black text-red-700">{fmtMoney(e.tutar)}</span>
-                  </div>
-                ))}
-                {expenseMonth.expenses.length === 0 && <p className="py-4 text-center text-xs text-slate-400">Bu dönem gider kaydı yok</p>}
-              </div>
-            </section>
-            <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-sm font-black text-slate-900">Anlık Riskler</h2>
-              <div className="space-y-2">
-                <div className="rounded-xl border border-violet-100 bg-violet-50 px-3 py-2.5">
-                  <p className="text-[10px] font-bold uppercase text-violet-700">Gecikmiş Taksit Tutarı</p>
-                  <p className="mt-0.5 text-base font-black text-violet-800">{fmtMoney(totals.overdueAmount)}</p>
-                </div>
-                <div className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2.5">
-                  <p className="text-[10px] font-bold uppercase text-amber-700">Kritik Stok</p>
-                  <p className="mt-0.5 text-base font-black text-amber-800">{totals.criticalStock.length} kalem</p>
-                </div>
-              </div>
-            </section>
+          </div>
           </div>
         </div>
       )}
 
-      {/* ── TAB: Tahsilatlar ──────────────────────────────────────────────── */}
-      {activeTab === "tahsilatlar" && (
-        <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <h2 className="mr-auto text-sm font-black text-slate-900">Hasta Tahsilatları</h2>
-            <input placeholder="Hasta / açıklama ara..." value={paymentSearch} onChange={e => setPaymentSearch(e.target.value)} className="w-48 rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
-            <input type="date" value={paymentDateFrom} onChange={e => setPaymentDateFrom(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
-            <input type="date" value={paymentDateTo} onChange={e => setPaymentDateTo(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
-            <button onClick={() => setQuickAction("tahsilat")} className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">+ Tahsilat</button>
-          </div>
-          {tabLoading ? <div className="py-12 text-center text-sm text-slate-400">Yükleniyor...</div>
-          : <div className="overflow-hidden rounded-2xl border border-slate-100">
-              <table className="w-full text-xs">
-                <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                  <th className="px-3 py-2.5 text-left">Tarih</th><th className="px-3 py-2.5 text-left">Hasta</th>
-                  <th className="px-3 py-2.5 text-left">Yöntem</th><th className="px-3 py-2.5 text-left">Açıklama</th><th className="px-3 py-2.5 text-right">Tutar</th>
-                </tr></thead>
-                <tbody>
-                  {filteredPayments.length === 0 ? <tr><td colSpan={5} className="px-3 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
-                  : filteredPayments.slice(0, 100).map(p => (
-                    <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50">
-                      <td className="px-3 py-2.5">{fmtDate(p.createdAt)}</td>
-                      <td className="px-3 py-2.5 font-medium">{p.patient?.fullName || "—"}</td>
-                      <td className="px-3 py-2.5">{METHOD_LABELS[p.method] || p.method}</td>
-                      <td className="px-3 py-2.5 text-slate-500">{p.description || "—"}</td>
-                      <td className="px-3 py-2.5 text-right font-bold text-emerald-700">{fmtMoney(p.amount)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>}
-          <div className="mt-3 flex justify-between text-xs text-slate-500">
-            <span>{filteredPayments.length} kayıt</span>
-            <span className="font-bold text-emerald-700">{fmtMoney(filteredPayments.reduce((s, p) => s + Number(p.amount), 0))} toplam</span>
-          </div>
-        </section>
-      )}
-
-      {/* ── TAB: Giderler ─────────────────────────────────────────────────── */}
-      {activeTab === "giderler" && (
-        <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <h2 className="mr-auto text-sm font-black text-slate-900">Gider Hareketleri</h2>
-            <input placeholder="Kategori / açıklama ara..." value={expenseSearch} onChange={e => setExpenseSearch(e.target.value)} className="w-52 rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
-            <input type="date" value={expenseDateFrom} onChange={e => setExpenseDateFrom(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
-            <input type="date" value={expenseDateTo} onChange={e => setExpenseDateTo(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
-            <button onClick={() => setQuickAction("gider")} className="rounded-xl bg-red-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-700">+ Gider</button>
-          </div>
-          {tabLoading ? <div className="py-12 text-center text-sm text-slate-400">Yükleniyor...</div>
-          : <div className="overflow-hidden rounded-2xl border border-slate-100">
-              <table className="w-full text-xs">
-                <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                  <th className="px-3 py-2.5 text-left">Tarih</th><th className="px-3 py-2.5 text-left">Kategori</th>
-                  <th className="px-3 py-2.5 text-left">Açıklama</th><th className="px-3 py-2.5 text-left">Yöntem</th><th className="px-3 py-2.5 text-right">Tutar</th>
-                </tr></thead>
-                <tbody>
-                  {filteredExpenses.length === 0 ? <tr><td colSpan={5} className="px-3 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
-                  : filteredExpenses.slice(0, 100).map(e => (
-                    <tr key={e.id} className="border-t border-slate-100 hover:bg-slate-50">
-                      <td className="px-3 py-2.5">{fmtDate(e.tarih)}</td>
-                      <td className="px-3 py-2.5 font-medium">{e.category}</td>
-                      <td className="px-3 py-2.5 text-slate-500">{e.description || "—"}</td>
-                      <td className="px-3 py-2.5">{METHOD_LABELS[e.yontem || ""] || e.yontem || "—"}</td>
-                      <td className="px-3 py-2.5 text-right font-bold text-red-700">{fmtMoney(e.tutar)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>}
-          <div className="mt-3 flex justify-between text-xs text-slate-500">
-            <span>{filteredExpenses.length} kayıt</span>
-            <span className="font-bold text-red-700">{fmtMoney(filteredExpenses.reduce((s, e) => s + Number(e.tutar), 0))} toplam</span>
-          </div>
-        </section>
-      )}
-
-      {/* ── TAB: Cari Borçlar ─────────────────────────────────────────────── */}
-      {activeTab === "cari" && (
-        <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <h2 className="mr-auto text-sm font-black text-slate-900">Tedarikçi Cari Hesaplar</h2>
-            <input placeholder="Firma ara..." value={cariSearch} onChange={e => setCariSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
-            <Link href="/firma" className="rounded-xl bg-blue-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-700">Firma Sayfasına Git</Link>
-          </div>
-          <div className="overflow-hidden rounded-2xl border border-slate-100">
-            <table className="w-full text-xs">
-              <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                <th className="px-3 py-2.5 text-left">Firma</th><th className="px-3 py-2.5 text-right">Toplam Borç</th>
-                <th className="px-3 py-2.5 text-right">Ödenen</th><th className="px-3 py-2.5 text-right">Net Bakiye</th><th className="px-3 py-2.5 text-center">Durum</th>
-              </tr></thead>
-              <tbody>
-                {filteredFirmas.length === 0 ? <tr><td colSpan={5} className="px-3 py-10 text-center text-slate-400">Firma bulunamadı</td></tr>
-                : filteredFirmas.map(f => (
-                  <tr key={f.id} className="border-t border-slate-100 hover:bg-slate-50">
-                    <td className="px-3 py-3 font-semibold">{f.name}</td>
-                    <td className="px-3 py-3 text-right font-bold text-red-700">{fmtMoney(f.borc)}</td>
-                    <td className="px-3 py-3 text-right font-bold text-emerald-700">{fmtMoney(f.odenen)}</td>
-                    <td className="px-3 py-3 text-right font-black text-slate-900">{fmtMoney(f.bakiye)}</td>
-                    <td className="px-3 py-3 text-center">
-                      <span className={`rounded-lg px-2 py-0.5 text-[10px] font-bold ${f.bakiye > 0 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
-                        {f.bakiye > 0 ? "Borçlu" : "Kapalı"}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="mt-3 flex justify-between text-xs text-slate-500">
-            <span>{filteredFirmas.length} tedarikçi</span>
-            <span className="font-bold text-amber-700">{fmtMoney(filteredFirmas.reduce((s, f) => s + f.bakiye, 0))} toplam bakiye</span>
-          </div>
-        </section>
-      )}
-
-      {/* ── TAB: Kasa / Banka ─────────────────────────────────────────────── */}
-      {activeTab === "kasa" && (
-        <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <h2 className="mr-auto text-sm font-black text-slate-900">Kasa / Banka Hareketleri</h2>
-            <input placeholder="Hasta / açıklama ara..." value={paymentSearch} onChange={e => setPaymentSearch(e.target.value)} className="w-48 rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
-            <input type="date" value={paymentDateFrom} onChange={e => setPaymentDateFrom(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
-            <input type="date" value={paymentDateTo} onChange={e => setPaymentDateTo(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
-          </div>
-          <div className="mb-4 grid gap-2 sm:grid-cols-5">
-            {Object.entries(METHOD_LABELS).map(([k, v]) => {
-              const total = filteredPayments.filter(p => p.method === k).reduce((s, p) => s + Number(p.amount), 0);
-              return (
-                <div key={k} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
-                  <p className="text-[10px] font-bold uppercase text-slate-500">{v}</p>
-                  <p className="mt-0.5 text-sm font-black text-slate-800">{fmtMoney(total)}</p>
+      {/* ════════════════════════════════════════════════════════════════════
+          TAB: GELİR / TAHSİLAT
+      ════════════════════════════════════════════════════════════════════ */}
+      {activeTab === "gelir" && (
+        <div className="space-y-4">
+          {!showTahForm ? (
+            <button onClick={() => setShowTahForm(true)}
+              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-emerald-700">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Tahsilat Ekle
+            </button>
+          ) : (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-sm font-black text-slate-900">Yeni Tahsilat</h2>
+                <button onClick={() => setShowTahForm(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-white">
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta (isteğe bağlı)</label>
+                  <select value={tahForm.patientId} onChange={e => setTahForm(f => ({ ...f, patientId: e.target.value }))} className={INP}>
+                    <option value="">— Hasta seçin —</option>
+                    {patients.map(p => <option key={p.id} value={p.id}>{p.fullName}</option>)}
+                  </select>
                 </div>
-              );
-            })}
-          </div>
-          {tabLoading ? <div className="py-12 text-center text-sm text-slate-400">Yükleniyor...</div>
-          : <div className="overflow-hidden rounded-2xl border border-slate-100">
-              <table className="w-full text-xs">
-                <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                  <th className="px-3 py-2.5 text-left">Tarih</th><th className="px-3 py-2.5 text-left">Hasta</th>
-                  <th className="px-3 py-2.5 text-left">Kanal</th><th className="px-3 py-2.5 text-left">Açıklama</th><th className="px-3 py-2.5 text-right">Tutar</th>
-                </tr></thead>
-                <tbody>
-                  {filteredPayments.length === 0 ? <tr><td colSpan={5} className="px-3 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
-                  : filteredPayments.slice(0, 100).map(p => (
-                    <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50">
-                      <td className="px-3 py-2.5">{fmtDate(p.createdAt)}</td>
-                      <td className="px-3 py-2.5 font-medium">{p.patient?.fullName || "—"}</td>
-                      <td className="px-3 py-2.5">{METHOD_LABELS[p.method] || p.method}</td>
-                      <td className="px-3 py-2.5 text-slate-500">{p.description || "—"}</td>
-                      <td className="px-3 py-2.5 text-right font-bold text-emerald-700">{fmtMoney(p.amount)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>}
-        </section>
-      )}
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor <span className="text-red-500">*</span></label>
+                  <select value={tahForm.doctorId} onChange={e => setTahForm(f => ({ ...f, doctorId: e.target.value }))} className={INP}>
+                    <option value="">— Doktor seçin —</option>
+                    {taksitDoctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar (₺) *</label>
+                  <input type="number" value={tahForm.amount} onChange={e => setTahForm(f => ({ ...f, amount: e.target.value }))} placeholder="0.00" className={INP + " text-lg font-bold"} />
+                </div>
+                <div>
+                  <label className="mb-2 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
+                  <div className="flex flex-wrap gap-2">
+                    {(["NAKIT","KREDI_KARTI","HAVALE_EFT","MAIL_ORDER","DIGER"] as const).map(m => (
+                      <button key={m} type="button" onClick={() => setTahForm(f => ({ ...f, method: m, posId: "" }))}
+                        className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${tahForm.method === m ? "bg-emerald-600 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+                        {m === "NAKIT" ? "💵 Nakit" : m === "KREDI_KARTI" ? "💳 Kart" : m === "HAVALE_EFT" ? "🏦 Havale" : m === "MAIL_ORDER" ? "📧 Mail Order" : "📌 Diğer"}
+                      </button>
+                    ))}
+                  </div>
+                  {(tahForm.method === "KREDI_KARTI" || tahForm.method === "MAIL_ORDER") && (
+                    <select value={tahForm.posId} onChange={e => setTahForm(f => ({ ...f, posId: e.target.value }))} className={INP + " mt-2"}>
+                      <option value="">— POS Cihazı Seçin —</option>
+                      {posDevices.length === 0
+                        ? <option disabled>Kayıtlı POS cihazı yok</option>
+                        : posDevices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                    </select>
+                  )}
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
+                  <input value={tahForm.description} onChange={e => setTahForm(f => ({ ...f, description: e.target.value }))} placeholder="Tedavi türü, notlar…" className={INP} />
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={() => setShowTahForm(false)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">İptal</button>
+                <button onClick={submitTahsilat} disabled={tahSaving} className="rounded-xl bg-emerald-600 px-6 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-60">
+                  {tahSaving ? "Kaydediliyor…" : "Tahsilat Kaydet"}
+                </button>
+              </div>
+            </div>
+          )}
 
-      {/* ── TAB: Taksit / Alacak ──────────────────────────────────────────── */}
-      {activeTab === "taksit" && (
-        <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <h2 className="mr-auto text-sm font-black text-slate-900">Taksit ve Alacak Takibi</h2>
-            <select value={taksitFilter} onChange={e => setTaksitFilter(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400">
-              <option value="HEPSI">Tüm Planlar</option>
-              <option value="GECIKTI">Gecikmiş</option>
-              <option value="BEKLIYOR">Bekleyenler</option>
-              <option value="ODENDI">Ödenenler</option>
-            </select>
-            <Link href="/taksit" className="rounded-xl bg-violet-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-violet-700">Taksit Sayfasına Git</Link>
-          </div>
-          <div className="space-y-3">
-            {plans.length === 0 ? <div className="py-10 text-center text-sm text-slate-400">Taksit planı bulunamadı</div>
-            : plans.filter(p => {
-                if (taksitFilter === "GECIKTI") return (p.taksitler || []).some(t => t.status === "GECIKTI");
-                if (taksitFilter === "BEKLIYOR") return (p.taksitler || []).some(t => t.status === "BEKLIYOR");
-                if (taksitFilter === "ODENDI") return (p.taksitler || []).every(t => t.status === "ODENDI");
-                return true;
-              }).slice(0, 30).map(plan => {
-                const gecikti = (plan.taksitler || []).filter(t => t.status === "GECIKTI");
-                const bekleyen = (plan.taksitler || []).filter(t => t.status === "BEKLIYOR");
+          <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+            <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-4">
+              <h2 className="mr-auto text-sm font-black text-slate-900">Tahsilat Kayıtları</h2>
+              <input placeholder="Hasta / açıklama ara…" value={pmtSearch} onChange={e => setPmtSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-emerald-400" />
+              <input type="date" value={pmtFrom} onChange={e => setPmtFrom(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none" />
+              <input type="date" value={pmtTo}   onChange={e => setPmtTo(e.target.value)}   className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none" />
+              <button onClick={() => {
+                const rows = [["Tarih","Hasta","Yöntem","Açıklama","Tutar"], ...filteredPayments.map(p => [fmtDate(p.createdAt), p.patient?.fullName || "", METHOD_LABELS[p.method] || p.method, p.description || "", String(p.amount)])];
+                const csv = rows.map(r => r.map(c => `"${c}"`).join(",")).join("\n");
+                const a = document.createElement("a"); a.href = "data:text/csv;charset=utf-8,\uFEFF" + encodeURIComponent(csv); a.download = "tahsilatlar.csv"; a.click();
+              }} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">
+                ↓ CSV
+              </button>
+            </div>
+            <div className="grid grid-cols-2 divide-x divide-slate-100 border-b border-slate-100 sm:grid-cols-4">
+              {(["NAKIT","KREDI_KARTI","HAVALE_EFT","MAIL_ORDER"] as const).map(m => {
+                const total = filteredPayments.filter(p => p.method === m).reduce((s, p) => s + Number(p.amount), 0);
                 return (
-                  <div key={plan.id} className="rounded-2xl border border-slate-100 p-4 hover:bg-slate-50">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="text-sm font-bold text-slate-900">{plan.patient?.fullName || "—"}</p>
-                        <p className="text-xs text-slate-500">{plan.baslik || "Taksit Planı"} • Toplam: {fmtMoney(plan.toplamBorc)}</p>
-                      </div>
-                      <div className="flex gap-1">
-                        {gecikti.length > 0 && <span className="rounded-lg bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">{gecikti.length} gecikmiş</span>}
-                        {bekleyen.length > 0 && <span className="rounded-lg bg-blue-100 px-2 py-0.5 text-[10px] font-bold text-blue-700">{bekleyen.length} bekliyor</span>}
-                      </div>
-                    </div>
-                    {gecikti.length > 0 && (
-                      <div className="mt-2 space-y-1">
-                        {gecikti.slice(0, 3).map(t => (
-                          <div key={t.id} className="flex items-center justify-between rounded-lg bg-red-50 px-2 py-1.5">
-                            <span className="text-[11px] text-red-700">#{t.siraNo} • Vade: {fmtDate(t.vadeDate)}</span>
-                            <span className="text-[11px] font-bold text-red-700">{fmtMoney(t.kalan)} kalan</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                  <div key={m} className="px-4 py-3">
+                    <p className="text-[10px] font-bold uppercase text-slate-500">{METHOD_LABELS[m]}</p>
+                    <p className="mt-0.5 text-base font-black text-slate-800">{fmt(total)}</p>
                   </div>
                 );
               })}
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                  <th className="px-4 py-3 text-left">Tarih</th>
+                  <th className="px-4 py-3 text-left">Hasta</th>
+                  <th className="px-4 py-3 text-left">Yöntem</th>
+                  <th className="px-4 py-3 text-left">Açıklama</th>
+                  <th className="px-4 py-3 text-right">Tutar</th>
+                </tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredPayments.length === 0
+                    ? <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
+                    : filteredPayments.slice(0, 150).map(p => (
+                      <tr key={p.id} className="hover:bg-slate-50">
+                        <td className="whitespace-nowrap px-4 py-3 text-slate-400">{fmtDate(p.createdAt)}</td>
+                        <td className="px-4 py-3 font-semibold text-slate-800">{p.patient?.fullName || "—"}</td>
+                        <td className="px-4 py-3">
+                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">{METHOD_LABELS[p.method] || p.method}</span>
+                        </td>
+                        <td className="px-4 py-3 text-slate-500">{p.description || "—"}</td>
+                        <td className="px-4 py-3 text-right font-black text-emerald-700">{fmt(p.amount)}</td>
+                      </tr>
+                    ))
+                  }
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-5 py-3">
+              <span className="text-xs text-slate-500">{filteredPayments.length} kayıt</span>
+              <span className="text-sm font-black text-emerald-700">{fmt(filteredPayments.reduce((s, p) => s + Number(p.amount), 0))} toplam</span>
+            </div>
           </div>
-        </section>
+        </div>
       )}
 
-      {/* ── TAB: Doktor Hakedişleri ───────────────────────────────────────── */}
-      {activeTab === "hakediş" && (
-        <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <h2 className="mr-auto text-sm font-black text-slate-900">Doktor Hakedişleri</h2>
-            <select value={selectedDoctorId} onChange={e => setSelectedDoctorId(e.target.value)} className="w-52 rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400">
-              <option value="">Doktor seçin...</option>
-              {doctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
-            </select>
-            <Link href="/finans" className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50">Hakediş Sayfasına Git</Link>
+      {/* ════════════════════════════════════════════════════════════════════
+          TAB: GİDER
+      ════════════════════════════════════════════════════════════════════ */}
+      {activeTab === "gider" && (
+        <div className="space-y-4">
+          <div className="flex gap-2">
+            {!showGiderForm && (
+              <button onClick={() => setShowGiderForm(true)}
+                className="flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-red-700">
+                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Gider Ekle
+              </button>
+            )}
+            <button onClick={() => setShowCatMgr(true)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">
+              Kategoriler
+            </button>
           </div>
-          {tabLoading ? <div className="py-12 text-center text-sm text-slate-400">Yükleniyor...</div>
-          : !selectedDoctorId ? <div className="rounded-2xl bg-slate-50 py-16 text-center text-sm text-slate-400">Görüntülemek için bir doktor seçin</div>
-          : doctorFinanceLoading ? <div className="py-12 text-center text-sm text-slate-400">Yükleniyor...</div>
-          : doctorFinance ? (
-            <div className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-4">
-                {[
-                  { label: "Toplam Üretim",  value: fmtMoney(Number(doctorFinance.totalTreatments) || 0), tone: "text-blue-700",    bg: "bg-blue-50" },
-                  { label: "Tahsil Edilen",   value: fmtMoney(Number(doctorFinance.received) || 0),       tone: "text-emerald-700", bg: "bg-emerald-50" },
-                  { label: "Tahsil Bekleyen", value: fmtMoney(Number(doctorFinance.toReceive) || 0),      tone: "text-amber-700",   bg: "bg-amber-50" },
-                  { label: "Ödenen Hakediş",  value: fmtMoney(Number(doctorFinance.earned) || 0),         tone: "text-slate-800",   bg: "bg-slate-50" },
-                ].map(c => (
-                  <div key={c.label} className={`${c.bg} rounded-2xl p-4`}>
-                    <p className="text-[10px] font-bold uppercase text-slate-500">{c.label}</p>
-                    <p className={`mt-1 text-xl font-black ${c.tone}`}>{c.value}</p>
-                  </div>
-                ))}
+
+          {showGiderForm && (
+            <div className="rounded-2xl border border-red-200 bg-red-50 p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="text-sm font-black text-slate-900">Yeni Gider</h2>
+                <button onClick={() => setShowGiderForm(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-white">
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                </button>
               </div>
-              {Array.isArray(doctorFinance.topExaminations) && (doctorFinance.topExaminations as { type: string; count: number }[]).length > 0 && (
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div>
-                  <h3 className="mb-3 text-sm font-black text-slate-900">En Çok Yapılan Tedaviler</h3>
-                  <div className="overflow-hidden rounded-2xl border border-slate-100">
-                    <table className="w-full text-xs">
-                      <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
-                        <th className="px-3 py-2 text-left">Tedavi</th><th className="px-3 py-2 text-right">Adet</th>
-                      </tr></thead>
-                      <tbody>
-                        {(doctorFinance.topExaminations as { type: string; count: number }[]).map(ex => (
-                          <tr key={ex.type} className="border-t border-slate-100">
-                            <td className="px-3 py-2">{ex.type}</td>
-                            <td className="px-3 py-2 text-right font-bold">{ex.count}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih *</label>
+                  <input type="date" value={giderForm.tarih} onChange={e => setGiderForm(f => ({ ...f, tarih: e.target.value }))} className={INP} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Kategori *</label>
+                  <select value={giderForm.categoryId} onChange={e => {
+                    const cat = giderKats.find(c => c.id === e.target.value);
+                    setGiderForm(f => ({ ...f, categoryId: e.target.value, category: cat?.name || "" }));
+                  }} className={INP}>
+                    <option value="">— Kategori seçin —</option>
+                    {giderKats.filter(c => c.isActive).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    <option value="__manual">Manuel Gir…</option>
+                  </select>
+                  {giderForm.categoryId === "__manual" && (
+                    <input value={giderForm.category} onChange={e => setGiderForm(f => ({ ...f, category: e.target.value }))} placeholder="Kategori adı" className={INP + " mt-2"} />
+                  )}
+                </div>
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
+                  <input value={giderForm.description} onChange={e => setGiderForm(f => ({ ...f, description: e.target.value }))} placeholder="Gider detayı…" className={INP} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar (₺) *</label>
+                  <input type="number" value={giderForm.tutar} onChange={e => setGiderForm(f => ({ ...f, tutar: e.target.value }))} placeholder="0.00" className={INP + " text-lg font-bold"} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
+                  <select value={giderForm.yontem} onChange={e => setGiderForm(f => ({ ...f, yontem: e.target.value }))} className={INP}>
+                    {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Fatura No</label>
+                  <input value={giderForm.faturaNo} onChange={e => setGiderForm(f => ({ ...f, faturaNo: e.target.value }))} placeholder="Opsiyonel" className={INP} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">KDV Oranı</label>
+                  <select value={giderForm.kdvOrani} onChange={e => setGiderForm(f => ({ ...f, kdvOrani: e.target.value }))} className={INP}>
+                    {KDV_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={() => setShowGiderForm(false)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">İptal</button>
+                <button onClick={submitGider} disabled={giderSaving} className="rounded-xl bg-red-600 px-6 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-60">
+                  {giderSaving ? "Kaydediliyor…" : "Gider Kaydet"}
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+            <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-4">
+              <h2 className="mr-auto text-sm font-black text-slate-900">Gider Kayıtları</h2>
+              <input placeholder="Kategori / açıklama ara…" value={expSearch} onChange={e => setExpSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-red-400" />
+              <input type="date" value={expFrom} onChange={e => setExpFrom(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none" />
+              <input type="date" value={expTo}   onChange={e => setExpTo(e.target.value)}   className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none" />
+              <button onClick={() => {
+                const rows = [["Tarih","Kategori","Açıklama","Yöntem","KDV","Fatura No","Tutar"], ...filteredExpenses.map(e => [fmtDate(e.tarih), e.category, e.description || "", METHOD_LABELS[e.yontem || ""] || "", e.kdvOrani != null ? `%${e.kdvOrani}` : "", e.faturaNo || "", String(e.tutar)])];
+                const csv = rows.map(r => r.map(c => `"${c}"`).join(",")).join("\n");
+                const a = document.createElement("a"); a.href = "data:text/csv;charset=utf-8,\uFEFF" + encodeURIComponent(csv); a.download = "giderler.csv"; a.click();
+              }} className="rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100">
+                ↓ CSV
+              </button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                  <th className="px-4 py-3 text-left">Tarih</th>
+                  <th className="px-4 py-3 text-left">Kategori</th>
+                  <th className="px-4 py-3 text-left">Açıklama</th>
+                  <th className="px-4 py-3 text-left">Yöntem</th>
+                  <th className="px-4 py-3 text-center">KDV</th>
+                  <th className="px-4 py-3 text-left">Fatura</th>
+                  <th className="px-4 py-3 text-right">Tutar</th>
+                  <th className="px-4 py-3" />
+                </tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredExpenses.length === 0
+                    ? <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
+                    : filteredExpenses.slice(0, 150).map(e => (
+                      <tr key={e.id} className="hover:bg-slate-50">
+                        <td className="whitespace-nowrap px-4 py-3 text-slate-400">{fmtDate(e.tarih)}</td>
+                        <td className="px-4 py-3">
+                          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700">{e.category}</span>
+                        </td>
+                        <td className="max-w-[160px] truncate px-4 py-3 text-slate-500">{e.description || "—"}</td>
+                        <td className="px-4 py-3">{METHOD_LABELS[e.yontem || ""] || e.yontem || "—"}</td>
+                        <td className="px-4 py-3 text-center">{e.kdvOrani != null ? `%${e.kdvOrani}` : "—"}</td>
+                        <td className="px-4 py-3 text-slate-500">{e.faturaNo || "—"}</td>
+                        <td className="px-4 py-3 text-right font-black text-red-700">{fmt(e.tutar)}</td>
+                        <td className="px-4 py-3">
+                          <button onClick={() => deleteGider(e.id)} className="rounded px-2 py-0.5 text-[10px] text-red-400 hover:bg-red-50 hover:text-red-600">Sil</button>
+                        </td>
+                      </tr>
+                    ))
+                  }
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-5 py-3">
+              <span className="text-xs text-slate-500">{filteredExpenses.length} kayıt</span>
+              <span className="text-sm font-black text-red-700">{fmt(filteredExpenses.reduce((s, e) => s + Number(e.tutar), 0))} toplam</span>
+            </div>
+          </div>
+
+          {/* Kategori Yönetimi Modal */}
+          {showCatMgr && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+              <div className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
+                <h3 className="text-base font-black text-slate-900">Gider Kategorileri</h3>
+                <div className="flex gap-2">
+                  <input value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddCategory()}
+                    placeholder="Yeni kategori adı…" className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none" />
+                  <button onClick={handleAddCategory} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700">Ekle</button>
+                </div>
+                <div className="max-h-56 space-y-1.5 overflow-y-auto">
+                  {giderKats.map(c => (
+                    <div key={c.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
+                      <span className={`text-sm ${c.isActive ? "text-slate-700" : "text-slate-400 line-through"}`}>{c.name}</span>
+                      <button onClick={async () => {
+                        await fetch(`/api/gider-kategorileri/${c.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: !c.isActive }) });
+                        loadGiderKats();
+                      }} className={`text-xs font-semibold ${c.isActive ? "text-red-500" : "text-emerald-600"}`}>
+                        {c.isActive ? "Devre Dışı" : "Aktif Et"}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={() => setShowCatMgr(false)} className="w-full rounded-lg border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">Kapat</button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════
+          TAB: TAKSİT / ALACAK
+      ════════════════════════════════════════════════════════════════════ */}
+      {activeTab === "taksit" && (
+        <div className="space-y-4">
+          {/* KPI */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {[
+              { label: "Toplam Kalan",  value: fmt(taksitKPIs.toplamKalan), color: "text-blue-700",    bg: "bg-blue-50"    },
+              { label: "Bekleyen",      value: String(taksitKPIs.bekleyen), color: "text-amber-700",   bg: "bg-amber-50"   },
+              { label: "Gecikmiş Plan", value: String(taksitKPIs.geciken),  color: "text-red-700",     bg: "bg-red-50"     },
+              { label: "Bugün Vadeli",  value: String(taksitKPIs.bugunVade),color: "text-emerald-700", bg: "bg-emerald-50" },
+            ].map(k => (
+              <div key={k.label} className={`${k.bg} rounded-2xl border border-slate-100 p-4`}>
+                <p className="text-[10px] font-bold uppercase text-slate-500">{k.label}</p>
+                <p className={`mt-0.5 text-xl font-black ${k.color}`}>{k.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Borç Yaşlandırma */}
+          {(() => {
+            const now = new Date();
+            const allTaksitler = taksitPlans.flatMap(p => p.taksitler.filter(t => t.kalan > 0 && t.status !== "ODENDI" && t.status !== "IPTAL").map(t => ({ ...t, vade: new Date(t.vadeDate) })));
+            const buckets = [
+              { label: "Bugün Vadeli",  count: 0, amount: 0, color: "bg-amber-500" },
+              { label: "1–30 Gün Geç", count: 0, amount: 0, color: "bg-orange-500" },
+              { label: "31–60 Gün",    count: 0, amount: 0, color: "bg-red-500"    },
+              { label: "60+ Gün",      count: 0, amount: 0, color: "bg-red-900"    },
+              { label: "Gelecek",      count: 0, amount: 0, color: "bg-blue-400"   },
+            ];
+            for (const t of allTaksitler) {
+              const diffDays = Math.floor((now.getTime() - t.vade.getTime()) / 86400000);
+              const kalan = Number(t.kalan);
+              if (t.vade.toDateString() === now.toDateString())     { buckets[0].count++; buckets[0].amount += kalan; }
+              else if (diffDays > 0 && diffDays <= 30)              { buckets[1].count++; buckets[1].amount += kalan; }
+              else if (diffDays > 30 && diffDays <= 60)             { buckets[2].count++; buckets[2].amount += kalan; }
+              else if (diffDays > 60)                               { buckets[3].count++; buckets[3].amount += kalan; }
+              else                                                   { buckets[4].count++; buckets[4].amount += kalan; }
+            }
+            const totalAmt = buckets.reduce((s, b) => s + b.amount, 0) || 1;
+            if (allTaksitler.length === 0) return null;
+            return (
+              <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+                <p className="mb-3 text-xs font-black text-slate-700">Alacak Yaşlandırma Tablosu</p>
+                <div className="mb-2 flex h-4 overflow-hidden rounded-full">
+                  {buckets.map(b => b.amount > 0 && <div key={b.label} className={`${b.color} transition-all`} style={{ width: `${(b.amount / totalAmt) * 100}%` }} />)}
+                </div>
+                <div className="grid grid-cols-5 gap-2">
+                  {buckets.map(b => (
+                    <div key={b.label} className="text-center">
+                      <div className={`mx-auto mb-1 h-2 w-2 rounded-full ${b.color}`} />
+                      <p className="text-[9px] font-semibold text-slate-500">{b.label}</p>
+                      <p className="text-[10px] font-black text-slate-800">{b.count} taksit</p>
+                      <p className="text-[10px] text-slate-600">{fmt(b.amount)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Sub-tabs */}
+          <div className="flex gap-1 border-b border-slate-200">
+            {([
+              { key: "liste",      label: "Plan Listesi" },
+              { key: "olustur",    label: "+ Yeni Plan" },
+              { key: "hatirlatma", label: `Hatırlatmalar (${reminders.filter(r => r.status === "AKTIF").length})` },
+            ] as const).map(t => (
+              <button key={t.key} onClick={() => setTaksitSubTab(t.key)}
+                className={`px-4 py-2 text-xs font-bold transition ${taksitSubTab === t.key ? "border-b-2 border-slate-900 text-slate-900" : "text-slate-500 hover:text-slate-700"}`}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Plan Listesi */}
+          {taksitSubTab === "liste" && (
+            <div className="flex gap-4">
+              <div className="min-w-0 flex-1">
+                <div className="mb-3 flex flex-wrap gap-2">
+                  <input value={taksitSearch} onChange={e => setTaksitSearch(e.target.value)}
+                    placeholder="Hasta / doktor / başlık…" className="w-48 rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
+                  <select value={taksitStatus} onChange={e => setTaksitStatus(e.target.value)}
+                    className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400">
+                    <option value="HEPSI">Tüm Durumlar</option>
+                    <option value="AKTIF">Aktif</option>
+                    <option value="DEVAM_EDIYOR">Devam Ediyor</option>
+                    <option value="TAMAMLANDI">Tamamlandı</option>
+                    <option value="IPTAL">İptal</option>
+                  </select>
+                </div>
+                {taksitLoading
+                  ? <div className="py-10 text-center text-sm text-slate-400">Yükleniyor…</div>
+                  : filteredTaksitPlans.length === 0
+                    ? <div className="py-10 text-center text-sm text-slate-400">Taksit planı bulunamadı</div>
+                    : (
+                      <div className="space-y-2">
+                        {filteredTaksitPlans.map(plan => {
+                          const kalan  = plan.taksitler.reduce((s, t) => s + Number(t.kalan), 0);
+                          const gec    = plan.taksitler.filter(t => t.status === "GECIKTI").length;
+                          const bek    = plan.taksitler.filter(t => t.status === "BEKLIYOR").length;
+                          return (
+                            <div key={plan.id} onClick={() => { setSelectedPlan(plan); loadPlanDetail(plan.id); }}
+                              className={`cursor-pointer rounded-xl border p-3 transition-all ${selectedPlan?.id === plan.id ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <span className="text-xs font-bold text-slate-900">{plan.patient.fullName}</span>
+                                    {plan.baslik && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600">{plan.baslik}</span>}
+                                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${TAKSIT_STATUS_BADGE[plan.status]}`}>{plan.status}</span>
+                                  </div>
+                                  <div className="mt-0.5 flex flex-wrap gap-x-3 text-[10px] text-slate-500">
+                                    <span>Dr: {plan.doctor.fullName}</span>
+                                    <span>{plan.taksitSayisi} taksit / {PERIODS[plan.period]}</span>
+                                    <span className={kalan > 0 ? "font-semibold text-amber-600" : "font-semibold text-emerald-600"}>Kalan: {fmt(kalan)}</span>
+                                  </div>
+                                </div>
+                                <div className="flex shrink-0 flex-col items-end gap-1">
+                                  {gec > 0 && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">{gec} gecikti</span>}
+                                  {bek > 0 && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">{bek} bekliyor</span>}
+                                  <button onClick={e => { e.stopPropagation(); cancelPlan(plan.id); }} className="mt-1 text-[10px] text-red-400 hover:text-red-600">İptal</button>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )
+                }
+              </div>
+
+              {/* Plan Detay */}
+              {planDetail && (
+                <div className="w-80 shrink-0">
+                  <div className="sticky top-4 space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-black text-slate-800">Taksit Detayı</h3>
+                      <button onClick={() => { setSelectedPlan(null); setPlanDetail(null); }} className="rounded p-1 text-slate-400 hover:bg-slate-100">✕</button>
+                    </div>
+                    <div className="space-y-0.5 text-[11px] text-slate-600">
+                      <p><b>Hasta:</b> {planDetail.patient.fullName}</p>
+                      <p><b>Doktor:</b> {planDetail.doctor.fullName}</p>
+                      <p><b>Toplam Borç:</b> {fmt(planDetail.toplamBorc)}</p>
+                      {planDetail.pesnat > 0 && <p><b>Peşinat:</b> {fmt(planDetail.pesnat)}</p>}
+                      <p><b>Periyot:</b> {PERIODS[planDetail.period]}</p>
+                    </div>
+                    <div className="max-h-96 space-y-1.5 overflow-y-auto pr-1">
+                      {planDetail.taksitler.map(t => (
+                        <div key={t.id} className={`rounded-lg border p-2 text-[10px] ${t.status === "GECIKTI" ? "border-red-200 bg-red-50" : "border-slate-100 bg-slate-50"}`}>
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-slate-700">#{t.siraNo} — {fmtDate(t.vadeDate)}</span>
+                            <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${TAKSIT_STATUS_BADGE[t.status] ?? ""}`}>{t.status}</span>
+                          </div>
+                          <div className="mt-0.5 flex justify-between text-slate-500">
+                            <span>Tutar: {fmt(t.tutar)}</span>
+                            <span>Kalan: <b className={Number(t.kalan) > 0 ? "text-amber-600" : "text-emerald-600"}>{fmt(t.kalan)}</b></span>
+                          </div>
+                          {t.status !== "ODENDI" && t.status !== "IPTAL" && (
+                            <button onClick={() => { setShowOdeModal(t); setOdeForm({ tutar: String(t.kalan), yontem: "NAKIT", note: "" }); }}
+                              className="mt-1.5 w-full rounded bg-emerald-600 py-1 text-[10px] font-bold text-white hover:bg-emerald-700">
+                              Tahsilat Yap
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
             </div>
-          ) : null}
-        </section>
+          )}
+
+          {/* Yeni Plan Oluştur */}
+          {taksitSubTab === "olustur" && (
+            <div className="max-w-lg space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <h2 className="text-sm font-black text-slate-800">Yeni Taksit Planı</h2>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta *</label>
+                  <select value={newPlanForm.patientId} onChange={e => setNewPlanForm(f => ({ ...f, patientId: e.target.value }))} className={INP}>
+                    <option value="">— Hasta seçin —</option>
+                    {patients.map(p => <option key={p.id} value={p.id}>{p.fullName}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor *</label>
+                  <select value={newPlanForm.doctorId} onChange={e => setNewPlanForm(f => ({ ...f, doctorId: e.target.value }))} className={INP}>
+                    <option value="">— Doktor seçin —</option>
+                    {taksitDoctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Başlık</label>
+                  <input value={newPlanForm.baslik} onChange={e => setNewPlanForm(f => ({ ...f, baslik: e.target.value }))} placeholder="örn: İmplant" className={INP} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Toplam Borç (₺) *</label>
+                  <input type="number" value={newPlanForm.toplamBorc} onChange={e => setNewPlanForm(f => ({ ...f, toplamBorc: e.target.value }))} placeholder="0.00" className={INP} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Peşinat (₺)</label>
+                  <input type="number" value={newPlanForm.pesnat} onChange={e => setNewPlanForm(f => ({ ...f, pesnat: e.target.value }))} placeholder="0.00" className={INP} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Taksit Sayısı *</label>
+                  <input type="number" min="1" max="60" value={newPlanForm.taksitSayisi} onChange={e => setNewPlanForm(f => ({ ...f, taksitSayisi: e.target.value }))} className={INP} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Periyot</label>
+                  <select value={newPlanForm.period} onChange={e => setNewPlanForm(f => ({ ...f, period: e.target.value }))} className={INP}>
+                    {Object.entries(PERIODS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">İlk Taksit Tarihi</label>
+                  <input type="date" value={newPlanForm.startDate} onChange={e => setNewPlanForm(f => ({ ...f, startDate: e.target.value }))} className={INP} />
+                </div>
+              </div>
+              {newPlanForm.toplamBorc && Number(newPlanForm.toplamBorc) > 0 && Number(newPlanForm.taksitSayisi) > 0 && Number(newPlanForm.toplamBorc) > Number(newPlanForm.pesnat || 0) && (
+                <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700">
+                  <p className="font-bold mb-1">Önizleme</p>
+                  <p>Kalan borç: {fmt(Number(newPlanForm.toplamBorc) - Number(newPlanForm.pesnat || 0))}</p>
+                  <p>Her taksit: {fmt((Number(newPlanForm.toplamBorc) - Number(newPlanForm.pesnat || 0)) / Number(newPlanForm.taksitSayisi))}</p>
+                  <p>{newPlanForm.taksitSayisi} taksit × {PERIODS[newPlanForm.period]}</p>
+                </div>
+              )}
+              <div className="flex gap-2">
+                <button onClick={() => setTaksitSubTab("liste")} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">İptal</button>
+                <button onClick={handleCreatePlan} className="flex-1 rounded-xl bg-blue-600 py-2.5 text-sm font-bold text-white hover:bg-blue-700">Plan Oluştur</button>
+              </div>
+            </div>
+          )}
+
+          {/* Hatırlatmalar */}
+          {taksitSubTab === "hatirlatma" && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h2 className="text-sm font-bold text-slate-800">Hatırlatmalar</h2>
+                <button onClick={() => setShowRemModal(true)} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700">+ Ekle</button>
+              </div>
+              {reminders.length === 0
+                ? <div className="py-10 text-center text-sm text-slate-400">Hatırlatma bulunamadı</div>
+                : (
+                  <div className="space-y-2">
+                    {reminders.map(r => {
+                      const isPast  = new Date(r.reminderDate) < new Date() && r.status === "AKTIF";
+                      const isToday = new Date(r.reminderDate).toDateString() === new Date().toDateString();
+                      return (
+                        <div key={r.id} className={`flex items-center justify-between gap-3 rounded-xl border p-3 ${isPast ? "border-red-200 bg-red-50" : isToday ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"}`}>
+                          <div className="flex-1">
+                            <p className="text-xs font-semibold text-slate-800">{r.note}</p>
+                            <div className="mt-0.5 flex gap-3 text-[10px] text-slate-500">
+                              {r.patient && <span>Hasta: {r.patient.fullName}</span>}
+                              <span>Tarih: {fmtDate(r.reminderDate)}</span>
+                              <span className={`rounded px-1.5 py-0.5 font-semibold ${r.status === "AKTIF" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{r.status}</span>
+                            </div>
+                          </div>
+                          {r.status === "AKTIF" && (
+                            <button onClick={() => completeReminder(r.id)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[10px] font-bold text-white hover:bg-emerald-700">Tamamla</button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )
+              }
+            </div>
+          )}
+
+          {/* Modal: Taksit Tahsilat */}
+          {showOdeModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+              <div className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
+                <h3 className="text-sm font-black text-slate-900">Taksit Tahsilatı — #{showOdeModal.siraNo}</h3>
+                <div className="rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-600 space-y-1">
+                  <p>Vade: {fmtDate(showOdeModal.vadeDate)}</p>
+                  <p>Taksit Tutarı: <b>{fmt(showOdeModal.tutar)}</b></p>
+                  <p>Kalan: <b className="text-amber-600">{fmt(showOdeModal.kalan)}</b></p>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Tahsilat Tutarı (₺) *</label>
+                  <input type="number" value={odeForm.tutar} onChange={e => setOdeForm(f => ({ ...f, tutar: e.target.value }))} className={INP + " text-lg font-bold"} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
+                  <select value={odeForm.yontem} onChange={e => setOdeForm(f => ({ ...f, yontem: e.target.value }))} className={INP}>
+                    {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Not</label>
+                  <input value={odeForm.note} onChange={e => setOdeForm(f => ({ ...f, note: e.target.value }))} placeholder="Opsiyonel…" className={INP} />
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowOdeModal(null)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600">Vazgeç</button>
+                  <button onClick={handleOde} className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white hover:bg-emerald-700">Tahsil Et</button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal: Hatırlatma Ekle */}
+          {showRemModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+              <div className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
+                <h3 className="text-sm font-black text-slate-900">Hatırlatma Ekle</h3>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta (opsiyonel)</label>
+                  <select value={remForm.patientId} onChange={e => setRemForm(f => ({ ...f, patientId: e.target.value }))} className={INP}>
+                    <option value="">— Hasta Seçin —</option>
+                    {patients.map(p => <option key={p.id} value={p.id}>{p.fullName}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Not *</label>
+                  <textarea value={remForm.note} onChange={e => setRemForm(f => ({ ...f, note: e.target.value }))} rows={3} className={INP} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih *</label>
+                  <input type="date" value={remForm.reminderDate} onChange={e => setRemForm(f => ({ ...f, reminderDate: e.target.value }))} className={INP} />
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowRemModal(false)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600">Vazgeç</button>
+                  <button onClick={handleAddReminder} className="flex-1 rounded-xl bg-blue-600 py-2.5 text-sm font-bold text-white hover:bg-blue-700">Kaydet</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       )}
+
+      {/* ════════════════════════════════════════════════════════════════════
+          TAB: HASTA ALACAKLARI
+      ════════════════════════════════════════════════════════════════════ */}
+      {activeTab === "alacak" && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-black text-slate-900">Hasta Alacak Takibi</h2>
+              <p className="mt-0.5 text-xs text-slate-500">Tedavi tutarı eksi ödemelerden kalan hasta borçları</p>
+            </div>
+            <div className="flex gap-2">
+              <input placeholder="Hasta / tel ara…" value={alacakSearch} onChange={e => setAlacakSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-violet-400" />
+              <button onClick={loadAlacaklar} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">↻ Yenile</button>
+              <button onClick={() => {
+                const rows = [["Hasta","Tel","Tedavi Toplamı","İndirim","Net Tedavi","Ödenen","Bakiye"], ...filteredAlacaklar.map(a => [a.fullName, a.phone, String(a.brutTedavi), String(a.indirim), String(a.netTedavi), String(a.odenen), String(a.bakiye)])];
+                const csv = rows.map(r => r.map(c => `"${c}"`).join(",")).join("\n");
+                const el = document.createElement("a"); el.href = "data:text/csv;charset=utf-8,\uFEFF" + encodeURIComponent(csv); el.download = "hasta-alacaklar.csv"; el.click();
+              }} className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100">
+                ↓ CSV
+              </button>
+            </div>
+          </div>
+
+          {/* Özet KPI */}
+          <div className="grid grid-cols-3 gap-3">
+            <div className="rounded-2xl border border-violet-100 bg-violet-50 p-4">
+              <p className="text-[10px] font-bold uppercase text-slate-500">Toplam Alacak</p>
+              <p className="mt-1 text-xl font-black text-violet-700">{fmt(alacakTotal)}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+              <p className="text-[10px] font-bold uppercase text-slate-500">Borçlu Hasta</p>
+              <p className="mt-1 text-xl font-black text-slate-800">{alacaklar.length} kişi</p>
+            </div>
+            <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+              <p className="text-[10px] font-bold uppercase text-slate-500">Ortalama Bakiye</p>
+              <p className="mt-1 text-xl font-black text-amber-700">{fmt(alacaklar.length > 0 ? alacakTotal / alacaklar.length : 0)}</p>
+            </div>
+          </div>
+
+          {alacakLoading
+            ? <div className="py-12 text-center text-sm text-slate-400">Hesaplanıyor…</div>
+            : (
+              <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+                <table className="w-full text-xs">
+                  <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                    <th className="px-4 py-3 text-left">Hasta</th>
+                    <th className="px-4 py-3 text-left">Telefon</th>
+                    <th className="px-4 py-3 text-right">Tedavi Toplamı</th>
+                    <th className="px-4 py-3 text-right">İndirim</th>
+                    <th className="px-4 py-3 text-right">Net Tedavi</th>
+                    <th className="px-4 py-3 text-right">Ödenen</th>
+                    <th className="px-4 py-3 text-right font-black">Bakiye (Alacak)</th>
+                    <th className="px-4 py-3" />
+                  </tr></thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredAlacaklar.length === 0
+                      ? <tr><td colSpan={8} className="py-10 text-center text-slate-400">
+                          {alacaklar.length === 0 ? "Alacak kaydı bulunamadı" : "Arama sonucu yok"}
+                        </td></tr>
+                      : filteredAlacaklar.map(a => {
+                        const pctOdendi = a.netTedavi > 0 ? Math.min(100, Math.round((a.odenen / a.netTedavi) * 100)) : 0;
+                        return (
+                          <tr key={a.id} className="hover:bg-slate-50">
+                            <td className="px-4 py-3">
+                              <Link href={`/hasta-detay/${a.id}`} className="font-semibold text-slate-800 hover:text-blue-700 hover:underline">{a.fullName}</Link>
+                              {a.discountRate > 0 && <span className="ml-1.5 rounded bg-green-100 px-1 py-0.5 text-[9px] text-green-700">%{a.discountRate} indirim</span>}
+                            </td>
+                            <td className="px-4 py-3 text-slate-500">{a.phone}</td>
+                            <td className="px-4 py-3 text-right text-slate-700">{fmt(a.brutTedavi)}</td>
+                            <td className="px-4 py-3 text-right text-green-600">{a.indirim > 0 ? `-${fmt(a.indirim)}` : "—"}</td>
+                            <td className="px-4 py-3 text-right font-semibold text-slate-800">{fmt(a.netTedavi)}</td>
+                            <td className="px-4 py-3 text-right">
+                              <div>
+                                <span className="font-semibold text-emerald-600">{fmt(a.odenen)}</span>
+                                <div className="mt-1 h-1 w-16 overflow-hidden rounded-full bg-slate-200">
+                                  <div className="h-full rounded-full bg-emerald-400" style={{ width: `${pctOdendi}%` }} />
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 text-right font-black text-violet-700">{fmt(a.bakiye)}</td>
+                            <td className="px-4 py-3">
+                              <button onClick={() => { setShowTahForm(true); changeTab("gelir"); setTahForm(f => ({ ...f, patientId: a.id })); ensurePatients(); ensurePos(); }}
+                                className="rounded-lg bg-emerald-600 px-2.5 py-1 text-[10px] font-bold text-white hover:bg-emerald-700">
+                                Tahsilat
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    }
+                  </tbody>
+                </table>
+                <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-5 py-3">
+                  <span className="text-xs text-slate-500">{filteredAlacaklar.length} hasta</span>
+                  <span className="text-sm font-black text-violet-700">{fmt(filteredAlacaklar.reduce((s, a) => s + a.bakiye, 0))} toplam alacak</span>
+                </div>
+              </div>
+            )
+          }
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════
+          TAB: TEDARİKÇİ / CARİ
+      ════════════════════════════════════════════════════════════════════ */}
+      {activeTab === "cari" && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-sm font-black text-slate-900">Tedarikçi Cari Hesaplar</h2>
+            <div className="flex gap-2">
+              <input placeholder="Firma ara…" value={cariSearch} onChange={e => setCariSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
+              <Link href="/firma" className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700">Satın Alma / Ödeme →</Link>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            {[
+              { label: "Toplam Tedarikçi Borcu", value: fmt(filteredFirmas.reduce((s, f) => s + f.bakiye, 0)), tone: "text-amber-700",   bg: "bg-amber-50",   border: "border-amber-100"   },
+              { label: "Toplam Alınan",           value: fmt(filteredFirmas.reduce((s, f) => s + f.borc, 0)),  tone: "text-red-700",     bg: "bg-red-50",     border: "border-red-100"     },
+              { label: "Toplam Ödenen",           value: fmt(filteredFirmas.reduce((s, f) => s + f.odenen, 0)),tone: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-100" },
+            ].map(c => (
+              <div key={c.label} className={`${c.bg} ${c.border} rounded-2xl border p-4`}>
+                <p className="text-[10px] font-bold uppercase text-slate-500">{c.label}</p>
+                <p className={`mt-1 text-xl font-black ${c.tone}`}>{c.value}</p>
+              </div>
+            ))}
+          </div>
+          <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+            <table className="w-full text-xs">
+              <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                <th className="px-4 py-3 text-left">Firma</th>
+                <th className="px-4 py-3 text-right">Toplam Alınan</th>
+                <th className="px-4 py-3 text-right">Toplam Ödenen</th>
+                <th className="px-4 py-3 text-right">Net Bakiye</th>
+                <th className="px-4 py-3 text-center">Durum</th>
+                <th className="px-4 py-3" />
+              </tr></thead>
+              <tbody className="divide-y divide-slate-100">
+                {filteredFirmas.length === 0
+                  ? <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-400">Firma bulunamadı</td></tr>
+                  : filteredFirmas.map(f => (
+                    <tr key={f.id} className="hover:bg-slate-50">
+                      <td className="px-4 py-3 font-semibold text-slate-800">{f.name}</td>
+                      <td className="px-4 py-3 text-right font-bold text-red-700">{fmt(f.borc)}</td>
+                      <td className="px-4 py-3 text-right font-bold text-emerald-700">{fmt(f.odenen)}</td>
+                      <td className="px-4 py-3 text-right font-black text-slate-900">{fmt(f.bakiye)}</td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`rounded-lg px-2 py-0.5 text-[10px] font-bold ${f.bakiye > 0 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
+                          {f.bakiye > 0 ? "Borçlu" : "Kapalı"}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3">
+                        <Link href="/firma" className="text-[10px] text-blue-600 hover:underline">Detay →</Link>
+                      </td>
+                    </tr>
+                  ))
+                }
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ════════════════════════════════════════════════════════════════════
+          TAB: HAKEDİŞLER
+      ════════════════════════════════════════════════════════════════════ */}
+      {activeTab === "hakedis" && (
+        <div className="space-y-4">
+          <div className="flex flex-wrap items-center gap-3">
+            <h2 className="mr-auto text-sm font-black text-slate-900">Doktor Hakedişleri</h2>
+            <select value={selectedDoctor} onChange={e => setSelectedDoctor(e.target.value)}
+              className="w-52 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400">
+              <option value="">— Doktor seçin —</option>
+              {hakDoctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+            </select>
+            {selectedDoctor && (
+              <button onClick={() => setShowHakOdeModal(true)} className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700">
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+                Hakediş Öde
+              </button>
+            )}
+          </div>
+          {!selectedDoctor
+            ? <div className="rounded-2xl bg-slate-50 py-16 text-center text-sm text-slate-400">Görüntülemek için bir doktor seçin</div>
+            : hakLoading
+              ? <div className="py-12 text-center text-sm text-slate-400">Yükleniyor…</div>
+              : doctorFinance && (
+                <div className="space-y-4">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    {[
+                      { label: "Toplam Üretim",  value: fmt(Number(doctorFinance.totalTreatments) || 0), tone: "text-blue-700",    bg: "bg-blue-50"    },
+                      { label: "Tahsil Edilen",   value: fmt(Number(doctorFinance.received) || 0),        tone: "text-emerald-700", bg: "bg-emerald-50" },
+                      { label: "Tahsil Bekleyen", value: fmt(Number(doctorFinance.toReceive) || 0),       tone: "text-amber-700",   bg: "bg-amber-50"   },
+                      { label: "Ödenen Hakediş",  value: fmt(Number(doctorFinance.earned) || 0),          tone: "text-slate-900",   bg: "bg-slate-100"  },
+                    ].map(c => (
+                      <div key={c.label} className={`${c.bg} rounded-2xl p-5`}>
+                        <p className="text-[10px] font-bold uppercase text-slate-500">{c.label}</p>
+                        <p className={`mt-1 text-2xl font-black ${c.tone}`}>{c.value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {Array.isArray(doctorFinance.topExaminations) && (doctorFinance.topExaminations as { type: string; count: number }[]).length > 0 && (
+                    <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+                      <div className="border-b border-slate-100 px-5 py-4">
+                        <h3 className="text-sm font-black text-slate-900">En Çok Yapılan Tedaviler</h3>
+                      </div>
+                      <table className="w-full text-xs">
+                        <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                          <th className="px-4 py-3 text-left">Tedavi</th>
+                          <th className="px-4 py-3 text-right">Adet</th>
+                        </tr></thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {(doctorFinance.topExaminations as { type: string; count: number }[]).map(ex => (
+                            <tr key={ex.type} className="hover:bg-slate-50">
+                              <td className="px-4 py-3 font-medium text-slate-700">{ex.type}</td>
+                              <td className="px-4 py-3 text-right font-black text-slate-900">{ex.count}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )
+          }
+
+          {/* Modal: Hakediş Öde */}
+          {showHakOdeModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+              <div className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
+                <h3 className="text-sm font-black text-slate-900">Hakediş Ödemesi</h3>
+                <p className="text-xs text-slate-500">
+                  {hakDoctors.find(d => d.id === selectedDoctor)?.fullName} için hakediş ödemesi kaydedilecek.
+                </p>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Ödeme Tutarı (₺) *</label>
+                  <input type="number" value={hakOdeForm.tutar} onChange={e => setHakOdeForm(f => ({ ...f, tutar: e.target.value }))} placeholder="0.00" className={INP + " text-lg font-bold"} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
+                  <input value={hakOdeForm.aciklama} onChange={e => setHakOdeForm(f => ({ ...f, aciklama: e.target.value }))} placeholder="örn: Mayıs 2026 hakediş" className={INP} />
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={() => setShowHakOdeModal(false)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600">Vazgeç</button>
+                  <button onClick={handleHakOde} disabled={hakOdeSaving} className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-60">
+                    {hakOdeSaving ? "Kaydediliyor…" : "Ödemeyi Kaydet"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
     </div>
   );
 }

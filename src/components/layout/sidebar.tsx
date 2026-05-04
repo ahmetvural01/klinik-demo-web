@@ -88,14 +88,9 @@ function buildNavGroups(role: string): NavGroup[] {
     groups.push({
       label: "Finans",
       items: [
-        { href: "/muhasebe",    label: "Muhasebe Merkezi",  icon: "finance" },
-        { href: "/kasa",        label: "Kasa / Banka",      icon: "kasa" },
-        { href: "/taksit",      label: "Taksit Takibi",     icon: "taksit" },
+        { href: "/muhasebe", label: "Muhasebe Merkezi", icon: "finance" },
         ...(isYonetici || isMuhasebe
-          ? [
-              { href: "/gider", label: "Giderler",          icon: "gider" },
-              { href: "/rapor", label: "Raporlar",           icon: "rapor" },
-            ]
+          ? [{ href: "/rapor", label: "Raporlar", icon: "rapor" }]
           : []),
       ],
     });
@@ -194,7 +189,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
       : pathname === href || pathname.startsWith(href + "/");
 
   const dynamicBadge = (href: string): number => {
-    if (href === "/taksit") return alerts.taksit;
+    if (href === "/muhasebe") return alerts.taksit; // gecikmiş taksit sayısı
     if (href === "/stok") return alerts.stok;
     if (href === "/lab") return alerts.lab;
     return 0;
