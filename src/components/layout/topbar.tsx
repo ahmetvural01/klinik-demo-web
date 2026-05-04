@@ -73,6 +73,22 @@ export function Topbar({ user }: Props) {
   const [q, setQ] = useState("");
   const [searchResults, setSearchResults] = useState<{id: string; fullName: string; tcNo: string; phone: string}[]>([]);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
+  const getEffectiveRole = () => sessionStorage.getItem("dev-preview-role") || user.role;
+  const [effectiveRole, setEffectiveRole] = useState(user.role);
+  useEffect(() => {
+    setEffectiveRole(getEffectiveRole());
+    const onStorage = () => setEffectiveRole(getEffectiveRole());
+    window.addEventListener("storage", onStorage);
+    // sidebar aynı pencerede sessionStorage'ı değiştirdiğinde storage event fırlamaz,
+    // bu yüzden custom event de dinle
+    window.addEventListener("preview-role-change", onStorage);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("preview-role-change", onStorage);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.role]);
+  const hidePhone = effectiveRole === "DOKTOR" || effectiveRole === "ASISTAN";
   const [alerts, setAlerts] = useState<AlertCounts>({ taksit: 0, stok: 0, lab: 0 });
   const [showAlerts, setShowAlerts] = useState(false);
   const alertRef = useRef<HTMLDivElement>(null);
@@ -232,7 +248,7 @@ export function Topbar({ user }: Props) {
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-bold text-slate-800 truncate">{p.fullName}</p>
-                        <p className="text-xs text-slate-500 truncate">{p.tcNo} · {p.phone}</p>
+                        <p className="text-xs text-slate-500 truncate">{p.tcNo}{!hidePhone ? ` · ${p.phone}` : ""}</p>
                       </div>
                       <svg className="h-4 w-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><polyline points="9 18 15 12 9 6"/></svg>
                     </button>

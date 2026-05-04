@@ -27,7 +27,9 @@ export default function FinansPage() {
         setStaff(doctors);
       });
     fetch("/api/auth/me").then(r=>r.json()).then(d=>{
-      if (d?.role) setUserRole(d.role);
+      const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
+      const effectiveRole = preview || d?.role || "";
+      if (effectiveRole) setUserRole(effectiveRole);
       if (d?.role === "DOKTOR" && d?.id) setSelectedDoctor(d.id);
     }).catch(()=>{});
   }, []);

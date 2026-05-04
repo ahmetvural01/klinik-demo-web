@@ -38,7 +38,8 @@ function HastaContent() {
       ]);
       const json = await res.json();
       const me = await meRes.json().catch(() => ({}));
-      if (me?.role) setUserRole(me.role);
+      const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
+      if (preview || me?.role) setUserRole(preview || me.role);
       if (!res.ok) {
         if (res.status === 401) {
           window.location.href = "/giris";

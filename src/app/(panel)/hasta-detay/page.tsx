@@ -270,7 +270,9 @@ function HastaDetayContent() {
       .then(r => r.ok ? r.json() : null)
       .then(d => {
         setCurrentUserId(d?.id || "");
-        if (d?.role) setCurrentUserRole(d.role);
+        const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
+        const effectiveRole = preview || d?.role || "";
+        if (effectiveRole) setCurrentUserRole(effectiveRole);
         if (d?.id) setTreatDoctorId(d.id);
       })
       .catch(() => {});

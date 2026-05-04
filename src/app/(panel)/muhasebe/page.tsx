@@ -149,7 +149,7 @@ export default function MuhasebePage() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/auth/me").then(r => r.ok ? r.json() : null).then(d => { if (d?.role) setUserRole(d.role); }).catch(() => null);
+    fetch("/api/auth/me").then(r => r.ok ? r.json() : null).then(d => { const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null; if (preview || d?.role) setUserRole(preview || d.role); }).catch(() => null);
     fetch("/api/taksit-plani/mark-gecikti", { method: "POST" }).catch(() => null);
     refreshSummary().finally(() => setLoading(false));
     loadTrend();
