@@ -56,6 +56,25 @@ export default function RaporPage() {
   const [stats,    setStats]    = useState<Stats>(EMPTY);
   const [loading,  setLoading]  = useState(false);
   const [tab,      setTab]      = useState<Tab>("genel");
+  const [printDr,  setPrintDr]  = useState<DoctorReport | null>(null);
+
+  const setQuickRange = (period: "bugun" | "hafta" | "ay" | "yil") => {
+    const now = new Date();
+    let from: Date;
+    if (period === "bugun") {
+      from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+    } else if (period === "hafta") {
+      const day = now.getDay(); // 0=Sun
+      const diff = day === 0 ? -6 : 1 - day;
+      from = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff, 0, 0, 0);
+    } else if (period === "ay") {
+      from = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
+    } else {
+      from = new Date(now.getFullYear(), 0, 1, 0, 0, 0);
+    }
+    setFromDate(from.toISOString().slice(0, 16));
+    setToDate(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString().slice(0, 16));
+  };
 
   useEffect(() => {
     const now  = new Date();
@@ -89,6 +108,7 @@ export default function RaporPage() {
   const maxExp = Math.max(...stats.expenseByCategory.map(e => e.amount), 1);
 
   return (
+    <>
     <section className="space-y-5">
       {/* Header */}
       <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
@@ -97,6 +117,19 @@ export default function RaporPage() {
           <p className="mt-0.5 text-xs text-slate-500">Hakediş hesabı · KDV özeti · Gelir vergisi tahmini · Doktor bazlı tam döküm</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {/* Hızlı dönem butonları */}
+          {([
+            { key: "bugun", label: "Bugün" },
+            { key: "hafta", label: "Bu Hafta" },
+            { key: "ay",    label: "Bu Ay" },
+            { key: "yil",   label: "Bu Yıl" },
+          ] as const).map(p => (
+            <button key={p.key} onClick={() => setQuickRange(p.key)}
+              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-primary hover:text-white hover:border-primary transition">
+              {p.label}
+            </button>
+          ))}
+          <div className="w-px h-6 bg-slate-200" />
           <input type="datetime-local" value={fromDate} onChange={e => setFromDate(e.target.value)}
             className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
           <span className="text-slate-400 text-sm">—</span>
@@ -217,11 +250,58 @@ export default function RaporPage() {
             <>
               {/* Özet tablo */}
               <div className="rounded-xl border border-slate-100 bg-white shadow-sm overflow-x-auto">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50">
+                  <h3 className="text-sm font-bold text-slate-700">Dönem: {fromDate?.slice(0,10)} — {toDate?.slice(0,10)}</h3>
+                  <button
+                    onClick={() => {
+                      const win = window.open("", "_blank");
+                      if (!win) return;
+                      const rows = stats.doctorReports.map(dr => `
+                        <tr>
+                          <td>${dr.fullName}</td>
+                          <td class="r">${dr.ciro.toLocaleString("tr-TR", {minimumFractionDigits:2})}</td>
+                          <td class="r">${dr.kkMasraf.toLocaleString("tr-TR", {minimumFractionDigits:2})}</td>
+                          <td class="r">${dr.labCost.toLocaleString("tr-TR", {minimumFractionDigits:2})}</td>
+                          <td class="r">${dr.genelMasraf.toLocaleString("tr-TR", {minimumFractionDigits:2})}</td>
+                          <td class="r">${dr.toplamGider.toLocaleString("tr-TR", {minimumFractionDigits:2})}</td>
+                          <td class="r">${dr.brut.toLocaleString("tr-TR", {minimumFractionDigits:2})}</td>
+                          <td class="r">%${dr.maasYuzde}</td>
+                          <td class="r bold">${dr.hakEdis.toLocaleString("tr-TR", {minimumFractionDigits:2})}</td>
+                        </tr>`).join("");
+                      win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Doktor Hakediş Raporu</title>
+                        <style>body{font-family:Arial,sans-serif;font-size:11px;margin:20px}h2{margin-bottom:4px}p.sub{color:#666;font-size:10px;margin-bottom:16px}
+                        table{width:100%;border-collapse:collapse}th,td{border:1px solid #ddd;padding:5px 8px}th{background:#f5f5f5;font-weight:bold}
+                        .r{text-align:right}.bold{font-weight:bold}tfoot td{background:#f0f0f0;font-weight:bold}
+                        @media print{.no-print{display:none}}</style></head><body>
+                        <h2>Doktor Hakediş Raporu</h2>
+                        <p class="sub">Dönem: ${fromDate?.slice(0,10)} — ${toDate?.slice(0,10)}</p>
+                        <table><thead><tr>
+                          <th>Doktor</th><th>Ciro (₺)</th><th>KK Masraf</th><th>Lab</th><th>Genel Masraf</th><th>Toplam Gider</th><th>Brüt</th><th>Maaş%</th><th>Hakediş (₺)</th>
+                        </tr></thead><tbody>${rows}</tbody>
+                        <tfoot><tr>
+                          <td>TOPLAM</td>
+                          <td class="r">${stats.doctorReports.reduce((s,d)=>s+d.ciro,0).toLocaleString("tr-TR", {minimumFractionDigits:2})}</td>
+                          <td class="r">${stats.doctorReports.reduce((s,d)=>s+d.kkMasraf,0).toLocaleString("tr-TR", {minimumFractionDigits:2})}</td>
+                          <td class="r">${stats.doctorReports.reduce((s,d)=>s+d.labCost,0).toLocaleString("tr-TR", {minimumFractionDigits:2})}</td>
+                          <td class="r">${stats.doctorReports.reduce((s,d)=>s+d.genelMasraf,0).toLocaleString("tr-TR", {minimumFractionDigits:2})}</td>
+                          <td class="r">${stats.doctorReports.reduce((s,d)=>s+d.toplamGider,0).toLocaleString("tr-TR", {minimumFractionDigits:2})}</td>
+                          <td class="r">${stats.doctorReports.reduce((s,d)=>s+d.brut,0).toLocaleString("tr-TR", {minimumFractionDigits:2})}</td>
+                          <td></td>
+                          <td class="r bold">${stats.doctorReports.reduce((s,d)=>s+d.hakEdis,0).toLocaleString("tr-TR", {minimumFractionDigits:2})}</td>
+                        </tr></tfoot></table>
+                        <script>window.onload=()=>window.print()<\/script></body></html>`);
+                      win.document.close();
+                    }}
+                    className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition">
+                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                    Yazdır / PDF
+                  </button>
+                </div>
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-slate-100 bg-slate-50">
-                      {["Doktor","Ciro","KK Masraf","Lab","Genel Masraf","Toplam Gider","Brüt","Maaş%","Hakediş"].map(h => (
-                        <th key={h} className={`px-3 py-2.5 font-bold text-slate-500 uppercase ${h==="Doktor"?"text-left":"text-right"}`}>{h}</th>
+                      {["Doktor","Ciro","KK Masraf","Lab","Genel Masraf","Toplam Gider","Brüt","Maaş%","Hakediş",""].map(h => (
+                        <th key={h} className={`px-3 py-2.5 font-bold text-slate-500 uppercase ${h==="Doktor"||h===""?"text-left":"text-right"}`}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -249,6 +329,12 @@ export default function RaporPage() {
                         <td className="px-3 py-2.5 text-right">
                           <span className={`font-black text-sm ${dr.hakEdis >= 0 ? "text-emerald-700" : "text-red-600"}`}>{CUR(dr.hakEdis)}</span>
                         </td>
+                        <td className="px-3 py-2.5">
+                          <button onClick={() => setPrintDr(dr)}
+                            className="rounded border border-slate-200 px-2 py-1 text-[10px] font-semibold text-slate-500 hover:bg-slate-100 transition">
+                            Detay
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -265,6 +351,7 @@ export default function RaporPage() {
                       ].map((v,i) => <td key={i} className="px-3 py-2.5 text-right text-xs font-bold">{CUR(v)}</td>)}
                       <td className="px-3 py-2.5" />
                       <td className="px-3 py-2.5 text-right text-sm font-black text-emerald-700">{CUR(stats.doctorReports.reduce((s,d)=>s+d.hakEdis,0))}</td>
+                      <td className="px-3 py-2.5" />
                     </tr>
                   </tfoot>
                 </table>
@@ -492,5 +579,99 @@ export default function RaporPage() {
         </div>
       )}
     </section>
+
+      {/* ── DOKTOR DETAY MODAL ───────────────────────────────────────── */}
+      {printDr && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setPrintDr(null)}>
+          <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl" onClick={e => e.stopPropagation()}>
+            {/* Modal Header */}
+            <div className="flex items-center justify-between rounded-t-2xl border-b border-slate-100 bg-slate-50 px-6 py-4">
+              <div>
+                <h2 className="text-base font-black text-slate-900">{printDr.fullName}</h2>
+                <p className="text-xs text-slate-500">Dönem: {fromDate?.slice(0,10)} — {toDate?.slice(0,10)}</p>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const dr = printDr;
+                    const win = window.open("", "_blank");
+                    if (!win) return;
+                    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+                    <title>${dr.fullName} - Hakediş Raporu</title>
+                    <style>
+                      body{font-family:Arial,sans-serif;font-size:12px;margin:30px;color:#222}
+                      h2{margin:0 0 4px;font-size:18px} p.sub{color:#666;margin:0 0 20px;font-size:11px}
+                      table{width:100%;border-collapse:collapse;margin-top:10px}
+                      th,td{border:1px solid #ccc;padding:7px 10px} th{background:#f0f0f0}
+                      .r{text-align:right} .gr{color:#16a34a;font-weight:bold} .rd{color:#dc2626}
+                      .info{background:#f8fafc;border:1px solid #e2e8f0;padding:12px;border-radius:6px;margin-bottom:16px}
+                      .info-row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #f1f5f9}
+                    </style></head><body>
+                    <h2>${dr.fullName} — Hakediş Raporu</h2>
+                    <p class="sub">Dönem: ${fromDate?.slice(0,10)} — ${toDate?.slice(0,10)}</p>
+                    <div class="info">
+                      <div class="info-row"><span>Komisyon Oranları</span><span>KK: %${dr.kkYuzde} · Genel: %${dr.genelYuzde} · Maaş: %${dr.maasYuzde}</span></div>
+                      <div class="info-row"><span>Muayene Sayısı</span><span>${dr.examinationCount}</span></div>
+                      <div class="info-row"><span>Benzersiz Hasta</span><span>${dr.uniquePatients}</span></div>
+                    </div>
+                    <table>
+                      <tbody>
+                        <tr><th style="text-align:left">Toplam Ciro</th><td class="r gr">₺${dr.ciro.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
+                        <tr><td>— KK Masrafı (KK × %${dr.kkYuzde})</td><td class="r rd">₺${dr.kkMasraf.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
+                        <tr><td>— Lab Maliyeti</td><td class="r rd">₺${dr.labCost.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
+                        <tr><td>— Genel Masraf (Ciro × %${dr.genelYuzde})</td><td class="r rd">₺${dr.genelMasraf.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
+                        <tr><th style="text-align:left">Toplam Gider</th><td class="r rd">₺${dr.toplamGider.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
+                        <tr><th style="text-align:left">Brüt (Ciro − Gider)</th><td class="r" style="color:#1d4ed8">₺${dr.brut.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
+                        <tr><th style="text-align:left;font-size:14px">HAKEDİŞ (Brüt × %${dr.maasYuzde})</th>
+                          <td class="r ${dr.hakEdis>=0?"gr":"rd"}" style="font-size:16px">₺${dr.hakEdis.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
+                      </tbody>
+                    </table>
+                    <script>window.onload=()=>window.print()<\/script></body></html>`);
+                    win.document.close();
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white hover:bg-primary/90 transition">
+                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                  PDF / Yazdır
+                </button>
+                <button onClick={() => setPrintDr(null)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition">Kapat</button>
+              </div>
+            </div>
+
+            {/* Bilgi satırları */}
+            <div className="px-6 py-4 space-y-2.5 text-sm">
+              <div className="flex justify-between items-center rounded-lg bg-slate-50 px-4 py-2 text-xs">
+                <span className="text-slate-500">Komisyon Oranları</span>
+                <span className="font-semibold text-slate-700">KK: %{printDr.kkYuzde} · Genel: %{printDr.genelYuzde} · Maaş: %{printDr.maasYuzde}</span>
+              </div>
+              <div className="flex justify-between items-center rounded-lg bg-slate-50 px-4 py-2 text-xs">
+                <span className="text-slate-500">Muayene / Hasta</span>
+                <span className="font-semibold text-slate-700">{printDr.examinationCount} işlem · {printDr.uniquePatients} hasta</span>
+              </div>
+
+              {/* Hesap özeti */}
+              <div className="rounded-lg border border-slate-100 divide-y divide-slate-50">
+                {[
+                  { label: "Toplam Ciro",                    val: printDr.ciro,        cls: "text-emerald-700 font-black text-base" },
+                  { label: `KK Masrafı (KK × %${printDr.kkYuzde})`,  val: -printDr.kkMasraf,   cls: "text-red-600" },
+                  { label: "Lab Maliyeti",                   val: -printDr.labCost,    cls: "text-red-600" },
+                  { label: `Genel Masraf (Ciro × %${printDr.genelYuzde})`, val: -printDr.genelMasraf, cls: "text-red-600" },
+                  { label: "Toplam Gider",                   val: -printDr.toplamGider, cls: "text-red-700 font-semibold" },
+                  { label: "Brüt (Ciro − Gider)",            val: printDr.brut,        cls: "text-blue-700 font-semibold" },
+                ].map(r => (
+                  <div key={r.label} className="flex justify-between items-center px-4 py-2 text-xs">
+                    <span className="text-slate-600">{r.label}</span>
+                    <span className={r.cls}>{r.val < 0 ? "−" : ""}{CUR(Math.abs(r.val))}</span>
+                  </div>
+                ))}
+                <div className="flex justify-between items-center px-4 py-3 bg-emerald-50 rounded-b-lg">
+                  <span className="text-sm font-black text-slate-800">HAKEDİŞ (Brüt × %{printDr.maasYuzde})</span>
+                  <span className={`text-xl font-black ${printDr.hakEdis >= 0 ? "text-emerald-700" : "text-red-600"}`}>{CUR(printDr.hakEdis)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
