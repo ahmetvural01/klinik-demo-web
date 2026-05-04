@@ -101,22 +101,12 @@ export default function AnasayfaPage() {
   useEffect(() => {
     fetch("/api/dashboard")
       .then(r => r.json())
-      .then(d => setStats({ totalAppointments: d.totalAppointments || 0, totalExaminations: d.totalExaminations || 0, totalPatients: d.totalPatients || 0, totalStaff: d.totalStaff || 0 }))
+      .then(d => {
+        setStats({ totalAppointments: d.totalAppointments || 0, totalExaminations: d.totalExaminations || 0, totalPatients: d.totalPatients || 0, totalStaff: d.totalStaff || 0 });
+        if (Array.isArray(d.weekData)) setWeekData(d.weekData);
+      })
       .catch(() => {})
       .finally(() => setStatsLoading(false));
-
-    const today = new Date();
-    const promises = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(today);
-      d.setDate(d.getDate() - (6 - i));
-      const ds = d.toISOString().split("T")[0];
-      const lbl = DAY_NAMES[d.getDay()];
-      return fetch("/api/appointments?date=" + ds)
-        .then(r => r.json())
-        .then(data => ({ label: lbl, count: Array.isArray(data) ? data.length : (data?.appointments?.length || 0) }))
-        .catch(() => ({ label: lbl, count: 0 }));
-    });
-    Promise.all(promises).then(setWeekData);
 
     fetch("/api/messages").then(r => r.json()).then(d => setMessages(Array.isArray(d) ? d : [])).catch(() => {});
     fetch("/api/announcements").then(r => r.json()).then(d => setAnnouncements(Array.isArray(d) ? d : [])).catch(() => {});

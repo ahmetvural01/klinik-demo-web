@@ -71,9 +71,12 @@ export function Topbar({ user }: Props) {
   const router = useRouter();
   const pathname = usePathname();
   const [q, setQ] = useState("");
+  const [searchResults, setSearchResults] = useState<{id: string; fullName: string; tcNo: string; phone: string}[]>([]);
+  const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const [alerts, setAlerts] = useState<AlertCounts>({ taksit: 0, stok: 0, lab: 0 });
   const [showAlerts, setShowAlerts] = useState(false);
   const alertRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
   const today = new Date().toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" });
 
   // Sayfa başlığı
@@ -109,10 +112,59 @@ export function Topbar({ user }: Props) {
       if (alertRef.current && !alertRef.current.contains(e.target as Node)) {
         setShowAlerts(false);
       }
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setShowSearchDropdown(false);
+        setQ("");
+        setSearchResults([]);
+      }
     }
     document.addEventListener("mousedown", handle);
     return () => document.removeEventListener("mousedown", handle);
   }, []);
+
+  // Debounced search
+  useEffect(() => {
+    if (q.length < 2) {
+      setSearchResults([]);
+      return;
+    }
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/patients?q=${encodeURIComponent(q)}&take=8`);
+        if (res.ok) {
+          const json = await res.json();
+          const patients = Array.isArray(json) ? json : (json?.patients ?? []);
+          setSearchResults(patients.slice(0, 8));
+        }
+      } catch {}
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [q]);
+
+  const [selectedResultIdx, setSelectedResultIdx] = useState(-1);
+
+  const handleSearchKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape") {
+      setShowSearchDropdown(false);
+      setQ("");
+      setSearchResults([]);
+      setSelectedResultIdx(-1);
+      return;
+    }
+
+    if (!showSearchDropdown || searchResults.length === 0) return;
+
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setSelectedResultIdx(idx => Math.min(idx + 1, searchResults.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setSelectedResultIdx(idx => Math.max(idx - 1, -1));
+    } else if (e.key === "Enter" && selectedResultIdx >= 0) {
+      e.preventDefault();
+      window.location.href = `/hasta-detay?id=${searchResults[selectedResultIdx].id}`;
+    }
+  };
 
   const search = (e: React.FormEvent) => {
     e.preventDefault();
@@ -130,20 +182,74 @@ export function Topbar({ user }: Props) {
         {pageTitle && (
           <span className="hidden text-sm font-semibold text-slate-700 md:block">{pageTitle}</span>
         )}
-        <form onSubmit={search} className="flex max-w-sm flex-1 items-center gap-2">
-          <div className="relative flex-1">
-            <svg className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-            </svg>
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Hasta adı veya TC ile ara…"
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 py-1.5 pl-8 pr-3 text-sm text-slate-700 placeholder-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-            />
-          </div>
-          <button type="submit" className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white transition hover:bg-blue-700">Ara</button>
-        </form>
+        <div className="relative flex max-w-sm flex-1">
+          <form onSubmit={search} className="w-full">
+            <div ref={searchRef} className="relative flex items-center gap-2 rounded-lg border-2 border-blue-200 bg-blue-50 px-3 py-1.5 shadow-sm">
+              <svg className="h-4 w-4 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+              </svg>
+              <input
+                value={q}
+                onChange={(e) => { setQ(e.target.value); setShowSearchDropdown(true); setSelectedResultIdx(-1); }}
+                onKeyDown={handleSearchKeyDown}
+                onFocus={() => { setShowSearchDropdown(true); setSelectedResultIdx(-1); }}
+                placeholder="İsim, TC veya telefon ile hasta ara…"
+                aria-label="Hasta ara - ad, TC no veya telefon ile"
+                aria-expanded={showSearchDropdown}
+                aria-autocomplete="list"
+                className="flex-1 border-none bg-transparent text-sm font-medium outline-none placeholder-blue-400"
+              />
+              {q && (
+                <button
+                  type="button"
+                  onClick={() => { setQ(""); setSearchResults([]); setShowSearchDropdown(false); }}
+                  className="text-blue-400 hover:text-blue-600"
+                >
+                  ✕
+                </button>
+              )}
+              {searchResults.length > 0 && showSearchDropdown && (
+                <div className="absolute top-full left-0 right-0 z-50 mt-2 rounded-lg border border-blue-200 bg-white shadow-xl" role="listbox">
+                  <div className="flex items-center justify-between border-b border-blue-100 px-4 py-2 text-xs font-bold text-blue-600">
+                    <span>{searchResults.length} sonuç</span>
+                  </div>
+                  {searchResults.map((p, idx) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      role="option"
+                      aria-selected={selectedResultIdx === idx}
+                      onMouseEnter={() => setSelectedResultIdx(idx)}
+                      onClick={() => {
+                        window.location.href = `/hasta-detay?id=${p.id}`;
+                      }}
+                      className={`flex w-full items-center gap-3 px-4 py-3 text-left transition ${
+                        selectedResultIdx === idx ? "bg-blue-100" : "hover:bg-blue-50"
+                      } ${idx < searchResults.length - 1 ? "border-b border-blue-50" : ""}`}
+                    >
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">
+                        {p.fullName.split(" ").map(w => w[0]).slice(0, 1).join("")}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-bold text-slate-800 truncate">{p.fullName}</p>
+                        <p className="text-xs text-slate-500 truncate">{p.tcNo} · {p.phone}</p>
+                      </div>
+                      <svg className="h-4 w-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><polyline points="9 18 15 12 9 6"/></svg>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {showSearchDropdown && q.length >= 2 && searchResults.length === 0 && (
+                <div className="absolute top-full left-0 right-0 z-50 mt-2 rounded-lg border border-blue-200 bg-white px-4 py-3 text-center text-sm text-slate-500 shadow-lg">
+                  <div className="inline-flex items-center gap-2">
+                    <div className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    Hastalar aranıyor…
+                  </div>
+                </div>
+              )}
+            </div>
+          </form>
+        </div>
       </div>
 
       {/* Sağ taraf */}

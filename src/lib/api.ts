@@ -3,6 +3,42 @@ import { decodeTokenUser } from "@/lib/auth";
 import { can } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 
+// ── Kurum bilgisi in-memory cache (60 saniyelik TTL) ───────────────────────
+type CachedInstitution = {
+  isActive: boolean;
+  serviceMode: string;
+  serviceNote: string | null;
+  throttleMs: number;
+  paymentGraceUntil: Date | null;
+  suspendedUntil: Date | null;
+  expiresAt: number;
+};
+const _instCache = new Map<string, CachedInstitution>();
+const INST_CACHE_TTL_MS = 60_000; // 60 saniye
+
+async function getCachedInstitution(institutionId: string) {
+  const cached = _instCache.get(institutionId);
+  if (cached && cached.expiresAt > Date.now()) return cached;
+
+  const institution = await prisma.institution.findUnique({
+    where: { id: institutionId },
+    select: {
+      isActive: true,
+      serviceMode: true,
+      serviceNote: true,
+      throttleMs: true,
+      paymentGraceUntil: true,
+      suspendedUntil: true,
+    },
+  });
+
+  if (!institution) return null;
+
+  const entry: CachedInstitution = { ...institution, expiresAt: Date.now() + INST_CACHE_TTL_MS };
+  _instCache.set(institutionId, entry);
+  return entry;
+}
+
 function isWritePermission(permission?: string) {
   if (!permission) return false;
   if (permission === "*") return true;
@@ -30,18 +66,8 @@ export async function requireAuth(permission?: string) {
   if (user.role !== "SUPERADMIN" && user.institutionId) {
     const now = new Date();
 
-    // TEK DB sorgusu: kurum + gecikmiş fatura sayısı (sadece paymentGraceUntil dolmuşsa)
-    const institution = await prisma.institution.findUnique({
-      where: { id: user.institutionId },
-      select: {
-        isActive: true,
-        serviceMode: true,
-        serviceNote: true,
-        throttleMs: true,
-        paymentGraceUntil: true,
-        suspendedUntil: true,
-      },
-    });
+    // TEK DB sorgusu (cache'li): kurum + gecikmiş fatura sayısı (sadece paymentGraceUntil dolmuşsa)
+    const institution = await getCachedInstitution(user.institutionId);
 
     if (!institution) {
       return { error: NextResponse.json({ message: "Oturum kurumu bulunamadı. Lütfen yeniden giriş yapın." }, { status: 401 }) };

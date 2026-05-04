@@ -46,3 +46,20 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
   }
 }
+
+export async function DELETE(_: NextRequest, { params }: { params: { id: string } }) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+
+    // Önce hatırlatıcıları sil, sonra plan (Taksit + TaksitOdeme cascade ile silinir)
+    await prisma.$transaction(async (tx) => {
+      await (tx as any).reminder.deleteMany({ where: { planId: params.id } });
+      await (tx as any).taksitPlan.delete({ where: { id: params.id } });
+    });
+
+    return NextResponse.json({ ok: true });
+  } catch (e) {
+    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+  }
+}

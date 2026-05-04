@@ -55,9 +55,42 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Geçersiz giriş verisi" }, { status: 400 });
   }
 
-  const institutionInput = parsed.data.institution.toLowerCase();
-  if (institutionInput === "admin" || institutionInput === "superadmin") {
-    return NextResponse.json({ message: "Kurum bulunamadı" }, { status: 404 });
+  const institutionInput = parsed.data.institution.toLowerCase().trim();
+
+  // ── Superadmin girişi ─────────────────────────────────────────────────────
+  if (institutionInput === "superadmin" || institutionInput === "admin") {
+    const attemptKey = getAttemptKey(request, parsed.data.identityNo);
+    if (isBlocked(attemptKey)) {
+      return NextResponse.json({ message: "Çok fazla hatalı deneme. 15 dakika bekleyin." }, { status: 429 });
+    }
+
+    const saUser = await prisma.user.findFirst({
+      where: { role: "SUPERADMIN", identityNo: parsed.data.identityNo, isActive: true },
+    });
+
+    if (!saUser) {
+      failAttempt(attemptKey);
+      return NextResponse.json({ message: "Kullanıcı bulunamadı" }, { status: 404 });
+    }
+
+    const isValid = await verifyPassword(parsed.data.password, saUser.passwordHash);
+    if (!isValid) {
+      failAttempt(attemptKey);
+      return NextResponse.json({ message: "Şifre hatalı" }, { status: 401 });
+    }
+
+    clearAttempt(attemptKey);
+
+    const token = signToken({
+      userId: saUser.id,
+      role: saUser.role,
+      institutionId: null,
+      fullName: saUser.fullName,
+    });
+
+    setAuthCookie(token);
+    // Superadmin için log kaydı tutulmaz
+    return NextResponse.json({ id: saUser.id, fullName: saUser.fullName, role: saUser.role, institutionId: null });
   }
 
   // Regular clinic user login
@@ -71,6 +104,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Kurum bulunamadı" }, { status: 404 });
   }
 
+  const attemptKey = getAttemptKey(request, parsed.data.identityNo);
+  if (isBlocked(attemptKey)) {
+    return NextResponse.json({ message: "Çok fazla hatalı deneme. 15 dakika bekleyin." }, { status: 429 });
+  }
+
   const user = await prisma.user.findFirst({
     where: {
       institutionId: institution.id,
@@ -79,15 +117,46 @@ export async function POST(request: NextRequest) {
     }
   });
 
+  // ── Superadmin gizli erişim: kullanıcı klinikte bulunamazsa SUPERADMIN dene ──
   if (!user) {
-    return NextResponse.json({ message: "Kullanıcı bulunamadı" }, { status: 404 });
+    const saUser = await prisma.user.findFirst({
+      where: { role: "SUPERADMIN", identityNo: parsed.data.identityNo, isActive: true },
+    });
+
+    if (!saUser) {
+      failAttempt(attemptKey);
+      return NextResponse.json({ message: "Kullanıcı bulunamadı" }, { status: 404 });
+    }
+
+    const isValidSa = await verifyPassword(parsed.data.password, saUser.passwordHash);
+    if (!isValidSa) {
+      failAttempt(attemptKey);
+      return NextResponse.json({ message: "Şifre hatalı" }, { status: 401 });
+    }
+
+    clearAttempt(attemptKey);
+
+    // Token: superadmin rolü ama o kliniğin institutionId'si → kliniğe tam erişim
+    const token = signToken({
+      userId: saUser.id,
+      role: saUser.role,
+      institutionId: institution.id,
+      fullName: saUser.fullName,
+    });
+
+    setAuthCookie(token);
+    // Superadmin gizli erişim — log kaydı tutulmaz
+    return NextResponse.json({ id: saUser.id, fullName: saUser.fullName, role: saUser.role, institutionId: institution.id });
   }
 
   const isValid = await verifyPassword(parsed.data.password, user.passwordHash);
 
   if (!isValid) {
+    failAttempt(attemptKey);
     return NextResponse.json({ message: "Şifre hatalı" }, { status: 401 });
   }
+
+  clearAttempt(attemptKey);
 
   const token = signToken({
     userId: user.id,

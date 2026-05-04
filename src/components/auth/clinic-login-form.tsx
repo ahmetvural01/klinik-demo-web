@@ -74,7 +74,6 @@ export function ClinicLoginForm() {
                 onChange={(e) => setInstitution(e.target.value)}
                 placeholder="ornekklinik"
                 autoComplete="organization"
-                required
               />
             </label>
 

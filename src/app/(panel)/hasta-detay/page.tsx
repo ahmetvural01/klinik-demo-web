@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useState, useRef } from "react";
 import { TeethMap, ToothButton, ToothStatus as TSType, TOOTH_STATUS_LABELS, TOOTH_STATUS_BADGE } from "@/components/ToothChart";
 import PhoneInput from "@/components/PhoneInput";
 import { MEDICATION_TEMPLATES } from "@/lib/medications";
@@ -139,6 +139,7 @@ function HastaDetayContent() {
   const [installmentLoading, setInstallmentLoading] = useState(false);
   const [installmentModalOpen, setInstallmentModalOpen] = useState(false);
   const [installmentStep, setInstallmentStep] = useState<"borç" | "plan" | "onay">("borç");
+  const installmentModalRef = useRef<HTMLDivElement>(null);
   const [installmentForm, setInstallmentForm] = useState({
     toplamBorc: "",
     pesnat: "0",
@@ -237,6 +238,23 @@ function HastaDetayContent() {
     if (!isValidTab(requestedTab)) return;
     setTab(requestedTab);
   }, [requestedTab]);
+
+  // Installment modal Escape key handler
+  useEffect(() => {
+    if (!installmentModalOpen) return;
+
+    const handleEscapeKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setInstallmentModalOpen(false);
+        setInstallmentStep("borç");
+        setInstallmentForm({toplamBorc: "", pesnat: "0", taksitSayisi: "3", period: "AYLIK", startDate: new Date().toISOString().slice(0, 10), notes: ""});
+        setInstallmentPreview([]);
+      }
+    };
+
+    document.addEventListener("keydown", handleEscapeKey);
+    return () => document.removeEventListener("keydown", handleEscapeKey);
+  }, [installmentModalOpen]);
 
   useEffect(() => {
     const storedPriceList = window.localStorage.getItem(ACTIVE_PRICE_LIST_STORAGE_KEY);
@@ -813,10 +831,10 @@ function HastaDetayContent() {
   const diagnozlar = data.examinations.filter(e => e.status === "DIAGNOZ" || e.status === "Diagnoz (Ön Teşhis)");
   const tedaviler = data.examinations.filter(e => e.status !== "DIAGNOZ" && e.status !== "Diagnoz (Ön Teşhis)");
 
-  const healthFlags = [
+  const healthFlags = ([
     ["Alerji", data.hasAllergy], ["Hepatit", data.hasHepatitis], ["Böbrek", data.hasKidney],
     ["Diyabet", data.hasDiabetes], ["Kalp", data.hasHeart], ["Kan Sorunu", data.hasBloodIssue]
-  ] as [string, boolean][];
+  ] as [string, boolean][]).filter(([, v]) => v);
 
   return (
     <section className="space-y-4">
@@ -829,36 +847,18 @@ function HastaDetayContent() {
         </div>
       )}
 
-      <div className="flex items-start justify-between rounded-xl border border-slate-100 bg-white p-4">
-        <div className="flex items-center gap-3">
+      <div className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-white p-4">
+        <div className="flex flex-1 items-center gap-3">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary text-lg font-bold text-white">
             {data.fullName.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase()}
           </div>
-          <div>
+          <div className="flex-1">
             <h2 className="text-xl font-bold text-slate-900">{data.fullName}</h2>
             <p className="text-sm text-slate-500">TC: {data.tcNo} · {data.phone}</p>
           </div>
         </div>
-        <Link href="/hasta" className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 transition">← Geri Dön</Link>
-      </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <article className="rounded-lg bg-slate-800 p-3 text-center text-white">
-          <p className="text-xs opacity-80">TOPLAM TEDAVİ</p>
-          <p className="text-xl font-bold">{totalCharged.toFixed(2)} TL</p>
-        </article>
-        <article className="rounded-lg bg-orange-500 p-3 text-center text-white">
-          <p className="text-xs opacity-80">İNDİRİM ORANI</p>
-          <p className="text-xl font-bold">%{data.discountRate}</p>
-        </article>
-        <article className="rounded-lg bg-blue-600 p-3 text-center text-white">
-          <p className="text-xs opacity-80">İNDİRİM SONRASI</p>
-          <p className="text-xl font-bold">{discountedTotal.toFixed(2)} TL</p>
-        </article>
-        <article className={"rounded-lg p-3 text-center text-white " + (totalDebt > 0 ? "bg-red-600" : "bg-green-600")}>
-          <p className="text-xs opacity-80">KALAN BORÇ</p>
-          <p className="text-xl font-bold">{totalDebt.toFixed(2)} TL</p>
-        </article>
+        <Link href="/hasta" className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 transition">← Geri Dön</Link>
       </div>
 
       <div className="flex flex-wrap gap-1 border-b">
@@ -889,11 +889,13 @@ function HastaDetayContent() {
             <div className="rounded-lg border bg-white p-4">
               <h3 className="mb-3 font-semibold text-gray-700">Sağlık Bilgileri</h3>
               <div className="flex flex-wrap gap-2">
-                {healthFlags.map(([label, val]) => (
-                  <span key={label} className={"rounded-full px-3 py-1 text-xs font-semibold " + (val ? "bg-red-100 text-red-700" : "bg-gray-100 text-gray-500")}>
-                    {val ? "! " : ""}{label}
+                {healthFlags.length > 0 ? healthFlags.map(([label]) => (
+                  <span key={label} className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700">
+                    ! {label}
                   </span>
-                ))}
+                )) : (
+                  <span className="text-xs text-slate-400">Bilinen sağlık sorunu yok</span>
+                )}
               </div>
               {data.medications && <p className="mt-2 text-xs text-gray-600"><span className="font-medium">İlaçlar:</span> {data.medications}</p>}
               {data.surgeries && <p className="mt-1 text-xs text-gray-600"><span className="font-medium">Ameliyatlar:</span> {data.surgeries}</p>}
@@ -1310,10 +1312,20 @@ function HastaDetayContent() {
           </div>
 
           {installmentModalOpen && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-              <div className="w-full max-w-2xl rounded-xl bg-white shadow-2xl p-6 max-h-[85vh] flex flex-col">
+            <div 
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+              onClick={(e) => {
+                if (e.target === e.currentTarget) {
+                  setInstallmentModalOpen(false);
+                  setInstallmentStep("borç");
+                  setInstallmentForm({toplamBorc: "", pesnat: "0", taksitSayisi: "3", period: "AYLIK", startDate: new Date().toISOString().slice(0, 10), notes: ""});
+                  setInstallmentPreview([]);
+                }
+              }}
+            >
+              <div ref={installmentModalRef} className="w-full max-w-2xl rounded-xl bg-white shadow-2xl p-6 max-h-[85vh] flex flex-col" role="dialog" aria-modal="true" aria-labelledby="installment-modal-title">
                 <div className="mb-6">
-                  <h2 className="text-2xl font-bold text-slate-900">Taksit Planı Oluştur</h2>
+                  <h2 id="installment-modal-title" className="text-2xl font-bold text-slate-900">Taksit Planı Oluştur</h2>
                   <p className="mt-1 text-sm text-slate-500">Adım {installmentStep === "borç" ? 1 : installmentStep === "plan" ? 2 : 3} / 3</p>
                 </div>
 
@@ -1490,6 +1502,16 @@ function HastaDetayContent() {
                           {overdue > 0 && <span className="text-xs font-bold text-red-600">{overdue} gecikmiş!</span>}
                           <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusCls[plan.status] || "bg-gray-100 text-gray-600"}`}>{plan.status}</span>
                           <button onClick={() => printInstallmentPlan(plan)} className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">🖨 Yazdır</button>
+                          <button
+                            onClick={async () => {
+                              if (!window.confirm("Bu taksit planı ve tüm taksitleri silinsin mi?")) return;
+                              const res = await fetch(`/api/taksit-plani/${plan.id}`, { method: "DELETE" });
+                              if (res.ok) { showToast("success", "Taksit planı silindi"); void load(); }
+                              else showToast("error", "Taksit planı silinemedi");
+                            }}
+                            className="rounded border border-red-200 px-2 py-1 text-xs font-semibold text-red-500 hover:bg-red-50">
+                            Sil
+                          </button>
                         </div>
                       </div>
                       <div className="grid grid-cols-3 divide-x text-center text-sm">

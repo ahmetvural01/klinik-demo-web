@@ -71,7 +71,7 @@ function HastaContent() {
 
   const remove = async (id: string) => {
     const patient = patients.find(p => p.id === id);
-    if (!window.confirm(`"${patient?.fullName || "Hasta"}" kaydı kalıcı olarak silinecek.\nBu işlem geri alınamaz. Devam etmek istiyor musunuz?`)) return;
+    if (!window.confirm(`"${patient?.fullName || "Hasta"}" kaydı kalıcı olarak silinecek.\n\nBu işlemle birlikte aşağıdaki kayıtlar da silinecektir:\n• Randevular\n• Muayeneler\n• Ödemeler\n• Taksit planları\n• Reçeteler\n• Lab siparişleri\n\nBu işlem geri alınamaz. Devam etmek istiyor musunuz?`)) return;
     const res = await fetch(`/api/patients/${id}`, { method: "DELETE" });
     if (!res.ok) {
       setError("Silme işlemi başarısız");
