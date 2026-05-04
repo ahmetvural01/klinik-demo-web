@@ -213,6 +213,34 @@ export async function DELETE(_: NextRequest, { params }: Params) {
   if (auth.error) return auth.error;
 
   const deleted = await prisma.$transaction(async (tx) => {
+    // Önce taksit planlarının ID'lerini al (reminder silimi için)
+    const planIds = (await tx.taksitPlan.findMany({
+      where: { patientId: params.id },
+      select: { id: true }
+    })).map(p => p.id);
+
+    // Hatırlatıcıları sil (hem hastaya hem plan'a bağlı olanlar)
+    await tx.reminder.deleteMany({
+      where: {
+        OR: [
+          { patientId: params.id },
+          ...(planIds.length > 0 ? [{ planId: { in: planIds } }] : [])
+        ]
+      }
+    });
+
+    // Taksit planlarını sil (Taksit ve TaksitOdeme cascade ile silinir)
+    await tx.taksitPlan.deleteMany({ where: { patientId: params.id } });
+
+    // Lab siparişlerini sil (LabTrip cascade ile silinir)
+    await tx.labOrder.deleteMany({ where: { patientId: params.id } });
+
+    // Reçeteleri sil
+    await tx.prescription.deleteMany({ where: { patientId: params.id } });
+
+    // Tedavi planlarını sil (TreatmentStep cascade ile silinir)
+    await tx.treatmentPlan.deleteMany({ where: { patientId: params.id } });
+
     await tx.appointment.deleteMany({ where: { patientId: params.id } });
     await tx.examination.deleteMany({ where: { patientId: params.id } });
     await tx.payment.deleteMany({ where: { patientId: params.id } });
