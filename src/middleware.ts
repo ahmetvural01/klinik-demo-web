@@ -14,6 +14,42 @@ const PUBLIC_PREFIXES = [
   "/api/auth/logout",
 ];
 
+// Rol bazlı sayfa erişim haritası
+// Her rol için erişilemeyen sayfa prefix'leri
+const ROLE_DENIED_PAGES: Record<string, string[]> = {
+  DOKTOR: [
+    "/muhasebe", "/kasa", "/gider", "/firma", "/stok",
+    "/rapor", "/personel", "/personel-ekle", "/ayar", "/log",
+    "/fiyat", "/sms", "/taksit", "/dashboard",
+  ],
+  ASISTAN: [
+    "/muhasebe", "/kasa", "/gider", "/firma", "/stok",
+    "/rapor", "/personel", "/personel-ekle", "/ayar", "/log",
+    "/fiyat", "/finans", "/muayene", "/taksit", "/dashboard",
+  ],
+  BANKO: [
+    "/gider", "/firma", "/stok", "/rapor",
+    "/personel", "/personel-ekle", "/ayar", "/log",
+    "/fiyat", "/finans", "/hasta-takip", "/tedavi-plani",
+    "/lab", "/muayene", "/recete", "/dashboard",
+  ],
+  MUHASEBE: [
+    "/personel", "/personel-ekle", "/ayar", "/log",
+    "/randevu", "/hasta", "/hasta-detay", "/hasta-ekle",
+    "/hasta-takip", "/tedavi-plani", "/lab", "/muayene",
+    "/recete", "/dashboard",
+  ],
+};
+
+// API rol kısıtlamaları: hangi API prefix'leri hangi roller için yasak
+const API_ROLE_DENIED: Record<string, string[]> = {
+  DOKTOR:   ["/api/gider", "/api/firma", "/api/kasa", "/api/stock", "/api/muhasebe", "/api/reports", "/api/settings", "/api/logs", "/api/sms", "/api/prices", "/api/taksit-plani"],
+  ASISTAN:  ["/api/gider", "/api/firma", "/api/kasa", "/api/stock", "/api/muhasebe", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/sms", "/api/taksit-plani"],
+  // NOT: /api/examinations ASISTAN için izinli — requireAuth("examinations:read") ile GET, requireAuth("examinations:write") ile POST kontrolü yapılır
+  BANKO:    ["/api/gider", "/api/firma", "/api/stock", "/api/muhasebe/trend", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/prices", "/api/lab-orders", "/api/treatment-plans", "/api/examinations", "/api/prescriptions"],
+  MUHASEBE: ["/api/settings", "/api/logs", "/api/appointments", "/api/patients", "/api/examinations", "/api/treatment-plans", "/api/lab-orders", "/api/prescriptions"],
+};
+
 function isPublicPath(pathname: string) {
   if (pathname === "/") return true;
   if (pathname === "/superadmin") return true;
@@ -80,6 +116,25 @@ export async function middleware(request: NextRequest) {
           return NextResponse.json({ message: "Bu modüle erişim yetkiniz yok" }, { status: 403 });
         }
         return NextResponse.redirect(new URL("/superadmin/yetki-yok", request.url));
+      }
+    }
+
+    // Rol bazlı sayfa & API erişim kontrolü (SUPERADMIN ve YONETICI hariç)
+    const role = payload.role;
+    if (role && role !== "SUPERADMIN" && role !== "YONETICI") {
+      // Sayfa erişim kontrolü
+      if (!pathname.startsWith("/api/")) {
+        const denied = ROLE_DENIED_PAGES[role] ?? [];
+        if (denied.some(p => pathname === p || pathname.startsWith(p + "/"))) {
+          return NextResponse.redirect(new URL("/yetkisiz", request.url));
+        }
+      }
+      // API erişim kontrolü
+      if (pathname.startsWith("/api/") && !pathname.startsWith("/api/auth/")) {
+        const deniedApis = API_ROLE_DENIED[role] ?? [];
+        if (deniedApis.some(p => pathname === p || pathname.startsWith(p + "/"))) {
+          return NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 });
+        }
       }
     }
   } catch {

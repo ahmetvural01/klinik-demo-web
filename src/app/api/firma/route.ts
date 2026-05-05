@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 type FirmaIslem = { islemTipi: string; tutar: unknown };
 type RawFirma = {
@@ -11,8 +11,8 @@ type RawFirma = {
 
 export async function GET(req: NextRequest) {
   try {
-    const user = await getCurrentUser();
-    if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    const auth = await requireAuth("finance:read");
+    if (auth.error) return auth.error;
 
     const firmas = await (prisma as any).firma.findMany({
       where: { isActive: true },

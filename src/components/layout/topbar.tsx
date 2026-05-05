@@ -98,17 +98,25 @@ export function Topbar({ user }: Props) {
   // Sayfa başlığı
   const pageTitle = PAGE_TITLES[pathname ?? ""] ?? "";
 
+  // Rol bazlı bildirim yetki haritası
+  // taksit: finans yetkisi olan roller (YONETICI, MUHASEBE, BANKO)
+  // stok:   stok yetkisi olan roller (YONETICI, MUHASEBE)
+  // lab:    lab yetkisi olan roller (YONETICI, DOKTOR, ASISTAN)
+  const canSeeTaksit = ["YONETICI", "SUPERADMIN", "MUHASEBE", "BANKO"].includes(effectiveRole);
+  const canSeeStok   = ["YONETICI", "SUPERADMIN", "MUHASEBE"].includes(effectiveRole);
+  const canSeeLab    = ["YONETICI", "SUPERADMIN", "DOKTOR", "ASISTAN"].includes(effectiveRole);
+
   useEffect(() => {
     async function loadAlerts() {
       try {
-        const [tRes, sRes, lRes] = await Promise.allSettled([
-          fetch("/api/taksit-plani?status=GECIKTI"),
-          fetch("/api/stock"),
-          fetch("/api/lab-orders?status=BEKLIYOR"),
+        const fetches = await Promise.allSettled([
+          canSeeTaksit ? fetch("/api/taksit-plani?status=GECIKTI") : Promise.resolve(null),
+          canSeeStok   ? fetch("/api/stock")                       : Promise.resolve(null),
+          canSeeLab    ? fetch("/api/lab-orders?status=BEKLIYOR")  : Promise.resolve(null),
         ]);
-        const tData = tRes.status === "fulfilled" && tRes.value.ok ? await tRes.value.json() : null;
-        const sData = sRes.status === "fulfilled" && sRes.value.ok ? await sRes.value.json() : null;
-        const lData = lRes.status === "fulfilled" && lRes.value.ok ? await lRes.value.json() : null;
+        const tData = canSeeTaksit && fetches[0].status === "fulfilled" && fetches[0].value?.ok ? await fetches[0].value.json() : null;
+        const sData = canSeeStok   && fetches[1].status === "fulfilled" && fetches[1].value?.ok ? await fetches[1].value.json() : null;
+        const lData = canSeeLab    && fetches[2].status === "fulfilled" && fetches[2].value?.ok ? await fetches[2].value.json() : null;
 
         const overdueCount = Array.isArray(tData)
           ? tData.reduce((sum: number, plan: any) =>
@@ -120,7 +128,9 @@ export function Topbar({ user }: Props) {
       } catch {}
     }
     loadAlerts();
-  }, []);
+  // effectiveRole değişince bildirimleri yeniden yükle
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveRole]);
 
   // Dışarı tıklanınca kapat
   useEffect(() => {
@@ -144,6 +154,8 @@ export function Topbar({ user }: Props) {
       setSearchResults([]);
       return;
     }
+    // Her aramada güncel rolü oku
+    setEffectiveRole(getEffectiveRole());
     const timer = setTimeout(async () => {
       try {
         const res = await fetch(`/api/patients?q=${encodeURIComponent(q)}&take=8`);
@@ -315,7 +327,8 @@ export function Topbar({ user }: Props) {
                 <p className="text-sm font-bold text-slate-800">Sistem Uyarıları</p>
               </div>
               <div className="divide-y divide-slate-50 py-1">
-                {alerts.taksit > 0 ? (
+                {/* Taksit bildirimi — sadece yetkili roller */}
+                {canSeeTaksit && (alerts.taksit > 0 ? (
                   <a href="/muhasebe?tab=taksit" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition">
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-red-100">
                       <svg className="h-4 w-4 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -334,8 +347,9 @@ export function Topbar({ user }: Props) {
                     </span>
                     <p className="text-sm text-slate-600">Gecikmiş taksit yok</p>
                   </div>
-                )}
-                {alerts.stok > 0 ? (
+                ))}
+                {/* Stok bildirimi — sadece yetkili roller */}
+                {canSeeStok && (alerts.stok > 0 ? (
                   <a href="/stok" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition">
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-100">
                       <svg className="h-4 w-4 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -354,8 +368,9 @@ export function Topbar({ user }: Props) {
                     </span>
                     <p className="text-sm text-slate-600">Stok seviyesi normal</p>
                   </div>
-                )}
-                {alerts.lab > 0 ? (
+                ))}
+                {/* Lab bildirimi — sadece yetkili roller */}
+                {canSeeLab && (alerts.lab > 0 ? (
                   <a href="/lab" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition">
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100">
                       <svg className="h-4 w-4 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -373,6 +388,12 @@ export function Topbar({ user }: Props) {
                       <svg className="h-4 w-4 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
                     </span>
                     <p className="text-sm text-slate-600">Bekleyen lab siparişi yok</p>
+                  </div>
+                ))}
+                {/* Hiçbir bildirim grubu yoksa */}
+                {!canSeeTaksit && !canSeeStok && !canSeeLab && (
+                  <div className="px-4 py-6 text-center">
+                    <p className="text-sm text-slate-400">Bu rol için sistem uyarısı bulunmuyor</p>
                   </div>
                 )}
               </div>

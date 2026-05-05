@@ -89,7 +89,10 @@ export default function AnasayfaPage() {
   const [msgLoading, setMsgLoading] = useState(false);
   const [announcements, setAnnouncements] = useState<Ann[]>([]);
   const [annText, setAnnText] = useState("");
-  const [annRole, setAnnRole] = useState("");
+  // Başlangıçta sessionStorage'dan rol al — ilk render flash'ını önler
+  const [annRole, setAnnRole] = useState(() =>
+    typeof window !== "undefined" ? (sessionStorage.getItem("dev-preview-role") || "") : ""
+  );
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const [liveLogs, setLiveLogs] = useState<LiveLog[]>([]);
 
@@ -110,19 +113,29 @@ export default function AnasayfaPage() {
 
     fetch("/api/messages").then(r => r.json()).then(d => setMessages(Array.isArray(d) ? d : [])).catch(() => {});
     fetch("/api/announcements").then(r => r.json()).then(d => setAnnouncements(Array.isArray(d) ? d : [])).catch(() => {});
-    fetch("/api/auth/me").then(r => r.json()).then(d => setAnnRole(d.role || "")).catch(() => {});
+    fetch("/api/auth/me").then(r => r.json()).then(d => {
+      const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
+      setAnnRole(preview || d.role || "");
+    }).catch(() => {});
 
-    // Bugünkü kasa cirosu
-    fetch("/api/kasa?date=" + new Date().toISOString().split("T")[0])
-      .then(r => r.json())
-      .then(d => setTodayCiro(d?.total || 0))
-      .catch(() => {});
+    // Bugünkü kasa cirosu — sadece yetkili roller çeker
+    const previewRole = typeof window !== "undefined" ? (sessionStorage.getItem("dev-preview-role") || "") : "";
+    const _canSeeCiro = ["YONETICI", "SUPERADMIN", "MUHASEBE"].includes(previewRole || "");
+    if (_canSeeCiro) {
+      fetch("/api/kasa?date=" + new Date().toISOString().split("T")[0])
+        .then(r => r.json())
+        .then(d => setTodayCiro(d?.total || 0))
+        .catch(() => {});
+    }
 
-    // Cross-module KPIs
+    // Cross-module KPIs — sadece yetkili roller veriyi çeker
+    const _previewRole2 = typeof window !== "undefined" ? (sessionStorage.getItem("dev-preview-role") || "") : "";
+    const _canSeeTaksitDash = ["YONETICI", "SUPERADMIN", "MUHASEBE", "BANKO"].includes(_previewRole2 || "");
+    const _canSeeLabDash    = ["YONETICI", "SUPERADMIN", "DOKTOR", "ASISTAN"].includes(_previewRole2 || "");
     const todayIso = new Date().toISOString().split("T")[0];
     Promise.all([
-      fetch("/api/lab-orders?limit=1000").then(r => r.json()).catch(() => ({ labOrders: [] })),
-      fetch("/api/taksit-plani?limit=1000").then(r => r.json()).catch(() => ({ taksitPlanlari: [] })),
+      _canSeeLabDash    ? fetch("/api/lab-orders?limit=1000").then(r => r.json()).catch(() => ({ labOrders: [] })) : Promise.resolve({ labOrders: [] }),
+      _canSeeTaksitDash ? fetch("/api/taksit-plani?limit=1000").then(r => r.json()).catch(() => ({ taksitPlanlari: [] })) : Promise.resolve({ taksitPlanlari: [] }),
     ]).then(([labData, taksitData]) => {
       const labOrders: { status: string }[] = Array.isArray(labData) ? labData : (labData.labOrders || []);
       const pendingLab = labOrders.filter((l: { status: string }) => l.status !== "HASTAYA_TAKILDI" && l.status !== "IPTAL").length;
@@ -139,11 +152,24 @@ export default function AnasayfaPage() {
       setCrossStats({ pendingLabOrders: pendingLab, overdueInstallments: overdueCount, todayInstallments: todayCount });
     });
 
-      const todayStr = new Date().toISOString().split("T")[0];
-      fetch("/api/logs?from=" + todayStr + "&to=" + todayStr + "&limit=10")
-        .then(r => r.json())
-        .then(d => setLiveLogs(Array.isArray(d) ? d : (d.logs || [])))
-        .catch(() => {});
+      // Log API sadece Yonetici ve Superadmin için çekilir
+      const _logRole = typeof window !== "undefined" ? (sessionStorage.getItem("dev-preview-role") || "") : "";
+      if (["YONETICI", "SUPERADMIN"].includes(_logRole)) {
+        const todayStr = new Date().toISOString().split("T")[0];
+        fetch("/api/logs?from=" + todayStr + "&to=" + todayStr + "&limit=10")
+          .then(r => r.json())
+          .then(d => setLiveLogs(Array.isArray(d) ? d : (d.logs || [])))
+          .catch(() => {});
+      }
+
+    const onPreview = () => {
+      const preview = sessionStorage.getItem("dev-preview-role");
+      fetch("/api/auth/me").then(r => r.json()).then(d => {
+        setAnnRole(preview || d.role || "");
+      }).catch(() => {});
+    };
+    window.addEventListener("preview-role-change", onPreview);
+    return () => window.removeEventListener("preview-role-change", onPreview);
   }, []);
 
   useEffect(() => {
@@ -192,30 +218,58 @@ export default function AnasayfaPage() {
   const todayDone    = appts.filter(a => a.status === "TAMAMLANDI").length;
   const todayWaiting = appts.filter(a => a.status === "BEKLIYOR" || a.status === "GELDI").length;
 
+  // Rol bazlı içerik kontrolü
+  const isYonetici   = annRole === "YONETICI" || annRole === "SUPERADMIN";
+  const isDoktorRole = annRole === "DOKTOR";
+  const isAsistanRole = annRole === "ASISTAN";
+  const isBankoRole  = annRole === "BANKO";
+  const isMuhasebeRole = annRole === "MUHASEBE";
+  const hideCiro     = isDoktorRole || isAsistanRole || isBankoRole; // Kasa/ciro sadece Yönetici ve Muhasebe
+  const hideTaksitAlerts = isDoktorRole || isAsistanRole;             // Taksit uyarıları finans dışında gizli
+  const hideHastaTakipBanner = isBankoRole || isMuhasebeRole;         // Middleware ile de yasak, banner da gizle
+  const hideLogs     = !isYonetici;                                   // Loglar sadece Yönetici/Superadmin
+  const hideKlinikYogunAlan = isMuhasebeRole;                         // Muhasebe için klinik yoğun blokları sadeleştir
+  const showBottomSection = !isMuhasebeRole || !hideLogs;
+
+  // Rol bazlı hızlı erişim linkleri
+  const allQuickLinks = [
+    { href: "/hasta",        label: "Hastalar",     cls: "bg-blue-50 text-blue-700 hover:bg-blue-100",       dot: "bg-blue-400",    roles: ["YONETICI","SUPERADMIN","DOKTOR","ASISTAN","BANKO"] },
+    { href: "/tedavi-plani", label: "Tedavi Planı", cls: "bg-violet-50 text-violet-700 hover:bg-violet-100", dot: "bg-violet-400",  roles: ["YONETICI","SUPERADMIN","DOKTOR","ASISTAN"] },
+    { href: "/lab",          label: "Lab Takip",    cls: "bg-teal-50 text-teal-700 hover:bg-teal-100",       dot: "bg-teal-400",    roles: ["YONETICI","SUPERADMIN","DOKTOR","ASISTAN"] },
+    { href: "/stok",         label: "Stok",         cls: "bg-amber-50 text-amber-700 hover:bg-amber-100",    dot: "bg-amber-400",   roles: ["YONETICI","SUPERADMIN","MUHASEBE"] },
+    { href: "/kasa",         label: "Kasa",         cls: "bg-emerald-50 text-emerald-700 hover:bg-emerald-100", dot: "bg-emerald-400", roles: ["YONETICI","SUPERADMIN","BANKO","MUHASEBE"] },
+    { href: "/rapor",        label: "Raporlar",     cls: "bg-rose-50 text-rose-700 hover:bg-rose-100",       dot: "bg-rose-400",    roles: ["YONETICI","SUPERADMIN","MUHASEBE"] },
+  ];
+  const quickLinks = allQuickLinks.filter(l => !annRole || l.roles.includes(annRole));
+
   return (
     <div className="space-y-5">
 
       {/* ── HEADER ────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-black text-slate-900">Genel Bakış</h1>
+          <h1 className="text-2xl font-black text-slate-900">Anasayfa</h1>
           <p className="mt-0.5 text-sm text-slate-500">{dateLabel}</p>
         </div>
         <div className="flex items-center gap-2">
-          <Link href="/hasta-ekle" className="flex items-center gap-1.5 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 transition hover:bg-violet-100">
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-            Yeni Hasta
-          </Link>
-          <Link href="/randevu" className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700">
-            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-            Randevu Ekle
-          </Link>
+          {!isMuhasebeRole && (
+            <Link href="/hasta-ekle" className="flex items-center gap-1.5 rounded-xl border border-violet-200 bg-violet-50 px-4 py-2 text-sm font-semibold text-violet-700 transition hover:bg-violet-100">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              Yeni Hasta
+            </Link>
+          )}
+          {!isMuhasebeRole && (
+            <Link href="/randevu" className="flex items-center gap-1.5 rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700">
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              Randevu Ekle
+            </Link>
+          )}
         </div>
       </div>
 
       {/* ── KPI CARDS ──────────────────────────── */}
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-        <div className="relative overflow-hidden rounded-2xl grad-blue p-5 text-white shadow-md shadow-blue-200">
+        {!hideKlinikYogunAlan && <div className="relative overflow-hidden rounded-2xl grad-blue p-5 text-white shadow-md shadow-blue-200">
           <div className="absolute -right-3 -top-3 h-20 w-20 rounded-full bg-white/10" />
           <p className="text-[11px] font-bold uppercase tracking-widest text-blue-100">Bugün Randevu</p>
           <p className="mt-1 text-4xl font-black tabular-nums">{statsLoading ? "…" : todayTotal}</p>
@@ -223,15 +277,15 @@ export default function AnasayfaPage() {
             <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-semibold">{todayDone} bitti</span>
             <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-semibold">{todayWaiting} bekliyor</span>
           </div>
-        </div>
-        <div className="relative overflow-hidden rounded-2xl grad-violet p-5 text-white shadow-md shadow-violet-200">
+        </div>}
+        {!hideKlinikYogunAlan && <div className="relative overflow-hidden rounded-2xl grad-violet p-5 text-white shadow-md shadow-violet-200">
           <div className="absolute -right-3 -top-3 h-20 w-20 rounded-full bg-white/10" />
           <p className="text-[11px] font-bold uppercase tracking-widest text-violet-100">Toplam Muayene</p>
           <p className="mt-1 text-4xl font-black tabular-nums">{statsLoading ? "…" : stats.totalExaminations}</p>
           <div className="mt-2">
             <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-semibold">{stats.totalPatients} aktif hasta</span>
           </div>
-        </div>
+        </div>}
         <div className="relative overflow-hidden rounded-2xl grad-green p-5 text-white shadow-md shadow-green-200">
           <div className="absolute -right-3 -top-3 h-20 w-20 rounded-full bg-white/10" />
           <p className="text-[11px] font-bold uppercase tracking-widest text-emerald-100">Kayıtlı Hasta</p>
@@ -240,18 +294,20 @@ export default function AnasayfaPage() {
             <Link href="/hasta-ekle" className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-semibold transition hover:bg-white/30">+ Yeni Hasta</Link>
           </div>
         </div>
-        <div className="relative overflow-hidden rounded-2xl grad-amber p-5 text-white shadow-md shadow-amber-200">
-          <div className="absolute -right-3 -top-3 h-20 w-20 rounded-full bg-white/10" />
-          <p className="text-[11px] font-bold uppercase tracking-widest text-amber-100">Bugünkü Ciro</p>
-          <p className="mt-1 text-4xl font-black tabular-nums">{statsLoading ? "…" : "₺" + todayCiro.toLocaleString("tr-TR")}</p>
-          <div className="mt-2">
-            <Link href="/muhasebe?tab=gelir" className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-semibold transition hover:bg-white/30">Muhasebeye Git</Link>
+        {!hideCiro && (
+          <div className="relative overflow-hidden rounded-2xl grad-amber p-5 text-white shadow-md shadow-amber-200">
+            <div className="absolute -right-3 -top-3 h-20 w-20 rounded-full bg-white/10" />
+            <p className="text-[11px] font-bold uppercase tracking-widest text-amber-100">Bugünkü Ciro</p>
+            <p className="mt-1 text-4xl font-black tabular-nums">{statsLoading ? "…" : "₺" + todayCiro.toLocaleString("tr-TR")}</p>
+            <div className="mt-2">
+              <Link href="/muhasebe?tab=gelir" className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-semibold transition hover:bg-white/30">Muhasebeye Git</Link>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* ── CROSS-MODULE UYARI KARTLARİ ──────── */}
-      {(crossStats.pendingLabOrders > 0 || crossStats.overdueInstallments > 0 || crossStats.todayInstallments > 0) && (
+      {(crossStats.pendingLabOrders > 0 || (!hideTaksitAlerts && (crossStats.overdueInstallments > 0 || crossStats.todayInstallments > 0))) && (
         <div className="grid gap-3 sm:grid-cols-3">
           {crossStats.pendingLabOrders > 0 && (
             <Link href="/lab" className="group flex items-center gap-3 rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3 shadow-sm transition hover:border-cyan-300 hover:bg-cyan-100">
@@ -264,7 +320,7 @@ export default function AnasayfaPage() {
               </div>
             </Link>
           )}
-          {crossStats.overdueInstallments > 0 && (
+          {!hideTaksitAlerts && crossStats.overdueInstallments > 0 && (
             <Link href="/muhasebe?tab=taksit" className="group flex items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 shadow-sm transition hover:border-red-300 hover:bg-red-100">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-100 text-red-600 group-hover:bg-red-200">
                 <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -275,7 +331,7 @@ export default function AnasayfaPage() {
               </div>
             </Link>
           )}
-          {crossStats.todayInstallments > 0 && (
+          {!hideTaksitAlerts && crossStats.todayInstallments > 0 && (
             <Link href="/muhasebe?tab=taksit" className="group flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 shadow-sm transition hover:border-amber-300 hover:bg-amber-100">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-600 group-hover:bg-amber-200">
                 <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
@@ -289,20 +345,20 @@ export default function AnasayfaPage() {
         </div>
       )}
 
-      <Link href="/hasta-takip" className="group flex items-center justify-between rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-50 via-white to-orange-50 px-5 py-4 shadow-sm transition hover:border-rose-300 hover:shadow-md">
+      {!hideHastaTakipBanner && <Link href="/hasta-takip" className="group flex items-center justify-between rounded-2xl border border-rose-200 bg-gradient-to-r from-rose-50 via-white to-orange-50 px-5 py-4 shadow-sm transition hover:border-rose-300 hover:shadow-md">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-rose-500">Operasyon Takibi</p>
           <h2 className="mt-1 text-lg font-bold text-slate-900">Hasta Takip Paneli</h2>
           <p className="mt-1 text-sm text-slate-600">Gelmeyen, ulaşılamayan ve geri aranması gereken hastaları ayrı panelden yönetin.</p>
         </div>
         <span className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-rose-700 shadow-sm transition group-hover:bg-rose-100">Panele Git →</span>
-      </Link>
+      </Link>}
 
       {/* ── MAIN GRID ─────────────────────────── */}
-      <div className="grid gap-5 xl:grid-cols-3">
+      <div className={`grid gap-5 ${hideKlinikYogunAlan ? "xl:grid-cols-1" : "xl:grid-cols-3"}`}>
 
         {/* LEFT: Appointments */}
-        <div className="xl:col-span-2 space-y-3">
+        {!hideKlinikYogunAlan && <div className="xl:col-span-2 space-y-3">
           {/* Tarih nav */}
           <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-white px-5 py-3 shadow-sm">
             <button onClick={() => setDateOffset(d => d - 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50">
@@ -368,12 +424,12 @@ export default function AnasayfaPage() {
               <Link href="/randevu" className="text-xs font-semibold text-primary hover:underline">Tüm Randevulara Git →</Link>
             </div>
           </div>
-        </div>
+        </div>}
 
         {/* RIGHT */}
-        <div className="space-y-4">
+        <div className={hideKlinikYogunAlan ? "grid gap-4 md:grid-cols-2" : "space-y-4"}>
           {/* 7-Gün Chart */}
-          <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+          {!hideKlinikYogunAlan && <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
             <h3 className="mb-4 text-sm font-bold text-slate-800">7 Günlük Randevu</h3>
             <div className="flex h-20 items-end justify-between gap-1.5">
               {weekData.map((w, i) => (
@@ -384,7 +440,7 @@ export default function AnasayfaPage() {
                 </div>
               ))}
             </div>
-          </div>
+          </div>}
 
           {/* Duyurular */}
           <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
@@ -419,12 +475,7 @@ export default function AnasayfaPage() {
             <h3 className="mb-3 text-sm font-bold text-slate-800">Hızlı Erişim</h3>
             <div className="grid grid-cols-2 gap-2">
               {[
-                { href: "/hasta",        label: "Hastalar",     cls: "bg-blue-50 text-blue-700 hover:bg-blue-100",     dot: "bg-blue-400" },
-                { href: "/tedavi-plani", label: "Tedavi Planı", cls: "bg-violet-50 text-violet-700 hover:bg-violet-100", dot: "bg-violet-400" },
-                { href: "/lab",          label: "Lab Takip",    cls: "bg-teal-50 text-teal-700 hover:bg-teal-100",     dot: "bg-teal-400" },
-                { href: "/stok",         label: "Stok",         cls: "bg-amber-50 text-amber-700 hover:bg-amber-100",   dot: "bg-amber-400" },
-                { href: "/kasa",         label: "Kasa",         cls: "bg-emerald-50 text-emerald-700 hover:bg-emerald-100", dot: "bg-emerald-400" },
-                { href: "/rapor",        label: "Raporlar",     cls: "bg-rose-50 text-rose-700 hover:bg-rose-100",     dot: "bg-rose-400" },
+                ...quickLinks
               ].map(l => (
                 <Link key={l.href} href={l.href} className={`flex items-center gap-2 rounded-xl px-3 py-2.5 text-xs font-semibold transition ${l.cls}`}>
                   <span className={`h-2 w-2 rounded-full ${l.dot}`} />{l.label}
@@ -436,9 +487,9 @@ export default function AnasayfaPage() {
       </div>
 
       {/* ── BOTTOM ────────────────────────────── */}
-      <div className="grid gap-5 lg:grid-cols-2">
+      {showBottomSection && <div className="grid gap-5 lg:grid-cols-2">
         {/* Chat */}
-        <div className="flex flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+        {!isMuhasebeRole && <div className="flex flex-col overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
           <div className="border-b border-slate-50 px-4 py-3">
             <h3 className="text-sm font-bold text-slate-800">Klinik İçi Mesajlar</h3>
           </div>
@@ -458,10 +509,10 @@ export default function AnasayfaPage() {
             <input value={msgText} onChange={e => setMsgText(e.target.value)} onKeyDown={e => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), sendMessage())} placeholder="Mesaj yaz… (Enter)" className="flex-1 rounded-lg border border-slate-200 px-3 py-1.5 text-xs focus:border-primary focus:outline-none" />
             <button onClick={sendMessage} disabled={msgLoading} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white transition hover:bg-blue-700 disabled:opacity-50">Gönder</button>
           </div>
-        </div>
+        </div>}
 
         {/* Loglar */}
-        <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+        {!hideLogs && <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
           <div className="flex items-center justify-between border-b border-slate-50 px-4 py-3">
             <h3 className="text-sm font-bold text-slate-800">Sistem Logları</h3>
             <Link href="/log" className="text-xs font-semibold text-primary hover:underline">Tümünü Gör →</Link>
@@ -479,8 +530,8 @@ export default function AnasayfaPage() {
               </div>
             ))}
           </div>
-        </div>
-      </div>
+        </div>}
+      </div>}
     </div>
   );
 }

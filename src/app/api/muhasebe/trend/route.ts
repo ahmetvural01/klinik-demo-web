@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUserFast } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 /**
  * GET /api/muhasebe/trend
  * Son 6 ayın aylık gelir ve gider toplamlarını döner.
  */
 export async function GET() {
-  const user = await getCurrentUserFast();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("finance:read");
+  if (auth.error) return auth.error;
 
   const months: { label: string; gelir: number; gider: number }[] = [];
 

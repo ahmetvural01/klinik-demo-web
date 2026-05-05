@@ -14,6 +14,7 @@ const ALL_MODULES = [
   { key: "dashboard", label: "Dashboard" },
   { key: "institutions", label: "Klinikler" },
   { key: "users", label: "Kullanıcılar" },
+  { key: "roles", label: "Rol Yetkileri" },
   { key: "invoices", label: "Faturalar" },
   { key: "sms", label: "SMS" },
   { key: "ads", label: "Reklamlar" },

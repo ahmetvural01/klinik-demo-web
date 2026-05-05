@@ -106,7 +106,16 @@ export default function MuhasebePage() {
 
   // ── Summary state ─────────────────────────────────────────────────────────
   const [loading,       setLoading]       = useState(true);
-  const [userRole,      setUserRole]      = useState<string>("");
+  // Başlangıçta sessionStorage'dan oku — flash'siz render
+  const [userRole,      setUserRole]      = useState<string>(() =>
+    typeof window !== "undefined" ? (sessionStorage.getItem("dev-preview-role") || "") : ""
+  );
+
+  const visibleTabs = useMemo(() => {
+    if (userRole === "BANKO") return TABS.filter(tab => !["gider", "cari", "hakedis"].includes(tab.id));
+    if (userRole === "DOKTOR" || userRole === "ASISTAN") return [] as typeof TABS;
+    return TABS;
+  }, [userRole]);
   const [kasaToday,     setKasaToday]     = useState<{ total: number; byMethod: Record<string, number>; payments: Payment[] }>({ total: 0, byMethod: {}, payments: [] });
   const [expenseToday,  setExpenseToday]  = useState<{ total: number }>({ total: 0 });
   const [expenseMonth,  setExpenseMonth]  = useState<{ total: number; expenses: Expense[] }>({ total: 0, expenses: [] });
@@ -114,16 +123,21 @@ export default function MuhasebePage() {
   const [stockItems,    setStockItems]    = useState<StockItem[]>([]);
   const [taksitOverdue, setTaksitOverdue] = useState<{ count: number; amount: number }>({ count: 0, amount: 0 });
 
-  const refreshSummary = useCallback(async () => {
+  const refreshSummary = useCallback(async (role?: string) => {
+    // Anlık rol: parametre > state > sessionStorage
+    const effectiveRole = role || (typeof window !== "undefined" ? (sessionStorage.getItem("dev-preview-role") || "") : "");
+    const isBankoRole = effectiveRole === "BANKO";
     const today = new Date().toISOString().split("T")[0];
     const ms = new Date(); ms.setDate(1);
     const monthStart = ms.toISOString().split("T")[0];
     const [k, gt, gm, fr, sr, tr] = await Promise.all([
       fetch(`/api/kasa?date=${today}`).then(r => r.json()).catch(() => ({})),
-      fetch(`/api/gider?from=${today}&to=${today}`).then(r => r.json()).catch(() => ({})),
-      fetch(`/api/gider?from=${monthStart}&to=${today}`).then(r => r.json()).catch(() => ({})),
-      fetch("/api/firma").then(r => r.json()).catch(() => []),
-      fetch("/api/stock").then(r => r.json()).catch(() => []),
+      // BANKO için /api/gider yasak — çekilmez
+      !isBankoRole ? fetch(`/api/gider?from=${today}&to=${today}`).then(r => r.json()).catch(() => ({})) : Promise.resolve({}),
+      !isBankoRole ? fetch(`/api/gider?from=${monthStart}&to=${today}`).then(r => r.json()).catch(() => ({})) : Promise.resolve({}),
+      // BANKO için /api/firma ve /api/stock yasak — çekilmez
+      !isBankoRole ? fetch("/api/firma").then(r => r.json()).catch(() => []) : Promise.resolve([]),
+      !isBankoRole ? fetch("/api/stock").then(r => r.json()).catch(() => []) : Promise.resolve([]),
       fetch("/api/taksit-plani?status=GECIKTI").then(r => r.json()).catch(() => []),
     ]);
     setKasaToday({ total: Number(k?.total || 0), byMethod: k?.byMethod || {}, payments: Array.isArray(k?.payments) ? k.payments : [] });
@@ -149,11 +163,38 @@ export default function MuhasebePage() {
   }, []);
 
   useEffect(() => {
-    fetch("/api/auth/me").then(r => r.ok ? r.json() : null).then(d => { const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null; if (preview || d?.role) setUserRole(preview || d.role); }).catch(() => null);
+    const syncRole = () => {
+      fetch("/api/auth/me")
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
+          if (preview || d?.role) setUserRole(preview || d.role);
+        })
+        .catch(() => null);
+    };
+
+    syncRole();
     fetch("/api/taksit-plani/mark-gecikti", { method: "POST" }).catch(() => null);
     refreshSummary().finally(() => setLoading(false));
     loadTrend();
+
+    const onPreview = () => syncRole();
+    window.addEventListener("preview-role-change", onPreview);
+    return () => window.removeEventListener("preview-role-change", onPreview);
   }, [refreshSummary, loadTrend]);
+
+  useEffect(() => {
+    if (userRole === "DOKTOR" || userRole === "ASISTAN") {
+      router.replace("/yetkisiz");
+    }
+  }, [router, userRole]);
+
+  useEffect(() => {
+    if (visibleTabs.length === 0) return;
+    if (!visibleTabs.some(tab => tab.id === activeTab)) {
+      changeTab(visibleTabs[0].id);
+    }
+  }, [activeTab, changeTab, visibleTabs]);
 
   // ── Hasta Alacakları ─────────────────────────────────────────────────────
   const [alacaklar,      setAlacaklar]      = useState<AlacakRow[]>([]);
@@ -560,13 +601,13 @@ export default function MuhasebePage() {
         : (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
             {[
-              { label: "Bugün Gelir",     value: fmt(kasaToday.total),       tone: "text-emerald-700", bg: "bg-emerald-50",  border: "border-emerald-100" },
-              { label: "Bugün Gider",     value: fmt(expenseToday.total),    tone: "text-red-700",     bg: "bg-red-50",      border: "border-red-100"     },
-              { label: "Bugün Net",       value: fmt(todayNet),              tone: todayNet >= 0 ? "text-blue-700" : "text-red-700", bg: "bg-blue-50", border: "border-blue-100" },
-              { label: "Aylık Gider",     value: fmt(expenseMonth.total),    tone: "text-slate-800",   bg: "bg-slate-50",    border: "border-slate-100"   },
-              { label: "Tedarikçi Borcu", value: fmt(supplierDebt),          tone: "text-amber-700",   bg: "bg-amber-50",    border: "border-amber-100"   },
-              { label: "Gecikmiş Taksit", value: `${taksitOverdue.count} adet`, tone: "text-violet-700", bg: "bg-violet-50", border: "border-violet-100" },
-            ].map(c => (
+              { label: "Bugün Gelir",     value: fmt(kasaToday.total),       tone: "text-emerald-700", bg: "bg-emerald-50",  border: "border-emerald-100", banko: true  },
+              { label: "Bugün Gider",     value: fmt(expenseToday.total),    tone: "text-red-700",     bg: "bg-red-50",      border: "border-red-100",     banko: false },
+              { label: "Bugün Net",       value: fmt(todayNet),              tone: todayNet >= 0 ? "text-blue-700" : "text-red-700", bg: "bg-blue-50", border: "border-blue-100", banko: true },
+              { label: "Aylık Gider",     value: fmt(expenseMonth.total),    tone: "text-slate-800",   bg: "bg-slate-50",    border: "border-slate-100",   banko: false },
+              { label: "Tedarikçi Borcu", value: fmt(supplierDebt),          tone: "text-amber-700",   bg: "bg-amber-50",    border: "border-amber-100",   banko: false },
+              { label: "Gecikmiş Taksit", value: `${taksitOverdue.count} adet`, tone: "text-violet-700", bg: "bg-violet-50", border: "border-violet-100", banko: true  },
+            ].filter(c => userRole !== "BANKO" || c.banko).map(c => (
               <article key={c.label} className={`${c.bg} ${c.border} rounded-2xl border p-4`}>
                 <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{c.label}</p>
                 <p className={`mt-1 text-xl font-black ${c.tone}`}>{c.value}</p>
@@ -603,10 +644,7 @@ export default function MuhasebePage() {
 
       {/* Tab Navigation */}
       <div className="flex gap-1 overflow-x-auto rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
-        {TABS.filter(tab => {
-          if (userRole === "BANKO") return !["gider", "cari", "hakedis"].includes(tab.id);
-          return true;
-        }).map(tab => (
+        {visibleTabs.map(tab => (
           <button key={tab.id} onClick={() => changeTab(tab.id)}
             className={`shrink-0 rounded-xl px-4 py-2 text-xs font-bold transition ${activeTab === tab.id ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"}`}>
             {tab.label}

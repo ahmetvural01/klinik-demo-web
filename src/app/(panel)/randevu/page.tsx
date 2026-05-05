@@ -22,7 +22,7 @@ type Appointment = {
 };
 
 type Staff = { id: string; fullName: string; role: string };
-type Patient = { id: string; fullName: string };
+type Patient = { id: string; fullName: string; tcNo?: string; phone?: string };
 
 const STATUS_COLORS: Record<string, string> = {
   BEKLIYOR: "bg-yellow-50 border-l-4 border-yellow-400",
@@ -62,13 +62,18 @@ export default function RandevuPage() {
   const [doctorId, setDoctorId] = useState("");
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
-  const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Hasta arama (combobox)
   const [patientId, setPatientId] = useState("");
+  const [patientSearch, setPatientSearch] = useState("");
+  const [patientResults, setPatientResults] = useState<Patient[]>([]);
+  const [patientSearchLoading, setPatientSearchLoading] = useState(false);
+  const [patientDropdownOpen, setPatientDropdownOpen] = useState(false);
+
   const [newDoctorId, setNewDoctorId] = useState("");
   const [startAt, setStartAt] = useState(() => toLocalInput(new Date(Date.now() + 30 * 60000)));
   const [endAt, setEndAt] = useState(() => toLocalInput(new Date(Date.now() + 60 * 60000)));
@@ -104,20 +109,33 @@ export default function RandevuPage() {
     return { from, to };
   }, [date, view]);
 
+  // Hasta arama debounce
+  useEffect(() => {
+    if (patientSearch.trim().length < 2) { setPatientResults([]); return; }
+    const t = setTimeout(async () => {
+      setPatientSearchLoading(true);
+      try {
+        const res = await fetch("/api/patients?q=" + encodeURIComponent(patientSearch.trim()) + "&take=10");
+        const data = await res.json();
+        setPatientResults(Array.isArray(data.patients) ? data.patients : []);
+      } finally { setPatientSearchLoading(false); }
+    }, 280);
+    return () => clearTimeout(t);
+  }, [patientSearch]);
+
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
       const params = new URLSearchParams({ from: range.from.toISOString(), to: range.to.toISOString() });
       if (doctorId) params.set("doctorId", doctorId);
-      const [aRes, sRes, pRes] = await Promise.all([
+      const [aRes, sRes] = await Promise.all([
         fetch("/api/appointments?" + params.toString()),
         fetch("/api/staff"),
-        fetch("/api/patients")
       ]);
-      const [aJson, sJson, pJson] = await Promise.all([aRes.json(), sRes.json(), pRes.json()]);
+      const [aJson, sJson] = await Promise.all([aRes.json(), sRes.json()]);
       setAppointments(Array.isArray(aJson) ? aJson : []);
-      setStaff(sJson.filter((x: Staff) => x.role === "DOKTOR" || x.role === "YONETICI"));
-      setPatients(pJson);
+      const staffList = Array.isArray(sJson) ? sJson : (sJson?.staff || []);
+      setStaff(staffList.filter((x: Staff) => x.role === "DOKTOR" || x.role === "YONETICI"));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Bilinmeyen hata");
     } finally { setLoading(false); }
@@ -132,6 +150,11 @@ export default function RandevuPage() {
     setFollowUpNote(parsed.detail);
   }, [selectedAppt]);
 
+  const resetForm = () => {
+    setPatientId(""); setPatientSearch(""); setPatientResults([]); setPatientDropdownOpen(false);
+    setNewDoctorId(""); setNote(""); setConflictWarning(null);
+  };
+
   const createAppointment = async () => {
     if (!patientId || !newDoctorId) return setError("Hasta ve doktor seçin");
     setSaving(true); setError(null);
@@ -142,7 +165,7 @@ export default function RandevuPage() {
     });
     setSaving(false);
     if (!res.ok) { const b = await res.json().catch(() => ({ message: "Kaydedilemedi" })); setError(b.message || "Kaydedilemedi"); return; }
-    setShowForm(false); setPatientId(""); setNewDoctorId(""); setNote("");
+    setShowForm(false); resetForm();
     await load();
   };
 
@@ -297,10 +320,57 @@ export default function RandevuPage() {
           )}
           {error && <p className="mb-2 text-red-600 text-sm">{error}</p>}
           <div className="grid gap-2 md:grid-cols-3">
-            <select className="rounded-lg border px-3 py-2 text-sm" value={patientId} onChange={e => setPatientId(e.target.value)}>
-              <option value="">Hasta seçin</option>
-              {patients.map(p => <option key={p.id} value={p.id}>{p.fullName}</option>)}
-            </select>
+            {/* Hasta Arama Combobox */}
+            <div className="relative">
+              <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/20">
+                <span className="text-slate-400 text-sm">🔍</span>
+                <input
+                  type="text"
+                  placeholder={patientId ? undefined : "Hasta adı, TC veya telefon ile ara..."}
+                  value={patientId ? patientSearch : patientSearch}
+                  onChange={e => {
+                    setPatientSearch(e.target.value);
+                    setPatientDropdownOpen(true);
+                    if (!e.target.value) { setPatientId(""); }
+                  }}
+                  onFocus={() => patientSearch.trim().length >= 2 && setPatientDropdownOpen(true)}
+                  className="flex-1 bg-transparent text-sm outline-none"
+                />
+                {patientId && (
+                  <button type="button" onClick={() => { setPatientId(""); setPatientSearch(""); setPatientResults([]); }}
+                    className="text-slate-400 hover:text-red-500 text-base leading-none">
+                    ×
+                  </button>
+                )}
+                {patientSearchLoading && <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-primary" />}
+              </div>
+              {patientDropdownOpen && (patientResults.length > 0 || (patientSearch.trim().length >= 2 && !patientSearchLoading)) && (
+                <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                  {patientResults.length === 0
+                    ? <p className="px-4 py-3 text-sm text-slate-400">Sonuç bulunamadı</p>
+                    : patientResults.map(p => (
+                      <button key={p.id} type="button"
+                        className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-primary/5 transition"
+                        onMouseDown={e => e.preventDefault()}
+                        onClick={() => {
+                          setPatientId(p.id);
+                          setPatientSearch(p.fullName);
+                          setPatientResults([]);
+                          setPatientDropdownOpen(false);
+                        }}>
+                        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                          {p.fullName.charAt(0).toUpperCase()}
+                        </span>
+                        <span className="flex flex-col">
+                          <span className="font-semibold text-slate-800">{p.fullName}</span>
+                          {p.tcNo && <span className="text-[11px] text-slate-400">TC: {p.tcNo}</span>}
+                        </span>
+                      </button>
+                    ))
+                  }
+                </div>
+              )}
+            </div>
             <select className="rounded-lg border px-3 py-2 text-sm" value={newDoctorId} onChange={e => setNewDoctorId(e.target.value)}>
               <option value="">Doktor seçin</option>
               {staff.map(s => <option key={s.id} value={s.id}>{s.fullName}</option>)}
@@ -331,7 +401,7 @@ export default function RandevuPage() {
             <button onClick={createAppointment} disabled={saving} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
               {saving ? "Kaydediliyor..." : "Randevu Ekle"}
             </button>
-            <button onClick={() => { setShowForm(false); setConflictWarning(null); }} className="rounded-lg border px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">İptal</button>
+            <button onClick={() => { setShowForm(false); resetForm(); }} className="rounded-lg border px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">İptal</button>
           </div>
         </div>
       )}

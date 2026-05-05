@@ -31,6 +31,25 @@ export default function HastaTakipPage() {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<"TUMU" | "GELMEDI" | "GERI_ARA" | "ULASILAMADI" | "DONUS_BEKLENIYOR">("TUMU");
+  const [userRole, setUserRole] = useState("");
+  const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then(r => r.json())
+      .then(d => {
+        const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
+        setUserRole(preview || d?.role || "");
+      })
+      .catch(() => {});
+
+    const onPreview = () => {
+      const preview = sessionStorage.getItem("dev-preview-role");
+      fetch("/api/auth/me").then(r => r.json()).then(d => setUserRole(preview || d?.role || "")).catch(() => {});
+    };
+    window.addEventListener("preview-role-change", onPreview);
+    return () => window.removeEventListener("preview-role-change", onPreview);
+  }, []);
 
   useEffect(() => {
     const load = async () => {
@@ -65,7 +84,7 @@ export default function HastaTakipPage() {
       })
       .filter((appt) => {
         if (!normalizedQuery) return true;
-        const haystack = [appt.patient?.fullName, appt.patient?.phone, appt.doctor?.fullName, parseAppointmentNote(appt.note).detail]
+        const haystack = [appt.patient?.fullName, hidePhone ? null : appt.patient?.phone, appt.doctor?.fullName, parseAppointmentNote(appt.note).detail]
           .filter(Boolean)
           .join(" ")
           .toLocaleLowerCase("tr-TR");
@@ -168,14 +187,17 @@ export default function HastaTakipPage() {
                   </div>
                   <div>
                     <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Telefon</p>
-                    <p className="mt-1 text-sm font-medium text-slate-700">{appt.patient?.phone || "Kayıtlı telefon yok"}</p>
+                    {hidePhone
+                      ? <p className="mt-1 text-sm text-slate-400 italic">Gizli</p>
+                      : <p className="mt-1 text-sm font-medium text-slate-700">{appt.patient?.phone || "Kayıtlı telefon yok"}</p>
+                    }
                   </div>
                   <div>
                     <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Sonraki Adım</p>
                     <p className="mt-1 text-sm font-medium text-slate-700">{primaryLabel}</p>
                   </div>
                   <div className="flex flex-wrap gap-2 lg:justify-end">
-                    {appt.patient?.phone && (
+                    {!hidePhone && appt.patient?.phone && (
                       <a href={`tel:${appt.patient.phone}`} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
                         Ara
                       </a>

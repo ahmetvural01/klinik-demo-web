@@ -38,6 +38,29 @@ export default function PrescriptionPage() {
   const [patient, setPatient] = useState<Patient | null>(null);
   const [setting, setSetting] = useState<Setting | null>(null);
   const [loading, setLoading] = useState(false);
+  const [userRole, setUserRole] = useState("");
+  const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then(r => r.json())
+      .then(d => {
+        const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
+        setUserRole(preview || d?.role || "");
+      })
+      .catch(() => {});
+    const onPreview = () => {
+      const preview = sessionStorage.getItem("dev-preview-role");
+      fetch("/api/auth/me").then(r => r.json()).then(d => setUserRole(preview || d?.role || "")).catch(() => {});
+    };
+    window.addEventListener("preview-role-change", onPreview);
+    return () => window.removeEventListener("preview-role-change", onPreview);
+  }, []);
+
+  const [prescription, setPrescription] = useState<Prescription | null>(null);
+  const [patient, setPatient] = useState<Patient | null>(null);
+  const [setting, setSetting] = useState<Setting | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const load = async () => {
     if (!prescriptionId || !patientId) return;
@@ -122,7 +145,7 @@ export default function PrescriptionPage() {
         <span>T.C.: <strong>${patient.tcNo}</strong></span>
         <span>${(patient.gender==="ERKEK"||patient.gender==="M")?"Erkek":"Kadın"}${age ? `, ${age} yaş` : ""}</span>
         ${patient.birthDate ? `<span>D.T.: <strong>${new Date(patient.birthDate).toLocaleDateString("tr-TR")}</strong></span>` : ""}
-        ${patient.phone ? `<span>Tel: <strong>${patient.phone}</strong></span>` : ""}
+        ${!hidePhone && patient.phone ? `<span>Tel: <strong>${patient.phone}</strong></span>` : ""}
         ${patient.insurance ? `<span>Kurum: <strong>${patient.insurance}</strong></span>` : ""}
       </div>
       <div class="rx-content">
@@ -199,7 +222,7 @@ export default function PrescriptionPage() {
               <div><span className="text-slate-400">T.C. No: </span><span className="text-slate-700">{patient.tcNo}</span></div>
               <div><span className="text-slate-400">Cinsiyet: </span><span className="text-slate-700">{(patient.gender === "ERKEK" || patient.gender === "M") ? "Erkek" : "Kadın"}</span></div>
               <div><span className="text-slate-400">Doğum Tarihi: </span><span className="text-slate-700">{patient.birthDate ? new Date(patient.birthDate).toLocaleDateString("tr-TR") : "—"}</span></div>
-              {patient.phone && <div><span className="text-slate-400">Telefon: </span><span className="text-slate-700">{patient.phone}</span></div>}
+              {!hidePhone && patient.phone && <div><span className="text-slate-400">Telefon: </span><span className="text-slate-700">{patient.phone}</span></div>}
               {patient.insurance && <div><span className="text-slate-400">Kurum: </span><span className="text-slate-700">{patient.insurance}</span></div>}
               {patient.address && <div className="col-span-2"><span className="text-slate-400">Adres: </span><span className="text-slate-700">{patient.address}</span></div>}
             </div>

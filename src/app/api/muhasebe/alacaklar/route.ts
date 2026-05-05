@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUserFast } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 /**
  * GET /api/muhasebe/alacaklar
@@ -8,8 +8,8 @@ import { getCurrentUserFast } from "@/lib/auth";
  * Sadece pozitif bakiyeli (borçlu) hastaları döner.
  */
 export async function GET() {
-  const user = await getCurrentUserFast();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("finance:read");
+  if (auth.error) return auth.error;
 
   // Tüm muayeneleri (tedavi tutarları)
   const examGroups = await prisma.examination.groupBy({

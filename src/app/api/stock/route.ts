@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 export async function GET(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("finance:read");
+  if (auth.error) return auth.error;
 
   const { searchParams } = new URL(req.url);
   const category = searchParams.get("category");
@@ -21,8 +21,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("finance:write");
+  if (auth.error) return auth.error;
 
   const body = await req.json();
   const { name, category, unit, quantity, minQuantity, unitPrice, supplier } = body;

@@ -23,7 +23,15 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: "desc" },
   });
 
-  return NextResponse.json(plans);
+  const hidePhone = user.role === "DOKTOR" || user.role === "ASISTAN";
+  const result = hidePhone
+    ? plans.map((p: any) => ({
+        ...p,
+        patient: p.patient ? { ...p.patient, phone: "***" } : p.patient,
+      }))
+    : plans;
+
+  return NextResponse.json(result);
 }
 
 export async function POST(req: NextRequest) {

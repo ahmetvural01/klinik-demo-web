@@ -59,12 +59,19 @@ function buildNavGroups(role: string): NavGroup[] {
 
   const groups: NavGroup[] = [];
 
+  // Tüm roller için anasayfa girişi
+  if (isYonetici || isDoktor || isAsistan || isBanko || isMuhasebe) {
+    groups.push({
+      label: "Ana Menü",
+      items: [{ href: "/anasayfa", label: "Anasayfa", icon: "home" }],
+    });
+  }
+
   // ── KLİNİK ──
   if (isYonetici || isDoktor || isAsistan || isBanko) {
     groups.push({
       label: "Klinik",
       items: [
-        ...(isYonetici || isDoktor || isAsistan ? [{ href: "/anasayfa", label: "Genel Bakış", icon: "home" }] : []),
         { href: "/randevu",     label: "Randevular",  icon: "calendar" },
         { href: "/hasta",       label: "Hastalar",    icon: "users" },
         ...(isYonetici || isDoktor || isAsistan ? [{ href: "/hasta-takip", label: "Hasta Takip", icon: "follow" }] : []),
@@ -187,6 +194,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
     }
     setPreviewRole(role);
     setRolePickerOpen(false);
+    window.dispatchEvent(new Event("preview-role-change"));
   };
 
   const userRole = user.role;

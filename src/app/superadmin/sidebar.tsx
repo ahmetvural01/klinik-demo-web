@@ -9,6 +9,7 @@ const NAV_ITEMS = [
   { href: "/superadmin/panel", icon: "📊", label: "Dashboard", module: "dashboard" },
   { href: "/superadmin/institutions", icon: "🏢", label: "Klinikler", module: "institutions" },
   { href: "/superadmin/users", icon: "👥", label: "Kullanıcılar", module: "users" },
+  { href: "/superadmin/role-permissions", icon: "🧩", label: "Rol Yetkileri", module: "roles" },
   { href: "/superadmin/invoices", icon: "💳", label: "Faturalar", module: "invoices" },
   { href: "/superadmin/sms-packages", icon: "📱", label: "SMS Paketleri", module: "sms" },
   { href: "/superadmin/sms-stock", icon: "📦", label: "SMS Stok", module: "sms" },

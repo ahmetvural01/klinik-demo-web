@@ -44,7 +44,15 @@ export async function GET(request: NextRequest) {
     take: 500, // Güvenlik limiti
   });
 
-  return NextResponse.json(appointments);
+  const hidePhone = auth.user.role === "DOKTOR" || auth.user.role === "ASISTAN";
+  const result = hidePhone
+    ? appointments.map(a => ({
+        ...a,
+        patient: a.patient ? { ...a.patient, phone: null } : a.patient,
+      }))
+    : appointments;
+
+  return NextResponse.json(result);
 }
 
 export async function POST(request: NextRequest) {

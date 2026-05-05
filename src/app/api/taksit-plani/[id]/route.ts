@@ -20,7 +20,14 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       }
     });
     if (!plan) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
-    return NextResponse.json(plan);
+    const hidePhone = user.role === "DOKTOR" || user.role === "ASISTAN";
+    const result = hidePhone
+      ? {
+          ...plan,
+          patient: plan.patient ? { ...plan.patient, phone: "***" } : plan.patient,
+        }
+      : plan;
+    return NextResponse.json(result);
   } catch (e) {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
   }

@@ -2,6 +2,7 @@ export const SUPERADMIN_MODULES = [
   "dashboard",
   "institutions",
   "users",
+  "roles",
   "invoices",
   "sms",
   "ads",
@@ -22,6 +23,7 @@ const MODULE_ROUTE_RULES: Array<{ module: SuperadminModule; prefixes: string[] }
   { module: "dashboard", prefixes: ["/superadmin/panel", "/api/superadmin/dashboard"] },
   { module: "institutions", prefixes: ["/superadmin/institutions", "/api/superadmin/institutions"] },
   { module: "users", prefixes: ["/superadmin/users", "/api/superadmin/users"] },
+  { module: "roles", prefixes: ["/superadmin/role-permissions", "/api/superadmin/role-permissions"] },
   { module: "invoices", prefixes: ["/superadmin/invoices", "/api/superadmin/invoices"] },
   {
     module: "sms",

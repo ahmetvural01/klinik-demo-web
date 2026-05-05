@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 import { applyTaksitIntegration } from "@/lib/taksit-integration";
 
 export async function GET(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("payments:read");
+  if (auth.error) return auth.error;
 
   const { searchParams } = new URL(req.url);
   const dateRaw = searchParams.get("date"); // YYYY-MM-DD
@@ -32,8 +32,8 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("payments:write");
+  if (auth.error) return auth.error;
 
   const body = await req.json();
   const { patientId, doctorId, method, amount, description, posId } = body;

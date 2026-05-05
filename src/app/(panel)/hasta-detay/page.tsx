@@ -82,7 +82,17 @@ function HastaDetayContent() {
   const [payDoctorId, setPayDoctorId] = useState("");
   const [payLoading, setPayLoading] = useState(false);
   const [currentUserId, setCurrentUserId] = useState("");
-  const [currentUserRole, setCurrentUserRole] = useState("");
+  // Başlangıçta sessionStorage'dan oku — flash'siz render
+  const [currentUserRole, setCurrentUserRole] = useState(() =>
+    typeof window !== "undefined" ? (sessionStorage.getItem("dev-preview-role") || "") : ""
+  );
+
+  // Rol bazlı sekme filtreleme
+  // BANKO: tedavi, recete, lab sekmeleri API tarafından engellendi
+  const visibleTabItems = TAB_ITEMS.filter(t => {
+    if (currentUserRole === "BANKO") return !["tedavi", "recete", "lab"].includes(t.key);
+    return true;
+  });
   const [posDevices, setPosDevices] = useState<{ id: string; name: string; isActive: boolean }[]>([]);
   const [editForm, setEditForm] = useState<Partial<Patient & { birthDate: string }>>({});
   const [editLoading, setEditLoading] = useState(false);
@@ -866,7 +876,7 @@ function HastaDetayContent() {
       </div>
 
       <div className="flex flex-wrap gap-1 border-b">
-        {TAB_ITEMS.map(t => (
+        {visibleTabItems.map(t => (
           <button key={t.key} onClick={() => selectTab(t.key)}
             className={"rounded-t px-4 py-2 text-sm font-semibold transition-colors " + (tab === t.key ? "border-b-2 border-primary bg-white text-primary" : "text-gray-600 hover:text-primary")}>
             {t.label}
