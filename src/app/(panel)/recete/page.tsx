@@ -57,11 +57,6 @@ export default function PrescriptionPage() {
     return () => window.removeEventListener("preview-role-change", onPreview);
   }, []);
 
-  const [prescription, setPrescription] = useState<Prescription | null>(null);
-  const [patient, setPatient] = useState<Patient | null>(null);
-  const [setting, setSetting] = useState<Setting | null>(null);
-  const [loading, setLoading] = useState(false);
-
   const load = async () => {
     if (!prescriptionId || !patientId) return;
     setLoading(true);

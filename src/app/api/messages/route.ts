@@ -6,6 +6,11 @@ export async function GET() {
   const user = decodeTokenUser();
   if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
 
+  // Günlük temizlik: bugünden eski mesajları otomatik temizle
+  const now = new Date();
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  await prisma.message.deleteMany({ where: { createdAt: { lt: startOfToday } } });
+
   const messages = await prisma.message.findMany({
     orderBy: { createdAt: "desc" },
     take: 50,
@@ -20,10 +25,14 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
 
   const { text } = await req.json();
-  if (!text?.trim()) return NextResponse.json({ error: "Mesaj boş olamaz" }, { status: 400 });
+  const normalizedText = String(text || "").trim();
+  if (!normalizedText) return NextResponse.json({ error: "Mesaj boş olamaz" }, { status: 400 });
+  if (normalizedText.length > 1000) {
+    return NextResponse.json({ error: "Mesaj en fazla 1000 karakter olabilir" }, { status: 400 });
+  }
 
   const message = await prisma.message.create({
-    data: { userId: user.id, text: text.trim() },
+    data: { userId: user.id, text: normalizedText },
     include: { user: { select: { fullName: true, role: true } } },
   });
 

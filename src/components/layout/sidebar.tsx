@@ -161,6 +161,7 @@ const PREVIEW_ROLES = [
 export function Sidebar({ user }: { user: { fullName: string; role: string } }) {
   const pathname = usePathname();
   const [alerts, setAlerts] = useState<{ taksit: number; stok: number; lab: number }>({ taksit: 0, stok: 0, lab: 0 });
+  const [messageUnread, setMessageUnread] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
   const [previewRole, setPreviewRole] = useState<string | null>(null);
   const [rolePickerOpen, setRolePickerOpen] = useState(false);
@@ -237,12 +238,29 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
     return () => clearInterval(timer);
   }, [needsTaksit, needsStok, needsLab]);
 
+  useEffect(() => {
+    const syncUnread = () => {
+      const raw = localStorage.getItem("clinic-unread-messages") || "0";
+      const val = Number(raw);
+      setMessageUnread(Number.isFinite(val) ? val : 0);
+    };
+
+    syncUnread();
+    window.addEventListener("clinic-unread-messages-change", syncUnread);
+    window.addEventListener("storage", syncUnread);
+    return () => {
+      window.removeEventListener("clinic-unread-messages-change", syncUnread);
+      window.removeEventListener("storage", syncUnread);
+    };
+  }, []);
+
   const isActive = (href: string) =>
     href === "/anasayfa"
       ? pathname === "/anasayfa"
       : pathname === href || pathname.startsWith(href + "/");
 
   const dynamicBadge = (href: string): number => {
+    if (href === "/anasayfa") return messageUnread;
     if (href === "/muhasebe") return alerts.taksit; // gecikmiş taksit sayısı
     if (href === "/stok") return alerts.stok;
     if (href === "/lab") return alerts.lab;

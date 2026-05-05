@@ -70,3 +70,24 @@ export const paymentSchema = z.object({
   amount: z.number().min(0),
   description: z.string().optional()
 });
+
+export const patientFollowUpCreateSchema = z.object({
+  patientId: z.string().min(1),
+  appointmentId: z.string().optional(),
+  doctorId: z.string().optional(),
+  type: z.enum(["GERI_ARA", "ULASILAMADI", "DONUS_BEKLENIYOR", "DIGER"]),
+  priority: z.number().int().min(1).max(3).default(2),
+  note: z.string().max(2000).optional(),
+  nextActionAt: z.string().datetime().optional(),
+});
+
+export const patientFollowUpUpdateSchema = z.object({
+  type: z.enum(["GERI_ARA", "ULASILAMADI", "DONUS_BEKLENIYOR", "DIGER"]).optional(),
+  priority: z.number().int().min(1).max(3).optional(),
+  status: z.enum(["ACIK", "KAPALI"]).optional(),
+  note: z.string().max(2000).optional(),
+  resolutionNote: z.string().max(2000).optional(),
+  nextActionAt: z.string().datetime().nullable().optional(),
+  lastContactAt: z.string().datetime().nullable().optional(),
+  close: z.boolean().optional(),
+});

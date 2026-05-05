@@ -54,6 +54,7 @@ const PAGE_TITLES: Record<string, string> = {
 };
 
 type AlertCounts = { taksit: number; stok: number; lab: number };
+type MessageLite = { id: string; userId: string; createdAt: string };
 
 function Clock() {
   const [time, setTime] = useState("");
@@ -70,6 +71,7 @@ function Clock() {
 export function Topbar({ user }: Props) {
   const router = useRouter();
   const pathname = usePathname();
+  const baseTitleRef = useRef<string>("KlinikModern");
   const [q, setQ] = useState("");
   const [searchResults, setSearchResults] = useState<{id: string; fullName: string; tcNo: string; phone: string}[]>([]);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
@@ -91,12 +93,61 @@ export function Topbar({ user }: Props) {
   const hidePhone = effectiveRole === "DOKTOR" || effectiveRole === "ASISTAN";
   const [alerts, setAlerts] = useState<AlertCounts>({ taksit: 0, stok: 0, lab: 0 });
   const [showAlerts, setShowAlerts] = useState(false);
+  const [messageUnread, setMessageUnread] = useState(0);
+  const [currentUserId, setCurrentUserId] = useState("");
   const alertRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const today = new Date().toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" });
 
   // Sayfa başlığı
   const pageTitle = PAGE_TITLES[pathname ?? ""] ?? "";
+
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      baseTitleRef.current = document.title || "KlinikModern";
+    }
+  }, []);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setCurrentUserId(d?.id || ""))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const updateUnread = async () => {
+      try {
+        const res = await fetch("/api/messages");
+        if (!res.ok) return;
+        const list = (await res.json()) as MessageLite[];
+        const lastSeenRaw = localStorage.getItem("clinic-messages-last-seen") || "";
+        const lastSeen = lastSeenRaw ? new Date(lastSeenRaw).getTime() : 0;
+
+        const unread = Array.isArray(list)
+          ? list.filter((m) => new Date(m.createdAt).getTime() > lastSeen && m.userId !== currentUserId).length
+          : 0;
+
+        setMessageUnread(unread);
+        localStorage.setItem("clinic-unread-messages", String(unread));
+        window.dispatchEvent(new Event("clinic-unread-messages-change"));
+      } catch {}
+    };
+
+    updateUnread();
+    timer = setInterval(updateUnread, 20000);
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [currentUserId]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const base = baseTitleRef.current || "KlinikModern";
+    document.title = messageUnread > 0 ? `(${messageUnread}) ${base}` : base;
+  }, [messageUnread]);
 
   // Rol bazlı bildirim yetki haritası
   // taksit: finans yetkisi olan roller (YONETICI, MUHASEBE, BANKO)

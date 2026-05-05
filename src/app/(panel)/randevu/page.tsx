@@ -2,10 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  type AppointmentTreatmentKey,
   type FollowUpKey,
+  APPOINTMENT_TREATMENT_OPTIONS,
   FOLLOW_UP_OPTIONS,
   buildAppointmentNote,
   getFollowUpMeta,
+  getTreatmentMeta,
   parseAppointmentNote,
 } from "@/lib/appointment-follow-up";
 
@@ -34,13 +37,6 @@ const STATUS_COLORS: Record<string, string> = {
 const STATUS_LABELS: Record<string, string> = {
   BEKLIYOR: "Bekliyor", GELDI: "Geldi", GELMEDI: "Gelmedi", IPTAL: "İptal"
 };
-
-const TYPE_BADGE: Record<string, string> = {
-  STANDART: "bg-blue-100 text-blue-700",
-  KONTROL: "bg-yellow-100 text-yellow-700",
-  ACIL: "bg-red-100 text-red-700",
-};
-
 
 function toLocalInput(date: Date) {
   const z = (n: number) => String(n).padStart(2, "0");
@@ -76,18 +72,35 @@ export default function RandevuPage() {
 
   const [newDoctorId, setNewDoctorId] = useState("");
   const [startAt, setStartAt] = useState(() => toLocalInput(new Date(Date.now() + 30 * 60000)));
-  const [endAt, setEndAt] = useState(() => toLocalInput(new Date(Date.now() + 60 * 60000)));
-  const [type, setType] = useState<"STANDART" | "KONTROL" | "ACIL">("STANDART");
+  const [durationMinutes, setDurationMinutes] = useState<15 | 30 | 45 | 60 | 90 | 120>(30);
+  const [treatmentKey, setTreatmentKey] = useState<AppointmentTreatmentKey>("MUAYENE");
+  const [treatmentQuery, setTreatmentQuery] = useState(getTreatmentMeta("MUAYENE").label);
   const [note, setNote] = useState("");
   const [smsInfo, setSmsInfo] = useState(true);
   const [smsReminder, setSmsReminder] = useState(false);
   const [smsSurvey, setSmsSurvey] = useState(false);
-  const [colorCode, setColorCode] = useState("#2a9d8f");
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
   const [conflictWarning, setConflictWarning] = useState<string | null>(null);
+  const [conflictSuggestions, setConflictSuggestions] = useState<string[]>([]);
   const [followUpStatus, setFollowUpStatus] = useState<FollowUpKey>("YOK");
   const [followUpNote, setFollowUpNote] = useState("");
   const [detailSaving, setDetailSaving] = useState(false);
+  const [agendaStatusFilter, setAgendaStatusFilter] = useState<"ALL" | "BEKLIYOR" | "GELDI" | "GELMEDI" | "IPTAL">("ALL");
+  const selectedTreatmentMeta = useMemo(() => getTreatmentMeta(treatmentKey), [treatmentKey]);
+  const filteredTreatmentOptions = useMemo(() => {
+    const q = treatmentQuery.trim().toLowerCase();
+    if (!q) return APPOINTMENT_TREATMENT_OPTIONS;
+    return APPOINTMENT_TREATMENT_OPTIONS.filter((item) => item.label.toLowerCase().includes(q));
+  }, [treatmentQuery]);
+
+  const resolveTreatmentKey = useCallback((query: string): AppointmentTreatmentKey => {
+    const q = query.trim().toLowerCase();
+    if (!q) return "MUAYENE";
+    const exact = APPOINTMENT_TREATMENT_OPTIONS.find((item) => item.label.toLowerCase() === q);
+    if (exact) return exact.value;
+    const included = APPOINTMENT_TREATMENT_OPTIONS.find((item) => item.label.toLowerCase().includes(q));
+    return included?.value || "DIGER";
+  }, []);
 
   const range = useMemo(() => {
     const from = new Date(date);
@@ -152,16 +165,40 @@ export default function RandevuPage() {
 
   const resetForm = () => {
     setPatientId(""); setPatientSearch(""); setPatientResults([]); setPatientDropdownOpen(false);
-    setNewDoctorId(""); setNote(""); setConflictWarning(null);
+    setNewDoctorId(""); setNote(""); setConflictWarning(null); setConflictSuggestions([]); setTreatmentKey("MUAYENE");
+    setTreatmentQuery(getTreatmentMeta("MUAYENE").label);
+    setDurationMinutes(30);
   };
 
   const createAppointment = async () => {
     if (!patientId || !newDoctorId) return setError("Hasta ve doktor seçin");
+    const resolvedTreatmentKey = resolveTreatmentKey(treatmentQuery);
+    const resolvedTreatmentMeta = getTreatmentMeta(resolvedTreatmentKey);
+    setTreatmentKey(resolvedTreatmentKey);
+    setTreatmentQuery(resolvedTreatmentMeta.label);
+    const startDate = new Date(startAt);
+    if (Number.isNaN(startDate.getTime())) {
+      setError("Başlangıç tarih ve saatini doğru girin");
+      return;
+    }
+    const endDate = new Date(startDate);
+    endDate.setMinutes(endDate.getMinutes() + durationMinutes);
     setSaving(true); setError(null);
     const res = await fetch("/api/appointments", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ patientId, doctorId: newDoctorId, startAt: new Date(startAt).toISOString(), endAt: new Date(endAt).toISOString(), type, colorCode, note, smsInfo, smsReminder, smsSurvey })
+      body: JSON.stringify({
+        patientId,
+        doctorId: newDoctorId,
+        startAt: startDate.toISOString(),
+        endAt: endDate.toISOString(),
+        type: "STANDART",
+        colorCode: resolvedTreatmentMeta.color,
+        note: buildAppointmentNote("YOK", note, resolvedTreatmentKey),
+        smsInfo,
+        smsReminder,
+        smsSurvey,
+      })
     });
     setSaving(false);
     if (!res.ok) { const b = await res.json().catch(() => ({ message: "Kaydedilemedi" })); setError(b.message || "Kaydedilemedi"); return; }
@@ -178,7 +215,8 @@ export default function RandevuPage() {
   const saveAppointmentFollowUp = async () => {
     if (!selectedAppt) return;
     setDetailSaving(true);
-    const nextNote = buildAppointmentNote(followUpStatus, followUpNote);
+    const parsed = parseAppointmentNote(selectedAppt.note);
+    const nextNote = buildAppointmentNote(followUpStatus, followUpNote, parsed.treatment);
     const res = await fetch("/api/appointments/" + selectedAppt.id, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -239,39 +277,408 @@ export default function RandevuPage() {
     setDate(d);
   };
 
+  const buildConflictInfo = useCallback((targetStartAt: string, targetDoctorId: string, targetDurationMinutes: number) => {
+    if (!targetDoctorId || !targetStartAt) return { warning: null as string | null, suggestions: [] as string[] };
+    const start = new Date(targetStartAt);
+    if (Number.isNaN(start.getTime())) return { warning: null as string | null, suggestions: [] as string[] };
+    const end = new Date(start);
+    end.setMinutes(end.getMinutes() + targetDurationMinutes);
+
+    const dayAppointments = appointments.filter((appt) => {
+      if (appt.doctor?.id !== targetDoctorId) return false;
+      if (appt.status === "IPTAL" || appt.status === "GELMEDI") return false;
+      const ad = new Date(appt.startAt);
+      return ad.getFullYear() === start.getFullYear() && ad.getMonth() === start.getMonth() && ad.getDate() === start.getDate();
+    });
+
+    const overlaps = dayAppointments.filter((appt) => {
+      const apptStart = new Date(appt.startAt);
+      const apptEnd = new Date(appt.endAt);
+      return apptStart < end && apptEnd > start;
+    });
+
+    const slotTime = String(start.getHours()).padStart(2, "0") + ":" + String(start.getMinutes()).padStart(2, "0");
+    const warning = overlaps.length > 0
+      ? `Bu aralıkta (${slotTime}, ${targetDurationMinutes} dk) ${overlaps.length} çakışan randevu var: ${overlaps.map((a) => a.patient?.fullName || "Hasta").join(", ")}.`
+      : null;
+
+    const candidates: { slot: string; distance: number }[] = [];
+    SLOT_HOURS.forEach((slot) => {
+      const [h, m] = slot.split(":").map(Number);
+      const candidateStart = new Date(start);
+      candidateStart.setHours(h, m, 0, 0);
+      const candidateEnd = new Date(candidateStart);
+      candidateEnd.setMinutes(candidateEnd.getMinutes() + targetDurationMinutes);
+
+      const occupied = dayAppointments.some((appt) => {
+        const apptStart = new Date(appt.startAt);
+        const apptEnd = new Date(appt.endAt);
+        return apptStart < candidateEnd && apptEnd > candidateStart;
+      });
+
+      if (!occupied) {
+        const distance = Math.abs(candidateStart.getTime() - start.getTime()) / (1000 * 60);
+        candidates.push({ slot, distance });
+      }
+    });
+
+    candidates.sort((a, b) => a.distance - b.distance);
+    const suggestions = candidates.slice(0, 3).map(c => c.slot);
+
+    return { warning, suggestions };
+  }, [appointments]);
+
   const openQuickCreate = (slotTime: string, forDate: Date, slotDoctorId?: string) => {
     const [h, m] = slotTime.split(":").map(Number);
     const start = new Date(forDate);
     start.setHours(h, m, 0, 0);
-    const end = new Date(start);
-    end.setMinutes(end.getMinutes() + 30);
-
     const docId = slotDoctorId || doctorId || null;
-    const existing = getApptForSlot(docId, slotTime, forDate);
-    if (existing.length > 0) {
-      const names = existing.map(a => a.patient?.fullName || "Hasta").join(", ");
-      setConflictWarning(`Bu saatte (${slotTime}) zaten ${existing.length} randevu mevcut: ${names}. Yine de ekleyebilirsiniz.`);
-    } else {
-      setConflictWarning(null);
-    }
+    const conflict = buildConflictInfo(start.toISOString(), docId || "", 30);
+    setConflictWarning(conflict.warning ? `${conflict.warning} Yine de ekleyebilirsiniz.` : null);
+    setConflictSuggestions(conflict.suggestions);
 
     setStartAt(toLocalInput(start));
-    setEndAt(toLocalInput(end));
+    setDurationMinutes(30);
     setNewDoctorId(docId || "");
     setShowForm(true);
   };
 
+  useEffect(() => {
+    if (!showForm || !newDoctorId || !startAt) return;
+    const conflict = buildConflictInfo(new Date(startAt).toISOString(), newDoctorId, durationMinutes);
+    setConflictWarning(conflict.warning ? `${conflict.warning} Yine de ekleyebilirsiniz.` : null);
+    setConflictSuggestions(conflict.suggestions);
+  }, [showForm, startAt, newDoctorId, durationMinutes, appointments]);
+
   const doctors = doctorId ? staff.filter(s => s.id === doctorId) : staff;
+
+  const canExportOrPrint = view === "GUN" || view === "HAFTA";
+  const reportTitle = view === "GUN"
+    ? `Gunluk Randevu Cizelgesi - ${date.getDate()} ${TR_MONTHS[date.getMonth()]} ${date.getFullYear()}`
+    : (() => {
+        const end = new Date(range.from);
+        end.setDate(end.getDate() + 6);
+        return `Haftalik Randevu Cizelgesi - ${range.from.getDate()} ${TR_MONTHS[range.from.getMonth()]} - ${end.getDate()} ${TR_MONTHS[end.getMonth()]} ${end.getFullYear()}`;
+      })();
+
+  const reportRows = useMemo(() => {
+    return [...appointments]
+      .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
+      .map((a) => {
+        const parsed = parseAppointmentNote(a.note);
+        const treatment = getTreatmentMeta(parsed.treatment).label;
+        const start = new Date(a.startAt);
+        const end = new Date(a.endAt);
+        const duration = Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000));
+        return {
+          tarih: start.toLocaleDateString("tr-TR"),
+          saat: start.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }),
+          sure: `${duration} dk`,
+          hasta: a.patient?.fullName || "-",
+          doktor: a.doctor?.fullName || "-",
+          tedavi: treatment,
+          durum: STATUS_LABELS[a.status] || a.status,
+          not: parsed.detail || "",
+        };
+      });
+  }, [appointments]);
+
+  const downloadExcelReport = () => {
+    if (!canExportOrPrint) {
+      setError("Excel dışa aktarma sadece Gün veya Hafta görünümünde kullanılabilir.");
+      return;
+    }
+    const esc = (v: string) => v.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+
+    const statusStyle: Record<string, string> = {
+      BEKLIYOR: "background:#FEF3C7;color:#92400E;font-weight:600;",
+      GELDI:    "background:#D1FAE5;color:#065F46;font-weight:600;",
+      GELMEDI:  "background:#FEE2E2;color:#991B1B;font-weight:600;",
+      IPTAL:    "background:#F1F5F9;color:#475569;font-weight:600;",
+    };
+
+    const now = new Date();
+    const statusCounts = { BEKLIYOR: 0, GELDI: 0, GELMEDI: 0, IPTAL: 0 };
+    appointments.forEach((a) => { if (a.status in statusCounts) (statusCounts as Record<string, number>)[a.status]++; });
+
+    const doctor = doctorId ? (staff.find((s) => s.id === doctorId)?.fullName || "Tüm Doktorlar") : "Tüm Doktorlar";
+
+    const dataRows = reportRows.map((r, i) => {
+      const rawStatus = appointments.find(
+        (a) => a.patient?.fullName === r.hasta &&
+               new Date(a.startAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) === r.saat
+      )?.status || "";
+      const sStyle = statusStyle[rawStatus] || "";
+      const rowBg = i % 2 === 0 ? "background:#F8FAFC;" : "background:#FFFFFF;";
+      return `<tr style="${rowBg}font-size:12px;">
+        <td style="border:1px solid #CBD5E1;padding:7px 10px;color:#374151;">${esc(r.tarih)}</td>
+        <td style="border:1px solid #CBD5E1;padding:7px 10px;color:#374151;font-weight:600;">${esc(r.saat)}</td>
+        <td style="border:1px solid #CBD5E1;padding:7px 10px;color:#6B7280;text-align:center;">${esc(r.sure)}</td>
+        <td style="border:1px solid #CBD5E1;padding:7px 10px;color:#111827;font-weight:600;">${esc(r.hasta)}</td>
+        <td style="border:1px solid #CBD5E1;padding:7px 10px;color:#374151;">${esc(r.doktor)}</td>
+        <td style="border:1px solid #CBD5E1;padding:7px 10px;color:#374151;">${esc(r.tedavi)}</td>
+        <td style="border:1px solid #CBD5E1;padding:7px 10px;${sStyle}">${esc(r.durum)}</td>
+        <td style="border:1px solid #CBD5E1;padding:7px 10px;color:#6B7280;font-size:11px;">${esc(r.not)}</td>
+      </tr>`;
+    }).join("");
+
+    const html = `
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+<head><meta charset="UTF-8">
+<style>
+  body { font-family: Calibri, Arial, sans-serif; }
+  td, th { mso-number-format: "@"; }
+</style>
+</head>
+<body>
+<table style="width:100%;border-collapse:collapse;font-family:Calibri,Arial,sans-serif;">
+  <tr>
+    <td colspan="8" style="background:#1E3A5F;color:#FFFFFF;font-size:18px;font-weight:700;padding:14px 16px;border:none;letter-spacing:0.5px;">
+      KlinikModern — Randevu Çizelgesi
+    </td>
+  </tr>
+  <tr>
+    <td colspan="4" style="background:#F0F4F8;padding:8px 16px;font-size:12px;color:#374151;border:1px solid #E2E8F0;">
+      <b>Rapor:</b> ${esc(reportTitle)}
+    </td>
+    <td colspan="2" style="background:#F0F4F8;padding:8px 16px;font-size:12px;color:#374151;border:1px solid #E2E8F0;">
+      <b>Doktor:</b> ${esc(doctor)}
+    </td>
+    <td colspan="2" style="background:#F0F4F8;padding:8px 16px;font-size:12px;color:#374151;border:1px solid #E2E8F0;">
+      <b>Oluşturma:</b> ${now.toLocaleString("tr-TR")}
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" style="background:#EEF2FF;padding:6px 16px;font-size:12px;border:1px solid #E2E8F0;color:#3730A3;">
+      Toplam: <b>${reportRows.length}</b>
+    </td>
+    <td colspan="2" style="background:#FEF3C7;padding:6px 16px;font-size:12px;border:1px solid #E2E8F0;color:#92400E;">
+      Bekliyor: <b>${statusCounts.BEKLIYOR}</b>
+    </td>
+    <td colspan="2" style="background:#D1FAE5;padding:6px 16px;font-size:12px;border:1px solid #E2E8F0;color:#065F46;">
+      Geldi: <b>${statusCounts.GELDI}</b>
+    </td>
+    <td style="background:#FEE2E2;padding:6px 16px;font-size:12px;border:1px solid #E2E8F0;color:#991B1B;">
+      Gelmedi: <b>${statusCounts.GELMEDI}</b>
+    </td>
+    <td style="background:#F1F5F9;padding:6px 16px;font-size:12px;border:1px solid #E2E8F0;color:#475569;">
+      İptal: <b>${statusCounts.IPTAL}</b>
+    </td>
+  </tr>
+  <tr style="height:8px;"><td colspan="8" style="border:none;background:#FFFFFF;"></td></tr>
+  <tr style="background:#1E3A5F;">
+    <th style="border:1px solid #2D4F7C;padding:9px 12px;color:#FFFFFF;font-size:12px;font-weight:700;text-align:left;white-space:nowrap;">Tarih</th>
+    <th style="border:1px solid #2D4F7C;padding:9px 12px;color:#FFFFFF;font-size:12px;font-weight:700;text-align:left;white-space:nowrap;">Saat</th>
+    <th style="border:1px solid #2D4F7C;padding:9px 12px;color:#FFFFFF;font-size:12px;font-weight:700;text-align:center;white-space:nowrap;">Süre</th>
+    <th style="border:1px solid #2D4F7C;padding:9px 12px;color:#FFFFFF;font-size:12px;font-weight:700;text-align:left;white-space:nowrap;">Hasta</th>
+    <th style="border:1px solid #2D4F7C;padding:9px 12px;color:#FFFFFF;font-size:12px;font-weight:700;text-align:left;white-space:nowrap;">Doktor</th>
+    <th style="border:1px solid #2D4F7C;padding:9px 12px;color:#FFFFFF;font-size:12px;font-weight:700;text-align:left;white-space:nowrap;">Tedavi</th>
+    <th style="border:1px solid #2D4F7C;padding:9px 12px;color:#FFFFFF;font-size:12px;font-weight:700;text-align:left;white-space:nowrap;">Durum</th>
+    <th style="border:1px solid #2D4F7C;padding:9px 12px;color:#FFFFFF;font-size:12px;font-weight:700;text-align:left;white-space:nowrap;">Not</th>
+  </tr>
+  ${dataRows || `<tr><td colspan="8" style="text-align:center;padding:16px;color:#6B7280;font-style:italic;">Kayıt bulunamadı</td></tr>`}
+  <tr style="height:12px;"><td colspan="8" style="border:none;background:#FFFFFF;"></td></tr>
+  <tr>
+    <td colspan="8" style="padding:8px 16px;font-size:11px;color:#9CA3AF;font-style:italic;border-top:2px solid #E2E8F0;">
+      Bu çizelge KlinikModern üzerinden ${now.toLocaleString("tr-TR")} tarihinde oluşturulmuştur.
+    </td>
+  </tr>
+</table>
+</body>
+</html>`;
+
+    const blob = new Blob(["\uFEFF" + html], { type: "application/vnd.ms-excel;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const y = now.getFullYear();
+    const mo = String(now.getMonth() + 1).padStart(2, "0");
+    const dy = String(now.getDate()).padStart(2, "0");
+    anchor.href = url;
+    anchor.download = `randevu-${view === "GUN" ? "gunluk" : "haftalik"}-${y}${mo}${dy}.xls`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  };
+
+  const printReport = () => {
+    if (!canExportOrPrint) {
+      setError("Yazdırma sadece Gün veya Hafta görünümünde kullanılabilir.");
+      return;
+    }
+    const esc = (v: string) =>
+      v.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+
+    const now = new Date();
+    const doctor = doctorId ? (staff.find((s) => s.id === doctorId)?.fullName || "Tüm Doktorlar") : "Tüm Doktorlar";
+
+    const statusStyle: Record<string, string> = {
+      BEKLIYOR: "background:#FEF3C7;color:#92400E;",
+      GELDI:    "background:#D1FAE5;color:#065F46;",
+      GELMEDI:  "background:#FEE2E2;color:#991B1B;",
+      IPTAL:    "background:#F1F5F9;color:#475569;",
+    };
+
+    const statusCounts = { BEKLIYOR: 0, GELDI: 0, GELMEDI: 0, IPTAL: 0 };
+    appointments.forEach((a) => { if (a.status in statusCounts) (statusCounts as Record<string, number>)[a.status]++; });
+
+    const rowsHtml = reportRows.length
+      ? reportRows.map((r, i) => {
+          const rawStatus = appointments.find(
+            (a) => a.patient?.fullName === r.hasta &&
+                   new Date(a.startAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }) === r.saat
+          )?.status || "";
+          const sStyle = statusStyle[rawStatus] || "";
+          const rowBg = i % 2 === 0 ? "#F8FAFC" : "#FFFFFF";
+          return `<tr style="background:${rowBg};">
+            <td class="td">${esc(r.tarih)}</td>
+            <td class="td td-bold">${esc(r.saat)}</td>
+            <td class="td td-center">${esc(r.sure)}</td>
+            <td class="td td-name">${esc(r.hasta)}</td>
+            <td class="td">${esc(r.doktor)}</td>
+            <td class="td">${esc(r.tedavi)}</td>
+            <td class="td"><span class="badge" style="${sStyle}">${esc(r.durum)}</span></td>
+            <td class="td td-note">${esc(r.not)}</td>
+          </tr>`;
+        }).join("")
+      : `<tr><td colspan="8" class="empty-row">Kayıt bulunamadı</td></tr>`;
+
+    const printWindow = window.open("", "_blank", "width=1200,height=800");
+    if (!printWindow) {
+      setError("Yazdırma penceresi açılamadı. Tarayıcı popup iznini kontrol edin.");
+      return;
+    }
+
+    printWindow.document.write(`<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <title>${esc(reportTitle)}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #fff; color: #0F172A; font-size: 12px; }
+    .page { padding: 20mm 18mm 16mm 18mm; }
+    /* Header */
+    .header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 14px; border-bottom: 3px solid #1E3A5F; margin-bottom: 14px; }
+    .logo-area { display: flex; flex-direction: column; }
+    .logo-name { font-size: 22px; font-weight: 800; color: #1E3A5F; letter-spacing: -0.5px; }
+    .logo-sub { font-size: 11px; color: #64748B; margin-top: 2px; }
+    .header-right { text-align: right; }
+    .report-title { font-size: 14px; font-weight: 700; color: #1E3A5F; }
+    .report-meta { font-size: 11px; color: #64748B; margin-top: 4px; line-height: 1.6; }
+    /* Stats */
+    .stats { display: flex; gap: 10px; margin-bottom: 14px; }
+    .stat-box { flex: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid; }
+    .stat-total { background: #EEF2FF; border-color: #C7D2FE; color: #3730A3; }
+    .stat-bek   { background: #FEF3C7; border-color: #FDE68A; color: #92400E; }
+    .stat-gel   { background: #D1FAE5; border-color: #A7F3D0; color: #065F46; }
+    .stat-gel2  { background: #FEE2E2; border-color: #FECACA; color: #991B1B; }
+    .stat-iptal { background: #F1F5F9; border-color: #CBD5E1; color: #475569; }
+    .stat-num  { font-size: 20px; font-weight: 800; }
+    .stat-lbl  { font-size: 10px; margin-top: 1px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+    /* Table */
+    table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+    thead tr { background: #1E3A5F; color: #FFFFFF; }
+    th { padding: 9px 10px; text-align: left; font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px; border: 1px solid #2D4F7C; white-space: nowrap; }
+    .td { border: 1px solid #E2E8F0; padding: 7px 10px; vertical-align: middle; color: #374151; }
+    .td-bold { font-weight: 700; color: #111827; }
+    .td-center { text-align: center; color: #6B7280; }
+    .td-name { font-weight: 600; color: #111827; }
+    .td-note { color: #6B7280; font-size: 11px; max-width: 160px; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 9999px; font-size: 10.5px; font-weight: 700; }
+    .empty-row { text-align: center; padding: 24px; color: #94A3B8; font-style: italic; border: 1px solid #E2E8F0; }
+    /* Footer */
+    .footer { margin-top: 16px; padding-top: 10px; border-top: 1px solid #E2E8F0; display: flex; justify-content: space-between; font-size: 10px; color: #94A3B8; }
+    @media print {
+      .page { padding: 10mm 12mm; }
+      thead { display: table-header-group; }
+      tr { page-break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <div class="logo-area">
+      <div class="logo-name">KlinikModern</div>
+      <div class="logo-sub">Randevu Çizelgesi</div>
+    </div>
+    <div class="header-right">
+      <div class="report-title">${esc(reportTitle)}</div>
+      <div class="report-meta">
+        Doktor: <b>${esc(doctor)}</b><br>
+        Oluşturma: ${now.toLocaleString("tr-TR")}
+      </div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat-box stat-total">
+      <div class="stat-num">${reportRows.length}</div>
+      <div class="stat-lbl">Toplam</div>
+    </div>
+    <div class="stat-box stat-bek">
+      <div class="stat-num">${statusCounts.BEKLIYOR}</div>
+      <div class="stat-lbl">Bekliyor</div>
+    </div>
+    <div class="stat-box stat-gel">
+      <div class="stat-num">${statusCounts.GELDI}</div>
+      <div class="stat-lbl">Geldi</div>
+    </div>
+    <div class="stat-box stat-gel2">
+      <div class="stat-num">${statusCounts.GELMEDI}</div>
+      <div class="stat-lbl">Gelmedi</div>
+    </div>
+    <div class="stat-box stat-iptal">
+      <div class="stat-num">${statusCounts.IPTAL}</div>
+      <div class="stat-lbl">İptal</div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Tarih</th>
+        <th>Saat</th>
+        <th style="text-align:center;">Süre</th>
+        <th>Hasta</th>
+        <th>Doktor</th>
+        <th>Tedavi</th>
+        <th>Durum</th>
+        <th>Not</th>
+      </tr>
+    </thead>
+    <tbody>${rowsHtml}</tbody>
+  </table>
+
+  <div class="footer">
+    <span>Bu çıktı KlinikModern randevu çizelgesinden üretilmiştir.</span>
+    <span>${now.toLocaleString("tr-TR")}</span>
+  </div>
+</div>
+<script>window.onload = function() { window.print(); }<\/script>
+</body>
+</html>`);
+    printWindow.document.close();
+    printWindow.focus();
+  };
+
+  const filteredAgendaAppointments = useMemo(() => {
+    if (agendaStatusFilter === "ALL") return appointments;
+    return appointments.filter(a => a.status === agendaStatusFilter);
+  }, [appointments, agendaStatusFilter]);
 
   const apptBlock = (a: Appointment) => (
     (() => {
       const parsed = parseAppointmentNote(a.note);
       const meta = getFollowUpMeta(parsed.followUp);
+      const treatmentMeta = getTreatmentMeta(parsed.treatment);
       return (
     <div key={a.id} onClick={() => setSelectedAppt(a)}
       className={"rounded p-1 mb-0.5 cursor-pointer " + (STATUS_COLORS[a.status] || "bg-blue-50 border-l-4 border-blue-400")}>
       <p className="font-semibold text-gray-800 truncate text-xs">{a.patient?.fullName || "-"}</p>
       <p className="text-gray-500 text-xs">{new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}</p>
+      <p className={"mt-0.5 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-semibold " + treatmentMeta.badge}>{treatmentMeta.label}</p>
       {parsed.followUp !== "YOK" && <p className={"mt-0.5 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-semibold " + meta.badge}>{meta.label}</p>}
     </div>
       );
@@ -298,13 +705,29 @@ export default function RandevuPage() {
           <button onClick={() => nav(1)} className="rounded border px-2 py-1 text-lg hover:bg-gray-100">›</button>
           <button onClick={() => setDate(new Date())} className="rounded border border-gray-300 px-3 py-1 text-xs font-medium bg-gray-50 hover:bg-gray-100">Bugün</button>
         </div>
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           {(["GUN","HAFTA","AY","AJANDA"] as const).map(mode => (
             <button key={mode} onClick={() => setView(mode)}
               className={"rounded-lg px-4 py-2 text-sm font-semibold transition-colors " + (view === mode ? "bg-primary text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200")}>
               {mode === "GUN" ? "Gün" : mode === "HAFTA" ? "Hafta" : mode === "AY" ? "Ay" : "Ajanda"}
             </button>
           ))}
+          <button
+            onClick={printReport}
+            disabled={!canExportOrPrint}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+            title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Randevu çizelgesini yazdır"}
+          >
+            Yazdır
+          </button>
+          <button
+            onClick={downloadExcelReport}
+            disabled={!canExportOrPrint}
+            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+            title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Excel olarak dışa aktar"}
+          >
+            Excel Dışa Aktar
+          </button>
           <button onClick={() => setShowForm(!showForm)} className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white">+ Yeni</button>
         </div>
       </div>
@@ -316,6 +739,29 @@ export default function RandevuPage() {
             <div className="mb-3 flex items-start gap-2 rounded-lg border border-yellow-300 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
               <span className="mt-0.5 text-base">⚠️</span>
               <span>{conflictWarning}</span>
+            </div>
+          )}
+          {conflictSuggestions.length > 0 && (
+            <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+              <p className="font-semibold">Önerilen uygun saatler:</p>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {conflictSuggestions.map((slot) => (
+                  <button
+                    key={slot}
+                    type="button"
+                    onClick={() => {
+                      const d = new Date(startAt);
+                      const [h, m] = slot.split(":").map(Number);
+                      d.setHours(h, m, 0, 0);
+                      setStartAt(toLocalInput(d));
+                      setDurationMinutes(30);
+                    }}
+                    className="rounded-md border border-blue-300 bg-white px-2 py-0.5 font-semibold text-blue-700 hover:bg-blue-100"
+                  >
+                    {slot}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           {error && <p className="mb-2 text-red-600 text-sm">{error}</p>}
@@ -375,18 +821,46 @@ export default function RandevuPage() {
               <option value="">Doktor seçin</option>
               {staff.map(s => <option key={s.id} value={s.id}>{s.fullName}</option>)}
             </select>
-            <select className="rounded-lg border px-3 py-2 text-sm" value={type} onChange={e => setType(e.target.value as typeof type)}>
-              <option value="STANDART">Standart</option>
-              <option value="KONTROL">Kontrol</option>
-              <option value="ACIL">Acil</option>
-            </select>
+            <div className="relative">
+              <input
+                list="appointment-treatment-options"
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                placeholder="Tedavi yazın veya seçin"
+                value={treatmentQuery}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setTreatmentQuery(value);
+                  const exact = APPOINTMENT_TREATMENT_OPTIONS.find((item) => item.label.toLowerCase() === value.trim().toLowerCase());
+                  if (exact) setTreatmentKey(exact.value);
+                }}
+                onBlur={() => {
+                  const resolved = resolveTreatmentKey(treatmentQuery);
+                  const meta = getTreatmentMeta(resolved);
+                  setTreatmentKey(resolved);
+                  setTreatmentQuery(meta.label);
+                }}
+              />
+              <datalist id="appointment-treatment-options">
+                {filteredTreatmentOptions.map((item) => (
+                  <option key={item.value} value={item.label} />
+                ))}
+              </datalist>
+            </div>
             <input type="datetime-local" className="rounded-lg border px-3 py-2 text-sm" value={startAt} onChange={e => setStartAt(e.target.value)} />
-            <input type="datetime-local" className="rounded-lg border px-3 py-2 text-sm" value={endAt} onChange={e => setEndAt(e.target.value)} />
-            <div className="flex items-center gap-1.5">
-              {["#2a9d8f","#e76f51","#264653","#e9c46a","#f4a261","#6c757d","#9b5de5","#00bbf9"].map(c => (
-                <button key={c} onClick={() => setColorCode(c)} style={{background:c}}
-                  className={"h-6 w-6 rounded-full border-2 " + (colorCode === c ? "border-gray-900 scale-125" : "border-transparent")} />
-              ))}
+            <select className="rounded-lg border px-3 py-2 text-sm" value={durationMinutes} onChange={e => setDurationMinutes(Number(e.target.value) as 15 | 30 | 45 | 60 | 90 | 120)}>
+              <option value={15}>15 dk</option>
+              <option value={30}>30 dk</option>
+              <option value={45}>45 dk</option>
+              <option value={60}>60 dk</option>
+              <option value={90}>90 dk</option>
+              <option value={120}>120 dk</option>
+            </select>
+            <div className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2">
+              <span className="text-xs font-semibold text-slate-600">Tedavi rengi:</span>
+              <span className="inline-flex items-center gap-2 rounded-full px-2 py-0.5 text-xs font-semibold text-white" style={{ backgroundColor: selectedTreatmentMeta.color }}>
+                <span className="inline-block h-2 w-2 rounded-full bg-white/80" />
+                {selectedTreatmentMeta.label}
+              </span>
             </div>
           </div>
           <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Not (isteğe bağlı)" rows={2} className="mt-2 w-full rounded-lg border px-3 py-2 text-sm" />
@@ -537,7 +1011,7 @@ export default function RandevuPage() {
                     </button>
                   </div>
                   {dayAppts.slice(0,3).map(a => (
-                    <div key={a.id} style={{background: a.colorCode||"#2a9d8f"}}
+                    <div key={a.id} style={{background: a.colorCode || getTreatmentMeta(parseAppointmentNote(a.note).treatment).color}}
                       className="rounded text-white text-xs px-1 mb-0.5 truncate"
                       onClick={e => { e.stopPropagation(); setSelectedAppt(a); }}>
                       {new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})} {a.patient?.fullName}
@@ -553,11 +1027,29 @@ export default function RandevuPage() {
 
       {!loading && view === "AJANDA" && (
         <div className="space-y-1">
-          {appointments.length === 0 && <p className="py-8 text-center text-gray-400">Bu tarih aralığında randevu yok</p>}
-          {appointments.map(a => (
+          <div className="mb-2 flex flex-wrap gap-1">
+            {[
+              { key: "ALL", label: "Tümü" },
+              { key: "BEKLIYOR", label: "Bekliyor" },
+              { key: "GELDI", label: "Geldi" },
+              { key: "GELMEDI", label: "Gelmedi" },
+              { key: "IPTAL", label: "İptal" },
+            ].map((chip) => (
+              <button
+                key={chip.key}
+                onClick={() => setAgendaStatusFilter(chip.key as "ALL" | "BEKLIYOR" | "GELDI" | "GELMEDI" | "IPTAL")}
+                className={"rounded-full px-3 py-1 text-xs font-semibold " + (agendaStatusFilter === chip.key ? "bg-primary text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200")}
+              >
+                {chip.label}
+              </button>
+            ))}
+          </div>
+          {filteredAgendaAppointments.length === 0 && <p className="py-8 text-center text-gray-400">Seçilen filtrede randevu yok</p>}
+          {filteredAgendaAppointments.map(a => (
             (() => {
               const parsed = parseAppointmentNote(a.note);
               const meta = getFollowUpMeta(parsed.followUp);
+              const treatmentMeta = getTreatmentMeta(parsed.treatment);
               return (
             <div key={a.id} onClick={() => setSelectedAppt(a)}
               className={"flex items-center gap-3 rounded-lg border bg-white p-3 cursor-pointer hover:shadow-sm " + (STATUS_COLORS[a.status] || "")}>
@@ -567,7 +1059,8 @@ export default function RandevuPage() {
               </div>
               <div className="flex-1">
                 <p className="font-semibold text-gray-800">{a.patient?.fullName}</p>
-                <p className="text-xs text-gray-500">{a.doctor?.fullName} - {a.type}</p>
+                <p className="text-xs text-gray-500">{a.doctor?.fullName}</p>
+                <p className={"mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold " + treatmentMeta.badge}>{treatmentMeta.label}</p>
                 {parsed.detail && <p className="text-xs text-gray-400 mt-0.5">{parsed.detail}</p>}
                 {parsed.followUp !== "YOK" && <p className={"mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold " + meta.badge}>{meta.label}</p>}
               </div>
@@ -585,6 +1078,7 @@ export default function RandevuPage() {
         (() => {
           const parsed = parseAppointmentNote(selectedAppt.note);
           const meta = getFollowUpMeta(parsed.followUp);
+          const treatmentMeta = getTreatmentMeta(parsed.treatment);
           return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
@@ -597,7 +1091,7 @@ export default function RandevuPage() {
               <div className="flex justify-between"><span className="text-gray-500">Doktor:</span><span>{selectedAppt.doctor?.fullName}</span></div>
               <div className="flex justify-between"><span className="text-gray-500">Başlangıç:</span><span>{new Date(selectedAppt.startAt).toLocaleString("tr-TR")}</span></div>
               <div className="flex justify-between"><span className="text-gray-500">Bitiş:</span><span>{new Date(selectedAppt.endAt).toLocaleString("tr-TR")}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Tip:</span><span className={"rounded-full px-2 py-0.5 text-xs " + (TYPE_BADGE[selectedAppt.type]||"")}>{selectedAppt.type}</span></div>
+              <div className="flex justify-between"><span className="text-gray-500">Tedavi:</span><span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + treatmentMeta.badge}>{treatmentMeta.label}</span></div>
               {parsed.detail && <div className="flex justify-between gap-3"><span className="text-gray-500">Not:</span><span className="max-w-xs text-right">{parsed.detail}</span></div>}
               {parsed.followUp !== "YOK" && <div className="flex justify-between"><span className="text-gray-500">Takip:</span><span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + meta.badge}>{meta.label}</span></div>}
             </div>

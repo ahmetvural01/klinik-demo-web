@@ -255,6 +255,8 @@ model User {
   labOrders            LabOrder[]            @relation("LabOrderDoctor")
   messages             Message[]
   profile              Profile?
+  assignedFollowUps    PatientFollowUp[]     @relation("FollowUpAssignedDoctor")
+  createdFollowUps     PatientFollowUp[]     @relation("FollowUpCreatedBy")
   stockMovements       StockMovement[]       @relation("StockMovementUser")
   superadminPermission SuperadminPermission?
   supportTickets       SupportTicket[]
@@ -318,6 +320,7 @@ model Patient {
   payments       Payment[]
   prescriptions  Prescription[]
   reminders      Reminder[]
+  followUps      PatientFollowUp[]
   taksitPlanlari TaksitPlan[]
   treatmentPlans TreatmentPlan[]
 
@@ -341,12 +344,42 @@ model Appointment {
   updatedAt   DateTime        @updatedAt
   status      String          @default("BEKLIYOR")
   doctor      User            @relation(fields: [doctorId], references: [id])
+  followUps   PatientFollowUp[]
   patient     Patient         @relation(fields: [patientId], references: [id])
 
   @@index([doctorId])
   @@index([patientId])
   @@index([startAt])
   @@index([doctorId, startAt])
+}
+
+model PatientFollowUp {
+  id             String       @id @default(cuid())
+  patientId      String
+  appointmentId  String?
+  doctorId       String?
+  createdById    String
+  type           FollowUpType @default(GERI_ARA)
+  priority       Int          @default(2)
+  status         String       @default("ACIK")
+  note           String?
+  resolutionNote String?
+  nextActionAt   DateTime?
+  lastContactAt  DateTime?
+  closedAt       DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  appointment    Appointment? @relation(fields: [appointmentId], references: [id])
+  assignedDoctor User?        @relation("FollowUpAssignedDoctor", fields: [doctorId], references: [id])
+  createdBy      User         @relation("FollowUpCreatedBy", fields: [createdById], references: [id])
+  patient        Patient      @relation(fields: [patientId], references: [id])
+
+  @@index([patientId])
+  @@index([appointmentId])
+  @@index([doctorId])
+  @@index([createdById])
+  @@index([status, nextActionAt])
+  @@index([createdAt])
 }
 
 model Examination {
@@ -742,6 +775,13 @@ enum AppointmentType {
   STANDART
   KONTROL
   ACIL
+}
+
+enum FollowUpType {
+  GERI_ARA
+  ULASILAMADI
+  DONUS_BEKLENIYOR
+  DIGER
 }
 
 enum PaymentMethod {
