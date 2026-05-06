@@ -210,6 +210,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
   const needsTaksit = ["YONETICI", "BANKO", "MUHASEBE", "SUPERADMIN"].includes(effectiveRole);
   const needsStok   = ["YONETICI", "MUHASEBE", "SUPERADMIN"].includes(effectiveRole);
   const needsLab    = ["YONETICI", "DOKTOR", "ASISTAN", "SUPERADMIN"].includes(effectiveRole);
+  const needsAppointmentReminderDispatch = ["YONETICI", "DOKTOR", "ASISTAN", "BANKO", "SUPERADMIN"].includes(effectiveRole);
 
   useEffect(() => {
     const load = async () => {
@@ -218,6 +219,9 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
           needsTaksit ? fetch("/api/taksit-plani?status=GECIKTI") : Promise.resolve(null),
           needsStok   ? fetch("/api/stock")                       : Promise.resolve(null),
           needsLab    ? fetch("/api/lab-orders?status=BEKLIYOR")  : Promise.resolve(null),
+          needsAppointmentReminderDispatch
+            ? fetch("/api/appointments/reminder-dispatch?take=20", { method: "POST" })
+            : Promise.resolve(null),
         ]);
         const tRes = fetches[0]; const sRes = fetches[1]; const lRes = fetches[2];
         const tData = tRes.status === "fulfilled" && tRes.value?.ok ? await tRes.value.json() : null;
@@ -236,7 +240,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
     load();
     const timer = setInterval(load, 60_000); // Her dakika yenile
     return () => clearInterval(timer);
-  }, [needsTaksit, needsStok, needsLab]);
+  }, [needsTaksit, needsStok, needsLab, needsAppointmentReminderDispatch]);
 
   useEffect(() => {
     const syncUnread = () => {

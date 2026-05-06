@@ -91,3 +91,29 @@
 	
 2026-05-06 15:15:53.569 +03 [2116] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
 	
+2026-05-06 15:54:30.624 +03 [16528] LOG:  checkpoint starting: time
+2026-05-06 15:54:31.924 +03 [16528] LOG:  checkpoint complete: wrote 12 buffers (0.1%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=1.270 s, sync=0.015 s, total=1.300 s; sync files=10, longest=0.004 s, average=0.002 s; distance=44 kB, estimate=5298 kB; lsn=0/52CBDF8, redo lsn=0/52CBDA0
+2026-05-06 15:57:50.219 +03 [18272] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 15:57:50.219 +03 [18124] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 15:57:50.220 +03 [14884] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 15:57:50.220 +03 [16120] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 15:57:50.220 +03 [10356] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 15:59:30.922 +03 [16528] LOG:  checkpoint starting: time
+2026-05-06 15:59:31.045 +03 [16528] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.106 s, sync=0.003 s, total=0.124 s; sync files=2, longest=0.002 s, average=0.002 s; distance=2 kB, estimate=4768 kB; lsn=0/52CC860, redo lsn=0/52CC808
+2026-05-06 16:09:30.053 +03 [16528] LOG:  checkpoint starting: time
+2026-05-06 16:09:30.182 +03 [16528] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.111 s, sync=0.004 s, total=0.130 s; sync files=2, longest=0.002 s, average=0.002 s; distance=4 kB, estimate=4292 kB; lsn=0/52CD8E8, redo lsn=0/52CD890
+2026-05-06 16:26:00.322 +03 [8912] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 16:26:00.323 +03 [17608] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 16:34:30.208 +03 [16528] LOG:  checkpoint starting: time
+2026-05-06 16:34:30.336 +03 [16528] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.107 s, sync=0.002 s, total=0.130 s; sync files=1, longest=0.002 s, average=0.002 s; distance=4 kB, estimate=3863 kB; lsn=0/52CE9D8, redo lsn=0/52CE980
+2026-05-06 16:49:30.352 +03 [16528] LOG:  checkpoint starting: time
+2026-05-06 16:49:31.526 +03 [16528] LOG:  checkpoint complete: wrote 11 buffers (0.1%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=1.146 s, sync=0.016 s, total=1.175 s; sync files=12, longest=0.004 s, average=0.002 s; distance=25 kB, estimate=3479 kB; lsn=0/52D4EF8, redo lsn=0/52D4EA0
+2026-05-06 17:09:30.543 +03 [16528] LOG:  checkpoint starting: time
+2026-05-06 17:09:31.197 +03 [16528] LOG:  checkpoint complete: wrote 6 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.626 s, sync=0.014 s, total=0.655 s; sync files=7, longest=0.005 s, average=0.002 s; distance=13 kB, estimate=3133 kB; lsn=0/52D86B8, redo lsn=0/52D8660

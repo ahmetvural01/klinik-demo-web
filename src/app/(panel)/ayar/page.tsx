@@ -34,7 +34,6 @@ export default function AyarPage() {
     closingTime: "23:59",
     appointmentDuration: 15,
     institutionWebsite: "",
-    holidayDays: [] as string[],
     lunchStart: "",
     lunchEnd: "",
     dailySchedules: DEFAULT_SCHEDULES as DaySchedule[],
@@ -71,12 +70,13 @@ export default function AyarPage() {
           closingTime:          data.closingTime          || "23:59",
           appointmentDuration:  data.appointmentDuration  || 15,
           institutionWebsite:   data.institutionWebsite   || "",
-          holidayDays: data.holidayDays ? (typeof data.holidayDays === "string" ? JSON.parse(data.holidayDays) : data.holidayDays) : [],
           lunchStart: data.lunchStart || "",
           lunchEnd: data.lunchEnd || "",
-          dailySchedules: data.dailySchedules
-            ? (typeof data.dailySchedules === "string" ? JSON.parse(data.dailySchedules) : data.dailySchedules)
-            : DEFAULT_SCHEDULES,
+          dailySchedules: (() => {
+              const raw = data.dailySchedules;
+              const parsed: DaySchedule[] = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : [];
+              return parsed.length > 0 ? parsed : DEFAULT_SCHEDULES;
+            })(),
           smsEnabled:         data.smsEnabled         !== undefined ? data.smsEnabled         : true,
           smsDefaultInfo:     data.smsDefaultInfo     !== undefined ? data.smsDefaultInfo     : true,
           smsDefaultReminder: data.smsDefaultReminder !== undefined ? data.smsDefaultReminder : false,
@@ -104,7 +104,6 @@ export default function AyarPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...settings,
-          holidayDays: JSON.stringify(settings.holidayDays),
           dailySchedules: JSON.stringify(settings.dailySchedules),
         })
       });
@@ -205,20 +204,6 @@ export default function AyarPage() {
                   onChange={e => setSettings({ ...settings, appointmentDuration: parseInt(e.target.value) })}
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
               </div>
-            </div>
-          </div>
-
-          <div>
-            <h3 className="mb-3 text-sm font-bold text-slate-800">Tatil Günleri</h3>
-            <div className="flex flex-wrap gap-3">
-              {["Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","Pazar"].map(day => (
-                <label key={day} className="flex items-center gap-2 cursor-pointer text-sm">
-                  <input type="checkbox" className="h-4 w-4 accent-primary"
-                    checked={settings.holidayDays.includes(day)}
-                    onChange={e => setSettings({ ...settings, holidayDays: e.target.checked ? [...settings.holidayDays, day] : settings.holidayDays.filter(d => d !== day) })} />
-                  {day}
-                </label>
-              ))}
             </div>
           </div>
 

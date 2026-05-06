@@ -1000,16 +1000,15 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
   };
 
   return (
-    <section className="space-y-6">
+    <section className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-slate-900">Hasta Takip Paneli</h1>
-          <p className="mt-1 text-sm text-slate-600">Aksiyon gerektiren takipleri tek ekranda yonetin, hizla filtreleyin ve manuel takip ekleyin.</p>
+          <h1 className="text-xl font-extrabold tracking-tight text-slate-900">Hasta Takip Paneli</h1>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button onClick={printReport} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Yazdir</button>
-          <button onClick={downloadExcelReport} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Excel Disa Aktar</button>
-          <Link href="/randevu" className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700">Randevulara Don</Link>
+          <button onClick={printReport} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Yazdir</button>
+          <button onClick={downloadExcelReport} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Excel</button>
+          <Link href="/randevu" className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700">Randevular</Link>
         </div>
       </div>
 
@@ -1019,35 +1018,33 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
         </div>
       )}
 
-      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <button onClick={() => { setStatusFilter("TUMU"); setFollowFilter("TUMU"); }} className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-slate-300 hover:shadow">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Toplam</p><p className="mt-1 text-2xl font-black text-slate-900">{stats.total}</p>
+      <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+        <button onClick={() => { setStatusFilter("TUMU"); setFollowFilter("TUMU"); }} className="rounded-xl border border-slate-200 bg-white p-2.5 text-left shadow-sm transition hover:border-slate-300">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Toplam</p><p className="mt-0.5 text-xl font-black text-slate-900">{stats.total}</p>
         </button>
-        <button onClick={() => setStatusFilter("ACIK")} className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-left shadow-sm transition hover:border-emerald-300">
-          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Acik</p><p className="mt-1 text-2xl font-black text-emerald-900">{stats.open}</p>
+        <button onClick={() => setStatusFilter("ACIK")} className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5 text-left shadow-sm transition hover:border-emerald-300">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Acik</p><p className="mt-0.5 text-xl font-black text-emerald-900">{stats.open}</p>
         </button>
-        <button onClick={() => setFollowFilter("GELMEDI")} className="rounded-2xl border border-red-200 bg-red-50 p-4 text-left shadow-sm transition hover:border-red-300">
-          <p className="text-xs font-semibold uppercase tracking-wide text-red-700">Gelmedi</p><p className="mt-1 text-2xl font-black text-red-900">{stats.noShow}</p>
+        <button onClick={() => setFollowFilter("GELMEDI")} className="rounded-xl border border-red-200 bg-red-50 p-2.5 text-left shadow-sm transition hover:border-red-300">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-red-700">Gelmedi</p><p className="mt-0.5 text-xl font-black text-red-900">{stats.noShow}</p>
         </button>
-        <button onClick={() => setFollowFilter("GERI_ARA")} className="rounded-2xl border border-rose-200 bg-rose-50 p-4 text-left shadow-sm transition hover:border-rose-300">
-          <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">Tekrar Ara</p><p className="mt-1 text-2xl font-black text-rose-900">{stats.callBack}</p>
+        <button onClick={() => setFollowFilter("GERI_ARA")} className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-left shadow-sm transition hover:border-rose-300">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">Tekrar Ara</p><p className="mt-0.5 text-xl font-black text-rose-900">{stats.callBack}</p>
         </button>
-        <button onClick={() => setFollowFilter("DONUS_BEKLENIYOR")} className="rounded-2xl border border-violet-200 bg-violet-50 p-4 text-left shadow-sm transition hover:border-violet-300">
-          <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">Donus Bekliyor</p><p className="mt-1 text-2xl font-black text-violet-900">{stats.waitingReturn}</p>
+        <button onClick={() => setFollowFilter("DONUS_BEKLENIYOR")} className="rounded-xl border border-violet-200 bg-violet-50 p-2.5 text-left shadow-sm transition hover:border-violet-300">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">Donus Bekliyor</p><p className="mt-0.5 text-xl font-black text-violet-900">{stats.waitingReturn}</p>
         </button>
-        <button onClick={() => setStatusFilter("ACIK")} className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-left shadow-sm transition hover:border-amber-300">
-          <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Yuksek Oncelik</p><p className="mt-1 text-2xl font-black text-amber-900">{stats.highPriority}</p>
+        <button onClick={() => setStatusFilter("ACIK")} className="rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-left shadow-sm transition hover:border-amber-300">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">Yuksek Oncelik</p><p className="mt-0.5 text-xl font-black text-amber-900">{stats.highPriority}</p>
         </button>
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h2 className="text-base font-bold text-slate-900">Manuel Takip</h2>
-            <p className="text-sm text-slate-600">Ihtiyac oldugunda paneli acip 4 adimda yeni takip kaydi ekleyin.</p>
           </div>
           <div className="flex items-center gap-2">
-            <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700">Adim 1-4</span>
             <button
               type="button"
               onClick={() => setShowManualCreate((v) => !v)}
@@ -1059,9 +1056,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
         </div>
 
         {!showManualCreate ? (
-          <div className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-600">
-            Bu alan varsayilan olarak kapali tutulur. Yeni kayit eklemek icin <span className="font-semibold">Manuel Takip Ekle</span> butonunu kullanin.
-          </div>
+          <div className="mt-2" />
         ) : (
           <>
             <div className="mt-3 grid gap-3 lg:grid-cols-5">
@@ -1077,7 +1072,6 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
               placeholder="Ad, telefon veya TC ile ara"
               className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:outline-none"
             />
-            {!selectedPatient && patientSearch.trim().length < 2 && <p className="mt-2 text-xs text-slate-500">En az 2 karakter yazarak hasta arayin.</p>}
             {patientSearchLoading && <p className="mt-2 text-xs text-slate-600">Hasta aranıyor...</p>}
             {selectedPatient ? (
               <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
@@ -1131,7 +1125,6 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                 ))
               )}
             </select>
-            <p className="mt-1 text-[11px] text-slate-500">Acilir listeden takip tipi secin.</p>
           </div>
 
           <div>
@@ -1174,13 +1167,13 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
         )}
       </div>
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Hasta, doktor, not veya takip tipi ara..."
-            className="min-w-[240px] flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm focus:border-primary focus:outline-none"
+            className="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:outline-none"
           />
           <button
             type="button"
@@ -1231,8 +1224,8 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
         )}
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3.5">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2.5">
           <h2 className="text-base font-bold text-slate-900">Aksiyon Gerektiren Hasta Listesi</h2>
           <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{items.length} kayit</span>
         </div>
@@ -1249,19 +1242,19 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
             </div>
           </div>
         ) : (
-          <div className="space-y-3 p-4">
+          <div className="space-y-2 p-3">
             {items.map((item) => (
-              <div key={item.key} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 hover:shadow-md">
-                <div className="flex flex-wrap items-start justify-between gap-4">
+              <div key={item.key} className="rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm transition hover:border-slate-300">
+                <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <p className="text-sm font-semibold text-slate-900">{item.patientName}</p>
                       <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + item.followBadgeClass}>{item.followUpLabel}</span>
                       <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + (item.isOpen ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600")}>{item.statusLabel}</span>
                     </div>
-                    <p className="mt-1 text-xs text-slate-500">{item.doctorName} · {item.ageDays} gun · Oncelik {item.priority}</p>
-                    <p className="mt-2 text-sm text-slate-700">{shortText(item.note || "Not bulunmuyor.", 90)}</p>
-                    {item.nextActionAt && <p className="mt-1 text-xs text-amber-700">Sonraki adim: {new Date(item.nextActionAt).toLocaleString("tr-TR")}</p>}
+                    <p className="mt-0.5 text-[11px] text-slate-500">{item.doctorName} · {item.ageDays} gun · Oncelik {item.priority}</p>
+                    <p className="mt-1 text-xs text-slate-700">{shortText(item.note || "Not bulunmuyor.", 65)}</p>
+                    {item.nextActionAt && <p className="mt-0.5 text-[11px] text-amber-700">Sonraki adim: {new Date(item.nextActionAt).toLocaleString("tr-TR")}</p>}
                   </div>
 
                   <div className="flex flex-wrap gap-2">
@@ -1417,10 +1410,6 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
         </div>
       )}
 
-      <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-        Takip listesi randevu notundaki takip durumu ile manuel eklenen takip kayitlarini birlikte gosterir.
-        Bu panelden manuel takip acabilir, hizli aksiyonlar ile durum guncelleyebilir, yazdirabilir ve Excel disa aktarabilirsiniz.
-      </div>
     </section>
   );
 }

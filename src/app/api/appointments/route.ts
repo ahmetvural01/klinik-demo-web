@@ -2,6 +2,86 @@
 import { prisma } from "@/lib/prisma";
 import { appointmentSchema } from "@/lib/validators";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { sendSms } from "@/lib/sms";
+
+const APPT_REMINDER_PREFIX = "[APPT_REMINDER]";
+
+function renderTemplate(template: string, vars: Record<string, string>) {
+  return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
+}
+
+async function sendAppointmentInfoSms(params: {
+  appointmentId: string;
+  institutionId: string;
+  createdByUserId: string;
+}) {
+  const appointment = await prisma.appointment.findUnique({
+    where: { id: params.appointmentId },
+    include: {
+      patient: { select: { fullName: true, phone: true } },
+      doctor: { select: { fullName: true } },
+    },
+  });
+  if (!appointment || !appointment.smsInfo) return;
+
+  const [settings, institution, smsTemplate] = await Promise.all([
+    prisma.setting.findUnique({ where: { institutionId: params.institutionId } }),
+    prisma.institution.findUnique({ where: { id: params.institutionId } }),
+    prisma.smsTemplate.findFirst({ where: { code: "BILGI", isActive: true } }),
+  ]);
+
+  if (!settings?.smsEnabled || !institution || institution.smsBalance <= 0) return;
+
+  const dateText = new Date(appointment.startAt).toLocaleString("tr-TR");
+  const institutionName = settings.institutionName || institution.name;
+  const fallbackMessage = `${institutionName}: Sayin ${appointment.patient.fullName}, randevunuz olusturuldu. Tarih: ${dateText}, Doktor: ${appointment.doctor.fullName}.`;
+  const message = smsTemplate
+    ? renderTemplate(smsTemplate.content, {
+        institutionName,
+        patientName: appointment.patient.fullName,
+        doctorName: appointment.doctor.fullName,
+        dateTime: dateText,
+      })
+    : fallbackMessage;
+
+  const sendResult = await sendSms(appointment.patient.phone, message);
+  if (sendResult.success) {
+    await prisma.institution.update({
+      where: { id: institution.id },
+      data: { smsBalance: { decrement: 1 } },
+    });
+    await writeAudit(
+      params.createdByUserId,
+      "SMS_BILGI_AUTO",
+      `${appointment.patient.fullName} (${appointment.patient.phone}) - ProviderMsgId: ${sendResult.providerMessageId || "-"}`
+    );
+  } else {
+    await writeAudit(
+      params.createdByUserId,
+      "SMS_BILGI_AUTO_FAILED",
+      `${appointment.patient.fullName} (${appointment.patient.phone}) - ${sendResult.error || sendResult.providerRaw}`
+    );
+  }
+}
+
+async function scheduleAppointmentReminder(appointment: { id: string; patientId: string; startAt: Date; smsReminder: boolean }) {
+  // Hatırlatma kapalıysa açık reminder kaydı bırakma.
+  if (!appointment.smsReminder) return;
+
+  const reminderDate = new Date(appointment.startAt);
+  reminderDate.setDate(reminderDate.getDate() - 1);
+
+  const note = `${APPT_REMINDER_PREFIX}:${appointment.id}`;
+
+  await prisma.reminder.create({
+    data: {
+      patientId: appointment.patientId,
+      note,
+      reminderDate,
+      status: "AKTIF",
+    },
+  });
+}
 
 async function isDoctorVisibleManager(userId: string) {
   const user = await prisma.user.findUnique({
@@ -158,6 +238,29 @@ export async function POST(request: NextRequest) {
     data: { ...parsed.data, startAt, endAt },
     include: { patient: true, doctor: true },
   });
+
+  if (auth.user.institutionId) {
+    try {
+      await sendAppointmentInfoSms({
+        appointmentId: appointment.id,
+        institutionId: auth.user.institutionId,
+        createdByUserId: auth.user.id,
+      });
+    } catch {
+      // SMS hatası randevu oluşturmayı kırmamalı.
+    }
+  }
+
+  try {
+    await scheduleAppointmentReminder({
+      id: appointment.id,
+      patientId: appointment.patientId,
+      startAt: appointment.startAt,
+      smsReminder: appointment.smsReminder,
+    });
+  } catch {
+    // Reminder kaydı hatası randevu oluşturmayı kırmamalı.
+  }
 
   await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${appointment.patient.fullName} icin randevu`);
   return NextResponse.json(appointment, { status: 201 });

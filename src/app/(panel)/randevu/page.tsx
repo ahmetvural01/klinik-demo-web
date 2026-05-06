@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   type AppointmentTreatmentKey,
   type FollowUpKey,
@@ -80,16 +81,29 @@ function toSlotLabel(totalMinutes: number): string {
   return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
 }
 
+type DaySchedule = {
+  day: string;
+  isHoliday: boolean;
+  open: string;
+  close: string;
+  lunchStart: string;
+  lunchEnd: string;
+};
+
+const SCHEDULE_IDX_TO_JS_DAY = [1, 2, 3, 4, 5, 6, 0] as const;
+
 type CalendarSettings = {
   openingTime: string;
   closingTime: string;
   appointmentDuration: number;
   holidayDays: string[];
+  dailySchedules: DaySchedule[];
 };
 
   type DoctorBlock = { id: string; doctorId: string; date: string; startTime: string; endTime: string; reason?: string | null; doctor?: { id: string; fullName: string } };
 
 export default function RandevuPage() {
+  const searchParams = useSearchParams();
   const [view, setView] = useState<"GUN" | "HAFTA" | "AY" | "AJANDA">("HAFTA");
   const [date, setDate] = useState(() => new Date());
   const [doctorId, setDoctorId] = useState("");
@@ -150,6 +164,7 @@ export default function RandevuPage() {
 
   // Doctor Block state
   const [doctorBlocks, setDoctorBlocks] = useState<DoctorBlock[]>([]);
+  const [focusAppointmentId, setFocusAppointmentId] = useState<string | null>(null);
   const [showBlockModal, setShowBlockModal] = useState(false);
   const [blockDoctorId, setBlockDoctorId] = useState("");
   const [blockDate, setBlockDate] = useState(() => { const d = new Date(); return d.toISOString().slice(0, 10); });
@@ -162,6 +177,7 @@ export default function RandevuPage() {
     closingTime: "23:59",
     appointmentDuration: 15,
     holidayDays: ["Pazar"],
+    dailySchedules: [],
   });
 
   const isBookableDoctor = useCallback((person: Staff & { profile?: { hideAsDoctor?: boolean } | null; isActive?: boolean }) => {
@@ -195,18 +211,56 @@ export default function RandevuPage() {
     return Math.max(5, Math.min(120, raw));
   }, [calendarSettings.appointmentDuration]);
 
-  const slotTimes = useMemo(() => {
-    const opening = parseTimeToMinutes(calendarSettings.openingTime, 8 * 60 + 30);
-    const closing = parseTimeToMinutes(calendarSettings.closingTime, 23 * 60 + 59);
-    if (closing <= opening) return [toSlotLabel(opening)];
+  // dailySchedules'tan gelen per-day saat bilgilerini JS day index'e göre map'le
+  const scheduleByJsDay = useMemo(() => {
+    const map = new Map<number, DaySchedule>();
+    calendarSettings.dailySchedules.forEach((ds, i) => {
+      if (i < SCHEDULE_IDX_TO_JS_DAY.length) map.set(SCHEDULE_IDX_TO_JS_DAY[i], ds);
+    });
+    return map;
+  }, [calendarSettings.dailySchedules]);
 
+  const slotTimes = useMemo(() => {
+    let opening: number;
+    let closing: number;
+    if (scheduleByJsDay.size > 0) {
+      // Tatil olmayan günlerin en erken açılışı / en geç kapanışı (HAFTA/AY view için tam aralık)
+      const opens: number[] = [];
+      const closes: number[] = [];
+      scheduleByJsDay.forEach((ds) => {
+        if (!ds.isHoliday) {
+          opens.push(parseTimeToMinutes(ds.open, 8 * 60 + 30));
+          closes.push(parseTimeToMinutes(ds.close, 18 * 60));
+        }
+      });
+      opening = opens.length > 0 ? Math.min(...opens) : parseTimeToMinutes(calendarSettings.openingTime, 8 * 60 + 30);
+      closing = closes.length > 0 ? Math.max(...closes) : parseTimeToMinutes(calendarSettings.closingTime, 23 * 60 + 59);
+    } else {
+      opening = parseTimeToMinutes(calendarSettings.openingTime, 8 * 60 + 30);
+      closing = parseTimeToMinutes(calendarSettings.closingTime, 23 * 60 + 59);
+    }
+    if (closing <= opening) return [toSlotLabel(opening)];
     const slots: string[] = [];
     for (let cursor = opening; cursor + slotInterval <= closing; cursor += slotInterval) {
       slots.push(toSlotLabel(cursor));
     }
-
     return slots.length > 0 ? slots : [toSlotLabel(opening)];
-  }, [calendarSettings.closingTime, calendarSettings.openingTime, slotInterval]);
+  }, [scheduleByJsDay, calendarSettings.openingTime, calendarSettings.closingTime, slotInterval]);
+
+  // Gün görünümü: sadece seçili günün çalışma saatlerindeki slotlar
+  const gunSlotTimes = useMemo(() => {
+    const jsDay = date.getDay();
+    const ds = scheduleByJsDay.get(jsDay);
+    if (!ds || ds.isHoliday) return slotTimes;
+    const opening = parseTimeToMinutes(ds.open, 8 * 60 + 30);
+    const closing = parseTimeToMinutes(ds.close, 18 * 60);
+    if (closing <= opening) return [toSlotLabel(opening)];
+    const slots: string[] = [];
+    for (let cursor = opening; cursor + slotInterval <= closing; cursor += slotInterval) {
+      slots.push(toSlotLabel(cursor));
+    }
+    return slots.length > 0 ? slots : [toSlotLabel(opening)];
+  }, [date, scheduleByJsDay, slotTimes, slotInterval]);
 
   const durationOptions = useMemo(() => {
     const candidates = [1, 2, 3, 4, 6, 8]
@@ -217,6 +271,12 @@ export default function RandevuPage() {
   }, [durationMinutes, slotInterval]);
 
   const workingDayIndexes = useMemo(() => {
+    if (scheduleByJsDay.size > 0) {
+      const active = new Set<number>();
+      scheduleByJsDay.forEach((ds, jsDay) => { if (!ds.isHoliday) active.add(jsDay); });
+      return active.size > 0 ? active : new Set([1, 2, 3, 4, 5]);
+    }
+    // eski holidayDays fallback
     const holidaySet = new Set(
       (calendarSettings.holidayDays || [])
         .map((day) => HOLIDAY_DAY_TO_INDEX[String(day).toLocaleLowerCase("tr-TR")])
@@ -224,7 +284,7 @@ export default function RandevuPage() {
     );
     const active = new Set([0, 1, 2, 3, 4, 5, 6].filter((idx) => !holidaySet.has(idx)));
     return active.size > 0 ? active : new Set([1, 2, 3, 4, 5, 6]);
-  }, [calendarSettings.holidayDays]);
+  }, [scheduleByJsDay, calendarSettings.holidayDays]);
 
   const resolveTreatmentKey = useCallback((query: string): AppointmentTreatmentKey => {
     const q = query.trim().toLowerCase();
@@ -254,6 +314,26 @@ export default function RandevuPage() {
     from.setHours(0, 0, 0, 0);
     return { from, to };
   }, [date, view]);
+
+  useEffect(() => {
+    const qpView = searchParams.get("view");
+    if (qpView === "GUN" || qpView === "HAFTA" || qpView === "AY" || qpView === "AJANDA") {
+      setView(qpView);
+    }
+
+    const qpDate = searchParams.get("date");
+    if (qpDate && /^\d{4}-\d{2}-\d{2}$/.test(qpDate)) {
+      const [y, m, d] = qpDate.split("-").map(Number);
+      const local = new Date(y, m - 1, d, 12, 0, 0, 0);
+      if (!Number.isNaN(local.getTime())) setDate(local);
+    }
+
+    const qpDoctorId = searchParams.get("doctorId");
+    if (qpDoctorId) setDoctorId(qpDoctorId);
+
+    const qpFocusAppointmentId = searchParams.get("focusAppointmentId");
+    if (qpFocusAppointmentId) setFocusAppointmentId(qpFocusAppointmentId);
+  }, [searchParams]);
 
   // Hasta arama debounce
   useEffect(() => {
@@ -340,11 +420,21 @@ export default function RandevuPage() {
         return [];
       })();
 
+      const parsedDailySchedules = (() => {
+        const raw = settingsJson?.dailySchedules;
+        if (Array.isArray(raw)) return raw as DaySchedule[];
+        if (typeof raw === "string") {
+          try { const p = JSON.parse(raw); return Array.isArray(p) ? p as DaySchedule[] : []; } catch { return []; }
+        }
+        return [];
+      })();
+
       setCalendarSettings({
         openingTime: settingsJson?.openingTime || "08:30",
         closingTime: settingsJson?.closingTime || "23:59",
         appointmentDuration: Number(settingsJson?.appointmentDuration || settingsJson?.appointmentDurationMin || 15),
         holidayDays: parsedHolidayDays,
+        dailySchedules: parsedDailySchedules,
       });
 
       const role = meJson?.role || "";
@@ -357,6 +447,15 @@ export default function RandevuPage() {
   }, [doctorId, isBookableDoctor, range.from, range.to]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    if (!focusAppointmentId) return;
+    const found = appointments.find((a) => a.id === focusAppointmentId);
+    if (found) {
+      setSelectedAppt(found);
+      setFocusAppointmentId(null);
+    }
+  }, [appointments, focusAppointmentId]);
 
   useEffect(() => {
     if (!selectedAppt) return;
@@ -1051,11 +1150,16 @@ export default function RandevuPage() {
       onDragStart={enableDrag ? (e) => { e.stopPropagation(); e.dataTransfer.effectAllowed = "move"; setDraggedApptId(a.id); } : undefined}
       onDragEnd={enableDrag ? () => { setDraggedApptId(null); setDragOverKey(null); } : undefined}
       onClick={() => setSelectedAppt(a)}
-      className={"rounded p-1 mb-0.5 cursor-pointer " + (enableDrag ? "cursor-grab active:cursor-grabbing " : "") + (STATUS_COLORS[a.status] || "bg-blue-50 border-l-4 border-blue-400")}>
-      <p className="font-semibold text-gray-800 truncate text-xs">{a.patient?.fullName || "-"}</p>
-      <p className="text-gray-500 text-xs">{new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}</p>
-      <p className={"mt-0.5 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-semibold " + treatmentMeta.badge}>{treatmentMeta.label}</p>
-      {parsed.followUp !== "YOK" && <p className={"mt-0.5 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-semibold " + meta.badge}>{meta.label}</p>}
+      title={`${a.patient?.fullName || "-"} - ${new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}`}
+      className={"mb-1 cursor-pointer rounded px-1.5 py-1 " + (enableDrag ? "cursor-grab active:cursor-grabbing " : "") + (STATUS_COLORS[a.status] || "bg-blue-50 border-l-4 border-blue-400")}>
+      <div className="flex items-center gap-1">
+        <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: treatmentMeta.color }} />
+        <p className="min-w-0 flex-1 truncate text-[11px] font-semibold text-gray-800">{a.patient?.fullName || "-"}</p>
+        {parsed.followUp !== "YOK" && (
+          <span className={"inline-flex rounded-full px-1 py-0.5 text-[9px] font-semibold " + meta.badge}>T</span>
+        )}
+      </div>
+      <p className="mt-0.5 truncate pl-3 text-[9px] leading-tight text-gray-500">{treatmentMeta.label}</p>
     </div>
       );
     })()
@@ -1379,7 +1483,7 @@ export default function RandevuPage() {
               </tr>
             </thead>
             <tbody>
-              {slotTimes.map(slot => (
+              {gunSlotTimes.map(slot => (
                 <tr key={slot} className="hover:bg-gray-50">
                   <td className="border px-2 py-1 text-gray-400 font-mono align-top whitespace-nowrap">{slot}</td>
                   {doctors.map(d => {
@@ -1470,15 +1574,23 @@ export default function RandevuPage() {
                     // Hafta görünümünde belirli bir doktor seçiliyse blok kontrolü yap
                     const blocked = doctorId ? isSlotBlocked(doctorId, dateStr, slot) : false;
                     const blockInfo = blocked && doctorId ? getBlockForSlot(doctorId, dateStr, slot) : null;
+                    // Per-day mesai saati kontrolü
+                    const haftaDayDs = scheduleByJsDay.get(d.getDay());
+                    const haftaSlotMins = parseTimeToMinutes(slot, 0);
+                    const haftaOutOfHours = haftaDayDs && !haftaDayDs.isHoliday
+                      ? (haftaSlotMins < parseTimeToMinutes(haftaDayDs.open, 0) || haftaSlotMins >= parseTimeToMinutes(haftaDayDs.close, 23 * 60 + 59))
+                      : false;
                     return (
                       <td
                         key={i}
-                        className={"group border p-1 align-top min-h-9 transition-colors " + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-blue-50 ring-2 ring-inset ring-blue-400" : "")}
-                        onDragOver={(e) => { if (draggedApptId && !blocked) { e.preventDefault(); setDragOverKey(dropKey); } }}
+                        className={"group border p-1 align-top min-h-9 transition-colors " + (haftaOutOfHours ? "bg-slate-50 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-blue-50 ring-2 ring-inset ring-blue-400" : "")}
+                        onDragOver={(e) => { if (draggedApptId && !blocked && !haftaOutOfHours) { e.preventDefault(); setDragOverKey(dropKey); } }}
                         onDragLeave={() => setDragOverKey(prev => prev === dropKey ? null : prev)}
-                        onDrop={(e) => { if (!blocked) { e.preventDefault(); void handleDropOnSlot(d, slot); } }}
+                        onDrop={(e) => { if (!blocked && !haftaOutOfHours) { e.preventDefault(); void handleDropOnSlot(d, slot); } }}
                       >
-                        {blocked ? (
+                        {haftaOutOfHours ? (
+                          <div className="h-7" />
+                        ) : blocked ? (
                           <div className="flex items-center gap-1 rounded bg-orange-100 border border-orange-200 px-1 py-0.5 text-[10px] text-orange-700">
                             <span>⊘</span>
                             <span className="truncate">{blockInfo?.reason || "Bloke"}</span>

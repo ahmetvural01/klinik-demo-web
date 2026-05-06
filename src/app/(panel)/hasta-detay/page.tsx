@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, useRef } from "react";
 import { TeethMap, ToothButton, ToothStatus as TSType, TOOTH_STATUS_LABELS, TOOTH_STATUS_BADGE } from "@/components/ToothChart";
 import PhoneInput from "@/components/PhoneInput";
@@ -68,6 +68,7 @@ const TAB_ITEMS: { key: Tab; label: string }[] = [
 const isValidTab = (value: string | null): value is Tab => TAB_ITEMS.some(item => item.key === value);
 
 function HastaDetayContent() {
+  const router = useRouter();
   const search = useSearchParams();
   const id = search.get("id") || "";
   const requestedTab = search.get("tab");
@@ -937,7 +938,23 @@ function HastaDetayContent() {
             <tbody>
               {data.appointments.length === 0 && <tr><td colSpan={4} className="px-3 py-4 text-center text-gray-400">Randevu yok</td></tr>}
               {data.appointments.map(a => (
-                <tr key={a.id} className="border-b hover:bg-gray-50">
+                <tr
+                  key={a.id}
+                  className="cursor-pointer border-b hover:bg-blue-50"
+                  onClick={() => {
+                    const d = new Date(a.startAt);
+                    const yyyy = d.getFullYear();
+                    const mm = String(d.getMonth() + 1).padStart(2, "0");
+                    const dd = String(d.getDate()).padStart(2, "0");
+                    const params = new URLSearchParams({
+                      view: "GUN",
+                      date: `${yyyy}-${mm}-${dd}`,
+                      focusAppointmentId: a.id,
+                    });
+                    router.push(`/randevu?${params.toString()}`);
+                  }}
+                  title="Randevular ekranında ilgili güne git"
+                >
                   <td className="px-3 py-2">{new Date(a.startAt).toLocaleString("tr-TR")}</td>
                   <td className="px-3 py-2">{a.doctor?.fullName || "-"}</td>
                   <td className="px-3 py-2"><span className={"rounded-full px-2 py-0.5 text-xs " + (a.type==="ACIL"?"bg-red-100 text-red-700":a.type==="KONTROL"?"bg-yellow-100 text-yellow-700":"bg-blue-100 text-blue-700")}>{a.type}</span></td>

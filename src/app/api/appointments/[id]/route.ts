@@ -3,6 +3,51 @@ import { prisma } from "@/lib/prisma";
 import { appointmentSchema } from "@/lib/validators";
 import { requireAuth, writeAudit } from "@/lib/api";
 
+const APPT_REMINDER_PREFIX = "[APPT_REMINDER]";
+
+async function syncAppointmentReminder(appointment: {
+  id: string;
+  patientId: string;
+  startAt: Date;
+  smsReminder: boolean;
+  status: string;
+}) {
+  const note = `${APPT_REMINDER_PREFIX}:${appointment.id}`;
+
+  if (!appointment.smsReminder || ["IPTAL", "GELMEDI"].includes(appointment.status)) {
+    await prisma.reminder.updateMany({
+      where: { note, status: "AKTIF", planId: null },
+      data: { status: "TAMAMLANDI" },
+    });
+    return;
+  }
+
+  const reminderDate = new Date(appointment.startAt);
+  reminderDate.setDate(reminderDate.getDate() - 1);
+
+  const existing = await prisma.reminder.findFirst({
+    where: { note, planId: null },
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (existing) {
+    await prisma.reminder.update({
+      where: { id: existing.id },
+      data: { patientId: appointment.patientId, reminderDate, status: "AKTIF" },
+    });
+    return;
+  }
+
+  await prisma.reminder.create({
+    data: {
+      patientId: appointment.patientId,
+      note,
+      reminderDate,
+      status: "AKTIF",
+    },
+  });
+}
+
 type Params = { params: { id: string } };
 
 async function isEligibleAppointmentDoctor(doctorId: string) {
@@ -78,6 +123,18 @@ export async function PUT(request: NextRequest, { params }: Params) {
       include: { patient: true, doctor: true }
     });
 
+    try {
+      await syncAppointmentReminder({
+        id: appointment.id,
+        patientId: appointment.patientId,
+        startAt: appointment.startAt,
+        smsReminder: appointment.smsReminder,
+        status: appointment.status,
+      });
+    } catch {
+      // reminder senkron hatası update akışını kırmamalı.
+    }
+
     const beforeParts: string[] = [];
     const afterParts: string[] = [];
     if (typeof body.status === "string" && existing.status !== body.status) {
@@ -151,6 +208,18 @@ export async function PUT(request: NextRequest, { params }: Params) {
     include: { patient: true, doctor: true },
   });
 
+  try {
+    await syncAppointmentReminder({
+      id: appointment.id,
+      patientId: appointment.patientId,
+      startAt: appointment.startAt,
+      smsReminder: appointment.smsReminder,
+      status: appointment.status,
+    });
+  } catch {
+    // reminder senkron hatası update akışını kırmamalı.
+  }
+
   const beforeParts: string[] = [];
   const afterParts: string[] = [];
   const pushDiff = (label: string, before: unknown, after: unknown) => {
@@ -195,6 +264,15 @@ export async function DELETE(_: NextRequest, { params }: Params) {
     where: { id: params.id },
     data: { status: "IPTAL" },
   });
+
+  try {
+    await prisma.reminder.updateMany({
+      where: { note: `${APPT_REMINDER_PREFIX}:${params.id}`, status: "AKTIF", planId: null },
+      data: { status: "TAMAMLANDI" },
+    });
+  } catch {
+    // reminder kapanış hatası cancel akışını kırmamalı.
+  }
 
   await writeAudit(auth.user.id, "APPOINTMENT_CANCEL", `${existing.patient?.fullName ?? "—"} randevusu iptal edildi`);
   return NextResponse.json({ ok: true });
