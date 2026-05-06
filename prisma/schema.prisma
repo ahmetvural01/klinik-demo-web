@@ -264,6 +264,7 @@ model User {
   supportTickets       SupportTicket[]
   taksitPlanlari       TaksitPlan[]          @relation("TaksitPlanDoctor")
   treatmentPlans       TreatmentPlan[]       @relation("TreatmentPlanDoctor")
+  doctorBlocks         DoctorBlock[]
   institution          Institution?          @relation(fields: [institutionId], references: [id])
 
   @@unique([institutionId, identityNo])
@@ -480,6 +481,11 @@ model Setting {
   closingTime         String      @default("23:00")
   appointmentDuration Int         @default(15)
   holidayDays         String      @default("[]")
+  // Günlük özel çalışma saatleri: JSON array of {day:"pazartesi",open:"08:30",close:"17:00",lunchStart:"12:00",lunchEnd:"13:00",isHoliday:false}
+  dailySchedules      String      @default("[]")
+  // Genel öğle arası (günlük override yoksa kullanılır)
+  lunchStart          String      @default("")
+  lunchEnd            String      @default("")
   smsEnabled          Boolean     @default(true)
   smsDefaultInfo      Boolean     @default(true)
   smsDefaultReminder  Boolean     @default(false)
@@ -488,6 +494,20 @@ model Setting {
   institutionId       String      @unique
   activePriceList     String      @default("standard")
   institution         Institution @relation(fields: [institutionId], references: [id])
+}
+
+// Doktor bazlı zaman blokajı (belirli tarih/saat aralığında randevuya kapalı)
+model DoctorBlock {
+  id          String   @id @default(cuid())
+  doctorId    String
+  date        String   // YYYY-MM-DD
+  startTime   String   // HH:mm
+  endTime     String   // HH:mm
+  reason      String?
+  createdAt   DateTime @default(now())
+  doctor      User     @relation(fields: [doctorId], references: [id])
+
+  @@index([doctorId, date])
 }
 
 model SupportTicket {

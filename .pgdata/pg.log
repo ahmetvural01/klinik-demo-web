@@ -1,0 +1,93 @@
+2026-05-06 14:40:51.173 +03 [10132] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-05-06 14:40:51.177 +03 [10132] LOG:  listening on IPv6 address "::1", port 5432
+2026-05-06 14:40:51.177 +03 [10132] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-05-06 14:40:51.214 +03 [2704] LOG:  database system was interrupted; last known up at 2026-05-06 14:22:12 +03
+2026-05-06 14:40:52.452 +03 [12888] FATAL:  the database system is starting up
+2026-05-06 14:40:52.467 +03 [5304] FATAL:  the database system is starting up
+2026-05-06 14:40:56.726 +03 [2704] LOG:  could not open file "./pg.log": sharing violation
+2026-05-06 14:40:56.726 +03 [2704] DETAIL:  Continuing to retry for 30 seconds.
+2026-05-06 14:40:56.726 +03 [2704] HINT:  You might have antivirus, backup, or similar software interfering with the database system.
+2026-05-06 14:41:12.156 +03 [7552] FATAL:  the database system is starting up
+2026-05-06 14:41:12.170 +03 [12884] FATAL:  the database system is starting up
+2026-05-06 14:41:12.554 +03 [6688] FATAL:  the database system is starting up
+2026-05-06 14:41:12.568 +03 [19768] FATAL:  the database system is starting up
+2026-05-06 14:41:22.702 +03 [2704] LOG:  syncing data directory (fsync), elapsed time: 31.48 s, current path: ./pg_commit_ts
+2026-05-06 14:41:22.711 +03 [2704] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-05-06 14:41:22.718 +03 [2704] LOG:  redo starts at 0/45D8B28
+2026-05-06 14:41:22.718 +03 [2704] LOG:  invalid record length at 0/45D8C30: expected at least 24, got 0
+2026-05-06 14:41:22.719 +03 [2704] LOG:  redo done at 0/45D8BF8 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-05-06 14:41:22.742 +03 [21044] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-05-06 14:41:22.756 +03 [21044] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.003 s, total=0.036 s; sync files=2, longest=0.002 s, average=0.002 s; distance=0 kB, estimate=0 kB; lsn=0/45D8C30, redo lsn=0/45D8C30
+2026-05-06 14:41:22.765 +03 [10132] LOG:  database system is ready to accept connections
+2026-05-06 14:41:23.755 +03 [10132] LOG:  background worker "logical replication launcher" (PID 21220) was terminated by exception 0xC000013A
+2026-05-06 14:41:23.755 +03 [10132] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-05-06 14:41:23.755 +03 [10132] LOG:  terminating any other active server processes
+2026-05-06 14:41:23.761 +03 [10132] LOG:  received fast shutdown request
+^C2026-05-06 14:46:55.523 +03 [16464] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-05-06 14:46:55.526 +03 [16464] LOG:  listening on IPv6 address "::1", port 5432
+2026-05-06 14:46:55.526 +03 [16464] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-05-06 14:46:55.569 +03 [3316] LOG:  database system was interrupted; last known up at 2026-05-06 14:41:22 +03
+2026-05-06 14:46:55.695 +03 [20956] FATAL:  the database system is starting up
+2026-05-06 14:47:01.152 +03 [3316] LOG:  could not open file "./pg.log": sharing violation
+2026-05-06 14:47:01.152 +03 [3316] DETAIL:  Continuing to retry for 30 seconds.
+2026-05-06 14:47:01.152 +03 [3316] HINT:  You might have antivirus, backup, or similar software interfering with the database system.
+2026-05-06 14:47:06.864 +03 [10080] FATAL:  the database system is starting up
+2026-05-06 14:47:12.190 +03 [16928] FATAL:  the database system is starting up
+2026-05-06 14:47:12.203 +03 [19600] FATAL:  the database system is starting up
+2026-05-06 14:47:22.802 +03 [14676] FATAL:  the database system is starting up
+2026-05-06 14:47:27.034 +03 [3316] LOG:  syncing data directory (fsync), elapsed time: 31.46 s, current path: ./pg_commit_ts
+2026-05-06 14:47:27.047 +03 [3316] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-05-06 14:47:27.051 +03 [3316] LOG:  redo starts at 0/45D8CA8
+2026-05-06 14:47:27.051 +03 [3316] LOG:  invalid record length at 0/45D8CE0: expected at least 24, got 0
+2026-05-06 14:47:27.051 +03 [3316] LOG:  redo done at 0/45D8CA8 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-05-06 14:47:27.067 +03 [16528] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-05-06 14:47:27.083 +03 [16528] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.003 s, total=0.032 s; sync files=2, longest=0.002 s, average=0.002 s; distance=0 kB, estimate=0 kB; lsn=0/45D8CE0, redo lsn=0/45D8CE0
+2026-05-06 14:47:27.099 +03 [16464] LOG:  database system is ready to accept connections
+2026-05-06 14:47:43.526 +03 [19900] ERROR:  unterminated quoted identifier at or near "" User\ klinik_modern" at character 22
+2026-05-06 14:47:43.526 +03 [19900] STATEMENT:  SELECT count(*) FROM " User\ klinik_modern
+2026-05-06 14:47:59.347 +03 [5436] ERROR:  unterminated quoted identifier at or near "" User\;" at character 29
+2026-05-06 14:47:59.347 +03 [5436] STATEMENT:  SELECT count(*) FROM public." User\;
+2026-05-06 14:52:27.088 +03 [16528] LOG:  checkpoint starting: time
+2026-05-06 14:52:27.737 +03 [16528] LOG:  checkpoint complete: wrote 6 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.627 s, sync=0.009 s, total=0.649 s; sync files=7, longest=0.002 s, average=0.002 s; distance=8 kB, estimate=8 kB; lsn=0/45DB0B8, redo lsn=0/45DB060
+2026-05-06 14:52:38.641 +03 [18104] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 14:52:38.641 +03 [12572] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 14:52:38.641 +03 [17620] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 14:52:38.641 +03 [15504] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 14:57:27.740 +03 [16528] LOG:  checkpoint starting: time
+2026-05-06 14:57:28.496 +03 [16528] LOG:  checkpoint complete: wrote 7 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.730 s, sync=0.012 s, total=0.756 s; sync files=8, longest=0.002 s, average=0.002 s; distance=17 kB, estimate=17 kB; lsn=0/45DF670, redo lsn=0/45DF618
+2026-05-06 15:02:27.498 +03 [16528] LOG:  checkpoint starting: time
+2026-05-06 15:02:28.260 +03 [16528] LOG:  checkpoint complete: wrote 7 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.737 s, sync=0.012 s, total=0.763 s; sync files=8, longest=0.003 s, average=0.002 s; distance=17 kB, estimate=17 kB; lsn=0/45E3D00, redo lsn=0/45E3CA8
+2026-05-06 15:04:29.033 +03 [21084] LOG:  could not receive data from client: An established connection was aborted by the software in your host machine.
+	
+2026-05-06 15:04:29.766 +03 [16528] LOG:  checkpoint starting: immediate force wait
+2026-05-06 15:04:29.785 +03 [16528] LOG:  checkpoint complete: wrote 4 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.003 s, sync=0.007 s, total=0.019 s; sync files=5, longest=0.002 s, average=0.002 s; distance=6360 kB, estimate=6360 kB; lsn=0/4C1A0E0, redo lsn=0/4C1A088
+2026-05-06 15:04:30.436 +03 [16528] LOG:  checkpoint starting: immediate force wait
+2026-05-06 15:04:30.465 +03 [16528] LOG:  checkpoint complete: wrote 26 buffers (0.2%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 1 recycled; write=0.005 s, sync=0.012 s, total=0.030 s; sync files=9, longest=0.002 s, average=0.002 s; distance=6501 kB, estimate=6501 kB; lsn=0/5273690, redo lsn=0/5273638
+2026-05-06 15:05:34.246 +03 [11304] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 15:05:46.885 +03 [19688] LOG:  could not receive data from client: An established connection was aborted by the software in your host machine.
+	
+2026-05-06 15:05:47.002 +03 [10272] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 15:05:59.979 +03 [14012] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 15:05:59.979 +03 [5420] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 15:05:59.979 +03 [7988] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 15:09:30.478 +03 [16528] LOG:  checkpoint starting: time
+2026-05-06 15:09:36.580 +03 [16528] LOG:  checkpoint complete: wrote 57 buffers (0.3%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=6.044 s, sync=0.044 s, total=6.102 s; sync files=39, longest=0.003 s, average=0.002 s; distance=308 kB, estimate=5882 kB; lsn=0/52C0AB8, redo lsn=0/52C0A28
+2026-05-06 15:15:53.567 +03 [15616] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 15:15:53.567 +03 [20000] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 15:15:53.567 +03 [16304] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 15:15:53.568 +03 [19856] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 15:15:53.569 +03 [2116] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	

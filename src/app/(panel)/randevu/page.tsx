@@ -87,6 +87,8 @@ type CalendarSettings = {
   holidayDays: string[];
 };
 
+  type DoctorBlock = { id: string; doctorId: string; date: string; startTime: string; endTime: string; reason?: string | null; doctor?: { id: string; fullName: string } };
+
 export default function RandevuPage() {
   const [view, setView] = useState<"GUN" | "HAFTA" | "AY" | "AJANDA">("HAFTA");
   const [date, setDate] = useState(() => new Date());
@@ -129,6 +131,32 @@ export default function RandevuPage() {
   const [doctorQuery, setDoctorQuery] = useState("");
   const [doctorDropdownOpen, setDoctorDropdownOpen] = useState(false);
   const [treatmentDropdownOpen, setTreatmentDropdownOpen] = useState(false);
+  // Edit modal state
+  const [editMode, setEditMode] = useState(false);
+  const [editPatientId, setEditPatientId] = useState("");
+  const [editPatientSearch, setEditPatientSearch] = useState("");
+  const [editPatientResults, setEditPatientResults] = useState<Patient[]>([]);
+  const [editPatientLoading, setEditPatientLoading] = useState(false);
+  const [editPatientDropdownOpen, setEditPatientDropdownOpen] = useState(false);
+  const [editDoctorId, setEditDoctorId] = useState("");
+  const [editDoctorQuery, setEditDoctorQuery] = useState("");
+  const [editDoctorDropdownOpen, setEditDoctorDropdownOpen] = useState(false);
+  const [editStartAt, setEditStartAt] = useState("");
+  const [editDurationMinutes, setEditDurationMinutes] = useState(30);
+  const [editSaving, setEditSaving] = useState(false);
+  // Drag-drop state
+  const [draggedApptId, setDraggedApptId] = useState<string | null>(null);
+  const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+
+  // Doctor Block state
+  const [doctorBlocks, setDoctorBlocks] = useState<DoctorBlock[]>([]);
+  const [showBlockModal, setShowBlockModal] = useState(false);
+  const [blockDoctorId, setBlockDoctorId] = useState("");
+  const [blockDate, setBlockDate] = useState(() => { const d = new Date(); return d.toISOString().slice(0, 10); });
+  const [blockStartTime, setBlockStartTime] = useState("13:00");
+  const [blockEndTime, setBlockEndTime] = useState("17:00");
+  const [blockReason, setBlockReason] = useState("");
+  const [blockSaving, setBlockSaving] = useState(false);
   const [calendarSettings, setCalendarSettings] = useState<CalendarSettings>({
     openingTime: "08:30",
     closingTime: "23:59",
@@ -155,6 +183,12 @@ export default function RandevuPage() {
     if (!q) return staff;
     return staff.filter((item) => item.fullName.toLowerCase().includes(q));
   }, [doctorQuery, staff]);
+
+  const filteredEditDoctorOptions = useMemo(() => {
+    const q = editDoctorQuery.trim().toLowerCase();
+    if (!q) return staff;
+    return staff.filter((item) => item.fullName.toLowerCase().includes(q));
+  }, [editDoctorQuery, staff]);
 
   const slotInterval = useMemo(() => {
     const raw = Number(calendarSettings.appointmentDuration) || 15;
@@ -257,20 +291,38 @@ export default function RandevuPage() {
     return () => clearTimeout(timer);
   }, [upcomingSearch]);
 
+  useEffect(() => {
+    if (editPatientSearch.trim().length < 2) { setEditPatientResults([]); return; }
+    const t = setTimeout(async () => {
+      setEditPatientLoading(true);
+      try {
+        const res = await fetch("/api/patients?q=" + encodeURIComponent(editPatientSearch.trim()) + "&take=10");
+        const data = await res.json();
+        setEditPatientResults(Array.isArray(data.patients) ? data.patients : []);
+      } finally { setEditPatientLoading(false); }
+    }, 280);
+    return () => clearTimeout(t);
+  }, [editPatientSearch]);
+
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
       const params = new URLSearchParams({ from: range.from.toISOString(), to: range.to.toISOString() });
       if (doctorId) params.set("doctorId", doctorId);
-      const [aRes, sRes, meRes, profileRes, settingsRes] = await Promise.all([
+      // Format range dates as YYYY-MM-DD for doctor-blocks
+      const fromDate = range.from.toISOString().slice(0, 10);
+      const toDate = range.to.toISOString().slice(0, 10);
+      const [aRes, sRes, meRes, profileRes, settingsRes, blocksRes] = await Promise.all([
         fetch("/api/appointments?" + params.toString()),
         fetch("/api/staff?booking=1"),
         fetch("/api/auth/me"),
         fetch("/api/profile"),
         fetch("/api/settings"),
+        fetch(`/api/doctor-blocks?from=${fromDate}&to=${toDate}`),
       ]);
-      const [aJson, sJson, meJson, profileJson, settingsJson] = await Promise.all([aRes.json(), sRes.json(), meRes.json(), profileRes.json(), settingsRes.json()]);
+      const [aJson, sJson, meJson, profileJson, settingsJson, blocksJson] = await Promise.all([aRes.json(), sRes.json(), meRes.json(), profileRes.json(), settingsRes.json(), blocksRes.json()]);
       setAppointments(Array.isArray(aJson) ? aJson : []);
+      setDoctorBlocks(Array.isArray(blocksJson) ? blocksJson : []);
       const staffList = Array.isArray(sJson) ? sJson : (sJson?.staff || []);
       setStaff(staffList.filter((x: Staff & { profile?: { hideAsDoctor?: boolean } | null; isActive?: boolean }) => isBookableDoctor(x)));
 
@@ -312,6 +364,8 @@ export default function RandevuPage() {
     setFollowUpStatus(parsed.followUp);
     setFollowUpNote(parsed.detail);
   }, [selectedAppt]);
+
+  useEffect(() => { setEditMode(false); setError(null); }, [selectedAppt?.id]);
 
   useEffect(() => {
     if (!newDoctorId) return;
@@ -395,9 +449,110 @@ export default function RandevuPage() {
 
   const remove = async (id: string) => {
     if (!window.confirm("Randevu silinsin mi?")) return;
-    await fetch("/api/appointments/" + id, { method: "DELETE" });
+    const res = await fetch("/api/appointments/" + id, { method: "DELETE" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ message: "Randevu silinemedi" }));
+      setError(body.message || "Randevu silinemedi");
+      return;
+    }
     setSelectedAppt(null);
     await load();
+  };
+
+  const openEditMode = () => {
+    if (!selectedAppt) return;
+    setEditPatientId(selectedAppt.patient?.id || "");
+    setEditPatientSearch(selectedAppt.patient?.fullName || "");
+    setEditPatientResults([]);
+    setEditPatientDropdownOpen(false);
+    setEditDoctorId(selectedAppt.doctor?.id || "");
+    setEditDoctorQuery(selectedAppt.doctor?.fullName || "");
+    setEditDoctorDropdownOpen(false);
+    const startDate = new Date(selectedAppt.startAt);
+    const endDate = new Date(selectedAppt.endAt);
+    const dur = Math.round((endDate.getTime() - startDate.getTime()) / 60000);
+    setEditStartAt(toLocalInput(startDate));
+    setEditDurationMinutes(dur > 0 ? dur : slotInterval);
+    setEditMode(true);
+  };
+
+  const updateAppointment = async () => {
+    if (!selectedAppt || !editPatientId || !editDoctorId) {
+      setError("Hasta ve doktor zorunludur.");
+      return;
+    }
+    const startDate = new Date(editStartAt);
+    if (Number.isNaN(startDate.getTime())) { setError("Geçerli bir başlangıç tarihi/saati girin."); return; }
+    const endDate = new Date(startDate);
+    endDate.setMinutes(endDate.getMinutes() + editDurationMinutes);
+    const parsed = parseAppointmentNote(selectedAppt.note);
+    const treatmentMeta = getTreatmentMeta(parsed.treatment);
+    setEditSaving(true); setError(null);
+    const res = await fetch("/api/appointments/" + selectedAppt.id, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        patientId: editPatientId,
+        doctorId: editDoctorId,
+        startAt: startDate.toISOString(),
+        endAt: endDate.toISOString(),
+        type: selectedAppt.type,
+        status: selectedAppt.status,
+        colorCode: treatmentMeta.color || selectedAppt.colorCode || "#2a9d8f",
+        note: selectedAppt.note || "",
+        smsInfo: false,
+        smsReminder: false,
+        smsSurvey: false,
+      })
+    });
+    setEditSaving(false);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ message: "Güncelleme başarısız" }));
+      setError(body.message || "Güncelleme başarısız");
+      return;
+    }
+    setEditMode(false);
+    setSelectedAppt(null);
+    await load();
+  };
+
+  const handleDropOnSlot = async (newDate: Date, slotTime: string, newDocId?: string) => {
+    if (!draggedApptId) return;
+    const appt = appointments.find(a => a.id === draggedApptId);
+    if (!appt) return;
+    const [h, m] = slotTime.split(":").map(Number);
+    const newStart = new Date(newDate);
+    newStart.setHours(h, m, 0, 0);
+    const origStart = new Date(appt.startAt);
+    const origEnd = new Date(appt.endAt);
+    if (newStart.getTime() === origStart.getTime() && (!newDocId || newDocId === appt.doctor?.id)) {
+      setDraggedApptId(null); setDragOverKey(null); return;
+    }
+    const dur = Math.round((origEnd.getTime() - origStart.getTime()) / 60000) || slotInterval;
+    const newEnd = new Date(newStart);
+    newEnd.setMinutes(newEnd.getMinutes() + dur);
+    const parsed = parseAppointmentNote(appt.note);
+    const treatmentMeta = getTreatmentMeta(parsed.treatment);
+    const res = await fetch("/api/appointments/" + draggedApptId, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        patientId: appt.patient?.id || "",
+        doctorId: newDocId || appt.doctor?.id || "",
+        startAt: newStart.toISOString(),
+        endAt: newEnd.toISOString(),
+        type: appt.type,
+        status: appt.status,
+        colorCode: treatmentMeta.color || appt.colorCode || "#2a9d8f",
+        note: appt.note || "",
+        smsInfo: false,
+        smsReminder: false,
+        smsSurvey: false,
+      })
+    });
+    setDraggedApptId(null); setDragOverKey(null);
+    if (res.ok) await load();
+    else { const body = await res.json().catch(() => ({ message: "Güncelleme başarısız" })); setError(body.message || "Güncelleme başarısız"); }
   };
 
   const weekDays = useMemo(() => {
@@ -421,6 +576,7 @@ export default function RandevuPage() {
 
   const getApptForSlot = (docId: string | null, slotTime: string, forDate?: Date) => {
     return appointments.filter(a => {
+      if (a.status === "IPTAL") return false;
       if (docId && a.doctor?.id !== docId) return false;
       const d = new Date(a.startAt);
       if (forDate && (d.getFullYear() !== forDate.getFullYear() || d.getMonth() !== forDate.getMonth() || d.getDate() !== forDate.getDate())) return false;
@@ -428,7 +584,11 @@ export default function RandevuPage() {
     });
   };
 
-  const getApptForDay = (d: Date) => appointments.filter(a => { const ad = new Date(a.startAt); return ad.getFullYear() === d.getFullYear() && ad.getMonth() === d.getMonth() && ad.getDate() === d.getDate(); });
+  const getApptForDay = (d: Date) => appointments.filter(a => {
+    if (a.status === "IPTAL") return false;
+    const ad = new Date(a.startAt);
+    return ad.getFullYear() === d.getFullYear() && ad.getMonth() === d.getMonth() && ad.getDate() === d.getDate();
+  });
 
   const navLabel = () => {
     if (view === "GUN") return date.getDate() + " " + TR_MONTHS[date.getMonth()] + " " + date.getFullYear();
@@ -835,18 +995,63 @@ export default function RandevuPage() {
   };
 
   const filteredAgendaAppointments = useMemo(() => {
-    if (agendaStatusFilter === "ALL") return appointments;
+    if (agendaStatusFilter === "ALL") return appointments.filter(a => a.status !== "IPTAL");
     return appointments.filter(a => a.status === agendaStatusFilter);
   }, [appointments, agendaStatusFilter]);
 
-  const apptBlock = (a: Appointment) => (
+  // DoctorBlock helpers
+  const isSlotBlocked = useCallback((docId: string, dateStr: string, slotTime: string): boolean => {
+    return doctorBlocks.some(b => {
+      if (b.doctorId !== docId) return false;
+      if (b.date !== dateStr) return false;
+      return slotTime >= b.startTime && slotTime < b.endTime;
+    });
+  }, [doctorBlocks]);
+
+  const getBlockForSlot = useCallback((docId: string, dateStr: string, slotTime: string) => {
+    return doctorBlocks.find(b => {
+      if (b.doctorId !== docId) return false;
+      if (b.date !== dateStr) return false;
+      return slotTime >= b.startTime && slotTime < b.endTime;
+    }) || null;
+  }, [doctorBlocks]);
+
+  const deleteBlock = async (id: string) => {
+    await fetch("/api/doctor-blocks?id=" + id, { method: "DELETE" });
+    await load();
+  };
+
+  const saveBlock = async () => {
+    if (!blockDoctorId || !blockDate || !blockStartTime || !blockEndTime) return;
+    setBlockSaving(true);
+    const res = await fetch("/api/doctor-blocks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ doctorId: blockDoctorId, date: blockDate, startTime: blockStartTime, endTime: blockEndTime, reason: blockReason || null }),
+    });
+    setBlockSaving(false);
+    if (res.ok) {
+      setShowBlockModal(false);
+      setBlockReason("");
+      await load();
+    } else {
+      const body = await res.json().catch(() => ({ message: "Blok eklenemedi" }));
+      setError(body.message || "Blok eklenemedi");
+    }
+  };
+
+  const apptBlock = (a: Appointment, enableDrag = false) => (
     (() => {
       const parsed = parseAppointmentNote(a.note);
       const meta = getFollowUpMeta(parsed.followUp);
       const treatmentMeta = getTreatmentMeta(parsed.treatment);
       return (
-    <div key={a.id} onClick={() => setSelectedAppt(a)}
-      className={"rounded p-1 mb-0.5 cursor-pointer " + (STATUS_COLORS[a.status] || "bg-blue-50 border-l-4 border-blue-400")}>
+    <div key={a.id}
+      draggable={enableDrag}
+      onDragStart={enableDrag ? (e) => { e.stopPropagation(); e.dataTransfer.effectAllowed = "move"; setDraggedApptId(a.id); } : undefined}
+      onDragEnd={enableDrag ? () => { setDraggedApptId(null); setDragOverKey(null); } : undefined}
+      onClick={() => setSelectedAppt(a)}
+      className={"rounded p-1 mb-0.5 cursor-pointer " + (enableDrag ? "cursor-grab active:cursor-grabbing " : "") + (STATUS_COLORS[a.status] || "bg-blue-50 border-l-4 border-blue-400")}>
       <p className="font-semibold text-gray-800 truncate text-xs">{a.patient?.fullName || "-"}</p>
       <p className="text-gray-500 text-xs">{new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}</p>
       <p className={"mt-0.5 inline-flex rounded-full px-1.5 py-0.5 text-[10px] font-semibold " + treatmentMeta.badge}>{treatmentMeta.label}</p>
@@ -924,11 +1129,6 @@ export default function RandevuPage() {
           <div className="flex flex-wrap items-center gap-1">
             <button onClick={() => nav(-1)} className="rounded border px-2 py-1 text-lg leading-none hover:bg-gray-100">‹</button>
             <span className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-sm font-bold text-gray-800">{navLabel()}</span>
-            <button onClick={() => nav(1)} className="rounded border px-2 py-1 text-lg leading-none hover:bg-gray-100">›</button>
-            <button onClick={() => setDate(new Date())} className="rounded border border-gray-300 px-2.5 py-1 text-xs font-medium bg-gray-50 hover:bg-gray-100">Bugün</button>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-1">
             {(["GUN","HAFTA","AY","AJANDA"] as const).map(mode => (
               <button
                 key={mode}
@@ -955,6 +1155,9 @@ export default function RandevuPage() {
               Excel
             </button>
             <button onClick={() => setShowForm(!showForm)} disabled={!canCreateAppointments} className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">+ Yeni</button>
+            {canCreateAppointments && (
+              <button onClick={() => setShowBlockModal(true)} className="rounded-md border border-orange-300 bg-orange-50 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-100">⊘ Blok</button>
+            )}
           </div>
         </div>
       </div>
@@ -1181,30 +1384,47 @@ export default function RandevuPage() {
                   <td className="border px-2 py-1 text-gray-400 font-mono align-top whitespace-nowrap">{slot}</td>
                   {doctors.map(d => {
                     const slotAppts = getApptForSlot(d.id, slot);
+                    const dropKey = `g-${d.id}-${slot}`;
+                    const dateStr = date.toISOString().slice(0, 10);
+                    const blocked = isSlotBlocked(d.id, dateStr, slot);
+                    const blockInfo = blocked ? getBlockForSlot(d.id, dateStr, slot) : null;
                     return (
                       <td
                         key={d.id}
-                        className="group border p-1 align-top min-h-9"
+                        className={"group border p-1 align-top min-h-9 transition-colors " + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-blue-50 ring-2 ring-inset ring-blue-400" : "")}
+                        onDragOver={(e) => { if (draggedApptId && !blocked) { e.preventDefault(); setDragOverKey(dropKey); } }}
+                        onDragLeave={() => setDragOverKey(prev => prev === dropKey ? null : prev)}
+                        onDrop={(e) => { if (!blocked) { e.preventDefault(); void handleDropOnSlot(date, slot, d.id); } }}
                       >
-                        {slotAppts.map(a => apptBlock(a))}
-                        {slotAppts.length === 0 ? (
-                          canCreateAppointments ? (
-                            <button
-                              onClick={() => openQuickCreate(slot, date, d.id)}
-                              className="w-full rounded border border-dashed border-gray-300 px-1 py-1 text-[11px] text-gray-500 transition hover:border-primary hover:text-primary"
-                            >
-                              + Randevu Oluştur
-                            </button>
-                          ) : <div className="h-7" />
+                        {blocked ? (
+                          <div className="flex items-center gap-1 rounded bg-orange-100 border border-orange-200 px-1 py-0.5 text-[10px] text-orange-700">
+                            <span>⊘</span>
+                            <span className="truncate">{blockInfo?.reason || "Bloke"}</span>
+                            {canCreateAppointments && <button onClick={() => blockInfo && deleteBlock(blockInfo.id)} className="ml-auto text-red-400 hover:text-red-600">✕</button>}
+                          </div>
                         ) : (
-                          canCreateAppointments ? (
-                            <button
-                              onClick={() => openQuickCreate(slot, date, d.id)}
-                              className="mt-0.5 w-full rounded border border-dashed border-yellow-300 px-1 py-0.5 text-[10px] text-yellow-600 transition hover:border-yellow-500 hover:bg-yellow-50"
-                            >
-                              + Ekle
-                            </button>
-                          ) : null
+                          <>
+                            {slotAppts.map(a => apptBlock(a, canCreateAppointments))}
+                            {slotAppts.length === 0 ? (
+                              canCreateAppointments ? (
+                                <button
+                                  onClick={() => openQuickCreate(slot, date, d.id)}
+                                  className="w-full rounded border border-dashed border-gray-300 px-1 py-1 text-[11px] text-gray-500 transition hover:border-primary hover:text-primary"
+                                >
+                                  + Randevu Oluştur
+                                </button>
+                              ) : <div className="h-7" />
+                            ) : (
+                              canCreateAppointments ? (
+                                <button
+                                  onClick={() => openQuickCreate(slot, date, d.id)}
+                                  className="mt-0.5 w-full rounded border border-dashed border-yellow-300 px-1 py-0.5 text-[10px] text-yellow-600 transition hover:border-yellow-500 hover:bg-yellow-50"
+                                >
+                                  + Ekle
+                                </button>
+                              ) : null
+                            )}
+                          </>
                         )}
                       </td>
                     );
@@ -1225,8 +1445,8 @@ export default function RandevuPage() {
       {!loading && view === "HAFTA" && (
         <div className="overflow-auto rounded-xl border bg-white">
           <table className="min-w-full border-collapse text-xs">
-            <thead className="sticky top-0 z-10 bg-gray-100">
-              <tr>
+              <thead className="sticky top-0 z-10 bg-gray-100">
+                <tr>
                 <th className="border px-2 py-2 text-left text-gray-500 w-16">Saat</th>
                 {weekDays.map((d, i) => {
                   const isToday = d.toDateString() === new Date().toDateString();
@@ -1245,30 +1465,48 @@ export default function RandevuPage() {
                   <td className="border px-2 py-1 text-gray-400 font-mono align-top whitespace-nowrap">{slot}</td>
                   {weekDays.map((d, i) => {
                     const slotAppts = getApptForSlot(doctorId || null, slot, d);
+                    const dropKey = `h-${d.toDateString()}-${slot}`;
+                    const dateStr = d.toISOString().slice(0, 10);
+                    // Hafta görünümünde belirli bir doktor seçiliyse blok kontrolü yap
+                    const blocked = doctorId ? isSlotBlocked(doctorId, dateStr, slot) : false;
+                    const blockInfo = blocked && doctorId ? getBlockForSlot(doctorId, dateStr, slot) : null;
                     return (
                       <td
                         key={i}
-                        className="group border p-1 align-top min-h-9"
+                        className={"group border p-1 align-top min-h-9 transition-colors " + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-blue-50 ring-2 ring-inset ring-blue-400" : "")}
+                        onDragOver={(e) => { if (draggedApptId && !blocked) { e.preventDefault(); setDragOverKey(dropKey); } }}
+                        onDragLeave={() => setDragOverKey(prev => prev === dropKey ? null : prev)}
+                        onDrop={(e) => { if (!blocked) { e.preventDefault(); void handleDropOnSlot(d, slot); } }}
                       >
-                        {slotAppts.map(a => apptBlock(a))}
-                        {slotAppts.length === 0 ? (
-                          canCreateAppointments ? (
-                            <button
-                              onClick={() => openQuickCreate(slot, d, doctorId || undefined)}
-                              className="w-full rounded border border-dashed border-gray-300 px-1 py-1 text-[11px] text-gray-500 transition hover:border-primary hover:text-primary"
-                            >
-                              + Randevu Oluştur
-                            </button>
-                          ) : <div className="h-7" />
+                        {blocked ? (
+                          <div className="flex items-center gap-1 rounded bg-orange-100 border border-orange-200 px-1 py-0.5 text-[10px] text-orange-700">
+                            <span>⊘</span>
+                            <span className="truncate">{blockInfo?.reason || "Bloke"}</span>
+                            {canCreateAppointments && <button onClick={() => blockInfo && deleteBlock(blockInfo.id)} className="ml-auto text-red-400 hover:text-red-600">✕</button>}
+                          </div>
                         ) : (
-                          canCreateAppointments ? (
-                            <button
-                              onClick={() => openQuickCreate(slot, d, doctorId || undefined)}
-                              className="mt-0.5 w-full rounded border border-dashed border-yellow-300 px-1 py-0.5 text-[10px] text-yellow-600 transition hover:border-yellow-500 hover:bg-yellow-50"
-                            >
-                              + Ekle
-                            </button>
-                          ) : null
+                          <>
+                            {slotAppts.map(a => apptBlock(a, canCreateAppointments))}
+                            {slotAppts.length === 0 ? (
+                              canCreateAppointments ? (
+                                <button
+                                  onClick={() => openQuickCreate(slot, d, doctorId || undefined)}
+                                  className="w-full rounded border border-dashed border-gray-300 px-1 py-1 text-[11px] text-gray-500 transition hover:border-primary hover:text-primary"
+                                >
+                                  + Randevu Oluştur
+                                </button>
+                              ) : <div className="h-7" />
+                            ) : (
+                              canCreateAppointments ? (
+                                <button
+                                  onClick={() => openQuickCreate(slot, d, doctorId || undefined)}
+                                  className="mt-0.5 w-full rounded border border-dashed border-yellow-300 px-1 py-0.5 text-[10px] text-yellow-600 transition hover:border-yellow-500 hover:bg-yellow-50"
+                                >
+                                  + Ekle
+                                </button>
+                              ) : null
+                            )}
+                          </>
                         )}
                       </td>
                     );
@@ -1374,6 +1612,83 @@ export default function RandevuPage() {
         </div>
       )}
 
+      {/* DOKTOR BLOK EKLEME MODALI */}
+      {showBlockModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-base font-bold text-slate-900">Doktor Zaman Blokajı Ekle</h2>
+              <button onClick={() => setShowBlockModal(false)} className="rounded-lg p-1 hover:bg-slate-100 text-slate-400">✕</button>
+            </div>
+            <p className="mb-4 text-xs text-slate-500">Seçili zaman aralığında doktor randevuya kapalı olarak işaretlenir. Mevcut randevular etkilenmez.</p>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Doktor</label>
+                <select className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                  value={blockDoctorId} onChange={e => setBlockDoctorId(e.target.value)}>
+                  <option value="">— Doktor Seçin —</option>
+                  {staff.map(s => <option key={s.id} value={s.id}>{s.fullName}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Tarih</label>
+                <input type="date" value={blockDate} onChange={e => setBlockDate(e.target.value)}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Başlangıç</label>
+                  <input type="time" value={blockStartTime} onChange={e => setBlockStartTime(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 mb-1">Bitiş</label>
+                  <input type="time" value={blockEndTime} onChange={e => setBlockEndTime(e.target.value)}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Neden (isteğe bağlı)</label>
+                <input type="text" value={blockReason} onChange={e => setBlockReason(e.target.value)}
+                  placeholder="Öğle arası, toplantı, izin..."
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+              </div>
+            </div>
+
+            {/* Mevcut bloklar bu doktor için */}
+            {blockDoctorId && blockDate && (
+              <div className="mt-4">
+                <h3 className="text-xs font-bold text-slate-700 mb-2">Bu güne ait mevcut bloklar</h3>
+                {doctorBlocks.filter(b => b.doctorId === blockDoctorId && b.date === blockDate).length === 0 ? (
+                  <p className="text-xs text-slate-400">Bu tarihte blok yok</p>
+                ) : (
+                  <div className="space-y-1">
+                    {doctorBlocks.filter(b => b.doctorId === blockDoctorId && b.date === blockDate).map(b => (
+                      <div key={b.id} className="flex items-center justify-between rounded-lg bg-orange-50 border border-orange-200 px-3 py-2 text-xs">
+                        <span className="font-semibold text-orange-800">{b.startTime} – {b.endTime}</span>
+                        <span className="text-orange-600">{b.reason || ""}</span>
+                        <button onClick={() => deleteBlock(b.id)} className="text-red-500 hover:text-red-700 font-bold ml-2">✕</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="mt-5 flex gap-2">
+              <button onClick={saveBlock} disabled={blockSaving || !blockDoctorId || !blockDate || !blockStartTime || !blockEndTime}
+                className="flex-1 rounded-lg bg-orange-500 py-2 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">
+                {blockSaving ? "Kaydediliyor…" : "Blok Ekle"}
+              </button>
+              <button onClick={() => setShowBlockModal(false)}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">
+                İptal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {selectedAppt && (
         (() => {
           const parsed = parseAppointmentNote(selectedAppt.note);
@@ -1383,60 +1698,135 @@ export default function RandevuPage() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-bold text-primary">Randevu Detayi</h3>
-              <button onClick={() => setSelectedAppt(null)} className="text-gray-400 hover:text-gray-600 text-xl">x</button>
+              <h3 className="text-lg font-bold text-primary">{editMode ? "Randevuyu Düzenle" : "Randevu Detayı"}</h3>
+              <button onClick={() => setSelectedAppt(null)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
             </div>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between"><span className="text-gray-500">Hasta:</span><span className="font-semibold">{selectedAppt.patient?.fullName}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Doktor:</span><span>{selectedAppt.doctor?.fullName}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Başlangıç:</span><span>{new Date(selectedAppt.startAt).toLocaleString("tr-TR")}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Bitiş:</span><span>{new Date(selectedAppt.endAt).toLocaleString("tr-TR")}</span></div>
-              <div className="flex justify-between"><span className="text-gray-500">Tedavi:</span><span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + treatmentMeta.badge}>{treatmentMeta.label}</span></div>
-              {parsed.detail && <div className="flex justify-between gap-3"><span className="text-gray-500">Not:</span><span className="max-w-xs text-right">{parsed.detail}</span></div>}
-              {parsed.followUp !== "YOK" && <div className="flex justify-between"><span className="text-gray-500">Takip:</span><span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + meta.badge}>{meta.label}</span></div>}
-            </div>
-            <div className="mt-4">
-              <p className="text-xs text-gray-500 mb-2 font-semibold">Durum Güncelle:</p>
-              <div className="flex flex-wrap gap-2">
-                {[{v:"BEKLIYOR",l:"Bekliyor",c:"bg-yellow-100 text-yellow-700"},{v:"GELDI",l:"Geldi",c:"bg-green-100 text-green-700"},{v:"GELMEDI",l:"Gelmedi",c:"bg-red-100 text-red-700"},{v:"IPTAL",l:"İptal",c:"bg-gray-200 text-gray-700"}].map(s => (
-                  <button key={s.v} onClick={() => updateStatus(selectedAppt.id, s.v)}
-                    className={"rounded-full px-3 py-1 text-sm font-semibold " + s.c + (selectedAppt.status===s.v?" ring-2 ring-gray-400":"")}>
-                    {s.l}
+            {editMode ? (
+              <div className="space-y-3">
+                {error && <p className="text-red-600 text-sm">{error}</p>}
+                {/* Hasta */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-600 mb-1 block">Hasta</label>
+                  <div className="relative">
+                    <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/20">
+                      <span className="text-slate-400 text-sm">🔍</span>
+                      <input type="text" placeholder="Hasta adı, TC veya telefon..."
+                        value={editPatientSearch}
+                        onChange={e => { setEditPatientSearch(e.target.value); setEditPatientDropdownOpen(true); if (!e.target.value) setEditPatientId(""); }}
+                        onFocus={() => editPatientSearch.trim().length >= 2 && setEditPatientDropdownOpen(true)}
+                        className="flex-1 bg-transparent text-sm outline-none" />
+                      {editPatientId && <button type="button" onClick={() => { setEditPatientId(""); setEditPatientSearch(""); setEditPatientResults([]); }} className="text-slate-400 hover:text-red-500 text-base leading-none">×</button>}
+                      {editPatientLoading && <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-primary" />}
+                    </div>
+                    {editPatientDropdownOpen && (editPatientResults.length > 0 || (editPatientSearch.trim().length >= 2 && !editPatientLoading)) && (
+                      <div className="absolute z-50 mt-1 w-full overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
+                        {editPatientResults.length === 0
+                          ? <p className="px-4 py-3 text-sm text-slate-400">Sonuç bulunamadı</p>
+                          : editPatientResults.map(p => (
+                            <button key={p.id} type="button"
+                              className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-primary/5 transition"
+                              onMouseDown={e => e.preventDefault()}
+                              onClick={() => { setEditPatientId(p.id); setEditPatientSearch(p.fullName); setEditPatientResults([]); setEditPatientDropdownOpen(false); }}>
+                              <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">{p.fullName.charAt(0).toUpperCase()}</span>
+                              <span className="flex flex-col"><span className="font-semibold text-slate-800">{p.fullName}</span>{p.tcNo && <span className="text-[11px] text-slate-400">TC: {p.tcNo}</span>}</span>
+                            </button>
+                          ))
+                        }
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {/* Doktor */}
+                <div>
+                  <label className="text-xs font-semibold text-slate-600 mb-1 block">Doktor</label>
+                  <div className="relative">
+                    <input type="text" placeholder="Doktor ara veya seç" value={editDoctorQuery}
+                      onChange={e => { setEditDoctorQuery(e.target.value); setEditDoctorId(""); setEditDoctorDropdownOpen(true); }}
+                      onFocus={() => setEditDoctorDropdownOpen(true)}
+                      onBlur={() => setTimeout(() => setEditDoctorDropdownOpen(false), 120)}
+                      className="w-full rounded-lg border px-3 py-2 text-sm" />
+                    {editDoctorDropdownOpen && (
+                      <div className="absolute z-30 mt-1 max-h-44 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                        {filteredEditDoctorOptions.length === 0
+                          ? <p className="px-3 py-2 text-sm text-slate-500">Doktor bulunamadı</p>
+                          : filteredEditDoctorOptions.map(item => (
+                            <button key={item.id} type="button"
+                              onMouseDown={e => e.preventDefault()}
+                              onClick={() => { setEditDoctorId(item.id); setEditDoctorQuery(item.fullName); setEditDoctorDropdownOpen(false); }}
+                              className={"w-full border-b border-slate-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-slate-50 " + (editDoctorId === item.id ? "bg-primary/5 text-primary" : "text-slate-700")}>
+                              {item.fullName}
+                            </button>
+                          ))
+                        }
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {/* Başlangıç & Süre */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs font-semibold text-slate-600 mb-1 block">Başlangıç</label>
+                    <input type="datetime-local" className="w-full rounded-lg border px-3 py-2 text-sm" value={editStartAt} onChange={e => setEditStartAt(e.target.value)} />
+                  </div>
+                  <div>
+                    <label className="text-xs font-semibold text-slate-600 mb-1 block">Süre</label>
+                    <select className="w-full rounded-lg border px-3 py-2 text-sm" value={editDurationMinutes} onChange={e => setEditDurationMinutes(Number(e.target.value))}>
+                      {durationOptions.map(opt => <option key={opt} value={opt}>{opt} dk</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex gap-2 pt-1">
+                  <button onClick={updateAppointment} disabled={editSaving || !editPatientId || !editDoctorId}
+                    className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                    {editSaving ? "Kaydediliyor..." : "Kaydet"}
                   </button>
-                ))}
+                  <button onClick={() => { setEditMode(false); setError(null); }} className="rounded-lg border px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">İptal</button>
+                </div>
               </div>
-            </div>
-            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-              <p className="mb-2 text-xs font-semibold text-slate-600">Takip Notu</p>
-              <select
-                value={followUpStatus}
-                onChange={(e) => setFollowUpStatus(e.target.value as FollowUpKey)}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-              >
-                {FOLLOW_UP_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-              </select>
-              <textarea
-                value={followUpNote}
-                onChange={(e) => setFollowUpNote(e.target.value)}
-                rows={3}
-                placeholder="Örn: Hasta gelmedi, 2 kez arandı ulaşılmadı. Yarın tekrar aranacak."
-                className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-              />
-              <div className="mt-2 flex justify-end">
-                <button
-                  onClick={saveAppointmentFollowUp}
-                  disabled={detailSaving}
-                  className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
-                >
-                  {detailSaving ? "Kaydediliyor..." : "Takip Notunu Kaydet"}
-                </button>
-              </div>
-            </div>
-            <div className="mt-4 flex gap-2">
-              <a href={"/hasta-detay?id=" + selectedAppt.patient?.id} className="rounded-lg bg-primary px-3 py-2 text-sm text-white">Hasta Detayi</a>
-              <button onClick={() => remove(selectedAppt.id)} className="rounded-lg bg-red-600 px-3 py-2 text-sm text-white">Sil</button>
-              <button onClick={() => setSelectedAppt(null)} className="ml-auto rounded-lg border px-3 py-2 text-sm text-gray-600">Kapat</button>
-            </div>
+            ) : (
+              <>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between"><span className="text-gray-500">Hasta:</span><span className="font-semibold">{selectedAppt.patient?.fullName}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Doktor:</span><span>{selectedAppt.doctor?.fullName}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Başlangıç:</span><span>{new Date(selectedAppt.startAt).toLocaleString("tr-TR")}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Bitiş:</span><span>{new Date(selectedAppt.endAt).toLocaleString("tr-TR")}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Tedavi:</span><span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + treatmentMeta.badge}>{treatmentMeta.label}</span></div>
+                  {parsed.detail && <div className="flex justify-between gap-3"><span className="text-gray-500">Not:</span><span className="max-w-xs text-right">{parsed.detail}</span></div>}
+                  {parsed.followUp !== "YOK" && <div className="flex justify-between"><span className="text-gray-500">Takip:</span><span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + meta.badge}>{meta.label}</span></div>}
+                </div>
+                <div className="mt-4">
+                  <p className="text-xs text-gray-500 mb-2 font-semibold">Durum Güncelle:</p>
+                  <div className="flex flex-wrap gap-2">
+                    {[{v:"BEKLIYOR",l:"Bekliyor",c:"bg-yellow-100 text-yellow-700"},{v:"GELDI",l:"Geldi",c:"bg-green-100 text-green-700"},{v:"GELMEDI",l:"Gelmedi",c:"bg-red-100 text-red-700"},{v:"IPTAL",l:"İptal",c:"bg-gray-200 text-gray-700"}].map(s => (
+                      <button key={s.v} onClick={() => updateStatus(selectedAppt.id, s.v)}
+                        className={"rounded-full px-3 py-1 text-sm font-semibold " + s.c + (selectedAppt.status===s.v?" ring-2 ring-gray-400":"")}>
+                        {s.l}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                  <p className="mb-2 text-xs font-semibold text-slate-600">Takip Notu</p>
+                  <select value={followUpStatus} onChange={(e) => setFollowUpStatus(e.target.value as FollowUpKey)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+                    {FOLLOW_UP_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+                  </select>
+                  <textarea value={followUpNote} onChange={(e) => setFollowUpNote(e.target.value)} rows={3}
+                    placeholder="Örn: Hasta gelmedi, 2 kez arandı ulaşılmadı. Yarın tekrar aranacak."
+                    className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
+                  <div className="mt-2 flex justify-end">
+                    <button onClick={saveAppointmentFollowUp} disabled={detailSaving} className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                      {detailSaving ? "Kaydediliyor..." : "Takip Notunu Kaydet"}
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-4 flex gap-2">
+                  <a href={"/hasta-detay?id=" + selectedAppt.patient?.id} className="rounded-lg bg-primary px-3 py-2 text-sm text-white">Hasta Detayı</a>
+                  <button onClick={openEditMode} className="rounded-lg bg-slate-600 px-3 py-2 text-sm text-white">Düzenle</button>
+                  <button onClick={() => remove(selectedAppt.id)} className="rounded-lg bg-red-600 px-3 py-2 text-sm text-white">Sil</button>
+                  <button onClick={() => setSelectedAppt(null)} className="ml-auto rounded-lg border px-3 py-2 text-sm text-gray-600">Kapat</button>
+                </div>
+              </>
+            )}
           </div>
         </div>
           );

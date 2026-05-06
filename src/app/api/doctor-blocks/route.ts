@@ -1,0 +1,81 @@
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireAuth } from "@/lib/api";
+
+// GET /api/doctor-blocks?doctorId=xxx&date=2026-05-06
+// GET /api/doctor-blocks?from=2026-05-01&to=2026-05-31  (tüm doktorlar için)
+export async function GET(request: NextRequest) {
+  const auth = await requireAuth("*");
+  if (auth.error) return auth.error;
+
+  const { searchParams } = new URL(request.url);
+  const doctorId = searchParams.get("doctorId");
+  const date     = searchParams.get("date");
+  const from     = searchParams.get("from");
+  const to       = searchParams.get("to");
+
+  const where: Record<string, unknown> = {};
+
+  if (doctorId) where.doctorId = doctorId;
+  if (date)     where.date = date;
+  if (from && to) {
+    where.date = { gte: from, lte: to };
+  }
+
+  const blocks = await prisma.doctorBlock.findMany({
+    where,
+    include: { doctor: { select: { id: true, fullName: true } } },
+    orderBy: [{ date: "asc" }, { startTime: "asc" }],
+  });
+
+  return NextResponse.json(blocks);
+}
+
+// POST /api/doctor-blocks
+// { doctorId, date, startTime, endTime, reason? }
+export async function POST(request: NextRequest) {
+  const auth = await requireAuth("*");
+  if (auth.error) return auth.error;
+
+  const allowedRoles = ["SUPERADMIN", "YONETICI", "ADMIN"];
+  if (!allowedRoles.includes(auth.user!.role)) {
+    return NextResponse.json({ message: "Yasak" }, { status: 403 });
+  }
+
+  const body = await request.json();
+  const { doctorId, date, startTime, endTime, reason } = body;
+
+  if (!doctorId || !date || !startTime || !endTime) {
+    return NextResponse.json({ message: "doctorId, date, startTime, endTime gerekli" }, { status: 400 });
+  }
+
+  if (startTime >= endTime) {
+    return NextResponse.json({ message: "Başlangıç saati bitiş saatinden önce olmalı" }, { status: 400 });
+  }
+
+  const block = await prisma.doctorBlock.create({
+    data: { doctorId, date, startTime, endTime, reason: reason || null },
+    include: { doctor: { select: { id: true, fullName: true } } },
+  });
+
+  return NextResponse.json(block, { status: 201 });
+}
+
+// DELETE /api/doctor-blocks?id=xxx
+export async function DELETE(request: NextRequest) {
+  const auth = await requireAuth("*");
+  if (auth.error) return auth.error;
+
+  const allowedRoles = ["SUPERADMIN", "YONETICI", "ADMIN"];
+  if (!allowedRoles.includes(auth.user!.role)) {
+    return NextResponse.json({ message: "Yasak" }, { status: 403 });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
+
+  if (!id) return NextResponse.json({ message: "id gerekli" }, { status: 400 });
+
+  await prisma.doctorBlock.delete({ where: { id } });
+  return NextResponse.json({ ok: true });
+}

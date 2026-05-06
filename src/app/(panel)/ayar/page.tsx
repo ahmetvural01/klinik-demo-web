@@ -4,8 +4,28 @@ import { useEffect, useState } from "react";
 
 type PosDevice = { id: string; name: string; isActive: boolean; createdAt: string };
 
+type DaySchedule = {
+  day: string;
+  isHoliday: boolean;
+  open: string;
+  close: string;
+  lunchStart: string;
+  lunchEnd: string;
+};
+
+const DAYS = ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","Pazar"];
+
+const DEFAULT_SCHEDULES: DaySchedule[] = DAYS.map(day => ({
+  day,
+  isHoliday: day === "Pazar",
+  open: "08:30",
+  close: day === "Cumartesi" ? "15:00" : "18:00",
+  lunchStart: "",
+  lunchEnd: "",
+}));
+
 export default function AyarPage() {
-  const [activeTab, setActiveTab] = useState<"genel" | "sms" | "pos">("genel");
+  const [activeTab, setActiveTab] = useState<"genel" | "calisma" | "sms" | "pos">("genel");
   const [settings, setSettings] = useState({
     institutionName: "Adana White Dental Clinic",
     institutionAddress: "Çukurova/Adana",
@@ -15,6 +35,9 @@ export default function AyarPage() {
     appointmentDuration: 15,
     institutionWebsite: "",
     holidayDays: [] as string[],
+    lunchStart: "",
+    lunchEnd: "",
+    dailySchedules: DEFAULT_SCHEDULES as DaySchedule[],
     smsEnabled: true,
     smsDefaultInfo: true,
     smsDefaultReminder: false,
@@ -40,7 +63,7 @@ export default function AyarPage() {
       const res = await fetch("/api/settings");
       const data = await res.json();
       if (data) {
-        setSettings({
+      setSettings({
           institutionName:      data.institutionName      || "Adana White Dental Clinic",
           institutionAddress:   data.institutionAddress   || "",
           institutionPhone:     data.institutionPhone     || "",
@@ -49,6 +72,11 @@ export default function AyarPage() {
           appointmentDuration:  data.appointmentDuration  || 15,
           institutionWebsite:   data.institutionWebsite   || "",
           holidayDays: data.holidayDays ? (typeof data.holidayDays === "string" ? JSON.parse(data.holidayDays) : data.holidayDays) : [],
+          lunchStart: data.lunchStart || "",
+          lunchEnd: data.lunchEnd || "",
+          dailySchedules: data.dailySchedules
+            ? (typeof data.dailySchedules === "string" ? JSON.parse(data.dailySchedules) : data.dailySchedules)
+            : DEFAULT_SCHEDULES,
           smsEnabled:         data.smsEnabled         !== undefined ? data.smsEnabled         : true,
           smsDefaultInfo:     data.smsDefaultInfo     !== undefined ? data.smsDefaultInfo     : true,
           smsDefaultReminder: data.smsDefaultReminder !== undefined ? data.smsDefaultReminder : false,
@@ -74,7 +102,11 @@ export default function AyarPage() {
       await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...settings, holidayDays: JSON.stringify(settings.holidayDays) })
+        body: JSON.stringify({
+          ...settings,
+          holidayDays: JSON.stringify(settings.holidayDays),
+          dailySchedules: JSON.stringify(settings.dailySchedules),
+        })
       });
       showToast("success", "Ayarlar kaydedildi");
     } catch (e) { console.error(e); showToast("error", "Hata oluştu"); }
@@ -111,9 +143,10 @@ export default function AyarPage() {
   if (loading) return <p className="p-6 text-slate-500">Yükleniyor…</p>;
 
   const TABS = [
-    { id: "genel" as const, label: "Genel Ayarlar" },
-    { id: "sms"   as const, label: "SMS Ayarları" },
-    { id: "pos"   as const, label: "POS Cihazları" },
+    { id: "genel"   as const, label: "Genel Ayarlar" },
+    { id: "calisma" as const, label: "Çalışma Saatleri" },
+    { id: "sms"     as const, label: "SMS Ayarları" },
+    { id: "pos"     as const, label: "POS Cihazları" },
   ];
 
   return (
@@ -164,20 +197,14 @@ export default function AyarPage() {
           </div>
 
           <div>
-            <h3 className="mb-3 text-sm font-bold text-slate-800">Çalışma Saatleri</h3>
-            <div className="grid gap-3 sm:grid-cols-3">
-              {[
-                { label: "Açılış",        key: "openingTime"          as const, type: "time" },
-                { label: "Kapanış",       key: "closingTime"          as const, type: "time" },
-                { label: "Randevu (dk)",  key: "appointmentDuration"  as const, type: "number" },
-              ].map(f => (
-                <div key={f.key}>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">{f.label}</label>
-                  <input type={f.type} value={(settings as any)[f.key]}
-                    onChange={e => setSettings({ ...settings, [f.key]: f.type === "number" ? parseInt(e.target.value) : e.target.value })}
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                </div>
-              ))}
+            <h3 className="mb-3 text-sm font-bold text-slate-800">Randevu Ayarı</h3>
+            <div className="grid gap-3 sm:grid-cols-1 max-w-xs">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Randevu Süresi (dakika)</label>
+                <input type="number" value={settings.appointmentDuration}
+                  onChange={e => setSettings({ ...settings, appointmentDuration: parseInt(e.target.value) })}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              </div>
             </div>
           </div>
 
@@ -192,6 +219,114 @@ export default function AyarPage() {
                   {day}
                 </label>
               ))}
+            </div>
+          </div>
+
+          <div className="flex gap-2 pt-2 border-t border-slate-100">
+            <button onClick={saveSettings} disabled={saving}
+              className="rounded-lg bg-primary px-6 py-2 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50">
+              {saving ? "Kaydediliyor…" : "Kaydet"}
+            </button>
+            <button onClick={fetchSettings}
+              className="rounded-lg border border-slate-200 px-6 py-2 text-sm text-slate-600 hover:bg-slate-50">
+              Sıfırla
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── ÇALIŞMA SAATLERİ ───────────────────────────────────────────── */}
+      {activeTab === "calisma" && (
+        <div className="rounded-xl border border-slate-100 bg-white p-6 shadow-sm space-y-6">
+          {/* Genel öğle arası */}
+          <div>
+            <h3 className="mb-1 text-sm font-bold text-slate-800">Genel Öğle Arası</h3>
+            <p className="mb-3 text-xs text-slate-500">Gün bazlı ayar yapılmamışsa bu saatler öğle arası olarak uygulanır. Boş bırakılırsa öğle arası uygulanmaz.</p>
+            <div className="flex gap-4 flex-wrap">
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Öğle Başlangıcı</label>
+                <input type="time" value={settings.lunchStart}
+                  onChange={e => setSettings({ ...settings, lunchStart: e.target.value })}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1">Öğle Bitişi</label>
+                <input type="time" value={settings.lunchEnd}
+                  onChange={e => setSettings({ ...settings, lunchEnd: e.target.value })}
+                  className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              </div>
+            </div>
+          </div>
+
+          {/* Gün bazlı saatler */}
+          <div>
+            <h3 className="mb-1 text-sm font-bold text-slate-800">Gün Bazlı Çalışma Saatleri</h3>
+            <p className="mb-3 text-xs text-slate-500">Her gün için açılış/kapanış ve öğle arası ayrı tanımlanabilir. Tatil olarak işaretlenen günler kapalı görünür.</p>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 text-xs text-slate-500 font-semibold">
+                    <th className="text-left p-2 pl-3 rounded-tl-lg">Gün</th>
+                    <th className="text-left p-2">Tatil</th>
+                    <th className="text-left p-2">Açılış</th>
+                    <th className="text-left p-2">Kapanış</th>
+                    <th className="text-left p-2">Öğle Başlangıç</th>
+                    <th className="text-left p-2 rounded-tr-lg">Öğle Bitiş</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {settings.dailySchedules.map((ds, idx) => (
+                    <tr key={ds.day} className={`border-t border-slate-100 ${ds.isHoliday ? "bg-red-50/50" : ""}`}>
+                      <td className="p-2 pl-3 font-semibold text-slate-700">{ds.day}</td>
+                      <td className="p-2">
+                        <input type="checkbox" className="h-4 w-4 accent-red-500"
+                          checked={ds.isHoliday}
+                          onChange={e => {
+                            const updated = [...settings.dailySchedules];
+                            updated[idx] = { ...ds, isHoliday: e.target.checked };
+                            setSettings({ ...settings, dailySchedules: updated });
+                          }} />
+                      </td>
+                      <td className="p-2">
+                        <input type="time" value={ds.open} disabled={ds.isHoliday}
+                          onChange={e => {
+                            const updated = [...settings.dailySchedules];
+                            updated[idx] = { ...ds, open: e.target.value };
+                            setSettings({ ...settings, dailySchedules: updated });
+                          }}
+                          className="rounded border border-slate-200 px-2 py-1 text-xs focus:border-primary focus:outline-none disabled:opacity-40 disabled:bg-slate-100" />
+                      </td>
+                      <td className="p-2">
+                        <input type="time" value={ds.close} disabled={ds.isHoliday}
+                          onChange={e => {
+                            const updated = [...settings.dailySchedules];
+                            updated[idx] = { ...ds, close: e.target.value };
+                            setSettings({ ...settings, dailySchedules: updated });
+                          }}
+                          className="rounded border border-slate-200 px-2 py-1 text-xs focus:border-primary focus:outline-none disabled:opacity-40 disabled:bg-slate-100" />
+                      </td>
+                      <td className="p-2">
+                        <input type="time" value={ds.lunchStart} disabled={ds.isHoliday}
+                          onChange={e => {
+                            const updated = [...settings.dailySchedules];
+                            updated[idx] = { ...ds, lunchStart: e.target.value };
+                            setSettings({ ...settings, dailySchedules: updated });
+                          }}
+                          className="rounded border border-slate-200 px-2 py-1 text-xs focus:border-primary focus:outline-none disabled:opacity-40 disabled:bg-slate-100" />
+                      </td>
+                      <td className="p-2">
+                        <input type="time" value={ds.lunchEnd} disabled={ds.isHoliday}
+                          onChange={e => {
+                            const updated = [...settings.dailySchedules];
+                            updated[idx] = { ...ds, lunchEnd: e.target.value };
+                            setSettings({ ...settings, dailySchedules: updated });
+                          }}
+                          className="rounded border border-slate-200 px-2 py-1 text-xs focus:border-primary focus:outline-none disabled:opacity-40 disabled:bg-slate-100" />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
 
