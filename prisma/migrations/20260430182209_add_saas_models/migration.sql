@@ -31,11 +31,10 @@ ALTER TABLE "Payment" ALTER COLUMN "patientId" DROP NOT NULL,
 ALTER COLUMN "method" SET DEFAULT 'NAKIT';
 
 -- AlterTable
-ALTER TABLE "Setting" ADD COLUMN     "institutionId" TEXT NOT NULL;
+ALTER TABLE "Setting" ADD COLUMN     "institutionId" TEXT;
 
 -- AlterTable
-ALTER TABLE "User" DROP COLUMN "institution",
-ADD COLUMN     "institutionId" TEXT,
+ALTER TABLE "User" ADD COLUMN     "institutionId" TEXT,
 ALTER COLUMN "role" SET DEFAULT 'DOKTOR';
 
 -- CreateTable
@@ -134,6 +133,25 @@ CREATE TABLE "Prescription" (
 
     CONSTRAINT "Prescription_pkey" PRIMARY KEY ("id")
 );
+
+-- Seed default institution and backfill foreign keys for existing rows
+INSERT INTO "Institution" ("id", "name", "email", "createdAt", "updatedAt")
+SELECT 'inst-default', 'whitedental', 'info@whitedental.local', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+WHERE NOT EXISTS (SELECT 1 FROM "Institution");
+
+UPDATE "User"
+SET "institutionId" = 'inst-default'
+WHERE "institutionId" IS NULL;
+
+UPDATE "Setting"
+SET "institutionId" = 'inst-default'
+WHERE "institutionId" IS NULL;
+
+-- Keep legacy institution column until data is backfilled, then drop it.
+ALTER TABLE "User" DROP COLUMN "institution";
+
+-- Enforce NOT NULL after backfill
+ALTER TABLE "Setting" ALTER COLUMN "institutionId" SET NOT NULL;
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Institution_name_key" ON "Institution"("name");

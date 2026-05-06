@@ -42,15 +42,15 @@ export async function PUT(request: NextRequest) {
     update: {
       workStart: body.workStart,
       workEnd: body.workEnd,
-      hideAsDoctor: Boolean(body.hideAsDoctor),
-      educationMode: Boolean(body.educationMode)
+      hideAsDoctor: typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : (currentProfile?.hideAsDoctor ?? false),
+      educationMode: typeof body.educationMode === "boolean" ? body.educationMode : (currentProfile?.educationMode ?? false)
     },
     create: {
       userId: auth.user.id,
       workStart: body.workStart ?? "08:30",
       workEnd: body.workEnd ?? "18:00",
-      hideAsDoctor: Boolean(body.hideAsDoctor),
-      educationMode: Boolean(body.educationMode)
+      hideAsDoctor: typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : false,
+      educationMode: typeof body.educationMode === "boolean" ? body.educationMode : false
     }
   });
 

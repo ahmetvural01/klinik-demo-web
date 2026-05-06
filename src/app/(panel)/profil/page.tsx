@@ -8,7 +8,7 @@ const roleLabel: Record<string, string> = {
 };
 
 export default function ProfilPage() {
-  const [profile, setProfile] = useState({ fullName: "", role: "", workStart: "08:00", workEnd: "17:00" });
+  const [profile, setProfile] = useState({ fullName: "", role: "", workStart: "08:00", workEnd: "17:00", showAsDoctor: false });
   const [password, setPassword] = useState({ old: "", new: "", confirm: "" });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -22,7 +22,17 @@ export default function ProfilPage() {
   useEffect(() => {
     fetch("/api/profile")
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setProfile(p => ({ ...p, ...d })); })
+      .then(d => {
+        if (!d) return;
+        setProfile(p => ({
+          ...p,
+          fullName: d.fullName || "",
+          role: d.role || "",
+          workStart: d.profile?.workStart || "08:30",
+          workEnd: d.profile?.workEnd || "18:00",
+          showAsDoctor: d.role === "YONETICI" ? !Boolean(d.profile?.hideAsDoctor) : false,
+        }));
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -33,7 +43,11 @@ export default function ProfilPage() {
       const res = await fetch("/api/profile", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workStart: profile.workStart, workEnd: profile.workEnd })
+        body: JSON.stringify({
+          workStart: profile.workStart,
+          workEnd: profile.workEnd,
+          ...(profile.role === "YONETICI" ? { hideAsDoctor: !profile.showAsDoctor } : {}),
+        })
       });
       if (res.ok) showToast("success", "Profil güncellendi");
       else showToast("error", "Güncelleme başarısız");
@@ -123,6 +137,17 @@ export default function ProfilPage() {
                 className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20" />
             </div>
           </div>
+          {profile.role === "YONETICI" && (
+            <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-700">
+              <input
+                type="checkbox"
+                checked={profile.showAsDoctor}
+                onChange={e => setProfile(p => ({ ...p, showAsDoctor: e.target.checked }))}
+                className="accent-primary"
+              />
+              Beni doktor olarak goster
+            </label>
+          )}
           <button onClick={updateProfile} disabled={saving}
             className="w-full rounded-xl bg-primary py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-50">
             {saving ? "Kaydediliyor…" : "Kaydet"}

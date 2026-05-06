@@ -26,6 +26,14 @@ type Appointment = {
 
 type Staff = { id: string; fullName: string; role: string };
 type Patient = { id: string; fullName: string; tcNo?: string; phone?: string };
+type UpcomingAppointment = {
+  id: string;
+  startAt: string;
+  endAt: string;
+  status: string;
+  patient?: { id: string; fullName: string; phone?: string | null; tcNo?: string | null };
+  doctor?: { id: string; fullName: string };
+};
 
 const STATUS_COLORS: Record<string, string> = {
   BEKLIYOR: "bg-yellow-50 border-l-4 border-yellow-400",
@@ -43,21 +51,50 @@ function toLocalInput(date: Date) {
   return date.getFullYear() + "-" + z(date.getMonth() + 1) + "-" + z(date.getDate()) + "T" + z(date.getHours()) + ":" + z(date.getMinutes());
 }
 
-const SLOT_HOURS: string[] = [];
-for (let h = 8; h < 20; h++) {
-  SLOT_HOURS.push(String(h).padStart(2, "0") + ":00");
-  SLOT_HOURS.push(String(h).padStart(2, "0") + ":30");
-}
-
 const TR_DAYS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
 const TR_MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
+const TR_DAYS_BY_JS_INDEX = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];
+
+const HOLIDAY_DAY_TO_INDEX: Record<string, number> = {
+  pazar: 0,
+  pazartesi: 1,
+  sali: 2,
+  "salı": 2,
+  carsamba: 3,
+  "çarşamba": 3,
+  persembe: 4,
+  "perşembe": 4,
+  cuma: 5,
+  cumartesi: 6,
+};
+
+function parseTimeToMinutes(value: string, fallback: number): number {
+  const [h, m] = String(value || "").split(":").map(Number);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return fallback;
+  return Math.min(23 * 60 + 59, Math.max(0, h * 60 + m));
+}
+
+function toSlotLabel(totalMinutes: number): string {
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
+}
+
+type CalendarSettings = {
+  openingTime: string;
+  closingTime: string;
+  appointmentDuration: number;
+  holidayDays: string[];
+};
 
 export default function RandevuPage() {
-  const [view, setView] = useState<"GUN" | "HAFTA" | "AY" | "AJANDA">("GUN");
+  const [view, setView] = useState<"GUN" | "HAFTA" | "AY" | "AJANDA">("HAFTA");
   const [date, setDate] = useState(() => new Date());
   const [doctorId, setDoctorId] = useState("");
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
+  const [currentUserRole, setCurrentUserRole] = useState("");
+  const [canCreateAppointments, setCanCreateAppointments] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -72,7 +109,7 @@ export default function RandevuPage() {
 
   const [newDoctorId, setNewDoctorId] = useState("");
   const [startAt, setStartAt] = useState(() => toLocalInput(new Date(Date.now() + 30 * 60000)));
-  const [durationMinutes, setDurationMinutes] = useState<15 | 30 | 45 | 60 | 90 | 120>(30);
+  const [durationMinutes, setDurationMinutes] = useState(30);
   const [treatmentKey, setTreatmentKey] = useState<AppointmentTreatmentKey>("MUAYENE");
   const [treatmentQuery, setTreatmentQuery] = useState(getTreatmentMeta("MUAYENE").label);
   const [note, setNote] = useState("");
@@ -86,12 +123,74 @@ export default function RandevuPage() {
   const [followUpNote, setFollowUpNote] = useState("");
   const [detailSaving, setDetailSaving] = useState(false);
   const [agendaStatusFilter, setAgendaStatusFilter] = useState<"ALL" | "BEKLIYOR" | "GELDI" | "GELMEDI" | "IPTAL">("ALL");
+  const [upcomingSearch, setUpcomingSearch] = useState("");
+  const [upcomingLoading, setUpcomingLoading] = useState(false);
+  const [upcomingResults, setUpcomingResults] = useState<UpcomingAppointment[]>([]);
+  const [doctorQuery, setDoctorQuery] = useState("");
+  const [doctorDropdownOpen, setDoctorDropdownOpen] = useState(false);
+  const [treatmentDropdownOpen, setTreatmentDropdownOpen] = useState(false);
+  const [calendarSettings, setCalendarSettings] = useState<CalendarSettings>({
+    openingTime: "08:30",
+    closingTime: "23:59",
+    appointmentDuration: 15,
+    holidayDays: ["Pazar"],
+  });
+
+  const isBookableDoctor = useCallback((person: Staff & { profile?: { hideAsDoctor?: boolean } | null; isActive?: boolean }) => {
+    if (person.isActive === false) return false;
+    if (["DOKTOR", "SUPERADMIN", "ADMIN"].includes(person.role)) return true;
+    if (person.role === "YONETICI") return !Boolean(person.profile?.hideAsDoctor);
+    return false;
+  }, []);
+
   const selectedTreatmentMeta = useMemo(() => getTreatmentMeta(treatmentKey), [treatmentKey]);
   const filteredTreatmentOptions = useMemo(() => {
     const q = treatmentQuery.trim().toLowerCase();
     if (!q) return APPOINTMENT_TREATMENT_OPTIONS;
     return APPOINTMENT_TREATMENT_OPTIONS.filter((item) => item.label.toLowerCase().includes(q));
   }, [treatmentQuery]);
+
+  const filteredDoctorOptions = useMemo(() => {
+    const q = doctorQuery.trim().toLowerCase();
+    if (!q) return staff;
+    return staff.filter((item) => item.fullName.toLowerCase().includes(q));
+  }, [doctorQuery, staff]);
+
+  const slotInterval = useMemo(() => {
+    const raw = Number(calendarSettings.appointmentDuration) || 15;
+    return Math.max(5, Math.min(120, raw));
+  }, [calendarSettings.appointmentDuration]);
+
+  const slotTimes = useMemo(() => {
+    const opening = parseTimeToMinutes(calendarSettings.openingTime, 8 * 60 + 30);
+    const closing = parseTimeToMinutes(calendarSettings.closingTime, 23 * 60 + 59);
+    if (closing <= opening) return [toSlotLabel(opening)];
+
+    const slots: string[] = [];
+    for (let cursor = opening; cursor + slotInterval <= closing; cursor += slotInterval) {
+      slots.push(toSlotLabel(cursor));
+    }
+
+    return slots.length > 0 ? slots : [toSlotLabel(opening)];
+  }, [calendarSettings.closingTime, calendarSettings.openingTime, slotInterval]);
+
+  const durationOptions = useMemo(() => {
+    const candidates = [1, 2, 3, 4, 6, 8]
+      .map((multiplier) => multiplier * slotInterval)
+      .filter((value) => value <= 240);
+    if (!candidates.includes(durationMinutes)) candidates.push(durationMinutes);
+    return Array.from(new Set(candidates)).sort((a, b) => a - b);
+  }, [durationMinutes, slotInterval]);
+
+  const workingDayIndexes = useMemo(() => {
+    const holidaySet = new Set(
+      (calendarSettings.holidayDays || [])
+        .map((day) => HOLIDAY_DAY_TO_INDEX[String(day).toLocaleLowerCase("tr-TR")])
+        .filter((v): v is number => typeof v === "number")
+    );
+    const active = new Set([0, 1, 2, 3, 4, 5, 6].filter((idx) => !holidaySet.has(idx)));
+    return active.size > 0 ? active : new Set([1, 2, 3, 4, 5, 6]);
+  }, [calendarSettings.holidayDays]);
 
   const resolveTreatmentKey = useCallback((query: string): AppointmentTreatmentKey => {
     const q = query.trim().toLowerCase();
@@ -136,23 +235,74 @@ export default function RandevuPage() {
     return () => clearTimeout(t);
   }, [patientSearch]);
 
+  useEffect(() => {
+    if (upcomingSearch.trim().length < 2) {
+      setUpcomingResults([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setUpcomingLoading(true);
+      try {
+        const res = await fetch("/api/appointments/upcoming?q=" + encodeURIComponent(upcomingSearch.trim()) + "&take=20");
+        const json = await res.json();
+        setUpcomingResults(Array.isArray(json?.appointments) ? json.appointments : []);
+      } catch {
+        setUpcomingResults([]);
+      } finally {
+        setUpcomingLoading(false);
+      }
+    }, 260);
+
+    return () => clearTimeout(timer);
+  }, [upcomingSearch]);
+
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
       const params = new URLSearchParams({ from: range.from.toISOString(), to: range.to.toISOString() });
       if (doctorId) params.set("doctorId", doctorId);
-      const [aRes, sRes] = await Promise.all([
+      const [aRes, sRes, meRes, profileRes, settingsRes] = await Promise.all([
         fetch("/api/appointments?" + params.toString()),
-        fetch("/api/staff"),
+        fetch("/api/staff?booking=1"),
+        fetch("/api/auth/me"),
+        fetch("/api/profile"),
+        fetch("/api/settings"),
       ]);
-      const [aJson, sJson] = await Promise.all([aRes.json(), sRes.json()]);
+      const [aJson, sJson, meJson, profileJson, settingsJson] = await Promise.all([aRes.json(), sRes.json(), meRes.json(), profileRes.json(), settingsRes.json()]);
       setAppointments(Array.isArray(aJson) ? aJson : []);
       const staffList = Array.isArray(sJson) ? sJson : (sJson?.staff || []);
-      setStaff(staffList.filter((x: Staff) => x.role === "DOKTOR" || x.role === "YONETICI"));
+      setStaff(staffList.filter((x: Staff & { profile?: { hideAsDoctor?: boolean } | null; isActive?: boolean }) => isBookableDoctor(x)));
+
+      const parsedHolidayDays = (() => {
+        const raw = settingsJson?.holidayDays;
+        if (Array.isArray(raw)) return raw;
+        if (typeof raw === "string") {
+          try {
+            const parsed = JSON.parse(raw);
+            return Array.isArray(parsed) ? parsed : [];
+          } catch {
+            return [];
+          }
+        }
+        return [];
+      })();
+
+      setCalendarSettings({
+        openingTime: settingsJson?.openingTime || "08:30",
+        closingTime: settingsJson?.closingTime || "23:59",
+        appointmentDuration: Number(settingsJson?.appointmentDuration || settingsJson?.appointmentDurationMin || 15),
+        holidayDays: parsedHolidayDays,
+      });
+
+      const role = meJson?.role || "";
+      setCurrentUserRole(role);
+      const canCreate = ["DOKTOR", "SUPERADMIN", "ADMIN"].includes(role) || (role === "YONETICI" && !Boolean(profileJson?.profile?.hideAsDoctor));
+      setCanCreateAppointments(canCreate);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Bilinmeyen hata");
     } finally { setLoading(false); }
-  }, [doctorId, range.from, range.to]);
+  }, [doctorId, isBookableDoctor, range.from, range.to]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -163,14 +313,25 @@ export default function RandevuPage() {
     setFollowUpNote(parsed.detail);
   }, [selectedAppt]);
 
+  useEffect(() => {
+    if (!newDoctorId) return;
+    const selectedDoctor = staff.find((item) => item.id === newDoctorId);
+    if (selectedDoctor) setDoctorQuery(selectedDoctor.fullName);
+  }, [newDoctorId, staff]);
+
   const resetForm = () => {
     setPatientId(""); setPatientSearch(""); setPatientResults([]); setPatientDropdownOpen(false);
     setNewDoctorId(""); setNote(""); setConflictWarning(null); setConflictSuggestions([]); setTreatmentKey("MUAYENE");
     setTreatmentQuery(getTreatmentMeta("MUAYENE").label);
-    setDurationMinutes(30);
+    setDoctorQuery(""); setDoctorDropdownOpen(false); setTreatmentDropdownOpen(false);
+    setDurationMinutes(slotInterval);
   };
 
   const createAppointment = async () => {
+    if (!canCreateAppointments) {
+      setError("Randevu sadece doktorlar tarafindan olusturulabilir.");
+      return;
+    }
     if (!patientId || !newDoctorId) return setError("Hasta ve doktor seçin");
     const resolvedTreatmentKey = resolveTreatmentKey(treatmentQuery);
     const resolvedTreatmentMeta = getTreatmentMeta(resolvedTreatmentKey);
@@ -241,8 +402,14 @@ export default function RandevuPage() {
 
   const weekDays = useMemo(() => {
     if (view !== "HAFTA") return [];
-    return Array.from({ length: 7 }, (_, i) => { const d = new Date(range.from); d.setDate(range.from.getDate() + i); return d; });
-  }, [view, range.from]);
+    const allDays = Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(range.from);
+      d.setDate(range.from.getDate() + i);
+      return d;
+    });
+    const visible = allDays.filter((d) => workingDayIndexes.has(d.getDay()));
+    return visible.length > 0 ? visible : allDays;
+  }, [view, range.from, workingDayIndexes]);
 
   const monthDays = useMemo(() => {
     if (view !== "AY") return [];
@@ -303,7 +470,7 @@ export default function RandevuPage() {
       : null;
 
     const candidates: { slot: string; distance: number }[] = [];
-    SLOT_HOURS.forEach((slot) => {
+    slotTimes.forEach((slot) => {
       const [h, m] = slot.split(":").map(Number);
       const candidateStart = new Date(start);
       candidateStart.setHours(h, m, 0, 0);
@@ -326,20 +493,24 @@ export default function RandevuPage() {
     const suggestions = candidates.slice(0, 3).map(c => c.slot);
 
     return { warning, suggestions };
-  }, [appointments]);
+  }, [appointments, slotTimes]);
 
   const openQuickCreate = (slotTime: string, forDate: Date, slotDoctorId?: string) => {
+    if (!canCreateAppointments) return;
     const [h, m] = slotTime.split(":").map(Number);
     const start = new Date(forDate);
     start.setHours(h, m, 0, 0);
     const docId = slotDoctorId || doctorId || null;
-    const conflict = buildConflictInfo(start.toISOString(), docId || "", 30);
+    const conflict = buildConflictInfo(start.toISOString(), docId || "", slotInterval);
     setConflictWarning(conflict.warning ? `${conflict.warning} Yine de ekleyebilirsiniz.` : null);
     setConflictSuggestions(conflict.suggestions);
 
     setStartAt(toLocalInput(start));
-    setDurationMinutes(30);
+    setDurationMinutes(slotInterval);
     setNewDoctorId(docId || "");
+    const quickDoctor = staff.find((item) => item.id === (docId || ""));
+    setDoctorQuery(quickDoctor?.fullName || "");
+    setDoctorDropdownOpen(false);
     setShowForm(true);
   };
 
@@ -686,54 +857,111 @@ export default function RandevuPage() {
   );
 
   return (
-    <section className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">Randevular</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Günlük, haftalık ve aylık randevu takvimi</p>
-        </div>
-        <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" value={doctorId} onChange={e => setDoctorId(e.target.value)}>
-          <option value="">Tüm Doktorlar</option>
-          {staff.map(s => <option key={s.id} value={s.id}>{s.fullName}</option>)}
-        </select>
-      </div>
+    <section className="space-y-3">
+      <div className="rounded-xl border border-slate-200 bg-white p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="min-w-[170px]">
+            <h1 className="text-lg font-bold text-slate-900 leading-tight">Randevular</h1>
+            <p className="text-xs text-slate-500">Hızlı takvim görünümü</p>
+          </div>
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-1">
-          <button onClick={() => nav(-1)} className="rounded border px-2 py-1 text-lg hover:bg-gray-100">‹</button>
-          <span className="font-bold text-gray-800 min-w-64 text-center text-lg">{navLabel()}</span>
-          <button onClick={() => nav(1)} className="rounded border px-2 py-1 text-lg hover:bg-gray-100">›</button>
-          <button onClick={() => setDate(new Date())} className="rounded border border-gray-300 px-3 py-1 text-xs font-medium bg-gray-50 hover:bg-gray-100">Bugün</button>
+          <div className="relative min-w-[260px] flex-1">
+            <input
+              value={upcomingSearch}
+              onChange={(e) => setUpcomingSearch(e.target.value)}
+              placeholder="Yaklaşan randevuda hasta ara"
+              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary"
+            />
+            {upcomingLoading && <span className="absolute right-2 top-2 text-xs text-slate-500">Aranıyor...</span>}
+            {upcomingSearch.trim().length >= 2 && (
+              <div className="absolute left-0 right-0 z-20 mt-1 max-h-52 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                {upcomingResults.length === 0 ? (
+                  <p className="px-3 py-2 text-sm text-slate-500">Yaklaşan randevu bulunamadı.</p>
+                ) : (
+                  upcomingResults.map((appt) => (
+                    <button
+                      key={appt.id}
+                      type="button"
+                      onClick={() => {
+                        const localDate = new Date(appt.startAt);
+                        setDate(localDate);
+                        setView("HAFTA");
+                        setSelectedAppt(
+                          appointments.find((a) => a.id === appt.id) || {
+                            id: appt.id,
+                            startAt: appt.startAt,
+                            endAt: appt.endAt,
+                            status: appt.status,
+                            type: "STANDART",
+                            note: "",
+                            patient: appt.patient ? { id: appt.patient.id, fullName: appt.patient.fullName } : undefined,
+                            doctor: appt.doctor ? { id: appt.doctor.id, fullName: appt.doctor.fullName } : undefined,
+                          }
+                        );
+                      }}
+                      className="flex w-full items-center justify-between border-b border-slate-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-slate-50"
+                    >
+                      <span className="font-semibold text-slate-800">{appt.patient?.fullName || "-"}</span>
+                      <span className="text-xs text-slate-600">
+                        {new Date(appt.startAt).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                        {" · "}
+                        {appt.doctor?.fullName || "Doktor yok"}
+                      </span>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+
+          <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" value={doctorId} onChange={e => setDoctorId(e.target.value)}>
+            <option value="">Tüm Doktorlar</option>
+            {staff.map(s => <option key={s.id} value={s.id}>{s.fullName}</option>)}
+          </select>
         </div>
-        <div className="flex flex-wrap gap-1">
-          {(["GUN","HAFTA","AY","AJANDA"] as const).map(mode => (
-            <button key={mode} onClick={() => setView(mode)}
-              className={"rounded-lg px-4 py-2 text-sm font-semibold transition-colors " + (view === mode ? "bg-primary text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200")}>
-              {mode === "GUN" ? "Gün" : mode === "HAFTA" ? "Hafta" : mode === "AY" ? "Ay" : "Ajanda"}
+
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2">
+          <div className="flex flex-wrap items-center gap-1">
+            <button onClick={() => nav(-1)} className="rounded border px-2 py-1 text-lg leading-none hover:bg-gray-100">‹</button>
+            <span className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-sm font-bold text-gray-800">{navLabel()}</span>
+            <button onClick={() => nav(1)} className="rounded border px-2 py-1 text-lg leading-none hover:bg-gray-100">›</button>
+            <button onClick={() => setDate(new Date())} className="rounded border border-gray-300 px-2.5 py-1 text-xs font-medium bg-gray-50 hover:bg-gray-100">Bugün</button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1">
+            {(["GUN","HAFTA","AY","AJANDA"] as const).map(mode => (
+              <button
+                key={mode}
+                onClick={() => setView(mode)}
+                className={"rounded-md px-3 py-1.5 text-xs font-semibold transition-colors " + (view === mode ? "bg-primary text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200")}
+              >
+                {mode === "GUN" ? "Gün" : mode === "HAFTA" ? "Hafta" : mode === "AY" ? "Ay" : "Ajanda"}
+              </button>
+            ))}
+            <button
+              onClick={printReport}
+              disabled={!canExportOrPrint}
+              className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Randevu çizelgesini yazdır"}
+            >
+              Yazdır
             </button>
-          ))}
-          <button
-            onClick={printReport}
-            disabled={!canExportOrPrint}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-            title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Randevu çizelgesini yazdır"}
-          >
-            Yazdır
-          </button>
-          <button
-            onClick={downloadExcelReport}
-            disabled={!canExportOrPrint}
-            className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-            title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Excel olarak dışa aktar"}
-          >
-            Excel Dışa Aktar
-          </button>
-          <button onClick={() => setShowForm(!showForm)} className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white">+ Yeni</button>
+            <button
+              onClick={downloadExcelReport}
+              disabled={!canExportOrPrint}
+              className="rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
+              title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Excel olarak dışa aktar"}
+            >
+              Excel
+            </button>
+            <button onClick={() => setShowForm(!showForm)} disabled={!canCreateAppointments} className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">+ Yeni</button>
+          </div>
         </div>
       </div>
 
       {showForm && (
-        <div className="mb-4 rounded-xl border bg-white p-4 shadow-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-3xl rounded-xl border bg-white p-4 shadow-xl">
           <h3 className="mb-3 font-bold text-gray-700">Yeni Randevu</h3>
           {conflictWarning && (
             <div className="mb-3 flex items-start gap-2 rounded-lg border border-yellow-300 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
@@ -754,7 +982,7 @@ export default function RandevuPage() {
                       const [h, m] = slot.split(":").map(Number);
                       d.setHours(h, m, 0, 0);
                       setStartAt(toLocalInput(d));
-                      setDurationMinutes(30);
+                      setDurationMinutes(slotInterval);
                     }}
                     className="rounded-md border border-blue-300 bg-white px-2 py-0.5 font-semibold text-blue-700 hover:bg-blue-100"
                   >
@@ -817,43 +1045,97 @@ export default function RandevuPage() {
                 </div>
               )}
             </div>
-            <select className="rounded-lg border px-3 py-2 text-sm" value={newDoctorId} onChange={e => setNewDoctorId(e.target.value)}>
-              <option value="">Doktor seçin</option>
-              {staff.map(s => <option key={s.id} value={s.id}>{s.fullName}</option>)}
-            </select>
             <div className="relative">
               <input
-                list="appointment-treatment-options"
+                type="text"
+                placeholder="Doktor ara veya seç"
+                value={doctorQuery}
+                onChange={(e) => {
+                  setDoctorQuery(e.target.value);
+                  setNewDoctorId("");
+                  setDoctorDropdownOpen(true);
+                }}
+                onFocus={() => setDoctorDropdownOpen(true)}
+                onBlur={() => setTimeout(() => setDoctorDropdownOpen(false), 120)}
                 className="w-full rounded-lg border px-3 py-2 text-sm"
-                placeholder="Tedavi yazın veya seçin"
+              />
+              {doctorDropdownOpen && (
+                <div className="absolute z-30 mt-1 max-h-44 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                  {filteredDoctorOptions.length === 0 ? (
+                    <p className="px-3 py-2 text-sm text-slate-500">Doktor bulunamadı</p>
+                  ) : (
+                    filteredDoctorOptions.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setNewDoctorId(item.id);
+                          setDoctorQuery(item.fullName);
+                          setDoctorDropdownOpen(false);
+                        }}
+                        className={"w-full border-b border-slate-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-slate-50 " + (newDoctorId === item.id ? "bg-primary/5 text-primary" : "text-slate-700")}
+                      >
+                        {item.fullName}
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="relative">
+              <input
+                type="text"
+                className="w-full rounded-lg border px-3 py-2 text-sm"
+                placeholder="Tedavi ara veya seç"
                 value={treatmentQuery}
                 onChange={(e) => {
                   const value = e.target.value;
                   setTreatmentQuery(value);
+                  setTreatmentDropdownOpen(true);
                   const exact = APPOINTMENT_TREATMENT_OPTIONS.find((item) => item.label.toLowerCase() === value.trim().toLowerCase());
                   if (exact) setTreatmentKey(exact.value);
                 }}
+                onFocus={() => setTreatmentDropdownOpen(true)}
                 onBlur={() => {
+                  setTimeout(() => setTreatmentDropdownOpen(false), 120);
                   const resolved = resolveTreatmentKey(treatmentQuery);
                   const meta = getTreatmentMeta(resolved);
                   setTreatmentKey(resolved);
                   setTreatmentQuery(meta.label);
                 }}
               />
-              <datalist id="appointment-treatment-options">
-                {filteredTreatmentOptions.map((item) => (
-                  <option key={item.value} value={item.label} />
-                ))}
-              </datalist>
+              {treatmentDropdownOpen && (
+                <div className="absolute z-30 mt-1 max-h-44 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                  {filteredTreatmentOptions.length === 0 ? (
+                    <p className="px-3 py-2 text-sm text-slate-500">Tedavi bulunamadı</p>
+                  ) : (
+                    filteredTreatmentOptions.map((item) => (
+                      <button
+                        key={item.value}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setTreatmentKey(item.value);
+                          setTreatmentQuery(item.label);
+                          setTreatmentDropdownOpen(false);
+                        }}
+                        className={"flex w-full items-center justify-between border-b border-slate-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-slate-50 " + (treatmentKey === item.value ? "bg-primary/5 text-primary" : "text-slate-700")}
+                      >
+                        <span>{item.label}</span>
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
             <input type="datetime-local" className="rounded-lg border px-3 py-2 text-sm" value={startAt} onChange={e => setStartAt(e.target.value)} />
-            <select className="rounded-lg border px-3 py-2 text-sm" value={durationMinutes} onChange={e => setDurationMinutes(Number(e.target.value) as 15 | 30 | 45 | 60 | 90 | 120)}>
-              <option value={15}>15 dk</option>
-              <option value={30}>30 dk</option>
-              <option value={45}>45 dk</option>
-              <option value={60}>60 dk</option>
-              <option value={90}>90 dk</option>
-              <option value={120}>120 dk</option>
+            <select className="rounded-lg border px-3 py-2 text-sm" value={durationMinutes} onChange={e => setDurationMinutes(Number(e.target.value))}>
+              {durationOptions.map((option) => (
+                <option key={option} value={option}>{option} dk</option>
+              ))}
             </select>
             <div className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2">
               <span className="text-xs font-semibold text-slate-600">Tedavi rengi:</span>
@@ -877,12 +1159,13 @@ export default function RandevuPage() {
             </button>
             <button onClick={() => { setShowForm(false); resetForm(); }} className="rounded-lg border px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">İptal</button>
           </div>
+          </div>
         </div>
       )}
 
       {loading && <div className="py-8 text-center text-gray-400">Yükleniyor...</div>}
 
-      {!loading && view === "GUN" && (
+      {!loading && view === "GUN" && workingDayIndexes.has(date.getDay()) && (
         <div className="overflow-auto rounded-xl border bg-white">
           <table className="min-w-full border-collapse text-xs">
             <thead className="sticky top-0 z-10 bg-gray-100">
@@ -893,7 +1176,7 @@ export default function RandevuPage() {
               </tr>
             </thead>
             <tbody>
-              {SLOT_HOURS.map(slot => (
+              {slotTimes.map(slot => (
                 <tr key={slot} className="hover:bg-gray-50">
                   <td className="border px-2 py-1 text-gray-400 font-mono align-top whitespace-nowrap">{slot}</td>
                   {doctors.map(d => {
@@ -905,19 +1188,23 @@ export default function RandevuPage() {
                       >
                         {slotAppts.map(a => apptBlock(a))}
                         {slotAppts.length === 0 ? (
-                          <button
-                            onClick={() => openQuickCreate(slot, date, d.id)}
-                            className="w-full rounded border border-dashed border-gray-300 px-1 py-1 text-[11px] text-gray-500 transition hover:border-primary hover:text-primary"
-                          >
-                            + Randevu Oluştur
-                          </button>
+                          canCreateAppointments ? (
+                            <button
+                              onClick={() => openQuickCreate(slot, date, d.id)}
+                              className="w-full rounded border border-dashed border-gray-300 px-1 py-1 text-[11px] text-gray-500 transition hover:border-primary hover:text-primary"
+                            >
+                              + Randevu Oluştur
+                            </button>
+                          ) : <div className="h-7" />
                         ) : (
-                          <button
-                            onClick={() => openQuickCreate(slot, date, d.id)}
-                            className="mt-0.5 w-full rounded border border-dashed border-yellow-300 px-1 py-0.5 text-[10px] text-yellow-600 transition hover:border-yellow-500 hover:bg-yellow-50"
-                          >
-                            + Ekle
-                          </button>
+                          canCreateAppointments ? (
+                            <button
+                              onClick={() => openQuickCreate(slot, date, d.id)}
+                              className="mt-0.5 w-full rounded border border-dashed border-yellow-300 px-1 py-0.5 text-[10px] text-yellow-600 transition hover:border-yellow-500 hover:bg-yellow-50"
+                            >
+                              + Ekle
+                            </button>
+                          ) : null
                         )}
                       </td>
                     );
@@ -926,6 +1213,12 @@ export default function RandevuPage() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {!loading && view === "GUN" && !workingDayIndexes.has(date.getDay()) && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+          Seçili gün klinik için tatil günü olarak tanımlı. Randevu çizelgesi gösterilmiyor.
         </div>
       )}
 
@@ -940,14 +1233,14 @@ export default function RandevuPage() {
                   return (
                     <th key={i} onClick={() => { setDate(d); setView("GUN"); }}
                       className={"border px-2 py-2 text-center cursor-pointer hover:bg-primary/10 min-w-28 " + (isToday ? "bg-primary/20 text-primary font-bold" : "text-gray-700")}>
-                      {TR_DAYS[i]}<br /><span className="text-sm">{d.getDate()}</span>
+                      {TR_DAYS_BY_JS_INDEX[d.getDay()]}<br /><span className="text-sm">{d.getDate()}</span>
                     </th>
                   );
                 })}
               </tr>
             </thead>
             <tbody>
-              {SLOT_HOURS.map(slot => (
+              {slotTimes.map(slot => (
                 <tr key={slot} className="hover:bg-gray-50">
                   <td className="border px-2 py-1 text-gray-400 font-mono align-top whitespace-nowrap">{slot}</td>
                   {weekDays.map((d, i) => {
@@ -959,19 +1252,23 @@ export default function RandevuPage() {
                       >
                         {slotAppts.map(a => apptBlock(a))}
                         {slotAppts.length === 0 ? (
-                          <button
-                            onClick={() => openQuickCreate(slot, d, doctorId || undefined)}
-                            className="w-full rounded border border-dashed border-gray-300 px-1 py-1 text-[11px] text-gray-500 transition hover:border-primary hover:text-primary"
-                          >
-                            + Randevu Oluştur
-                          </button>
+                          canCreateAppointments ? (
+                            <button
+                              onClick={() => openQuickCreate(slot, d, doctorId || undefined)}
+                              className="w-full rounded border border-dashed border-gray-300 px-1 py-1 text-[11px] text-gray-500 transition hover:border-primary hover:text-primary"
+                            >
+                              + Randevu Oluştur
+                            </button>
+                          ) : <div className="h-7" />
                         ) : (
-                          <button
-                            onClick={() => openQuickCreate(slot, d, doctorId || undefined)}
-                            className="mt-0.5 w-full rounded border border-dashed border-yellow-300 px-1 py-0.5 text-[10px] text-yellow-600 transition hover:border-yellow-500 hover:bg-yellow-50"
-                          >
-                            + Ekle
-                          </button>
+                          canCreateAppointments ? (
+                            <button
+                              onClick={() => openQuickCreate(slot, d, doctorId || undefined)}
+                              className="mt-0.5 w-full rounded border border-dashed border-yellow-300 px-1 py-0.5 text-[10px] text-yellow-600 transition hover:border-yellow-500 hover:bg-yellow-50"
+                            >
+                              + Ekle
+                            </button>
+                          ) : null
                         )}
                       </td>
                     );
@@ -995,20 +1292,23 @@ export default function RandevuPage() {
             {monthDays.map((d, i) => {
               const dayAppts = getApptForDay(d);
               const isToday = d.toDateString() === new Date().toDateString();
+              const isWorkday = workingDayIndexes.has(d.getDay());
               return (
                 <div key={i} onClick={() => { setDate(d); setView("GUN"); }}
-                  className={"bg-white min-h-20 p-1 cursor-pointer hover:bg-blue-50 " + (isToday ? "ring-2 ring-inset ring-primary" : "")}>
+                  className={"bg-white min-h-20 p-1 cursor-pointer hover:bg-blue-50 " + (isToday ? "ring-2 ring-inset ring-primary" : "") + (isWorkday ? "" : " opacity-70") }>
                   <div className="mb-1 flex items-center justify-between">
                     <div className={"text-xs font-bold " + (isToday ? "text-primary" : "text-gray-700")}>{d.getDate()}</div>
-                    <button
-                      onClick={e => {
-                        e.stopPropagation();
-                        openQuickCreate("09:00", d, doctorId || undefined);
-                      }}
-                      className="rounded border border-dashed border-gray-300 px-1 text-[10px] text-gray-500 hover:border-primary hover:text-primary"
-                    >
-                      +
-                    </button>
+                    {canCreateAppointments && isWorkday ? (
+                      <button
+                        onClick={e => {
+                          e.stopPropagation();
+                          openQuickCreate(slotTimes[0], d, doctorId || undefined);
+                        }}
+                        className="rounded border border-dashed border-gray-300 px-1 text-[10px] text-gray-500 hover:border-primary hover:text-primary"
+                      >
+                        +
+                      </button>
+                    ) : <span className="w-3" />}
                   </div>
                   {dayAppts.slice(0,3).map(a => (
                     <div key={a.id} style={{background: a.colorCode || getTreatmentMeta(parseAppointmentNote(a.note).treatment).color}}

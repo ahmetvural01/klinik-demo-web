@@ -4,13 +4,15 @@ import { Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const auth = await requireAuth("patients:read");
   if (auth.error) return auth.error;
 
+  const booking = request.nextUrl.searchParams.get("booking") === "1";
+
   const staff = await prisma.user.findMany({
     where: {
-      role: { not: "SUPERADMIN" },
+      ...(booking ? {} : { role: { not: "SUPERADMIN" } }),
       ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
     },
     include: { profile: true },

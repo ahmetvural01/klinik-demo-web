@@ -3,6 +3,29 @@ import { prisma } from "@/lib/prisma";
 import { appointmentSchema } from "@/lib/validators";
 import { requireAuth, writeAudit } from "@/lib/api";
 
+async function isDoctorVisibleManager(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true, profile: { select: { hideAsDoctor: true } } },
+  });
+  if (!user) return false;
+  if (["DOKTOR", "SUPERADMIN", "ADMIN"].includes(user.role)) return true;
+  if (user.role === "YONETICI") return !Boolean(user.profile?.hideAsDoctor);
+  return false;
+}
+
+async function isEligibleAppointmentDoctor(doctorId: string) {
+  const doctor = await prisma.user.findUnique({
+    where: { id: doctorId },
+    select: { isActive: true, role: true, profile: { select: { hideAsDoctor: true } } },
+  });
+
+  if (!doctor || !doctor.isActive) return false;
+  if (["DOKTOR", "SUPERADMIN", "ADMIN"].includes(doctor.role)) return true;
+  if (doctor.role === "YONETICI") return !Boolean(doctor.profile?.hideAsDoctor);
+  return false;
+}
+
 export async function GET(request: NextRequest) {
   const auth = await requireAuth("appointments:read");
   if (auth.error) return auth.error;
@@ -59,11 +82,21 @@ export async function POST(request: NextRequest) {
   const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
 
+  const canCreate = await isDoctorVisibleManager(auth.user.id);
+  if (!canCreate) {
+    return NextResponse.json({ message: "Randevu sadece doktorlar tarafindan olusturulabilir." }, { status: 403 });
+  }
+
   const body = await request.json();
   const parsed = appointmentSchema.safeParse(body);
 
   if (!parsed.success) {
     return NextResponse.json({ message: "Geçersiz randevu verisi" }, { status: 400 });
+  }
+
+  const eligibleDoctor = await isEligibleAppointmentDoctor(parsed.data.doctorId);
+  if (!eligibleDoctor) {
+    return NextResponse.json({ message: "Secilen personel randevu doktoru olarak kullanilamaz." }, { status: 400 });
   }
 
   const startAt = new Date(parsed.data.startAt);

@@ -11,7 +11,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "tsx prisma/seed.ts",
     "demo:hasta-takip:load": "tsx scripts/load-hasta-takip-demo.ts",
-    "demo:hasta-takip:clear": "tsx scripts/clear-hasta-takip-demo.ts"
+    "demo:hasta-takip:clear": "tsx scripts/clear-hasta-takip-demo.ts",
+    "demo:full:load": "tsx scripts/load-full-demo-package.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

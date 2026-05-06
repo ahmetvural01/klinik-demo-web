@@ -5,6 +5,18 @@ import { requireAuth, writeAudit } from "@/lib/api";
 
 type Params = { params: { id: string } };
 
+async function isEligibleAppointmentDoctor(doctorId: string) {
+  const doctor = await prisma.user.findUnique({
+    where: { id: doctorId },
+    select: { isActive: true, role: true, profile: { select: { hideAsDoctor: true } } },
+  });
+
+  if (!doctor || !doctor.isActive) return false;
+  if (["DOKTOR", "SUPERADMIN", "ADMIN"].includes(doctor.role)) return true;
+  if (doctor.role === "YONETICI") return !Boolean(doctor.profile?.hideAsDoctor);
+  return false;
+}
+
 const APPOINTMENT_STATUS_LABELS: Record<string, string> = {
   BEKLIYOR: "Bekliyor",
   ONAYLANDI: "Onaylandı",
@@ -92,6 +104,11 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
   if (!parsed.success) {
     return NextResponse.json({ message: "Geçersiz randevu verisi" }, { status: 400 });
+  }
+
+  const eligibleDoctor = await isEligibleAppointmentDoctor(parsed.data.doctorId);
+  if (!eligibleDoctor) {
+    return NextResponse.json({ message: "Secilen personel randevu doktoru olarak kullanilamaz." }, { status: 400 });
   }
 
   const newStart = new Date(parsed.data.startAt);
