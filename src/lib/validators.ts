@@ -91,3 +91,21 @@ export const patientFollowUpUpdateSchema = z.object({
   lastContactAt: z.string().datetime().nullable().optional(),
   close: z.boolean().optional(),
 });
+
+export const patientFollowUpEventCreateSchema = z.object({
+  occurredAt: z.string().datetime(),
+  channel: z.string().max(60).optional(),
+  summary: z.string().min(2).max(300),
+  detail: z.string().max(3000).optional(),
+  patientResponse: z.string().max(2000).optional(),
+  nextStep: z.string().max(1000).optional(),
+});
+
+export const patientFollowUpEventUpdateSchema = z.object({
+  occurredAt: z.string().datetime().optional(),
+  channel: z.string().max(60).nullable().optional(),
+  summary: z.string().min(2).max(300).optional(),
+  detail: z.string().max(3000).nullable().optional(),
+  patientResponse: z.string().max(2000).nullable().optional(),
+  nextStep: z.string().max(1000).nullable().optional(),
+});

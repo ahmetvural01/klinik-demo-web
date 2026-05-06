@@ -9,7 +9,9 @@
     "lint": "next lint",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:seed": "tsx prisma/seed.ts"
+    "prisma:seed": "tsx prisma/seed.ts",
+    "demo:hasta-takip:load": "tsx scripts/load-hasta-takip-demo.ts",
+    "demo:hasta-takip:clear": "tsx scripts/clear-hasta-takip-demo.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

@@ -257,6 +257,8 @@ model User {
   profile              Profile?
   assignedFollowUps    PatientFollowUp[]     @relation("FollowUpAssignedDoctor")
   createdFollowUps     PatientFollowUp[]     @relation("FollowUpCreatedBy")
+  createdFollowEvents  PatientFollowUpEvent[] @relation("FollowUpEventCreatedBy")
+  updatedFollowEvents  PatientFollowUpEvent[] @relation("FollowUpEventUpdatedBy")
   stockMovements       StockMovement[]       @relation("StockMovementUser")
   superadminPermission SuperadminPermission?
   supportTickets       SupportTicket[]
@@ -321,6 +323,7 @@ model Patient {
   prescriptions  Prescription[]
   reminders      Reminder[]
   followUps      PatientFollowUp[]
+  followUpEvents PatientFollowUpEvent[]
   taksitPlanlari TaksitPlan[]
   treatmentPlans TreatmentPlan[]
 
@@ -373,12 +376,37 @@ model PatientFollowUp {
   assignedDoctor User?        @relation("FollowUpAssignedDoctor", fields: [doctorId], references: [id])
   createdBy      User         @relation("FollowUpCreatedBy", fields: [createdById], references: [id])
   patient        Patient      @relation(fields: [patientId], references: [id])
+  events         PatientFollowUpEvent[]
 
   @@index([patientId])
   @@index([appointmentId])
   @@index([doctorId])
   @@index([createdById])
   @@index([status, nextActionAt])
+  @@index([createdAt])
+}
+
+model PatientFollowUpEvent {
+  id              String          @id @default(cuid())
+  followUpId      String
+  patientId       String
+  occurredAt      DateTime
+  channel         String?
+  summary         String
+  detail          String?
+  patientResponse String?
+  nextStep        String?
+  createdById     String
+  updatedById     String
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  followUp        PatientFollowUp @relation(fields: [followUpId], references: [id], onDelete: Cascade)
+  patient         Patient         @relation(fields: [patientId], references: [id])
+  createdBy       User            @relation("FollowUpEventCreatedBy", fields: [createdById], references: [id])
+  updatedBy       User            @relation("FollowUpEventUpdatedBy", fields: [updatedById], references: [id])
+
+  @@index([followUpId, occurredAt])
+  @@index([patientId, occurredAt])
   @@index([createdAt])
 }
 
