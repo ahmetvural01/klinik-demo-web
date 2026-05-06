@@ -860,6 +860,12 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
       return;
     }
 
+    const occurredAt = new Date(eventForm.occurredAt);
+    if (Number.isNaN(occurredAt.getTime())) {
+      setError("Gecersiz tarih/saat secildi. Lutfen tarihi tekrar secin.");
+      return;
+    }
+
     setEventBusy(true);
     setError("");
     setSuccess("");
@@ -872,7 +878,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
         method,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          occurredAt: new Date(eventForm.occurredAt).toISOString(),
+          occurredAt: occurredAt.toISOString(),
           channel: eventForm.channel.trim() || undefined,
           summary: eventForm.summary.trim(),
           detail: eventForm.detail.trim() || undefined,
