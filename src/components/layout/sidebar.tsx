@@ -74,6 +74,7 @@ function buildNavGroups(role: string): NavGroup[] {
       items: [
         { href: "/randevu",     label: "Randevular",  icon: "calendar" },
         { href: "/hasta",       label: "Hastalar",    icon: "users" },
+        ...(isYonetici || isDoktor || isAsistan || isBanko ? [{ href: "/gorevler", label: "Gorev Merkezi", icon: "clipboard" }] : []),
         ...(isYonetici || isDoktor || isAsistan ? [{ href: "/hasta-takip", label: "Hasta Takip", icon: "follow" }] : []),
       ],
     });

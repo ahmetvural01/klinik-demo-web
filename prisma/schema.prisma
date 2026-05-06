@@ -34,6 +34,7 @@ model Institution {
   throttleMs        Int                       @default(0)
   owner             User?                     @relation("InstitutionOwner", fields: [ownerId], references: [id])
   adAssignments     InstitutionAdAssignment[]
+  clinicTasks       ClinicTask[]
   invoices          Invoice[]
   settings          Setting?
   smsTransactions   SmsTransaction[]
@@ -265,6 +266,9 @@ model User {
   taksitPlanlari       TaksitPlan[]          @relation("TaksitPlanDoctor")
   treatmentPlans       TreatmentPlan[]       @relation("TreatmentPlanDoctor")
   doctorBlocks         DoctorBlock[]
+  assignedClinicTasks  ClinicTask[]           @relation("ClinicTaskAssignedUser")
+  clinicTaskAssignments ClinicTaskAssignee[]
+  createdClinicTasks   ClinicTask[]           @relation("ClinicTaskCreatedBy")
   institution          Institution?          @relation(fields: [institutionId], references: [id])
 
   @@unique([institutionId, identityNo])
@@ -325,6 +329,7 @@ model Patient {
   reminders      Reminder[]
   followUps      PatientFollowUp[]
   followUpEvents PatientFollowUpEvent[]
+  clinicTasks     ClinicTask[]
   taksitPlanlari TaksitPlan[]
   treatmentPlans TreatmentPlan[]
 
@@ -355,6 +360,47 @@ model Appointment {
   @@index([patientId])
   @@index([startAt])
   @@index([doctorId, startAt])
+}
+
+model ClinicTask {
+  id            String          @id @default(cuid())
+  institutionId String
+  patientId     String?
+  title         String
+  details       String?
+  vendorName    String?
+  type          ClinicTaskType  @default(DIGER)
+  priority      Int             @default(2)
+  status        ClinicTaskStatus @default(ACIK)
+  dueAt         DateTime?
+  remindAt      DateTime?
+  assignedToId  String?
+  createdById   String
+  completedAt   DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  institution   Institution     @relation(fields: [institutionId], references: [id])
+  patient       Patient?        @relation(fields: [patientId], references: [id])
+  assignedTo    User?           @relation("ClinicTaskAssignedUser", fields: [assignedToId], references: [id])
+  assignees     ClinicTaskAssignee[]
+  createdBy     User            @relation("ClinicTaskCreatedBy", fields: [createdById], references: [id])
+
+  @@index([institutionId, status, dueAt])
+  @@index([institutionId, patientId])
+  @@index([assignedToId, status])
+}
+
+model ClinicTaskAssignee {
+  id        String    @id @default(cuid())
+  taskId    String
+  userId    String
+  createdAt DateTime  @default(now())
+  task      ClinicTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, userId])
+  @@index([userId])
+  @@index([taskId])
 }
 
 model PatientFollowUp {
@@ -855,6 +901,21 @@ enum TreatmentPlanStatus {
 enum LabOrderStatus {
   DEVAM_EDIYOR
   HASTAYA_TAKILDI
+  IPTAL
+}
+
+enum ClinicTaskType {
+  PARCA_SIPARIS
+  LAB
+  ARAMA
+  EVRAK
+  DIGER
+}
+
+enum ClinicTaskStatus {
+  ACIK
+  BEKLEMEDE
+  TAMAMLANDI
   IPTAL
 }
 

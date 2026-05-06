@@ -109,3 +109,31 @@ export const patientFollowUpEventUpdateSchema = z.object({
   patientResponse: z.string().max(2000).nullable().optional(),
   nextStep: z.string().max(1000).nullable().optional(),
 });
+
+export const clinicTaskCreateSchema = z.object({
+  patientId: z.string().optional(),
+  title: z.string().min(2).max(180),
+  details: z.string().max(3000).optional(),
+  vendorName: z.string().max(180).optional(),
+  type: z.enum(["PARCA_SIPARIS", "LAB", "ARAMA", "EVRAK", "DIGER"]).default("DIGER"),
+  priority: z.number().int().min(1).max(3).default(2),
+  status: z.enum(["ACIK", "BEKLEMEDE", "TAMAMLANDI", "IPTAL"]).default("ACIK"),
+  dueAt: z.string().datetime().optional(),
+  remindAt: z.string().datetime().optional(),
+  assignedToId: z.string().optional(),
+  assignedToIds: z.array(z.string()).max(20).optional(),
+});
+
+export const clinicTaskUpdateSchema = z.object({
+  title: z.string().min(2).max(180).optional(),
+  details: z.string().max(3000).nullable().optional(),
+  vendorName: z.string().max(180).nullable().optional(),
+  type: z.enum(["PARCA_SIPARIS", "LAB", "ARAMA", "EVRAK", "DIGER"]).optional(),
+  priority: z.number().int().min(1).max(3).optional(),
+  status: z.enum(["ACIK", "BEKLEMEDE", "TAMAMLANDI", "IPTAL"]).optional(),
+  dueAt: z.string().datetime().nullable().optional(),
+  remindAt: z.string().datetime().nullable().optional(),
+  assignedToId: z.string().nullable().optional(),
+  assignedToIds: z.array(z.string()).max(20).optional(),
+  completedAt: z.string().datetime().nullable().optional(),
+});

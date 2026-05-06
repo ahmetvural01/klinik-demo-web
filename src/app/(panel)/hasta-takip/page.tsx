@@ -6,6 +6,7 @@ import {
   FollowUpKey,
   appointmentNeedsFollowUp,
   buildAppointmentNote,
+  getFollowUpMeta,
   parseAppointmentNote,
 } from "@/lib/appointment-follow-up";
 
@@ -63,6 +64,22 @@ type FollowUpEvent = {
   updatedAt: string;
   createdBy?: { id: string; fullName: string } | null;
   updatedBy?: { id: string; fullName: string } | null;
+};
+
+type ClinicTask = {
+  id: string;
+  title: string;
+  details?: string | null;
+  vendorName?: string | null;
+  type: "PARCA_SIPARIS" | "LAB" | "ARAMA" | "EVRAK" | "DIGER";
+  priority: number;
+  status: "ACIK" | "BEKLEMEDE" | "TAMAMLANDI" | "IPTAL";
+  dueAt?: string | null;
+  assignedToId?: string | null;
+  assignedTo?: { id: string; fullName: string } | null;
+  assignees?: Array<{ userId: string; user: { id: string; fullName: string; role: string } }>;
+  patient?: { id: string; fullName: string; phone?: string | null } | null;
+  createdAt: string;
 };
 
 type FollowItem = {
@@ -161,6 +178,21 @@ const EVENT_PRESETS = [
 
 const EVENT_CHANNEL_OPTIONS = ["Telefon", "WhatsApp", "Yuz yuze", "SMS", "E-posta", "Diger"] as const;
 
+const TASK_TYPE_LABELS: Record<ClinicTask["type"], string> = {
+  PARCA_SIPARIS: "Parca Siparis",
+  LAB: "Laboratuvar",
+  ARAMA: "Arama",
+  EVRAK: "Evrak",
+  DIGER: "Diger",
+};
+
+const TASK_STATUS_LABELS: Record<ClinicTask["status"], string> = {
+  ACIK: "Acik",
+  BEKLEMEDE: "Beklemede",
+  TAMAMLANDI: "Tamamlandi",
+  IPTAL: "Iptal",
+};
+
 function toIsoInputValue(date: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -182,6 +214,13 @@ function getPriorityBadge(priority: number) {
   if (priority >= 3) return "bg-rose-100 text-rose-700";
   if (priority === 2) return "bg-amber-100 text-amber-700";
   return "bg-sky-100 text-sky-700";
+}
+
+function getTaskStatusBadge(status: ClinicTask["status"]) {
+  if (status === "ACIK") return "bg-emerald-100 text-emerald-700";
+  if (status === "BEKLEMEDE") return "bg-amber-100 text-amber-700";
+  if (status === "TAMAMLANDI") return "bg-slate-200 text-slate-700";
+  return "bg-rose-100 text-rose-700";
 }
 
 function shortText(value: string, max = 110) {
@@ -244,7 +283,10 @@ export default function HastaTakipPage() {
   const [doctorFilter, setDoctorFilter] = useState("");
   const [rangeDays, setRangeDays] = useState<"30" | "60" | "90">("90");
   const [showManualCreate, setShowManualCreate] = useState(false);
+  const [showTaskCreate, setShowTaskCreate] = useState(false);
+  const [activeTab, setActiveTab] = useState<"hastalar" | "gorevler">("hastalar");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [denseView, setDenseView] = useState(true);
   const [selectedDetailKey, setSelectedDetailKey] = useState("");
   const [userRole, setUserRole] = useState("");
   const [error, setError] = useState("");
@@ -279,6 +321,15 @@ export default function HastaTakipPage() {
     patientResponse: "",
     nextStep: "",
   }));
+  const [clinicTasks, setClinicTasks] = useState<ClinicTask[]>([]);
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskType, setTaskType] = useState<ClinicTask["type"]>("DIGER");
+  const [taskPriority, setTaskPriority] = useState<1 | 2 | 3>(2);
+  const [taskDueAt, setTaskDueAt] = useState("");
+  const [taskDetails, setTaskDetails] = useState("");
+  const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([]);
+  const [taskBusyId, setTaskBusyId] = useState("");
+  const [taskSaving, setTaskSaving] = useState(false);
 
   const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
 
@@ -290,27 +341,31 @@ export default function HastaTakipPage() {
     from.setDate(from.getDate() - Number(rangeDays));
 
     try {
-      const [meRes, apptRes, followRes, staffRes] = await Promise.all([
+      const [meRes, apptRes, followRes, staffRes, tasksRes] = await Promise.all([
         fetch("/api/auth/me"),
         fetch(`/api/appointments?from=${from.toISOString()}&to=${to.toISOString()}`),
         fetch(`/api/patient-follow-ups?from=${from.toISOString()}&to=${to.toISOString()}`),
         fetch("/api/staff"),
+        fetch("/api/clinic-tasks?take=200"),
       ]);
 
       const meData = await meRes.json();
       const apptData = await apptRes.json();
       const followData = await followRes.json();
       const staffData = await staffRes.json();
+      const tasksData = await tasksRes.json();
 
       const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
       setUserRole(preview || meData?.role || "");
       setAppointments(Array.isArray(apptData) ? apptData : []);
       setManualFollowUps(Array.isArray(followData) ? followData : []);
       setStaff(Array.isArray(staffData) ? staffData : []);
+      setClinicTasks(Array.isArray(tasksData) ? tasksData : []);
     } catch {
       setError("Takip verileri yuklenemedi.");
       setAppointments([]);
       setManualFollowUps([]);
+      setClinicTasks([]);
     } finally {
       setLoading(false);
     }
@@ -641,10 +696,84 @@ export default function HastaTakipPage() {
       d.setDate(d.getDate() + 1);
       setManualNextActionAt(toIsoInputValue(d));
       setManualPriority(2);
+      setShowManualCreate(false);
     } catch {
       setError("Manuel takip olusturma sirasinda hata olustu.");
     } finally {
       setCreatingManual(false);
+    }
+  };
+
+  const createClinicTask = async () => {
+    if (!selectedPatient) {
+      setError("Gorev icin once hasta secin.");
+      return;
+    }
+    if (!taskTitle.trim()) {
+      setError("Gorev basligi bos birakilamaz.");
+      return;
+    }
+
+    setTaskSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      const res = await fetch("/api/clinic-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patientId: selectedPatient.id,
+          title: taskTitle.trim(),
+          details: taskDetails.trim() || undefined,
+          type: taskType,
+          priority: taskPriority,
+          dueAt: taskDueAt ? new Date(taskDueAt).toISOString() : undefined,
+          assignedToIds: taskAssigneeIds,
+          status: "ACIK",
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data?.message || "Gorev kaydi olusturulamadi.");
+        return;
+      }
+      setClinicTasks((prev) => [data as ClinicTask, ...prev]);
+      setTaskTitle("");
+      setTaskType("DIGER");
+      setTaskPriority(2);
+      setTaskDueAt("");
+      setTaskDetails("");
+      setTaskAssigneeIds([]);
+      setSuccess("Gorev hasta takip paneline eklendi.");
+      setShowTaskCreate(false);
+    } catch {
+      setError("Gorev kaydi sirasinda hata olustu.");
+    } finally {
+      setTaskSaving(false);
+    }
+  };
+
+  const updateClinicTaskStatus = async (taskId: string, status: ClinicTask["status"]) => {
+    setTaskBusyId(taskId);
+    setError("");
+    setSuccess("");
+    try {
+      const res = await fetch(`/api/clinic-tasks/${taskId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data?.message || "Gorev durumu guncellenemedi.");
+        return;
+      }
+      setClinicTasks((prev) => prev.map((t) => (t.id === taskId ? (data as ClinicTask) : t)));
+      setSuccess("Gorev durumu guncellendi.");
+    } catch {
+      setError("Gorev durumu degistirilirken hata olustu.");
+    } finally {
+      setTaskBusyId("");
     }
   };
 
@@ -763,6 +892,14 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
   };
 
   const doctors = useMemo(() => staff.filter((s) => s.role === "DOKTOR"), [staff]);
+  const manualOpenCount = useMemo(() => manualFollowUps.filter((f) => f.status === "ACIK").length, [manualFollowUps]);
+  const openClinicTasks = useMemo(
+    () => clinicTasks.filter((t) => t.status === "ACIK" || t.status === "BEKLEMEDE").sort((a, b) => {
+      if (a.priority !== b.priority) return b.priority - a.priority;
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    }),
+    [clinicTasks],
+  );
   const manualSubmitDisabledReason = creatingManual
     ? "Kayit olusturuluyor..."
     : !selectedPatient
@@ -1003,11 +1140,11 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
     <section className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-extrabold tracking-tight text-slate-900">Hasta Takip Paneli</h1>
+          <h1 className="text-xl font-extrabold tracking-tight text-slate-900">Hasta Takip</h1>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button onClick={printReport} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Yazdir</button>
-          <button onClick={downloadExcelReport} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Excel</button>
+          <button onClick={printReport} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">PDF</button>
+          <button onClick={downloadExcelReport} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">XLS</button>
           <Link href="/randevu" className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700">Randevular</Link>
         </div>
       </div>
@@ -1018,39 +1155,17 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
         </div>
       )}
 
-      <div className="grid gap-2 md:grid-cols-3 xl:grid-cols-6">
-        <button onClick={() => { setStatusFilter("TUMU"); setFollowFilter("TUMU"); }} className="rounded-xl border border-slate-200 bg-white p-2.5 text-left shadow-sm transition hover:border-slate-300">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Toplam</p><p className="mt-0.5 text-xl font-black text-slate-900">{stats.total}</p>
-        </button>
-        <button onClick={() => setStatusFilter("ACIK")} className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5 text-left shadow-sm transition hover:border-emerald-300">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Acik</p><p className="mt-0.5 text-xl font-black text-emerald-900">{stats.open}</p>
-        </button>
-        <button onClick={() => setFollowFilter("GELMEDI")} className="rounded-xl border border-red-200 bg-red-50 p-2.5 text-left shadow-sm transition hover:border-red-300">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-red-700">Gelmedi</p><p className="mt-0.5 text-xl font-black text-red-900">{stats.noShow}</p>
-        </button>
-        <button onClick={() => setFollowFilter("GERI_ARA")} className="rounded-xl border border-rose-200 bg-rose-50 p-2.5 text-left shadow-sm transition hover:border-rose-300">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">Tekrar Ara</p><p className="mt-0.5 text-xl font-black text-rose-900">{stats.callBack}</p>
-        </button>
-        <button onClick={() => setFollowFilter("DONUS_BEKLENIYOR")} className="rounded-xl border border-violet-200 bg-violet-50 p-2.5 text-left shadow-sm transition hover:border-violet-300">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">Donus Bekliyor</p><p className="mt-0.5 text-xl font-black text-violet-900">{stats.waitingReturn}</p>
-        </button>
-        <button onClick={() => setStatusFilter("ACIK")} className="rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-left shadow-sm transition hover:border-amber-300">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">Yuksek Oncelik</p><p className="mt-0.5 text-xl font-black text-amber-900">{stats.highPriority}</p>
-        </button>
-      </div>
-
       <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <h2 className="text-base font-bold text-slate-900">Manuel Takip</h2>
-          </div>
+          <h2 className="text-base font-bold text-slate-900">Manuel Takip</h2>
           <div className="flex items-center gap-2">
+            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{manualOpenCount} acik</span>
             <button
               type="button"
               onClick={() => setShowManualCreate((v) => !v)}
               className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
             >
-              {showManualCreate ? "Paneli Kapat" : "Manuel Takip Ekle"}
+              {showManualCreate ? "Kapat" : "Ekle"}
             </button>
           </div>
         </div>
@@ -1061,7 +1176,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
           <>
             <div className="mt-3 grid gap-3 lg:grid-cols-5">
           <div className="lg:col-span-2">
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">1. Hasta Ara</label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Hasta</label>
             <input
               value={patientSearch}
               onChange={(e) => {
@@ -1103,7 +1218,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
           </div>
 
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">2. Sorumlu Doktor</label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Doktor</label>
             <select value={manualDoctorId} onChange={(e) => setManualDoctorId(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
               <option value="">Secilmedi</option>
               {doctors.map((d) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
@@ -1111,7 +1226,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
           </div>
 
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">3. Takip Tipi</label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Takip Tipi</label>
             <select
               value={manualTypeInput}
               onChange={(e) => setManualTypeInput(e.target.value)}
@@ -1128,7 +1243,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
           </div>
 
           <div>
-            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">4. Oncelik</label>
+            <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Oncelik</label>
             <select value={manualPriority} onChange={(e) => setManualPriority(Number(e.target.value) as 1 | 2 | 3)} className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
               <option value={1}>Dusuk</option>
               <option value={2}>Orta</option>
@@ -1159,12 +1274,124 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                 disabled={Boolean(manualSubmitDisabledReason)}
                 className="mt-auto rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                {creatingManual ? "Ekleniyor..." : "Manuel Takip Ekle"}
+                {creatingManual ? "Kaydediliyor..." : "Kaydet"}
               </button>
             </div>
             {manualSubmitDisabledReason && <p className="mt-2 text-xs font-medium text-amber-700">{manualSubmitDisabledReason}</p>}
           </>
         )}
+      </div>
+
+      <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-base font-bold text-slate-900">Gorevler</h2>
+          <div className="flex items-center gap-2">
+            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{openClinicTasks.length} acik/beklemede</span>
+            <button type="button" onClick={() => setShowTaskCreate((v) => !v)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">{showTaskCreate ? "Kapat" : "Ekle"}</button>
+          </div>
+        </div>
+
+        {showTaskCreate && (
+        <div className="mt-3 grid gap-3 lg:grid-cols-[1.3fr_0.9fr_0.6fr_1fr_auto]">
+          <input
+            value={taskTitle}
+            onChange={(e) => setTaskTitle(e.target.value)}
+            placeholder="Gorev basligi (orn. implant parcasi siparisi)"
+            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+          />
+          <select value={taskType} onChange={(e) => setTaskType(e.target.value as ClinicTask["type"])} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+            <option value="PARCA_SIPARIS">Parca Siparis</option>
+            <option value="LAB">Laboratuvar</option>
+            <option value="ARAMA">Arama</option>
+            <option value="EVRAK">Evrak</option>
+            <option value="DIGER">Diger</option>
+          </select>
+          <select value={taskPriority} onChange={(e) => setTaskPriority(Number(e.target.value) as 1 | 2 | 3)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+            <option value={1}>Dusuk</option>
+            <option value={2}>Orta</option>
+            <option value={3}>Yuksek</option>
+          </select>
+          <div className="max-h-[92px] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-sm">
+            {staff.length === 0 ? <p className="text-xs text-slate-400">Personel bulunamadi</p> : staff.map((s) => {
+              const checked = taskAssigneeIds.includes(s.id);
+              return (
+                <label key={s.id} className="flex items-center gap-2 py-1 text-xs text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) => {
+                      setTaskAssigneeIds((prev) => e.target.checked ? Array.from(new Set([...prev, s.id])) : prev.filter((id) => id !== s.id));
+                    }}
+                  />
+                  <span>{s.fullName}</span>
+                </label>
+              );
+            })}
+          </div>
+          <input
+            type="datetime-local"
+            value={taskDueAt}
+            onChange={(e) => setTaskDueAt(e.target.value)}
+            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+          />
+          <button
+            type="button"
+            onClick={() => void createClinicTask()}
+            disabled={taskSaving || !selectedPatient || !taskTitle.trim()}
+            className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {taskSaving ? "Ekleniyor..." : "Gorev Ekle"}
+          </button>
+        </div>
+        )}
+
+        {showTaskCreate && <textarea
+          value={taskDetails}
+          onChange={(e) => setTaskDetails(e.target.value)}
+          rows={2}
+          placeholder="Gorev detayi (opsiyonel)"
+          className="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm"
+        />}
+
+        <div className="mt-3 space-y-2">
+          {openClinicTasks.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">Acik veya beklemede gorev yok.</p>
+          ) : (
+            openClinicTasks.slice(0, 12).map((task) => (
+              <div key={task.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-sm font-semibold text-slate-900">{task.title}</p>
+                      <span className={"rounded-full px-2 py-0.5 text-[11px] font-semibold " + getTaskStatusBadge(task.status)}>{TASK_STATUS_LABELS[task.status]}</span>
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">{TASK_TYPE_LABELS[task.type]}</span>
+                      <span className={"rounded-full px-2 py-0.5 text-[11px] font-semibold " + getPriorityBadge(task.priority)}>Oncelik {task.priority}</span>
+                    </div>
+                    <p className="mt-0.5 text-[11px] text-slate-500">
+                      {task.patient?.fullName || "Hasta baglanmamis"}
+                      {(task.assignees && task.assignees.length > 0)
+                        ? ` · Atanan: ${task.assignees.map((a) => a.user.fullName).join(", ")}`
+                        : (task.assignedTo?.fullName ? ` · Atanan: ${task.assignedTo.fullName}` : "")}
+                      {task.dueAt ? ` · Termin: ${new Date(task.dueAt).toLocaleString("tr-TR")}` : ""}
+                    </p>
+                    {task.details ? <p className="mt-1 text-xs text-slate-700">{shortText(task.details, 90)}</p> : null}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {task.patient?.id ? (
+                      <Link href={`/hasta-detay?id=${task.patient.id}`} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Hasta</Link>
+                    ) : null}
+                    {task.status !== "BEKLEMEDE" && (
+                      <button type="button" disabled={taskBusyId === task.id} onClick={() => void updateClinicTaskStatus(task.id, "BEKLEMEDE")} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60">Beklet</button>
+                    )}
+                    {task.status !== "TAMAMLANDI" && (
+                      <button type="button" disabled={taskBusyId === task.id} onClick={() => void updateClinicTaskStatus(task.id, "TAMAMLANDI")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60">Tamamla</button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
@@ -1182,6 +1409,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
           >
             {showAdvancedFilters ? "Gelismis Filtreleri Gizle" : "Gelismis Filtreler"}
           </button>
+          <button type="button" onClick={() => setDenseView((v) => !v)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">{denseView ? "Detayli Gorunum" : "Sade Gorunum"}</button>
           <button type="button" onClick={resetListFilters} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Filtreleri Temizle</button>
           <button onClick={() => void loadData()} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Yenile</button>
         </div>
@@ -1253,13 +1481,13 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                       <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + (item.isOpen ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600")}>{item.statusLabel}</span>
                     </div>
                     <p className="mt-0.5 text-[11px] text-slate-500">{item.doctorName} · {item.ageDays} gun · Oncelik {item.priority}</p>
-                    <p className="mt-1 text-xs text-slate-700">{shortText(item.note || "Not bulunmuyor.", 65)}</p>
+                    {!denseView && <p className="mt-1 text-xs text-slate-700">{shortText(item.note || "Not bulunmuyor.", 65)}</p>}
                     {item.nextActionAt && <p className="mt-0.5 text-[11px] text-amber-700">Sonraki adim: {new Date(item.nextActionAt).toLocaleString("tr-TR")}</p>}
                   </div>
 
                   <div className="flex flex-wrap gap-2">
-                    <button type="button" onClick={() => void openDetailModal(item)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Detay</button>
-                    {!hidePhone && item.patientPhone && <a href={`tel:${item.patientPhone}`} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Ara</a>}
+                    <button type="button" onClick={() => void openDetailModal(item)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Detay</button>
+                    {!hidePhone && item.patientPhone && <a href={`tel:${item.patientPhone}`} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Ara</a>}
                   </div>
                 </div>
               </div>

@@ -51,7 +51,22 @@ type Exam = { id: string; treatmentName: string; toothNo?: string | null; amount
 type Pay = { id: string; amount: string | number; method: string; description?: string | null; createdAt: string };
 type Rx = { id: string; drugs: string; note?: string | null; createdAt: string };
 type StaffLite = { id: string; fullName: string; role: string };
-type Tab = "bilgi" | "randevular" | "tedavi" | "odeme" | "recete" | "notlar" | "lab" | "duzenle";
+type ClinicTask = {
+  id: string;
+  title: string;
+  details?: string | null;
+  vendorName?: string | null;
+  type: "PARCA_SIPARIS" | "LAB" | "ARAMA" | "EVRAK" | "DIGER";
+  priority: number;
+  status: "ACIK" | "BEKLEMEDE" | "TAMAMLANDI" | "IPTAL";
+  dueAt?: string | null;
+  remindAt?: string | null;
+  assignedToId?: string | null;
+  assignedTo?: { id: string; fullName: string } | null;
+  createdBy?: { id: string; fullName: string } | null;
+  createdAt: string;
+};
+type Tab = "bilgi" | "randevular" | "gorevler" | "tedavi" | "odeme" | "recete" | "notlar" | "lab" | "duzenle";
 type ToothStatus = TSType;
 
 const TAB_ITEMS: { key: Tab; label: string }[] = [
@@ -66,6 +81,21 @@ const TAB_ITEMS: { key: Tab; label: string }[] = [
 ];
 
 const isValidTab = (value: string | null): value is Tab => TAB_ITEMS.some(item => item.key === value);
+
+const TASK_TYPE_LABELS: Record<ClinicTask["type"], string> = {
+  PARCA_SIPARIS: "Parça Sipariş",
+  LAB: "Laboratuvar",
+  ARAMA: "Arama",
+  EVRAK: "Evrak",
+  DIGER: "Diğer",
+};
+
+const TASK_STATUS_LABELS: Record<ClinicTask["status"], string> = {
+  ACIK: "Açık",
+  BEKLEMEDE: "Beklemede",
+  TAMAMLANDI: "Tamamlandı",
+  IPTAL: "İptal",
+};
 
 function HastaDetayContent() {
   const router = useRouter();
@@ -99,6 +129,16 @@ function HastaDetayContent() {
   const [editLoading, setEditLoading] = useState(false);
   const [noteText, setNoteText] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
+  const [clinicTasks, setClinicTasks] = useState<ClinicTask[]>([]);
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskType, setTaskType] = useState<ClinicTask["type"]>("PARCA_SIPARIS");
+  const [taskPriority, setTaskPriority] = useState(2);
+  const [taskAssignedToId, setTaskAssignedToId] = useState("");
+  const [taskVendor, setTaskVendor] = useState("");
+  const [taskDueAt, setTaskDueAt] = useState("");
+  const [taskDetails, setTaskDetails] = useState("");
+  const [taskSaving, setTaskSaving] = useState(false);
+  const [taskBusyId, setTaskBusyId] = useState("");
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const showToast = (type: "success" | "error", text: string) => {
     setToast({ type, text }); setTimeout(() => setToast(null), 3500);
@@ -211,7 +251,10 @@ function HastaDetayContent() {
     setLoading(true);
     setLoadError("");
     try {
-      const res = await fetch("/api/patients/" + id);
+      const [res, taskRes] = await Promise.all([
+        fetch("/api/patients/" + id),
+        fetch(`/api/clinic-tasks?patientId=${id}&take=200`),
+      ]);
       if (!res.ok) {
         setData(null);
         setLoadError(res.status === 404 ? "Hasta bulunamadı" : "Hasta kartı yüklenemedi");
@@ -219,7 +262,9 @@ function HastaDetayContent() {
       }
 
       const d = await res.json();
+      const taskJson = await taskRes.json().catch(() => []);
       setData(d);
+      setClinicTasks(Array.isArray(taskJson) ? taskJson : []);
       setEditForm({
         fullName: d.fullName, tcNo: d.tcNo, phone: d.phone, gender: d.gender,
         address: d.address || "", insurance: d.insurance || "", referrer: d.referrer || "",
@@ -767,6 +812,69 @@ function HastaDetayContent() {
     setNoteSaving(false);
   };
 
+  const createClinicTask = async () => {
+    if (!taskTitle.trim()) return showToast("error", "Görev başlığı girin");
+    setTaskSaving(true);
+    const res = await fetch("/api/clinic-tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        patientId: id,
+        title: taskTitle.trim(),
+        type: taskType,
+        priority: taskPriority,
+        assignedToId: taskAssignedToId || undefined,
+        vendorName: taskVendor.trim() || undefined,
+        dueAt: taskDueAt ? new Date(taskDueAt).toISOString() : undefined,
+        details: taskDetails.trim() || undefined,
+      }),
+    });
+    setTaskSaving(false);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return showToast("error", err.message || "Görev oluşturulamadı");
+    }
+
+    setTaskTitle("");
+    setTaskType("PARCA_SIPARIS");
+    setTaskPriority(2);
+    setTaskAssignedToId("");
+    setTaskVendor("");
+    setTaskDueAt("");
+    setTaskDetails("");
+    showToast("success", "Görev eklendi");
+    void load();
+  };
+
+  const updateClinicTaskStatus = async (taskId: string, status: ClinicTask["status"]) => {
+    setTaskBusyId(taskId);
+    const res = await fetch("/api/clinic-tasks/" + taskId, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    setTaskBusyId("");
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return showToast("error", err.message || "Görev güncellenemedi");
+    }
+    showToast("success", "Görev durumu güncellendi");
+    void load();
+  };
+
+  const deleteClinicTask = async (taskId: string) => {
+    if (!window.confirm("Görev silinsin mi?")) return;
+    setTaskBusyId(taskId);
+    const res = await fetch("/api/clinic-tasks/" + taskId, { method: "DELETE" });
+    setTaskBusyId("");
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      return showToast("error", err.message || "Görev silinemedi");
+    }
+    showToast("success", "Görev silindi");
+    void load();
+  };
+
   const addDrugToList = () => {
     if (!selectedMedicationId) return showToast("error", "Listeden ilaç seçin");
     const selected = MEDICATION_TEMPLATES.find(x => x.id === selectedMedicationId);
@@ -963,6 +1071,105 @@ function HastaDetayContent() {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {tab === "gorevler" && (
+        <div className="space-y-4">
+          <div className="rounded-lg border bg-white p-4">
+            <h3 className="mb-3 text-sm font-bold text-slate-800">Yeni Görev Ekle</h3>
+            <div className="grid gap-2 md:grid-cols-3">
+              <input
+                value={taskTitle}
+                onChange={e => setTaskTitle(e.target.value)}
+                placeholder="Görev başlığı (örn: X firmasından implant parçası sipariş)"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+              <select value={taskType} onChange={e => setTaskType(e.target.value as ClinicTask["type"])} className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                {Object.entries(TASK_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+              <select value={taskPriority} onChange={e => setTaskPriority(Number(e.target.value))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                <option value={1}>Öncelik: Düşük</option>
+                <option value={2}>Öncelik: Orta</option>
+                <option value={3}>Öncelik: Yüksek</option>
+              </select>
+              <input
+                value={taskVendor}
+                onChange={e => setTaskVendor(e.target.value)}
+                placeholder="Firma/Tedarikçi (opsiyonel)"
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+              <select value={taskAssignedToId} onChange={e => setTaskAssignedToId(e.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+                <option value="">Sorumlu: Seçilmedi</option>
+                {doctorOptions.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+              </select>
+              <input
+                type="datetime-local"
+                value={taskDueAt}
+                onChange={e => setTaskDueAt(e.target.value)}
+                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
+              />
+            </div>
+            <textarea
+              value={taskDetails}
+              onChange={e => setTaskDetails(e.target.value)}
+              rows={2}
+              placeholder="Detay/hatırlatma notu"
+              className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            />
+            <div className="mt-2 flex justify-end">
+              <button onClick={() => void createClinicTask()} disabled={taskSaving} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white hover:bg-primary/90 disabled:opacity-50">
+                {taskSaving ? "Ekleniyor..." : "Görev Ekle"}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-lg border bg-white overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50 border-b text-xs uppercase text-gray-500">
+                <tr>
+                  <th className="px-3 py-2 text-left">Görev</th>
+                  <th className="px-3 py-2 text-left">Tip</th>
+                  <th className="px-3 py-2 text-left">Sorumlu</th>
+                  <th className="px-3 py-2 text-left">Termin</th>
+                  <th className="px-3 py-2 text-left">Durum</th>
+                  <th className="px-3 py-2 text-left">İşlem</th>
+                </tr>
+              </thead>
+              <tbody>
+                {clinicTasks.length === 0 && <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">Kayıtlı görev yok</td></tr>}
+                {clinicTasks.map(t => (
+                  <tr key={t.id} className="border-b">
+                    <td className="px-3 py-2">
+                      <p className="font-semibold text-slate-800">{t.title}</p>
+                      {t.vendorName && <p className="text-xs text-slate-500">Firma: {t.vendorName}</p>}
+                      {t.details && <p className="text-xs text-slate-500">{t.details}</p>}
+                    </td>
+                    <td className="px-3 py-2 text-xs">{TASK_TYPE_LABELS[t.type]}</td>
+                    <td className="px-3 py-2 text-xs">{t.assignedTo?.fullName || "-"}</td>
+                    <td className="px-3 py-2 text-xs">{t.dueAt ? new Date(t.dueAt).toLocaleString("tr-TR") : "-"}</td>
+                    <td className="px-3 py-2">
+                      <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + (t.status === "TAMAMLANDI" ? "bg-emerald-100 text-emerald-700" : t.status === "IPTAL" ? "bg-slate-200 text-slate-700" : t.status === "BEKLEMEDE" ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700")}>{TASK_STATUS_LABELS[t.status]}</span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap gap-1">
+                        {t.status !== "TAMAMLANDI" && (
+                          <button onClick={() => void updateClinicTaskStatus(t.id, "TAMAMLANDI")} disabled={taskBusyId === t.id} className="rounded border border-emerald-300 px-2 py-1 text-[11px] text-emerald-700 hover:bg-emerald-50">Tamamla</button>
+                        )}
+                        {t.status !== "BEKLEMEDE" && t.status !== "TAMAMLANDI" && (
+                          <button onClick={() => void updateClinicTaskStatus(t.id, "BEKLEMEDE")} disabled={taskBusyId === t.id} className="rounded border border-amber-300 px-2 py-1 text-[11px] text-amber-700 hover:bg-amber-50">Beklet</button>
+                        )}
+                        {t.status !== "ACIK" && (
+                          <button onClick={() => void updateClinicTaskStatus(t.id, "ACIK")} disabled={taskBusyId === t.id} className="rounded border border-blue-300 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-50">Açık Yap</button>
+                        )}
+                        <button onClick={() => void deleteClinicTask(t.id)} disabled={taskBusyId === t.id} className="rounded border border-rose-300 px-2 py-1 text-[11px] text-rose-700 hover:bg-rose-50">Sil</button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
