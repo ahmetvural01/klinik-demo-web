@@ -119,7 +119,8 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ message: "Kullanıcı bulunamadı" }, { status: 404 });
   }
 
-  const prevModules = target.superadminPermission?.modules || [];
+  const prevModulesRaw = target.superadminPermission?.modules;
+  const prevModules = normalizeModules(Array.isArray(prevModulesRaw) ? prevModulesRaw.filter((m) => typeof m === "string") : []);
 
   const userData: { fullName?: string; email?: string | null; isActive?: boolean; passwordHash?: string } = {};
   if (typeof body.fullName === "string" && body.fullName.trim()) userData.fullName = body.fullName.trim();

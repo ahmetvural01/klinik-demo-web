@@ -831,7 +831,7 @@ async function upsertTaksitRows(planId: string, marker: string, posId: string) {
   const existing = await prisma.taksit.count({ where: { planId } });
   if (existing === 0) {
     const now = new Date();
-    const taksitData = [1, 2, 3].map((n) => {
+    const taksitData: Prisma.TaksitCreateManyInput[] = [1, 2, 3].map((n) => {
       const vade = new Date(now);
       vade.setMonth(vade.getMonth() + n);
       return {
@@ -841,7 +841,7 @@ async function upsertTaksitRows(planId: string, marker: string, posId: string) {
         tutar: new Prisma.Decimal(3333.33),
         odenen: n === 1 ? new Prisma.Decimal(3333.33) : new Prisma.Decimal(0),
         kalan: n === 1 ? new Prisma.Decimal(0) : new Prisma.Decimal(3333.33),
-        status: n === 1 ? "ODENDI" : "BEKLIYOR",
+        status: n === 1 ? "ODENDI" as const : "BEKLIYOR" as const,
         note: `${marker}-${n}`,
       };
     });

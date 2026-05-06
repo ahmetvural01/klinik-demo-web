@@ -57,7 +57,23 @@ export default function GorevlerPage() {
   const canSeeAll = role === "YONETICI" || role === "SUPERADMIN";
 
   const load = async () => {
-    setLoading(true);
+    const cacheKey = `clinic-tasks:list:${scope}:${status}`;
+    let hadCached = false;
+    if (typeof window !== "undefined") {
+      const raw = sessionStorage.getItem(cacheKey);
+      if (raw) {
+        try {
+          const cached = JSON.parse(raw) as { role?: string; tasks?: StaffTask[] };
+          if (Array.isArray(cached?.tasks)) {
+            setTasks(cached.tasks);
+            if (cached.role) setRole(cached.role);
+            hadCached = true;
+          }
+        } catch {}
+      }
+    }
+
+    setLoading(!hadCached);
     setError("");
     try {
       const [meRes, taskRes] = await Promise.all([
@@ -68,7 +84,11 @@ export default function GorevlerPage() {
       const me = await meRes.json().catch(() => ({}));
       const rows = await taskRes.json().catch(() => []);
       setRole(String(me?.role || ""));
-      setTasks(Array.isArray(rows) ? rows : []);
+      const nextTasks = Array.isArray(rows) ? rows : [];
+      setTasks(nextTasks);
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem(cacheKey, JSON.stringify({ role: String(me?.role || ""), tasks: nextTasks }));
+      }
     } catch {
       setError("Gorevler yuklenemedi.");
       setTasks([]);
@@ -79,6 +99,22 @@ export default function GorevlerPage() {
 
   useEffect(() => {
     void load();
+  }, [scope, status]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onRealtime = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        void load();
+      }, 300);
+    };
+
+    window.addEventListener("ks:realtime-sync", onRealtime);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("ks:realtime-sync", onRealtime);
+    };
   }, [scope, status]);
 
   const updateStatus = async (taskId: string, next: StaffTask["status"]) => {

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getCurrentUserFast } from "@/lib/auth";
 import { Sidebar } from "@/components/layout/sidebar";
 import { Topbar } from "@/components/layout/topbar";
+import { PanelRealtimeSync } from "@/components/realtime/panel-realtime-sync";
 
 export default function PanelLayout({ children }: { children: React.ReactNode }) {
   const user = getCurrentUserFast();
@@ -12,6 +13,7 @@ export default function PanelLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
+      <PanelRealtimeSync />
       <Sidebar user={{ fullName: user.fullName, role: user.rawRole }} />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Topbar user={{ fullName: user.fullName, role: user.role }} />

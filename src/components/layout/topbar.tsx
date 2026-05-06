@@ -29,8 +29,9 @@ const PAGE_TITLES: Record<string, string> = {
   "/randevu":       "Randevular",
   "/hasta":         "Hastalar",
   "/hasta-ekle":    "Yeni Hasta Kaydı",
-  "/hasta-takip":   "Hasta Takip Paneli",
+  "/hasta-takip":   "Hasta Takip",
   "/hasta-detay":   "Hasta Detayı",
+  "/gorevler":      "Gorev Merkezi",
   "/tedavi-plani":  "Tedavi Planları",
   "/lab":           "Laboratuvar Takibi",
   "/recete":        "Reçete Görüntüleme",
@@ -46,6 +47,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/personel-ekle": "Yeni Personel",
   "/fiyat":         "Fiyat Listesi",
   "/sms":           "SMS Modülü",
+  "/sistem-izleme": "Sistem Izleme",
   "/ayar":          "Sistem Ayarları",
   "/log":           "İşlem Kayıtları",
   "/profil":        "Profilim",
@@ -55,6 +57,74 @@ const PAGE_TITLES: Record<string, string> = {
 
 type AlertCounts = { taksit: number; stok: number; lab: number };
 type MessageLite = { id: string; userId: string; createdAt: string };
+
+type TopbarQuickAction = { href: string; label: string; className: string };
+type TopbarPageConfig = {
+  showDateTime: boolean;
+  showAlerts: boolean;
+  searchPlaceholder: string;
+  quickActions: TopbarQuickAction[];
+};
+
+function getTopbarConfig(pathname: string): TopbarPageConfig {
+  const base: TopbarPageConfig = {
+    showDateTime: true,
+    showAlerts: true,
+    searchPlaceholder: "Isim, TC veya telefon ile hasta ara...",
+    quickActions: [
+      { href: "/randevu", label: "+ Randevu", className: "rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100" },
+      { href: "/hasta-ekle", label: "+ Hasta", className: "rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-100" },
+    ],
+  };
+
+  if (pathname.startsWith("/hasta-takip")) {
+    return {
+      ...base,
+      quickActions: [
+        { href: "/gorevler", label: "Gorev Merkezi", className: "rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100" },
+      ],
+    };
+  }
+
+  if (pathname.startsWith("/randevu")) {
+    return {
+      ...base,
+      quickActions: [
+        { href: "/hasta-ekle", label: "+ Yeni Hasta", className: "rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-100" },
+      ],
+    };
+  }
+
+  if (pathname.startsWith("/gorevler")) {
+    return {
+      ...base,
+      quickActions: [
+        { href: "/hasta-takip", label: "Hasta Takip", className: "rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100" },
+      ],
+    };
+  }
+
+  if (pathname.startsWith("/hasta-detay")) {
+    return {
+      ...base,
+      quickActions: [
+        { href: "/randevu", label: "Randevuya Git", className: "rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100" },
+        { href: "/gorevler", label: "Gorev Merkezi", className: "rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100" },
+      ],
+    };
+  }
+
+  if (pathname.startsWith("/lab") || pathname.startsWith("/stok") || pathname.startsWith("/muhasebe")) {
+    return {
+      ...base,
+      quickActions: [
+        { href: "/gorevler", label: "Gorev Merkezi", className: "rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100" },
+      ],
+    };
+  }
+
+  return base;
+}
 
 function Clock() {
   const [time, setTime] = useState("");
@@ -98,6 +168,7 @@ export function Topbar({ user }: Props) {
   const alertRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const today = new Date().toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" });
+  const pageConfig = getTopbarConfig(pathname || "");
 
   // Sayfa başlığı
   const pageTitle = PAGE_TITLES[pathname ?? ""] ?? "";
@@ -116,9 +187,28 @@ export function Topbar({ user }: Props) {
   }, []);
 
   useEffect(() => {
+    const syncUnread = () => {
+      const raw = localStorage.getItem("clinic-unread-messages") || "0";
+      const val = Number(raw);
+      setMessageUnread(Number.isFinite(val) ? val : 0);
+    };
+
+    syncUnread();
+    window.addEventListener("clinic-unread-messages-change", syncUnread);
+    window.addEventListener("storage", syncUnread);
+    return () => {
+      window.removeEventListener("clinic-unread-messages-change", syncUnread);
+      window.removeEventListener("storage", syncUnread);
+    };
+  }, []);
+
+  useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
 
+    if (pathname.startsWith("/anasayfa")) return;
+
     const updateUnread = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
       try {
         const res = await fetch("/api/messages");
         if (!res.ok) return;
@@ -137,11 +227,11 @@ export function Topbar({ user }: Props) {
     };
 
     updateUnread();
-    timer = setInterval(updateUnread, 20000);
+    timer = setInterval(updateUnread, 60000);
     return () => {
       if (timer) clearInterval(timer);
     };
-  }, [currentUserId]);
+  }, [currentUserId, pathname]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -241,7 +331,11 @@ export function Topbar({ user }: Props) {
       setSelectedResultIdx(idx => Math.max(idx - 1, -1));
     } else if (e.key === "Enter" && selectedResultIdx >= 0) {
       e.preventDefault();
-      window.location.href = `/hasta-detay?id=${searchResults[selectedResultIdx].id}`;
+      router.push(`/hasta-detay?id=${searchResults[selectedResultIdx].id}`);
+      setShowSearchDropdown(false);
+      setQ("");
+      setSearchResults([]);
+      setSelectedResultIdx(-1);
     }
   };
 
@@ -272,7 +366,7 @@ export function Topbar({ user }: Props) {
                 onChange={(e) => { setQ(e.target.value); setShowSearchDropdown(true); setSelectedResultIdx(-1); }}
                 onKeyDown={handleSearchKeyDown}
                 onFocus={() => { setShowSearchDropdown(true); setSelectedResultIdx(-1); }}
-                placeholder="İsim, TC veya telefon ile hasta ara…"
+                placeholder={pageConfig.searchPlaceholder}
                 aria-label="Hasta ara - ad, TC no veya telefon ile"
                 aria-expanded={showSearchDropdown}
                 aria-autocomplete="list"
@@ -300,7 +394,11 @@ export function Topbar({ user }: Props) {
                       aria-selected={selectedResultIdx === idx}
                       onMouseEnter={() => setSelectedResultIdx(idx)}
                       onClick={() => {
-                        window.location.href = `/hasta-detay?id=${p.id}`;
+                        router.push(`/hasta-detay?id=${p.id}`);
+                        setShowSearchDropdown(false);
+                        setQ("");
+                        setSearchResults([]);
+                        setSelectedResultIdx(-1);
                       }}
                       className={`flex w-full items-center gap-3 px-4 py-3 text-left transition ${
                         selectedResultIdx === idx ? "bg-blue-100" : "hover:bg-blue-50"
@@ -334,28 +432,31 @@ export function Topbar({ user }: Props) {
       {/* Sağ taraf */}
       <div className="flex items-center gap-3">
         {/* Hızlı Erişim */}
-        <div className="hidden items-center gap-2 md:flex">
-          <a href="/randevu" className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100">
-            + Randevu
-          </a>
-          <a href="/hasta-ekle" className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-100">
-            + Hasta
-          </a>
-        </div>
+        {pageConfig.quickActions.length > 0 && (
+          <div className="hidden items-center gap-2 md:flex">
+            {pageConfig.quickActions.map((action) => (
+              <a key={action.href + action.label} href={action.href} className={action.className}>
+                {action.label}
+              </a>
+            ))}
+          </div>
+        )}
 
-        <span className="h-5 w-px bg-slate-200" />
+        {pageConfig.quickActions.length > 0 && (pageConfig.showDateTime || pageConfig.showAlerts) && <span className="h-5 w-px bg-slate-200" />}
 
         {/* Tarih & Saat */}
-        <div className="hidden items-center gap-2 text-xs text-slate-400 md:flex">
-          <span className="text-slate-500">{today}</span>
-          <span className="h-3.5 w-px bg-slate-200" />
-          <Clock />
-        </div>
+        {pageConfig.showDateTime && (
+          <div className="hidden items-center gap-2 text-xs text-slate-400 md:flex">
+            <span className="text-slate-500">{today}</span>
+            <span className="h-3.5 w-px bg-slate-200" />
+            <Clock />
+          </div>
+        )}
 
-        <span className="h-5 w-px bg-slate-200" />
+        {pageConfig.showDateTime && pageConfig.showAlerts && <span className="h-5 w-px bg-slate-200" />}
 
         {/* Alarm zili */}
-        <div className="relative" ref={alertRef}>
+        {pageConfig.showAlerts && <div className="relative" ref={alertRef}>
           <button
             onClick={() => setShowAlerts(v => !v)}
             className="relative flex h-8 w-8 items-center justify-center rounded-full hover:bg-slate-100 transition"
@@ -455,9 +556,9 @@ export function Topbar({ user }: Props) {
               )}
             </div>
           )}
-        </div>
+        </div>}
 
-        <span className="h-5 w-px bg-slate-200" />
+        {pageConfig.showAlerts && <span className="h-5 w-px bg-slate-200" />}
 
         {/* Kullanıcı */}
         <div className="flex items-center gap-2.5">

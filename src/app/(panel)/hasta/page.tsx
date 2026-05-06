@@ -28,18 +28,50 @@ function HastaContent() {
 
   const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
 
+  useEffect(() => {
+    const applyRole = async () => {
+      const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
+      if (preview) {
+        setUserRole(preview);
+        return;
+      }
+      try {
+        const meRes = await fetch("/api/auth/me");
+        const me = await meRes.json().catch(() => ({}));
+        if (me?.role) setUserRole(me.role);
+      } catch {}
+    };
+
+    void applyRole();
+    const onPreview = () => {
+      const preview = sessionStorage.getItem("dev-preview-role") || "";
+      if (preview) setUserRole(preview);
+    };
+    window.addEventListener("preview-role-change", onPreview);
+    return () => window.removeEventListener("preview-role-change", onPreview);
+  }, []);
+
   const load = useCallback(async () => {
-    setLoading(true);
+    const cacheKey = `patients:list:${query.trim().toLocaleLowerCase("tr-TR")}`;
+    let hadCached = false;
+    if (typeof window !== "undefined") {
+      const raw = sessionStorage.getItem(cacheKey);
+      if (raw) {
+        try {
+          const cached = JSON.parse(raw);
+          if (Array.isArray(cached)) {
+            setPatients(cached);
+            hadCached = true;
+          }
+        } catch {}
+      }
+    }
+
+    setLoading(!hadCached);
     setError(null);
     try {
-      const [res, meRes] = await Promise.all([
-        fetch(`/api/patients?q=${encodeURIComponent(query)}`),
-        fetch("/api/auth/me"),
-      ]);
+      const res = await fetch(`/api/patients?q=${encodeURIComponent(query)}`);
       const json = await res.json();
-      const me = await meRes.json().catch(() => ({}));
-      const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
-      if (preview || me?.role) setUserRole(preview || me.role);
       if (!res.ok) {
         if (res.status === 401) {
           window.location.href = "/giris";
@@ -47,7 +79,11 @@ function HastaContent() {
         }
         throw new Error(json?.message || "Hastalar alınamadı");
       }
-      setPatients(Array.isArray(json) ? json : (json?.patients || []));
+      const rows = Array.isArray(json) ? json : (json?.patients || []);
+      setPatients(rows);
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem(cacheKey, JSON.stringify(rows));
+      }
       setPage(1);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Bilinmeyen hata");
@@ -58,6 +94,22 @@ function HastaContent() {
 
   useEffect(() => {
     void load();
+  }, [load]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onRealtime = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        void load();
+      }, 300);
+    };
+
+    window.addEventListener("ks:realtime-sync", onRealtime);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("ks:realtime-sync", onRealtime);
+    };
   }, [load]);
 
   const sorted = useMemo(() => {

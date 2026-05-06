@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
 
 const I = (d: string, extra?: string) => (
   <svg className={`h-[18px] w-[18px] shrink-0 ${extra ?? ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: d }} />
@@ -133,6 +133,7 @@ function buildNavGroups(role: string): NavGroup[] {
         { href: "/personel", label: "Personeller",   icon: "person" },
         { href: "/fiyat",    label: "Fiyat Listesi", icon: "price" },
         { href: "/sms",      label: "SMS Modülü",    icon: "sms" },
+        { href: "/sistem-izleme", label: "Sistem Izleme", icon: "chart" },
         { href: "/ayar",     label: "Sistem Ayarları", icon: "settings" },
       ],
     });
@@ -161,11 +162,13 @@ const PREVIEW_ROLES = [
 
 export function Sidebar({ user }: { user: { fullName: string; role: string } }) {
   const pathname = usePathname();
+  const router = useRouter();
   const [alerts, setAlerts] = useState<{ taksit: number; stok: number; lab: number }>({ taksit: 0, stok: 0, lab: 0 });
   const [messageUnread, setMessageUnread] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
   const [previewRole, setPreviewRole] = useState<string | null>(null);
   const [rolePickerOpen, setRolePickerOpen] = useState(false);
+  const isLoadingAlertsRef = useRef(false);
 
   const isSuperAdmin = user.role === "SUPERADMIN";
 
@@ -211,18 +214,17 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
   const needsTaksit = ["YONETICI", "BANKO", "MUHASEBE", "SUPERADMIN"].includes(effectiveRole);
   const needsStok   = ["YONETICI", "MUHASEBE", "SUPERADMIN"].includes(effectiveRole);
   const needsLab    = ["YONETICI", "DOKTOR", "ASISTAN", "SUPERADMIN"].includes(effectiveRole);
-  const needsAppointmentReminderDispatch = ["YONETICI", "DOKTOR", "ASISTAN", "BANKO", "SUPERADMIN"].includes(effectiveRole);
 
   useEffect(() => {
     const load = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      if (isLoadingAlertsRef.current) return;
+      isLoadingAlertsRef.current = true;
       try {
         const fetches = await Promise.allSettled([
           needsTaksit ? fetch("/api/taksit-plani?status=GECIKTI") : Promise.resolve(null),
           needsStok   ? fetch("/api/stock")                       : Promise.resolve(null),
           needsLab    ? fetch("/api/lab-orders?status=BEKLIYOR")  : Promise.resolve(null),
-          needsAppointmentReminderDispatch
-            ? fetch("/api/appointments/reminder-dispatch?take=20", { method: "POST" })
-            : Promise.resolve(null),
         ]);
         const tRes = fetches[0]; const sRes = fetches[1]; const lRes = fetches[2];
         const tData = tRes.status === "fulfilled" && tRes.value?.ok ? await tRes.value.json() : null;
@@ -237,11 +239,29 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
         const labCount = Array.isArray(lData) ? lData.length : (lData?.total ?? 0);
         setAlerts({ taksit: overdueCount, stok: lowStock, lab: labCount });
       } catch { /* sessiz hata */ }
+      finally {
+        isLoadingAlertsRef.current = false;
+      }
     };
+
+    const onVisibility = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        void load();
+      }
+    };
+
     load();
-    const timer = setInterval(load, 60_000); // Her dakika yenile
-    return () => clearInterval(timer);
-  }, [needsTaksit, needsStok, needsLab, needsAppointmentReminderDispatch]);
+    const timer = setInterval(load, 180_000); // 3 dakikada bir yenile
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
+    }
+    return () => {
+      clearInterval(timer);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
+    };
+  }, [needsTaksit, needsStok, needsLab]);
 
   useEffect(() => {
     const syncUnread = () => {
@@ -273,6 +293,27 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
   };
 
   const w = collapsed ? "w-[64px]" : "w-[240px]";
+
+  useEffect(() => {
+    const coreRoutes = ["/anasayfa", "/randevu", "/hasta", "/hasta-takip", "/gorevler"];
+    const prefetchAll = () => {
+      coreRoutes.forEach((href) => {
+        if (href !== pathname) router.prefetch(href);
+      });
+    };
+
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      const id = (window as Window & { requestIdleCallback: (cb: () => void) => number }).requestIdleCallback(prefetchAll);
+      return () => {
+        if ("cancelIdleCallback" in window) {
+          (window as Window & { cancelIdleCallback: (n: number) => void }).cancelIdleCallback(id);
+        }
+      };
+    }
+
+    const timer = setTimeout(prefetchAll, 400);
+    return () => clearTimeout(timer);
+  }, [pathname, router]);
 
   return (
     <aside className={`flex h-screen ${w} shrink-0 flex-col bg-[#0f172a] transition-all duration-200`}>
@@ -454,6 +495,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
                 <div key={item.href} className="relative group">
                   <Link
                     href={item.href}
+                    onMouseEnter={() => router.prefetch(item.href)}
                     className={
                       "flex items-center rounded-lg transition-all duration-150 " +
                       (collapsed ? "justify-center px-0 py-2.5 mx-0" : "gap-2.5 px-3 py-2 text-[13px] font-medium") + " " +

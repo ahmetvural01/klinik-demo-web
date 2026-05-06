@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { decodeTokenUser } from "@/lib/auth";
 import { can } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
+import {
+  bumpRealtimeInstitution as bumpRealtimeInstitutionBus,
+  getRealtimeInstitutionVersion as getRealtimeInstitutionVersionBus,
+  subscribeRealtimeInstitution as subscribeRealtimeInstitutionBus,
+} from "@/lib/realtime-bus";
 
 // ── Kurum bilgisi in-memory cache (60 saniyelik TTL) ───────────────────────
 type CachedInstitution = {
@@ -15,6 +20,21 @@ type CachedInstitution = {
 };
 const _instCache = new Map<string, CachedInstitution>();
 const INST_CACHE_TTL_MS = 60_000; // 60 saniye
+
+export function getRealtimeInstitutionVersion(institutionId?: string | null) {
+  return getRealtimeInstitutionVersionBus(institutionId);
+}
+
+export function subscribeRealtimeInstitution(
+  institutionId: string | null | undefined,
+  listener: (payload: { institutionId: string; version: number; at: string }) => void,
+) {
+  return subscribeRealtimeInstitutionBus(institutionId, listener);
+}
+
+export function bumpRealtimeInstitution(institutionId?: string | null) {
+  void bumpRealtimeInstitutionBus(institutionId);
+}
 
 async function getCachedInstitution(institutionId: string) {
   const cached = _instCache.get(institutionId);
@@ -168,4 +188,6 @@ export async function writeAudit(userId: string, action: string, detail?: string
       detail
     }
   });
+
+  bumpRealtimeInstitution(currentUser?.institutionId || null);
 }

@@ -50,6 +50,47 @@ KlinikSistem benzeri tum ana modulleri iceren modern full-stack klinik paneli.
 
    - `npm run dev`
 
+## Realtime Kurumsal Olcek
+
+- Paylasimli realtime event-bus icin `REDIS_URL` tanimlayin (bkz. `.env.example`).
+- Lokal Redis icin (Docker varsa): `docker compose up -d redis`
+- 240 eszamanli kullanici realtime yuk testi:
+   - `npm run loadtest:realtime:240`
+
+## Gozlemlenebilirlik
+
+- Saglik kontrolu: `/api/system/health`
+- Yonetici metrikleri: `/api/system/metrics`
+
+## Kalite Kapisi
+
+- Tip kontrolu: `npm run typecheck`
+- Lint: `npm run lint`
+- Build: `npm run build`
+- Temel smoke test: `npm run test:smoke`
+- Entegrasyon kontrolu: `npm run test:integration`
+
+## Queue Worker (SMS)
+
+- Queue modunda SMS gonderimi: `POST /api/sms?mode=queue`
+- Worker calistirma: `npm run worker:sms`
+
+## Production Hazirlik
+
+- Production env sablonu: `.env.production.example`
+- Preflight kontrolu: `npm run preflight:prod`
+- PM2 surec tanimi: `ecosystem.config.cjs`
+- Go-live checklist: [docs/GO-LIVE-CHECKLIST.md](docs/GO-LIVE-CHECKLIST.md)
+- Rollback runbook: [docs/ROLLBACK-RUNBOOK.md](docs/ROLLBACK-RUNBOOK.md)
+
+## Redis Dogrulama
+
+- Realtime Redis pub/sub kontrolu: `npm run verify:redis:realtime`
+
+## Disaster Recovery
+
+- Felaket kurtarma proseduru: [docs/DR-RUNBOOK.md](docs/DR-RUNBOOK.md)
+
 ## Demo Giris
 
 - Kurum: whitedental

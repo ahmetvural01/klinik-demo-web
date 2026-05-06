@@ -102,7 +102,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
   pushDiff("Ad Soyad", existing.fullName, updated.fullName);
   pushDiff("Kimlik No", existing.identityNo, updated.identityNo);
-  pushDiff("Kurum", existing.institution, updated.institution);
+  pushDiff("Kurum", existing.institutionId, updated.institutionId);
   pushDiff("Rol", roleLabel(existing.role), roleLabel(updated.role));
   pushDiff("Durum", existing.isActive, updated.isActive);
   pushDiff("KK Yüzde", existing.kkYuzde, updated.kkYuzde);

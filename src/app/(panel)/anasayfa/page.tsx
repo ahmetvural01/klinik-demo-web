@@ -99,6 +99,10 @@ export default function AnasayfaPage() {
   const [annRole, setAnnRole] = useState("");
   const [hydrated, setHydrated] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const rolePanelsLoadingRef = useRef(false);
+  const messagesLoadingRef = useRef(false);
+  const baseRoleRef = useRef("");
+  const annRoleRef = useRef("");
   const [liveLogs, setLiveLogs] = useState<LiveLog[]>([]);
   const [lastSyncAt, setLastSyncAt] = useState("");
 
@@ -112,6 +116,9 @@ export default function AnasayfaPage() {
   };
 
   const loadMessages = async () => {
+    if (messagesLoadingRef.current) return;
+    if (typeof document !== "undefined" && document.hidden) return;
+    messagesLoadingRef.current = true;
     try {
       const res = await fetch("/api/messages");
       if (!res.ok) return;
@@ -121,6 +128,9 @@ export default function AnasayfaPage() {
       markMessagesSeen(list);
       setLastSyncAt(new Date().toISOString());
     } catch {}
+    finally {
+      messagesLoadingRef.current = false;
+    }
   };
 
   useEffect(() => {
@@ -128,24 +138,31 @@ export default function AnasayfaPage() {
   }, []);
 
   const loadRolePanels = async (role: string) => {
-    const canSeeRoleCiro = ["YONETICI", "SUPERADMIN", "MUHASEBE"].includes(role || "");
-    const canSeeTaksitDash = ["YONETICI", "SUPERADMIN", "MUHASEBE", "BANKO"].includes(role || "");
-    const canSeeLabDash = ["YONETICI", "SUPERADMIN", "DOKTOR", "ASISTAN"].includes(role || "");
+    if (!role) return;
+    if (typeof document !== "undefined" && document.hidden) return;
+    if (rolePanelsLoadingRef.current) return;
+    rolePanelsLoadingRef.current = true;
 
-    if (canSeeRoleCiro) {
-      fetch("/api/kasa?date=" + new Date().toISOString().split("T")[0])
-        .then(r => r.json())
-        .then(d => setTodayCiro(d?.total || 0))
-        .catch(() => setTodayCiro(0));
-    } else {
-      setTodayCiro(0);
-    }
+    try {
+      const canSeeRoleCiro = ["YONETICI", "SUPERADMIN", "MUHASEBE"].includes(role || "");
+      const canSeeTaksitDash = ["YONETICI", "SUPERADMIN", "MUHASEBE", "BANKO"].includes(role || "");
+      const canSeeLabDash = ["YONETICI", "SUPERADMIN", "DOKTOR", "ASISTAN"].includes(role || "");
 
-    const todayIso = new Date().toISOString().split("T")[0];
-    Promise.all([
-      canSeeLabDash ? fetch("/api/lab-orders?limit=1000").then(r => r.json()).catch(() => ({ labOrders: [] })) : Promise.resolve({ labOrders: [] }),
-      canSeeTaksitDash ? fetch("/api/taksit-plani?limit=1000").then(r => r.json()).catch(() => ({ taksitPlanlari: [] })) : Promise.resolve({ taksitPlanlari: [] }),
-    ]).then(([labData, taksitData]) => {
+      if (canSeeRoleCiro) {
+        fetch("/api/kasa?date=" + new Date().toISOString().split("T")[0])
+          .then(r => r.json())
+          .then(d => setTodayCiro(d?.total || 0))
+          .catch(() => setTodayCiro(0));
+      } else {
+        setTodayCiro(0);
+      }
+
+      const todayIso = new Date().toISOString().split("T")[0];
+      const [labData, taksitData] = await Promise.all([
+        canSeeLabDash ? fetch("/api/lab-orders?limit=300").then(r => r.json()).catch(() => ({ labOrders: [] })) : Promise.resolve({ labOrders: [] }),
+        canSeeTaksitDash ? fetch("/api/taksit-plani?limit=400").then(r => r.json()).catch(() => ({ taksitPlanlari: [] })) : Promise.resolve({ taksitPlanlari: [] }),
+      ]);
+
       const labOrders: { status: string }[] = Array.isArray(labData) ? labData : (labData.labOrders || []);
       const pendingLab = labOrders.filter((l: { status: string }) => l.status !== "HASTAYA_TAKILDI" && l.status !== "IPTAL").length;
 
@@ -213,18 +230,20 @@ export default function AnasayfaPage() {
       } else {
         setInstallmentAgenda({ overdue: [], upcoming: [] });
       }
-    });
 
-    if (["YONETICI", "SUPERADMIN"].includes(role || "")) {
-      const todayStr = new Date().toISOString().split("T")[0];
-      fetch("/api/logs?from=" + todayStr + "&to=" + todayStr + "&limit=10")
-        .then(r => r.json())
-        .then(d => setLiveLogs(Array.isArray(d) ? d : (d.logs || [])))
-        .catch(() => setLiveLogs([]));
-    } else {
-      setLiveLogs([]);
+      if (["YONETICI", "SUPERADMIN"].includes(role || "")) {
+        const todayStr = new Date().toISOString().split("T")[0];
+        fetch("/api/logs?from=" + todayStr + "&to=" + todayStr + "&limit=10")
+          .then(r => r.json())
+          .then(d => setLiveLogs(Array.isArray(d) ? d : (d.logs || [])))
+          .catch(() => setLiveLogs([]));
+      } else {
+        setLiveLogs([]);
+      }
+      setLastSyncAt(new Date().toISOString());
+    } finally {
+      rolePanelsLoadingRef.current = false;
     }
-    setLastSyncAt(new Date().toISOString());
   };
 
   const targetDate = new Date();
@@ -233,11 +252,16 @@ export default function AnasayfaPage() {
   const dateLabel = `${DAY_FULL[targetDate.getDay()]}, ${targetDate.getDate()} ${MONTHS[targetDate.getMonth()]} ${targetDate.getFullYear()}`;
 
   useEffect(() => {
-    loadMessages();
+    annRoleRef.current = annRole;
+  }, [annRole]);
+
+  useEffect(() => {
+    void loadMessages();
     fetch("/api/announcements").then(r => r.json()).then(d => setAnnouncements(Array.isArray(d) ? d : [])).catch(() => {});
     fetch("/api/auth/me").then(r => r.json()).then(d => {
+      baseRoleRef.current = d?.role || "";
       const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
-      const resolvedRole = preview || d.role || "";
+      const resolvedRole = preview || baseRoleRef.current;
       setAnnRole(resolvedRole);
       setCurrentUserId(d?.id || "");
       void loadRolePanels(resolvedRole);
@@ -245,36 +269,70 @@ export default function AnasayfaPage() {
 
     const onPreview = () => {
       const preview = sessionStorage.getItem("dev-preview-role");
-      fetch("/api/auth/me").then(r => r.json()).then(d => {
-        const resolvedRole = preview || d.role || "";
-        setAnnRole(resolvedRole);
-        setCurrentUserId(d?.id || "");
-        void loadRolePanels(resolvedRole);
-      }).catch(() => {});
+      const resolvedRole = preview || baseRoleRef.current;
+      setAnnRole(resolvedRole);
+      void loadRolePanels(resolvedRole);
     };
+
+    const onVisibility = () => {
+      if (typeof document !== "undefined" && !document.hidden) {
+        void loadMessages();
+        if (annRoleRef.current) void loadRolePanels(annRoleRef.current);
+      }
+    };
+
     const msgTimer = setInterval(() => {
       void loadMessages();
-    }, 15000);
+    }, 30000);
     const panelTimer = setInterval(() => {
-      const activeRole = (typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null) || annRole;
+      const activeRole = (typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null) || annRoleRef.current;
       if (activeRole) void loadRolePanels(activeRole);
-    }, 45000);
+    }, 120000);
 
     window.addEventListener("preview-role-change", onPreview);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
       window.removeEventListener("preview-role-change", onPreview);
+      document.removeEventListener("visibilitychange", onVisibility);
       clearInterval(msgTimer);
       clearInterval(panelTimer);
     };
-  }, [annRole]);
+  }, []);
 
   useEffect(() => {
     setApptLoading(true);
-    fetch("/api/appointments?date=" + dateStr)
+    const controller = new AbortController();
+    fetch("/api/appointments?date=" + dateStr, { signal: controller.signal })
       .then(r => r.json())
       .then(d => setAppts(Array.isArray(d) ? d : (d.appointments || [])))
-      .catch(() => setAppts([]))
+      .catch((e: unknown) => {
+        if (e instanceof Error && e.name === "AbortError") return;
+        setAppts([]);
+      })
       .finally(() => setApptLoading(false));
+    return () => controller.abort();
+  }, [dateStr]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onRealtime = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        void loadMessages();
+        if (annRoleRef.current) void loadRolePanels(annRoleRef.current);
+
+        fetch("/api/appointments?date=" + dateStr)
+          .then((r) => r.json())
+          .then((d) => setAppts(Array.isArray(d) ? d : (d.appointments || [])))
+          .catch(() => {});
+      }, 350);
+    };
+
+    window.addEventListener("ks:realtime-sync", onRealtime);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("ks:realtime-sync", onRealtime);
+    };
   }, [dateStr]);
 
   useEffect(() => {

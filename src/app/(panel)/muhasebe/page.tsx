@@ -113,7 +113,7 @@ export default function MuhasebePage() {
 
   const visibleTabs = useMemo(() => {
     if (userRole === "BANKO") return TABS.filter(tab => !["gider", "cari", "hakedis"].includes(tab.id));
-    if (userRole === "DOKTOR" || userRole === "ASISTAN") return [] as typeof TABS;
+    if (userRole === "DOKTOR" || userRole === "ASISTAN") return TABS.filter(() => false);
     return TABS;
   }, [userRole]);
   const [kasaToday,     setKasaToday]     = useState<{ total: number; byMethod: Record<string, number>; payments: Payment[] }>({ total: 0, byMethod: {}, payments: [] });

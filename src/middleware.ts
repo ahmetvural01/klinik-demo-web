@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractModuleFromPath, hasModuleAccess } from "@/lib/superadmin-modules";
+import { metricIncrement } from "@/lib/metrics";
+import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 
 const TOKEN_NAME = "klinik_token";
 
@@ -12,6 +14,7 @@ const PUBLIC_PREFIXES = [
   "/api/auth/superadmin/login",
   "/api/auth/superadmin/impersonate",
   "/api/auth/logout",
+  "/api/system/health",
 ];
 
 // Rol bazlı sayfa erişim haritası
@@ -57,7 +60,17 @@ function isPublicPath(pathname: string) {
 }
 
 export async function middleware(request: NextRequest) {
+  metricIncrement("api_requests_total");
   const { pathname } = request.nextUrl;
+  const ip = getClientIpFromHeaders(request.headers);
+
+  if (pathname.startsWith("/api/")) {
+    const limit = checkRateLimit(`mw:${ip}`, 400, 60_000);
+    if (!limit.ok) {
+      metricIncrement("rate_limit_hits_total");
+      return NextResponse.json({ message: "Cok fazla istek. Lutfen kisa bir sure sonra tekrar deneyin." }, { status: 429 });
+    }
+  }
 
   // Static files and Next.js internals
   if (
@@ -75,6 +88,7 @@ export async function middleware(request: NextRequest) {
   const token = request.cookies.get(TOKEN_NAME)?.value;
 
   if (!token) {
+    metricIncrement("auth_failures_total");
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ message: "Oturum gerekli" }, { status: 401 });
     }
@@ -96,6 +110,7 @@ export async function middleware(request: NextRequest) {
     };
 
     if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
+      metricIncrement("auth_failures_total");
       // Token süresi dolmuş
       if (pathname.startsWith("/api/")) {
         return NextResponse.json({ message: "Oturum süresi doldu" }, { status: 401 });
@@ -138,6 +153,7 @@ export async function middleware(request: NextRequest) {
       }
     }
   } catch {
+    metricIncrement("auth_failures_total");
     if (pathname.startsWith("/api/")) {
       return NextResponse.json({ message: "Oturum geçersiz" }, { status: 401 });
     }

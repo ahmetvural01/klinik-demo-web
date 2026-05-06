@@ -45,8 +45,8 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await getCurrentUser();
-    if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    const auth = await requireAuth("finance:write");
+    if (auth.error) return auth.error;
     const { name, phone, iban, ibanName, notes } = await req.json();
     if (!name) return NextResponse.json({ error: "Firma adi zorunlu" }, { status: 400 });
 

@@ -1,0 +1,68 @@
+name: Integration
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * *"
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: klinik_modern
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/klinik_modern?schema=public
+      JWT_SECRET: test-secret
+      REDIS_URL: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Prisma generate
+        run: npm run prisma:generate
+
+      - name: Prisma migrate deploy
+        run: npx prisma migrate deploy
+
+      - name: Prisma seed
+        run: npm run prisma:seed
+
+      - name: Start app
+        run: nohup npm run dev > app.log 2>&1 &
+
+      - name: Wait app
+        run: npx wait-on http://localhost:3000/api/system/health
+
+      - name: Smoke
+        run: SMOKE_BASE_URL=http://localhost:3000 npm run test:smoke
+
+      - name: Integration
+        run: INTEGRATION_BASE_URL=http://localhost:3000 npm run test:integration
+
+      - name: Realtime load test (lite)
+        run: LOADTEST_BASE_URL=http://localhost:3000 LOADTEST_USERS=20 LOADTEST_DURATION_SEC=15 npm run loadtest:realtime:240

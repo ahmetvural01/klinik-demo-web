@@ -385,7 +385,34 @@ export default function RandevuPage() {
   }, [editPatientSearch]);
 
   const load = useCallback(async () => {
-    setLoading(true); setError(null);
+    const cacheKey = `randevu:data:${range.from.toISOString()}:${range.to.toISOString()}:${doctorId || "all"}`;
+    let hadCached = false;
+    if (typeof window !== "undefined") {
+      const raw = sessionStorage.getItem(cacheKey);
+      if (raw) {
+        try {
+          const cached = JSON.parse(raw) as {
+            appointments?: Appointment[];
+            doctorBlocks?: DoctorBlock[];
+            staff?: Staff[];
+            role?: string;
+            canCreate?: boolean;
+            settings?: CalendarSettings;
+          };
+          if (Array.isArray(cached.appointments)) {
+            setAppointments(cached.appointments);
+            hadCached = true;
+          }
+          if (Array.isArray(cached.doctorBlocks)) setDoctorBlocks(cached.doctorBlocks);
+          if (Array.isArray(cached.staff) && cached.staff.length > 0) setStaff(cached.staff);
+          if (cached.role) setCurrentUserRole(cached.role);
+          if (typeof cached.canCreate === "boolean") setCanCreateAppointments(cached.canCreate);
+          if (cached.settings) setCalendarSettings(cached.settings);
+        } catch {}
+      }
+    }
+
+    setLoading(!hadCached); setError(null);
     try {
       const params = new URLSearchParams({ from: range.from.toISOString(), to: range.to.toISOString() });
       if (doctorId) params.set("doctorId", doctorId);
@@ -401,10 +428,13 @@ export default function RandevuPage() {
         fetch(`/api/doctor-blocks?from=${fromDate}&to=${toDate}`),
       ]);
       const [aJson, sJson, meJson, profileJson, settingsJson, blocksJson] = await Promise.all([aRes.json(), sRes.json(), meRes.json(), profileRes.json(), settingsRes.json(), blocksRes.json()]);
-      setAppointments(Array.isArray(aJson) ? aJson : []);
-      setDoctorBlocks(Array.isArray(blocksJson) ? blocksJson : []);
+      const resolvedAppointments = Array.isArray(aJson) ? aJson : [];
+      const resolvedBlocks = Array.isArray(blocksJson) ? blocksJson : [];
+      setAppointments(resolvedAppointments);
+      setDoctorBlocks(resolvedBlocks);
       const staffList = Array.isArray(sJson) ? sJson : (sJson?.staff || []);
-      setStaff(staffList.filter((x: Staff & { profile?: { hideAsDoctor?: boolean } | null; isActive?: boolean }) => isBookableDoctor(x)));
+      const filteredStaff = staffList.filter((x: Staff & { profile?: { hideAsDoctor?: boolean } | null; isActive?: boolean }) => isBookableDoctor(x));
+      setStaff(filteredStaff);
 
       const parsedHolidayDays = (() => {
         const raw = settingsJson?.holidayDays;
@@ -429,24 +459,52 @@ export default function RandevuPage() {
         return [];
       })();
 
-      setCalendarSettings({
+      const resolvedSettings: CalendarSettings = {
         openingTime: settingsJson?.openingTime || "08:30",
         closingTime: settingsJson?.closingTime || "23:59",
         appointmentDuration: Number(settingsJson?.appointmentDuration || settingsJson?.appointmentDurationMin || 15),
         holidayDays: parsedHolidayDays,
         dailySchedules: parsedDailySchedules,
-      });
+      };
+      setCalendarSettings(resolvedSettings);
 
       const role = meJson?.role || "";
       setCurrentUserRole(role);
       const canCreate = ["DOKTOR", "SUPERADMIN", "ADMIN"].includes(role) || (role === "YONETICI" && !Boolean(profileJson?.profile?.hideAsDoctor));
       setCanCreateAppointments(canCreate);
+
+      if (typeof window !== "undefined") {
+        sessionStorage.setItem(cacheKey, JSON.stringify({
+          appointments: resolvedAppointments,
+          doctorBlocks: resolvedBlocks,
+          staff: filteredStaff,
+          role,
+          canCreate,
+          settings: resolvedSettings,
+        }));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Bilinmeyen hata");
     } finally { setLoading(false); }
   }, [doctorId, isBookableDoctor, range.from, range.to]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onRealtime = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        void load();
+      }, 300);
+    };
+
+    window.addEventListener("ks:realtime-sync", onRealtime);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("ks:realtime-sync", onRealtime);
+    };
+  }, [load]);
 
   useEffect(() => {
     if (!focusAppointmentId) return;
