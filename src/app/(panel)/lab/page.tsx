@@ -37,12 +37,271 @@ type LabOrder = {
 type Patient = { id: string; fullName: string };
 type Doctor = { id: string; fullName: string; role: string };
 
-const LAB_TYPES = ["Kronkopru", "Zirkon", "Veneer", "Protez", "Braket", "İmplant Üstü", "Beyazlatma", "Diğer"];
+const LAB_CATEGORIES = [
+  {
+    group: "Sabit Restorasyon",
+    items: [
+      "Zirkonyum",
+      "E-max",
+      "Metal Destekli Porselen",
+      "Full Metal",
+      "Kuron Tamir",
+    ],
+  },
+  {
+    group: "Veneer",
+    items: ["Veneer (Laminat)"],
+  },
+  {
+    group: "Protez",
+    items: [
+      "Tam Protez",
+      "Hareketli Kısmi Protez",
+      "Hareketli Kısmi Protez (Metal Kroşe)",
+      "Protez Tamir",
+      "İmmediyat Protez",
+    ],
+  },
+  {
+    group: "İmplant Üstü Restorasyon",
+    items: [
+      "İmplant Üstü Sabit Restorasyon",
+      "İmplant Üstü Hareketli Protez",
+    ],
+  },
+  {
+    group: "Aparey ve Plak",
+    items: [
+      "Gece Plağı",
+      "Kas Gevşetici Splint (Michigan)",
+      "Şeffaf Plak (Aligner)",
+      "Braket Reteyner",
+      "Bruksizm Plağı",
+    ],
+  },
+  {
+    group: "Estetik & Diğer",
+    items: ["Beyazlatma Atel", "Zirkon Alt Yapı", "Braket", "Diğer"],
+  },
+];
+
+// Flat list for backward-compat lookups
+const LAB_TYPES = LAB_CATEGORIES.flatMap((c) => c.items);
+
+// Workflow templates: iş türüne göre adım önerileri
+const WORKFLOW_TEMPLATES: Record<string, { send: string; request: string }[]> = {
+  Zirkonyum: [
+    { send: "Ölçü", request: "Zirkonyum Alt Yapı" },
+    { send: "Zirkonyum Alt Yapı", request: "Dentin Prova" },
+    { send: "Dentin Prova", request: "Glazeli Bitim" },
+  ],
+  "E-max": [
+    { send: "Ölçü", request: "E-max Prova" },
+    { send: "E-max Prova", request: "Glazeli Bitim" },
+  ],
+  "Metal Destekli Porselen": [
+    { send: "Ölçü", request: "Metal Alt Yapı Prova" },
+    { send: "Metal Alt Yapı Prova", request: "Dentin Prova" },
+    { send: "Dentin Prova", request: "Glazeli Bitim" },
+  ],
+  "Full Metal": [
+    { send: "Ölçü", request: "Metal Prova" },
+    { send: "Metal Prova", request: "Final Bitim" },
+  ],
+  "Kuron Tamir": [
+    { send: "Kırık/Hasarlı Kronkopru", request: "Onarılmış Kronkopru" },
+  ],
+  "Veneer (Laminat)": [
+    { send: "Ölçü", request: "Wax-up / Mock-up Prova" },
+    { send: "Mock-up Onayı", request: "Laminat Prova" },
+    { send: "Laminat Prova", request: "Glazeli Bitim" },
+  ],
+  "Zirkon Veneer": [
+    { send: "Ölçü", request: "Zirkonyum Alt Yapı" },
+    { send: "Zirkonyum Alt Yapı", request: "Dentin Prova" },
+    { send: "Dentin Prova", request: "Glazeli Bitim" },
+  ],
+  "Tam Protez": [
+    { send: "Primer Ölçü", request: "Bireysel Kaşık" },
+    { send: "Fonksiyonel Ölçü", request: "Mum Prova" },
+    { send: "Mum Prova", request: "Akrilik Prova" },
+    { send: "Akrilik Prova", request: "Tam Protez Bitim" },
+  ],
+  "Hareketli Kısmi Protez": [
+    { send: "Ölçü", request: "Altyapı Prova" },
+    { send: "Altyapı Prova", request: "Diş Dizimi Mum Prova" },
+    { send: "Diş Dizimi Mum Prova", request: "Final Protez" },
+  ],
+  "Hareketli Kısmi Protez (Metal Kroşe)": [
+    { send: "Ölçü", request: "Kroşe Altyapı Prova" },
+    { send: "Kroşe Altyapı Prova", request: "Diş Dizimi Mum Prova" },
+    { send: "Diş Dizimi Mum Prova", request: "Final Protez" },
+  ],
+  "Protez Tamir": [
+    { send: "Kırık Protez", request: "Tamir Edilmiş Protez" },
+  ],
+  "İmplant Üstü Sabit Restorasyon": [
+    { send: "İmplant Ölçüsü (Scanbody / Transfer)", request: "Altyapı Prova" },
+    { send: "Altyapı Prova", request: "Dentin Prova" },
+    { send: "Dentin Prova", request: "Glazeli Bitim" },
+  ],
+  // Backward compatibility for legacy values
+  "Zirkon Kronkopru": [
+    { send: "Ölçü", request: "Zirkonyum Alt Yapı" },
+    { send: "Zirkonyum Alt Yapı", request: "Dentin Prova" },
+    { send: "Dentin Prova", request: "Glazeli Bitim" },
+  ],
+  "E-max Kronkopru": [
+    { send: "Ölçü", request: "E-max Prova" },
+    { send: "E-max Prova", request: "Glazeli Bitim" },
+  ],
+  "Metal Destekli Porselen Kronkopru": [
+    { send: "Ölçü", request: "Metal Alt Yapı Prova" },
+    { send: "Metal Alt Yapı Prova", request: "Dentin Prova" },
+    { send: "Dentin Prova", request: "Glazeli Bitim" },
+  ],
+  "Full Metal Kronkopru": [
+    { send: "Ölçü", request: "Metal Prova" },
+    { send: "Metal Prova", request: "Final Bitim" },
+  ],
+  "İmplant Kronkopru (Tekli)": [
+    { send: "İmplant Ölçüsü (Scanbody / Transfer)", request: "Altyapı Prova" },
+    { send: "Altyapı Prova", request: "Dentin Prova" },
+    { send: "Dentin Prova", request: "Glazeli Bitim" },
+  ],
+  "İmplant Köprü": [
+    { send: "İmplant Ölçüsü (Scanbody / Transfer)", request: "Altyapı Prova" },
+    { send: "Altyapı Prova", request: "Dentin Prova" },
+    { send: "Dentin Prova", request: "Glazeli Bitim" },
+  ],
+  "İmplant Üstü Hareketli Protez": [
+    { send: "Ölçü + Bar Ölçüsü", request: "Bar Prova" },
+    { send: "Bar Prova", request: "Diş Dizimi Mum Prova" },
+    { send: "Diş Dizimi Mum Prova", request: "Final Protez" },
+  ],
+  "Gece Plağı": [
+    { send: "Ölçü", request: "Gece Plağı" },
+  ],
+  "Kas Gevşetici Splint (Michigan)": [
+    { send: "Ölçü", request: "Michigan Splint" },
+    { send: "Splint Prova", request: "Oklüzal Ayarlama" },
+  ],
+  "Şeffaf Plak (Aligner)": [
+    { send: "Dijital Tarama / Ölçü", request: "Aligner Seti" },
+  ],
+  "Braket Reteyner": [
+    { send: "Ölçü", request: "Reteyner" },
+  ],
+  "Bruksizm Plağı": [
+    { send: "Ölçü", request: "Bruksizm Plağı" },
+  ],
+  "Beyazlatma Atel": [
+    { send: "Ölçü", request: "Beyazlatma Atel" },
+  ],
+};
+
+// FDI diş numaraları
+const UPPER_RIGHT = [18, 17, 16, 15, 14, 13, 12, 11];
+const UPPER_LEFT  = [21, 22, 23, 24, 25, 26, 27, 28];
+const LOWER_LEFT  = [31, 32, 33, 34, 35, 36, 37, 38];
+const LOWER_RIGHT = [48, 47, 46, 45, 44, 43, 42, 41];
+
 const CUR = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 0 });
 const NEW_LAB_VALUE = "__new_lab__";
 
+/** Yeni format: "Ölçü → Metal Alt Yapı" → {sentItem, requestedItem} 
+ *  Eski format: "Olcu gonderimi -TRIP" → {sentItem: aynen, requestedItem: ""} */
+function parseDesc(description: string): { sentItem: string; requestedItem: string } {
+  const idx = description.indexOf(" → ");
+  if (idx === -1) return { sentItem: description, requestedItem: "" };
+  return { sentItem: description.slice(0, idx), requestedItem: description.slice(idx + 3) };
+}
+
+function normalizeWorkflowText(value: string) {
+  return value
+    .toLocaleLowerCase("tr-TR")
+    .replace(/ı/g, "i")
+    .replace(/ğ/g, "g")
+    .replace(/ş/g, "s")
+    .replace(/ç/g, "c")
+    .replace(/ö/g, "o")
+    .replace(/ü/g, "u")
+    .replace(/\(final\)/g, "")
+    .replace(/son duzeltme\s*\/\s*glaze/g, "glazeli bitim")
+    .replace(/glaze/g, "glazeli bitim")
+    .replace(/zirkon\s+alt\s*yapi/g, "zirkonyum alt yapi")
+    .replace(/zirkon\s+altyapi/g, "zirkonyum alt yapi")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isSameWorkflowValue(left: string, right: string) {
+  return normalizeWorkflowText(left) === normalizeWorkflowText(right);
+}
+
+function getNextTemplateStepIndex(labType: string, trips: { description: string }[]) {
+  const template = WORKFLOW_TEMPLATES[labType] ?? [];
+  if (template.length === 0) return 0;
+
+  let cursor = 0;
+  for (const trip of trips) {
+    if (cursor >= template.length) break;
+
+    const { sentItem, requestedItem } = parseDesc(trip.description);
+    const expected = template[cursor];
+    const isMatch =
+      isSameWorkflowValue(sentItem, expected.send) &&
+      isSameWorkflowValue(requestedItem || "", expected.request || "");
+
+    if (isMatch) cursor += 1;
+  }
+
+  // Legacy/serbest metin kayıtlarda tamamen eşleşme yoksa eski davranışa yakın kal.
+  if (cursor === 0 && trips.length > 0) return Math.min(trips.length, template.length);
+  return cursor;
+}
+
+const SPOON_REQUEST_OPTIONS = ["Açık Kaşık", "Kişisel Kaşık"];
+
 function today() {
   return new Date().toISOString().slice(0, 10);
+}
+
+type ImpressionMethod = "" | "KLASIK_OLCU" | "DIJITAL_TARAMA";
+
+const IMPRESSION_METHOD_LABEL: Record<Exclude<ImpressionMethod, "">, string> = {
+  KLASIK_OLCU: "Klasik Ölçü",
+  DIJITAL_TARAMA: "Dijital Tarama",
+};
+
+function isMeasurementStep(sentItem: string) {
+  return /(ölçü|olcu|tarama|scan)/i.test(sentItem);
+}
+
+function parseMeasurementFromSentNote(note?: string): { method: ImpressionMethod; cleanNote: string } {
+  const raw = (note || "").trim();
+  if (!raw) return { method: "", cleanNote: "" };
+
+  const methodMatch = raw.match(/Ölçü\s*Yöntemi:\s*(Dijital Tarama|Klasik Ölçü)/i);
+  const methodText = methodMatch?.[1]?.toLowerCase() || "";
+  const method: ImpressionMethod =
+    methodText === "dijital tarama"
+      ? "DIJITAL_TARAMA"
+      : methodText === "klasik ölçü"
+      ? "KLASIK_OLCU"
+      : "";
+
+  const cleanNote = raw
+    .replace(/\s*\|?\s*Ölçü\s*Yöntemi:\s*(Dijital Tarama|Klasik Ölçü)\s*\|?\s*/i, " ")
+    .replace(/^\|+|\|+$/g, "")
+    .trim();
+
+  return { method, cleanNote };
+}
+
+function buildSentNote(baseNote: string, method: ImpressionMethod, sentItem: string) {
+  const methodPart = method && isMeasurementStep(sentItem) ? `Ölçü Yöntemi: ${IMPRESSION_METHOD_LABEL[method]}` : "";
+  return [methodPart, baseNote.trim()].filter(Boolean).join(" | ") || null;
 }
 
 function fmt(iso?: string) {
@@ -63,10 +322,16 @@ const emptyOrderForm = {
   labType: "",
   teeth: "",
   notes: "",
+  // İlk gidiş adımı
+  sentItem: "",
+  requestedItem: "",
+  impressionMethod: "" as ImpressionMethod,
 };
 
 const emptyTripForm = {
-  description: "",
+  sentItem: "",
+  requestedItem: "",
+  impressionMethod: "" as ImpressionMethod,
   sentAt: today(),
   sentNote: "",
 };
@@ -86,7 +351,9 @@ const emptyInvoiceForm = {
 };
 
 const emptyEditTripForm = {
-  description: "",
+  sentItem: "",
+  requestedItem: "",
+  impressionMethod: "" as ImpressionMethod,
   sentAt: today(),
   sentNote: "",
   hasReceived: false,
@@ -220,21 +487,6 @@ export default function LabPage() {
     return { active, waiting: allPendingTrips.length, done };
   }, [visibleOrders, allPendingTrips.length]);
 
-  const attentionQueue = useMemo(
-    () =>
-      allPendingTrips
-        .map((trip) => ({
-          ...trip,
-          pendingDays: daysSince(trip.sentAt),
-        }))
-        .sort((a, b) => {
-          if (b.pendingDays !== a.pendingDays) return b.pendingDays - a.pendingDays;
-          return new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime();
-        })
-        .slice(0, 4),
-    [allPendingTrips],
-  );
-
   const workflowBoard = useMemo(() => {
     const fresh: LabOrder[] = [];
     const atLab: LabOrder[] = [];
@@ -295,7 +547,7 @@ export default function LabPage() {
   };
 
   async function createOrder() {
-    if (!orderForm.patientId || !orderForm.doctorId || !resolvedLabName || !orderForm.labType) return;
+    if (!orderForm.patientId || !orderForm.doctorId || !resolvedLabName || !orderForm.labType || !orderForm.sentItem) return;
     setSaving(true);
     const res = await fetch("/api/lab-orders", {
       method: "POST",
@@ -309,24 +561,41 @@ export default function LabPage() {
         notes: orderForm.notes || null,
       }),
     });
-    setSaving(false);
     if (res.ok) {
-      setOrderForm(emptyOrderForm);
+      const newOrder = await res.json().catch(() => null);
+      if (newOrder?.id && orderForm.sentItem) {
+        const description = orderForm.requestedItem
+          ? `${orderForm.sentItem} → ${orderForm.requestedItem}`
+          : orderForm.sentItem;
+        await fetch(`/api/lab-orders/${newOrder.id}/trips`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            description,
+            sentNote: buildSentNote("", orderForm.impressionMethod, orderForm.sentItem),
+          }),
+        });
+      }
+      setOrderForm({ ...emptyOrderForm });
       closeModal();
       load();
     }
+    setSaving(false);
   }
 
   async function createTrip() {
-    if (!activeOrder || !tripForm.description) return;
+    if (!activeOrder || !tripForm.sentItem) return;
     setSaving(true);
+    const description = tripForm.requestedItem
+      ? `${tripForm.sentItem} → ${tripForm.requestedItem}`
+      : tripForm.sentItem;
     await fetch(`/api/lab-orders/${activeOrder.id}/trips`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        description: tripForm.description,
+        description,
         sentAt: tripForm.sentAt,
-        sentNote: tripForm.sentNote,
+        sentNote: buildSentNote(tripForm.sentNote, tripForm.impressionMethod, tripForm.sentItem),
       }),
     });
     setSaving(false);
@@ -377,16 +646,20 @@ export default function LabPage() {
   }
 
   async function updateTrip() {
-    if (!activeTrip || !editTripForm.description) return;
+    if (!activeTrip || !editTripForm.sentItem) return;
+
+    const description = editTripForm.requestedItem
+      ? `${editTripForm.sentItem} → ${editTripForm.requestedItem}`
+      : editTripForm.sentItem;
 
     setSaving(true);
     await fetch(`/api/lab-orders/${activeTrip.labOrder.id}/trips/${activeTrip.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        description: editTripForm.description,
+        description,
         sentAt: editTripForm.sentAt,
-        sentNote: editTripForm.sentNote || null,
+        sentNote: buildSentNote(editTripForm.sentNote, editTripForm.impressionMethod, editTripForm.sentItem),
         receivedAt: editTripForm.hasReceived ? editTripForm.receivedAt : null,
         receivedNote: editTripForm.hasReceived ? editTripForm.receivedNote || null : null,
       }),
@@ -418,10 +691,14 @@ export default function LabPage() {
       onReceive={(o, t) => { setActiveTrip({ ...t, labOrder: o }); setReceiveForm({ ...emptyReceiveForm, receivedAt: today() }); setModal("receive"); }}
       onEditTrip={(o, t) => {
         setActiveTrip({ ...t, labOrder: o });
+        const { sentItem, requestedItem } = parseDesc(t.description);
+        const parsedSent = parseMeasurementFromSentNote(t.sentNote);
         setEditTripForm({
-          description: t.description,
+          sentItem,
+          requestedItem,
+          impressionMethod: parsedSent.method,
           sentAt: t.sentAt ? new Date(t.sentAt).toISOString().slice(0, 10) : today(),
-          sentNote: t.sentNote || "",
+          sentNote: parsedSent.cleanNote,
           hasReceived: Boolean(t.receivedAt),
           receivedAt: t.receivedAt ? new Date(t.receivedAt).toISOString().slice(0, 10) : today(),
           receivedNote: t.receivedNote || "",
@@ -471,134 +748,40 @@ export default function LabPage() {
       </div>
 
       {/* ── Stats strip ── */}
-      <div className="mb-5 grid grid-cols-3 gap-3">
+      <div className="mb-4 grid grid-cols-3 gap-2">
         {[
           { label: "Aktif İş", value: stats.active, color: "text-blue-700", bg: "bg-blue-50 border-blue-100" },
           { label: "Labda Bekleyen", value: stats.waiting, color: "text-amber-700", bg: "bg-amber-50 border-amber-100" },
           { label: "Tamamlanan", value: stats.done, color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-100" },
         ].map((s) => (
-          <div key={s.label} className={`rounded-2xl border p-3 ${s.bg}`}>
-            <p className="text-[11px] font-medium uppercase tracking-widest text-slate-500">{s.label}</p>
-            <p className={`mt-1 text-2xl font-bold ${s.color}`}>{s.value}</p>
+          <div key={s.label} className={`flex items-center justify-between rounded-xl border px-4 py-2.5 ${s.bg}`}>
+            <p className="text-[12px] font-medium text-slate-500">{s.label}</p>
+            <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
           </div>
         ))}
       </div>
 
-      <div className="mb-5 grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Laboratuvarlar</p>
-              <p className="mt-1 text-[13px] text-slate-500">Birden fazla laboratuvarla çalışırken görünümü tek tıkla sadeleştir.</p>
-            </div>
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600">
-              {labOverview.length} aktif laboratuvar
-            </span>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setActiveLab("all")}
-              className={`rounded-xl border px-3 py-2 text-left transition ${
-                activeLab === "all"
-                  ? "border-slate-900 bg-slate-900 text-white"
-                  : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100"
-              }`}
-            >
-              <p className="text-[12px] font-semibold">Tüm laboratuvarlar</p>
-              <p className={`mt-1 text-[11px] ${activeLab === "all" ? "text-slate-300" : "text-slate-500"}`}>
-                {searchedOrders.length} iş · {allPendingTrips.length} bekleyen adım
-              </p>
-            </button>
-
-            {labOverview.map((lab) => {
-              const isActive = activeLab === lab.name;
-              return (
-                <button
-                  key={lab.name}
-                  onClick={() => setActiveLab(lab.name)}
-                  className={`min-w-[170px] rounded-xl border px-3 py-2 text-left transition ${
-                    isActive
-                      ? "border-slate-900 bg-slate-900 text-white"
-                      : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="truncate text-[12px] font-semibold">{lab.name}</p>
-                    {lab.overdue > 0 && (
-                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${isActive ? "bg-white/15 text-white" : "bg-red-50 text-red-600"}`}>
-                        {lab.overdue} geciken
-                      </span>
-                    )}
-                  </div>
-                  <p className={`mt-1 text-[11px] ${isActive ? "text-slate-300" : "text-slate-500"}`}>
-                    {lab.total} iş · {lab.waiting} labda
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center justify-between gap-3">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Öncelikli Takip</p>
-              <p className="mt-1 text-[13px] text-slate-500">Bugün aksiyon gerektiren işleri en üste taşı.</p>
-            </div>
-            {attentionQueue.length > 0 && (
-              <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
-                {attentionQueue.length} kritik adım
-              </span>
-            )}
-          </div>
-
-          {attentionQueue.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-5 text-sm text-slate-400">
-              Bekleyen kritik adım yok.
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {attentionQueue.map((trip) => (
-                <button
-                  key={trip.id}
-                  onClick={() => {
-                    setActiveFilter("atLab");
-                    setExpandedOrderId(trip.labOrder.id);
-                    setActiveLab(trip.labOrder.labName);
-                  }}
-                  className="flex w-full items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition hover:border-slate-300 hover:bg-slate-100"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-[12px] font-semibold text-slate-800">{trip.labOrder.patient.fullName}</p>
-                    <p className="mt-0.5 truncate text-[11px] text-slate-500">
-                      {trip.labOrder.labName} · #{trip.order} · {trip.description}
-                    </p>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                      trip.pendingDays >= 7
-                        ? "bg-red-50 text-red-600"
-                        : trip.pendingDays >= 4
-                        ? "bg-orange-50 text-orange-600"
-                        : "bg-amber-50 text-amber-700"
-                    }`}>
-                      {trip.pendingDays === 0 ? "bugün" : `${trip.pendingDays} gün`}
-                    </span>
-                    <p className="mt-1 text-[10px] text-slate-400">{fmt(trip.sentAt)}</p>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
+      {/* ── Lab filter bar ── */}
+      <div className="mb-3 flex items-center gap-2">
+        <label className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Laboratuvar</label>
+        <select
+          value={activeLab}
+          onChange={(e) => setActiveLab(e.target.value)}
+          className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[13px] text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+        >
+          <option value="all">Tümü ({searchedOrders.length} iş)</option>
+          {labOverview.map((lab) => (
+            <option key={lab.name} value={lab.name}>
+              {lab.name} — {lab.total} iş{lab.overdue > 0 ? `, ${lab.overdue} geciken` : ""}
+            </option>
+          ))}
+        </select>
       </div>
 
       {/* ── Filter Tabs ── */}
       <div className="mb-2 flex items-center gap-1 overflow-x-auto">
         {([
           { key: "all" as const, label: "Tümü", count: orderedVisibleOrders.length },
-          { key: "fresh" as const, label: "Yeni", count: workflowBoard.fresh.length },
           { key: "atLab" as const, label: "Labda", count: workflowBoard.atLab.length },
           { key: "returned" as const, label: "Klinikte", count: workflowBoard.returned.length },
           { key: "completed" as const, label: "Tamamlandı", count: workflowBoard.completed.length },
@@ -691,7 +874,7 @@ export default function LabPage() {
 
       {/* ── Modals ── */}
       {modal === "new" && (
-        <Modal title="Yeni Laboratuvar İşi" onClose={closeModal}>
+        <Modal title="Yeni Laboratuvar İşi" onClose={closeModal} wide>
           <div className="space-y-3">
             <Field label="Hasta *">
               <select value={orderForm.patientId} onChange={(e) => setOrderForm((p) => ({ ...p, patientId: e.target.value }))} className="field">
@@ -735,43 +918,116 @@ export default function LabPage() {
               )}
             </Field>
             <Field label="İş Türü *">
-              <select value={orderForm.labType} onChange={(e) => setOrderForm((p) => ({ ...p, labType: e.target.value }))} className="field">
+              <select
+                value={orderForm.labType}
+                onChange={(e) => {
+                  const newType = e.target.value;
+                  const tpl = WORKFLOW_TEMPLATES[newType]?.[0];
+                  setOrderForm((p) => ({
+                    ...p,
+                    labType: newType,
+                    sentItem: tpl ? tpl.send : p.sentItem,
+                    requestedItem: tpl ? tpl.request : p.requestedItem,
+                  }));
+                }}
+                className="field"
+              >
                 <option value="">Seçiniz</option>
-                {LAB_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                {LAB_CATEGORIES.map((cat) => (
+                  <optgroup key={cat.group} label={cat.group}>
+                    {cat.items.map((item) => (
+                      <option key={item} value={item}>{item}</option>
+                    ))}
+                  </optgroup>
+                ))}
               </select>
             </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Diş No">
-                <input value={orderForm.teeth} onChange={(e) => setOrderForm((p) => ({ ...p, teeth: e.target.value }))} className="field" placeholder="11, 12" />
-              </Field>
-              <Field label="Not">
-                <input value={orderForm.notes} onChange={(e) => setOrderForm((p) => ({ ...p, notes: e.target.value }))} className="field" placeholder="Renk, açıklama…" />
-              </Field>
+            <Field label="Diş Seçimi">
+              <DentalChart
+                selected={orderForm.teeth ? orderForm.teeth.split(",").map((t) => Number(t.trim())).filter(Boolean) : []}
+                onChange={(nums) => setOrderForm((p) => ({ ...p, teeth: nums.join(", ") }))}
+              />
+            </Field>
+            {/* ── İlk Adım ── */}
+            <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3 space-y-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-600">İlk Gidiş Adımı</p>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Gönderilen *">
+                  <input
+                    value={orderForm.sentItem}
+                    onChange={(e) =>
+                      setOrderForm((p) => {
+                        const nextSentItem = e.target.value;
+                        return {
+                          ...p,
+                          sentItem: nextSentItem,
+                          impressionMethod: isMeasurementStep(nextSentItem) ? p.impressionMethod : "",
+                        };
+                      })
+                    }
+                    className="field"
+                    placeholder="Ölçü, kaşık…"
+                  />
+                  <SpoonRequestQuickPicks
+                    selected={orderForm.requestedItem}
+                    onPick={(item) =>
+                      setOrderForm((p) => ({
+                        ...p,
+                        sentItem: "Ölçü",
+                        requestedItem: item,
+                      }))
+                    }
+                  />
+                </Field>
+                <Field label="İstenen (Labdan)">
+                  <input
+                    value={orderForm.requestedItem}
+                    onChange={(e) => setOrderForm((p) => ({ ...p, requestedItem: e.target.value }))}
+                    className="field"
+                    placeholder="Metal alt yapı, prova…"
+                  />
+                </Field>
+              </div>
+              {isMeasurementStep(orderForm.sentItem) && (
+                <Field label="Ölçü Yöntemi">
+                  <select
+                    value={orderForm.impressionMethod}
+                    onChange={(e) =>
+                      setOrderForm((p) => ({
+                        ...p,
+                        impressionMethod: e.target.value as ImpressionMethod,
+                      }))
+                    }
+                    className="field"
+                  >
+                    <option value="">Seçiniz</option>
+                    <option value="KLASIK_OLCU">Klasik Ölçü</option>
+                    <option value="DIJITAL_TARAMA">Dijital Tarama</option>
+                  </select>
+                </Field>
+              )}
             </div>
+            <Field label="Not">
+              <input value={orderForm.notes} onChange={(e) => setOrderForm((p) => ({ ...p, notes: e.target.value }))} className="field" placeholder="Renk, açıklama…" />
+            </Field>
           </div>
-          <ModalActions onClose={closeModal} onSave={createOrder} saving={saving} saveText="Oluştur" disabled={!orderForm.patientId || !orderForm.doctorId || !resolvedLabName || !orderForm.labType} />
+          <ModalActions onClose={closeModal} onSave={createOrder} saving={saving} saveText="Oluştur" disabled={!orderForm.patientId || !orderForm.doctorId || !resolvedLabName || !orderForm.labType || !orderForm.sentItem} />
         </Modal>
       )}
 
       {modal === "trip" && activeOrder && (
-        <Modal title="Gidiş Kaydı Ekle" subtitle={`${activeOrder.patient.fullName} · ${activeOrder.labName}`} onClose={closeModal}>
-          <div className="space-y-3">
-            <Field label="Ne için gitti? *">
-              <input value={tripForm.description} onChange={(e) => setTripForm((p) => ({ ...p, description: e.target.value }))} className="field" placeholder="Açık kaşık ölçü, zirkon alt yapı, glaze…" autoFocus />
-            </Field>
-            <Field label="Gidiş Tarihi *">
-              <input type="date" value={tripForm.sentAt} onChange={(e) => setTripForm((p) => ({ ...p, sentAt: e.target.value }))} className="field" />
-            </Field>
-            <Field label="Not">
-              <input value={tripForm.sentNote} onChange={(e) => setTripForm((p) => ({ ...p, sentNote: e.target.value }))} className="field" placeholder="Teknik not" />
-            </Field>
-          </div>
-          <ModalActions onClose={closeModal} onSave={createTrip} saving={saving} saveText="Gidişi Kaydet" disabled={!tripForm.description} />
+        <Modal title="Gidiş Kaydı Ekle" subtitle={`${activeOrder.patient.fullName} · ${activeOrder.labName} · ${activeOrder.labType}`} onClose={closeModal}>
+          <TripFormContent
+            order={activeOrder}
+            tripForm={tripForm}
+            setTripForm={setTripForm}
+          />
+          <ModalActions onClose={closeModal} onSave={createTrip} saving={saving} saveText="Gidişi Kaydet" disabled={!tripForm.sentItem} />
         </Modal>
       )}
 
       {modal === "receive" && activeTrip && (
-        <Modal title="Geri Geldi Olarak İşaretle" subtitle={`${activeTrip.labOrder.patient.fullName} · ${activeTrip.description}`} onClose={closeModal}>
+        <Modal title="Geri Geldi Olarak İşaretle" subtitle={`${activeTrip.labOrder.patient.fullName} · ${parseDesc(activeTrip.description).sentItem}${parseDesc(activeTrip.description).requestedItem ? " → " + parseDesc(activeTrip.description).requestedItem : ""}`} onClose={closeModal}>
           <div className="space-y-3">
             <Field label="Geliş Tarihi">
               <input type="date" value={receiveForm.receivedAt} onChange={(e) => setReceiveForm((p) => ({ ...p, receivedAt: e.target.value }))} className="field" />
@@ -814,17 +1070,49 @@ export default function LabPage() {
       )}
 
       {modal === "editTrip" && activeTrip && (
-        <Modal title="Adımı Düzenle" subtitle={`${activeTrip.labOrder.patient.fullName} · #${activeTrip.order}`} onClose={closeModal}>
+        <Modal title="Adımı Düzenle" subtitle={`${activeTrip.labOrder.patient.fullName} · ${activeTrip.labOrder.labType} · Adım #${activeTrip.order}`} onClose={closeModal}>
           <div className="space-y-3">
-            <Field label="Açıklama *">
-              <input value={editTripForm.description} onChange={(e) => setEditTripForm((p) => ({ ...p, description: e.target.value }))} className="field" />
+            <Field label="Gönderilen *">
+              <input
+                value={editTripForm.sentItem}
+                onChange={(e) => setEditTripForm((p) => ({ ...p, sentItem: e.target.value }))}
+                className="field"
+                placeholder="Ölçü, zirkon alt yapı, prova…"
+                autoFocus
+              />
+              <SpoonRequestQuickPicks
+                selected={editTripForm.requestedItem}
+                onPick={(item) =>
+                  setEditTripForm((p) => ({
+                    ...p,
+                    sentItem: "Ölçü",
+                    requestedItem: item,
+                  }))
+                }
+              />
             </Field>
+            <Field label="İstenen (Labdan Beklenen)">
+              <input value={editTripForm.requestedItem} onChange={(e) => setEditTripForm((p) => ({ ...p, requestedItem: e.target.value }))} className="field" placeholder="Metal alt yapı, dentin prova, glaze…" />
+            </Field>
+            {isMeasurementStep(editTripForm.sentItem) && (
+              <Field label="Ölçü Yöntemi">
+                <select
+                  value={editTripForm.impressionMethod}
+                  onChange={(e) => setEditTripForm((p) => ({ ...p, impressionMethod: e.target.value as ImpressionMethod }))}
+                  className="field"
+                >
+                  <option value="">Seçiniz</option>
+                  <option value="KLASIK_OLCU">Klasik Ölçü</option>
+                  <option value="DIJITAL_TARAMA">Dijital Tarama</option>
+                </select>
+              </Field>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <Field label="Gidiş Tarihi *">
                 <input type="date" value={editTripForm.sentAt} onChange={(e) => setEditTripForm((p) => ({ ...p, sentAt: e.target.value }))} className="field" />
               </Field>
               <Field label="Gidiş Notu">
-                <input value={editTripForm.sentNote} onChange={(e) => setEditTripForm((p) => ({ ...p, sentNote: e.target.value }))} className="field" />
+                <input value={editTripForm.sentNote} onChange={(e) => setEditTripForm((p) => ({ ...p, sentNote: e.target.value }))} className="field" placeholder="Teknik not…" />
               </Field>
             </div>
             <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 px-3 py-2.5 text-xs text-slate-700 transition hover:bg-slate-50">
@@ -842,7 +1130,7 @@ export default function LabPage() {
               </div>
             )}
           </div>
-          <ModalActions onClose={closeModal} onSave={updateTrip} saving={saving} saveText="Güncelle" disabled={!editTripForm.description} />
+          <ModalActions onClose={closeModal} onSave={updateTrip} saving={saving} saveText="Güncelle" disabled={!editTripForm.sentItem} />
         </Modal>
       )}
 
@@ -899,107 +1187,108 @@ function OrderRow({
   const totalAmount = order.invoices.reduce((s, i) => s + Number(i.amount || 0), 0);
   const pendingDays = pendingTrip ? daysSince(pendingTrip.sentAt) : 0;
 
+  // status renk sistemi — her durum için sol kenar + arka plan + pill
   const statusConfig = isDone
-    ? { label: "Tamamlandı", dot: "bg-emerald-500", pill: "bg-emerald-50 text-emerald-700 ring-emerald-200" }
+    ? { label: "Tamamlandı", border: "border-l-emerald-400", bg: "bg-emerald-50/40 hover:bg-emerald-50/70", pill: "bg-emerald-100 text-emerald-700", dot: "bg-emerald-400" }
     : pendingTrip
-    ? { label: "Labda", dot: "bg-amber-400", pill: "bg-amber-50 text-amber-700 ring-amber-200" }
-    : firstTrip
-    ? { label: "Klinikte", dot: "bg-blue-500", pill: "bg-blue-50 text-blue-700 ring-blue-200" }
-    : { label: "Yeni", dot: "bg-slate-400", pill: "bg-slate-100 text-slate-600 ring-slate-200" };
+      ? pendingDays >= 4
+        ? { label: "Gecikiyor", border: "border-l-red-400", bg: "bg-red-50/40 hover:bg-red-50/60", pill: "bg-red-100 text-red-700", dot: "bg-red-400" }
+        : { label: "Labda", border: "border-l-amber-400", bg: "bg-amber-50/40 hover:bg-amber-50/60", pill: "bg-amber-100 text-amber-700", dot: "bg-amber-400" }
+      : firstTrip
+      ? { label: "Klinikte", border: "border-l-blue-400", bg: "bg-blue-50/40 hover:bg-blue-50/60", pill: "bg-blue-100 text-blue-700", dot: "bg-blue-400" }
+      : { label: "Beklemede", border: "border-l-slate-300", bg: "bg-white hover:bg-slate-50/80", pill: "bg-slate-100 text-slate-600", dot: "bg-slate-300" };
+
+  const teethLabel = order.teeth
+    ? `${order.teeth.split(",").map((s) => s.trim()).filter(Boolean).length} üye ${order.labType}`
+    : order.labType;
 
   return (
     <div>
       {/* ── Row ── */}
       <div
-        className={`group flex items-center gap-4 px-5 py-3.5 transition-colors hover:bg-slate-50/70 ${isDone ? "opacity-60 hover:opacity-100" : ""}`}
+        onClick={onToggleExpand}
+        className={`group flex cursor-pointer items-center gap-3 border-l-4 px-4 py-2.5 transition-colors ${statusConfig.border} ${statusConfig.bg} ${isDone ? "opacity-70 hover:opacity-100" : ""}`}
       >
-        {/* Status dot */}
-        <span className={`h-2 w-2 shrink-0 rounded-full ${statusConfig.dot}`} />
-
-        {/* Patient + lab */}
+        {/* Patient + meta */}
         <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-baseline gap-2">
-            <span className="text-[13.5px] font-semibold text-slate-900">{order.patient.fullName}</span>
-            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ${statusConfig.pill}`}>{statusConfig.label}</span>
-            {pendingDays >= 1 && (
-              <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ${
-                pendingDays >= 7
-                  ? "bg-red-50 text-red-600 ring-red-200"
-                  : pendingDays >= 4
-                  ? "bg-orange-50 text-orange-600 ring-orange-200"
-                  : "bg-amber-50 text-amber-600 ring-amber-200"
-              }`}>
-                {pendingDays}g labda
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[13px] font-semibold text-slate-900">{order.patient.fullName}</span>
+            <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusConfig.pill}`}>
+              {statusConfig.label}
+            </span>
+            {pendingDays >= 4 && !isDone && (
+              <span className="rounded-md bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-600">
+                {pendingDays}g bekledi
               </span>
             )}
           </div>
-          <p className="mt-0.5 truncate text-[12px] text-slate-500">
-            {order.labName} · <span className="font-medium text-slate-600">{order.labType}</span>
-            {order.teeth ? ` · Diş ${order.teeth}` : ""}
-            {` · `}<span className="text-slate-400">{order.doctor.fullName}</span>
+          <p className="mt-0.5 truncate text-[11.5px] text-slate-500">
+            <span className="font-medium text-slate-700">{teethLabel}</span>
+            <span className="mx-1 text-slate-300">·</span>
+            {order.labName}
+            <span className="mx-1 text-slate-300">·</span>
+            <span className="text-slate-400">{order.doctor.fullName}</span>
           </p>
         </div>
 
-        {/* Step progress */}
-        <div className="hidden shrink-0 items-center gap-1.5 sm:flex">
+        {/* Step progress dots */}
+        <div className="hidden shrink-0 items-center gap-1 sm:flex">
           {totalCount === 0 ? (
-            <span className="text-[12px] text-slate-400">—</span>
+            <span className="text-[11px] text-slate-300">—</span>
           ) : (
             <>
               {sortedTrips.map((t) => (
-                <span
-                  key={t.id}
-                  title={t.description}
-                  className={`h-2 w-2 rounded-full ${t.receivedAt ? "bg-emerald-400" : "bg-amber-300"}`}
+                <span key={t.id} title={t.description}
+                  className={`h-2.5 w-2.5 rounded-full ${t.receivedAt ? "bg-emerald-400" : "bg-amber-300"}`}
                 />
               ))}
-              <span className="ml-1 text-[11px] text-slate-400">{doneCount}/{totalCount}</span>
+              <span className="ml-1 text-[11px] font-medium text-slate-400">{doneCount}/{totalCount}</span>
             </>
           )}
         </div>
 
-        {/* First date */}
-        <div className="hidden w-28 shrink-0 text-right md:block">
-          <span className="text-[12px] text-slate-500">{firstTrip ? fmt(firstTrip.sentAt) : "—"}</span>
+        {/* Date */}
+        <div className="hidden w-24 shrink-0 text-right md:block">
+          <span className="text-[11px] text-slate-400">{firstTrip ? fmt(firstTrip.sentAt) : "—"}</span>
         </div>
 
-        {/* Invoice chip */}
+        {/* Invoice amount */}
         {totalAmount > 0 && (
-          <div className="hidden shrink-0 md:block">
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">{CUR.format(totalAmount)}</span>
-          </div>
+          <span className="hidden shrink-0 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 md:inline">
+            {CUR.format(totalAmount)}
+          </span>
         )}
 
         {/* Actions */}
         <div className="flex shrink-0 items-center gap-1">
           {!isDone && (
-            <ActionBtn onClick={() => onAddTrip(order)} title="Gidiş Ekle">
+            <ActionBtn onClick={(e) => { e.stopPropagation(); onAddTrip(order); }} title="Gidiş Ekle">
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
             </ActionBtn>
           )}
           {!isDone && pendingTrip && (
-            <ActionBtn onClick={() => onReceive(order, pendingTrip)} title="Geldi" accent="emerald">
+            <ActionBtn onClick={(e) => { e.stopPropagation(); onReceive(order, pendingTrip); }} title="Geldi" accent="emerald">
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
             </ActionBtn>
           )}
-          <ActionBtn onClick={() => onAddInvoice(order)} title="Fatura ekle">
+          <ActionBtn onClick={(e) => { e.stopPropagation(); onAddInvoice(order); }} title="Fatura ekle">
             <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
               <rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="12" y2="15"/>
             </svg>
           </ActionBtn>
           {!isDone && (
-            <ActionBtn onClick={() => onComplete(order.id)} title={pendingTrip ? "Bekleyen adım var" : "Tamamla"} disabled={Boolean(pendingTrip)} accent={pendingTrip ? undefined : "slate"}>
+            <ActionBtn onClick={(e) => { e.stopPropagation(); onComplete(order.id); }} title={pendingTrip ? "Bekleyen adım var" : "Tamamla"} disabled={Boolean(pendingTrip)} accent={pendingTrip ? undefined : "slate"}>
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
               </svg>
             </ActionBtn>
           )}
           <button
-            onClick={onToggleExpand}
+            onClick={(e) => { e.stopPropagation(); onToggleExpand(); }}
             title={expanded ? "Kapat" : "Süreci aç"}
             className="ml-0.5 rounded-md p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
           >
@@ -1037,20 +1326,41 @@ function OrderRow({
                         </span>
                         <div className="rounded-lg border border-slate-100 bg-white px-3 py-2.5 shadow-sm">
                           <div className="flex items-start justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="text-[13px] font-semibold text-slate-800">
-                                <span className="mr-1.5 text-slate-400">#{idx + 1}</span>{trip.description}
-                              </p>
-                              <p className="mt-0.5 text-[11px] text-slate-500">
+                            <div className="min-w-0 flex-1">
+                              {(() => {
+                                const { sentItem, requestedItem } = parseDesc(trip.description);
+                                return (
+                                  <>
+                                    <div className="flex flex-wrap items-baseline gap-x-1.5">
+                                      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">#{idx + 1}</span>
+                                      <p className="text-[13px] font-semibold text-slate-800">{sentItem}</p>
+                                    </div>
+                                    {requestedItem && (
+                                      <div className="mt-0.5 flex items-center gap-1">
+                                        <svg className="h-2.5 w-2.5 shrink-0 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+                                          <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
+                                        </svg>
+                                        <span className="text-[11.5px] font-medium text-slate-600">{requestedItem}</span>
+                                        {!trip.receivedAt && (
+                                          <span className="rounded bg-amber-50 px-1 py-0.5 text-[10px] font-semibold text-amber-600">bekleniyor</span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </>
+                                );
+                              })()}
+                              <p className="mt-1 text-[11px] text-slate-500">
                                 <span className="font-medium">Gidiş:</span> {fmt(trip.sentAt)}
                                 {trip.receivedAt ? (
                                   <> · <span className="font-medium">Geliş:</span> {fmt(trip.receivedAt)}</>
-                                ) : (
-                                  <> · <span className="font-medium text-amber-600">Bekleniyor</span></>
-                                )}
+                                ) : null}
                               </p>
                               {trip.sentNote && <p className="mt-0.5 text-[11px] text-slate-500">↑ {trip.sentNote}</p>}
-                              {trip.receivedNote && <p className="mt-0.5 text-[11px] text-slate-500">↓ {trip.receivedNote}</p>}
+                              {trip.receivedNote && (
+                                <p className="mt-0.5 text-[11px] text-slate-500">
+                                  ↓ {trip.receivedNote.replace("RANDEVU_PROVA_GEREKLI | ", "").replace("RANDEVU_PROVA_GEREKLI", "Randevu/prova gerekli")}
+                                </p>
+                              )}
                             </div>
                             <div className="flex shrink-0 gap-1">
                               {!done && (
@@ -1084,7 +1394,7 @@ function OrderRow({
                     order.notes ? ["Not", order.notes] : null,
                     ["Adım", `${doneCount} / ${totalCount} tamamlandı`],
                     ["Bekleyen", pendingTrip
-                      ? `#${pendingTrip.order} · ${pendingTrip.description}${pendingDays >= 1 ? ` (${pendingDays}g)` : ""}`
+                      ? `#${pendingTrip.order} · ${parseDesc(pendingTrip.description).sentItem}${parseDesc(pendingTrip.description).requestedItem ? " → " + parseDesc(pendingTrip.description).requestedItem : ""}${pendingDays >= 1 ? ` (${pendingDays}g)` : ""}`
                       : "Yok"],
                     ["Fatura", order.invoices.length ? `${order.invoices.length} kalem · ${CUR.format(totalAmount)}` : "Yok"],
                   ].filter(Boolean) as [string, string][]).map(([k, v]) => (
@@ -1139,7 +1449,7 @@ function ActionBtn({
   accent,
 }: {
   children: React.ReactNode;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
   title?: string;
   disabled?: boolean;
   accent?: "emerald" | "slate";
@@ -1167,6 +1477,36 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   );
 }
 
+function SpoonRequestQuickPicks({
+  selected,
+  onPick,
+}: {
+  selected: string;
+  onPick: (item: string) => void;
+}) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {SPOON_REQUEST_OPTIONS.map((item) => {
+        const active = isSameWorkflowValue(selected, item);
+        return (
+          <button
+            key={item}
+            type="button"
+            onClick={() => onPick(item)}
+            className={`rounded-full border px-2 py-1 text-[11px] font-medium transition ${
+              active
+                ? "border-slate-700 bg-slate-800 text-white"
+                : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
+            }`}
+          >
+            {item}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function ModalActions({
   onClose, onSave, saving, saveText, disabled,
 }: {
@@ -1189,9 +1529,9 @@ function ModalActions({
 }
 
 function Modal({
-  title, subtitle, onClose, children,
+  title, subtitle, onClose, children, wide,
 }: {
-  title: string; subtitle?: string; onClose: () => void; children: React.ReactNode;
+  title: string; subtitle?: string; onClose: () => void; children: React.ReactNode; wide?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   return (
@@ -1199,7 +1539,7 @@ function Modal({
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div ref={ref} className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white shadow-2xl ring-1 ring-black/5">
+      <div ref={ref} className={`max-h-[90vh] w-full overflow-y-auto rounded-2xl bg-white shadow-2xl ring-1 ring-black/5 ${wide ? "max-w-2xl" : "max-w-md"}`}>
         <div className="flex items-start justify-between border-b border-slate-100 px-5 py-4">
           <div>
             <h2 className="text-[14px] font-semibold text-slate-900">{title}</h2>
@@ -1216,3 +1556,256 @@ function Modal({
     </div>
   );
 }
+
+// ─────────────────────────────────────────────
+// DentalChart — FDI görsel diş şeması seçici
+// ─────────────────────────────────────────────
+function DentalChart({
+  selected,
+  onChange,
+}: {
+  selected: number[];
+  onChange: (nums: number[]) => void;
+}) {
+  const toggle = (num: number) => {
+    if (selected.includes(num)) {
+      onChange(selected.filter((n) => n !== num));
+    } else {
+      onChange([...selected, num].sort((a, b) => a - b));
+    }
+  };
+
+  const selectGroup = (group: number[]) => {
+    const allSelected = group.every((n) => selected.includes(n));
+    if (allSelected) {
+      onChange(selected.filter((n) => !group.includes(n)));
+    } else {
+      const merged = Array.from(new Set([...selected, ...group])).sort((a, b) => a - b);
+      onChange(merged);
+    }
+  };
+
+  const ToothBtn = ({ num }: { num: number }) => {
+    const active = selected.includes(num);
+    // Sınıflara göre diş tipi rengi
+    const lastDigit = num % 10;
+    const isIncisor = lastDigit === 1 || lastDigit === 2;
+    const isCanine = lastDigit === 3;
+    const isPremolar = lastDigit === 4 || lastDigit === 5;
+    const ringColor = isIncisor
+      ? "ring-blue-400"
+      : isCanine
+      ? "ring-amber-400"
+      : isPremolar
+      ? "ring-violet-400"
+      : "ring-slate-400";
+    return (
+      <button
+        type="button"
+        onClick={() => toggle(num)}
+        className={`flex h-8 w-8 flex-col items-center justify-center rounded-lg border text-[10px] font-semibold transition-all
+          ${active
+            ? `border-transparent bg-slate-800 text-white shadow-sm`
+            : `border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:bg-slate-50`
+          }`}
+        title={`Diş ${num}`}
+      >
+        {num}
+      </button>
+    );
+  };
+
+  const upperSelected = [...UPPER_RIGHT, ...UPPER_LEFT].every((n) => selected.includes(n));
+  const lowerSelected = [...LOWER_LEFT, ...LOWER_RIGHT].every((n) => selected.includes(n));
+
+  return (
+    <div className="mt-1 rounded-xl border border-slate-200 bg-slate-50 p-3">
+      {/* Hızlı seçim butonları */}
+      <div className="mb-2.5 flex flex-wrap gap-1.5">
+        {[
+          { label: "Üst Çene", group: [...UPPER_RIGHT, ...UPPER_LEFT] },
+          { label: "Alt Çene", group: [...LOWER_LEFT, ...LOWER_RIGHT] },
+          { label: "Tüm Çene", group: [...UPPER_RIGHT, ...UPPER_LEFT, ...LOWER_LEFT, ...LOWER_RIGHT] },
+        ].map(({ label, group }) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => selectGroup(group)}
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-100 hover:border-slate-300"
+          >
+            {label}
+          </button>
+        ))}
+        {selected.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="rounded-md border border-red-100 bg-red-50 px-2.5 py-1 text-[11px] font-medium text-red-500 transition hover:bg-red-100"
+          >
+            Temizle
+          </button>
+        )}
+      </div>
+
+      {/* Üst çene */}
+      <div className="mb-1.5">
+        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Üst Çene</p>
+        <div className="flex gap-1">
+          {UPPER_RIGHT.map((n) => <ToothBtn key={n} num={n} />)}
+          <div className="mx-1 border-l border-dashed border-slate-300" />
+          {UPPER_LEFT.map((n) => <ToothBtn key={n} num={n} />)}
+        </div>
+      </div>
+
+      {/* Alt çene */}
+      <div className="mt-1.5">
+        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Alt Çene</p>
+        <div className="flex gap-1">
+          {LOWER_RIGHT.map((n) => <ToothBtn key={n} num={n} />)}
+          <div className="mx-1 border-l border-dashed border-slate-300" />
+          {LOWER_LEFT.map((n) => <ToothBtn key={n} num={n} />)}
+        </div>
+      </div>
+
+      {/* Seçili dişler özeti */}
+      {selected.length > 0 && (
+        <p className="mt-2 text-[11px] text-slate-500">
+          <span className="font-semibold text-slate-700">{selected.length} diş</span> seçili: {selected.join(", ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// TripFormContent — iş türüne göre akıllı öneri ile gidiş formu
+// ─────────────────────────────────────────────
+function TripFormContent({
+  order,
+  tripForm,
+  setTripForm,
+}: {
+  order: { labType: string; trips: { description: string }[] };
+  tripForm: { sentItem: string; requestedItem: string; impressionMethod: ImpressionMethod; sentAt: string; sentNote: string };
+  setTripForm: React.Dispatch<React.SetStateAction<typeof tripForm>>;
+}) {
+  const template = WORKFLOW_TEMPLATES[order.labType] ?? [];
+  const stepIndex = getNextTemplateStepIndex(order.labType, order.trips);
+  const suggestion = template[stepIndex] ?? null;
+
+  // Öneri henüz uygulanmadıysa auto-fill yap
+  const [suggested, setSuggested] = useState(false);
+  useEffect(() => {
+    if (!suggested && suggestion && !tripForm.sentItem) {
+      setTripForm((p) => ({
+        ...p,
+        sentItem: suggestion.send,
+        requestedItem: suggestion.request,
+      }));
+      setSuggested(true);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="space-y-3">
+      {/* Workflow ilerleme şeridi */}
+      {template.length > 0 && (
+        <div className="rounded-lg border border-slate-100 bg-slate-50 p-2.5">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+            {order.labType} · Adım {Math.min(stepIndex + 1, template.length)}/{template.length}
+          </p>
+          <div className="flex gap-1">
+            {template.map((step, i) => (
+              <div
+                key={i}
+                className={`flex-1 rounded px-1 py-1 text-center text-[10px] leading-tight ${
+                  i < stepIndex
+                    ? "bg-emerald-100 text-emerald-700"
+                    : i === stepIndex
+                    ? "bg-slate-800 text-white font-semibold"
+                    : "bg-slate-200 text-slate-400"
+                }`}
+                title={`${step.send} → ${step.request}`}
+              >
+                {i + 1}
+              </div>
+            ))}
+          </div>
+          {suggestion && (
+            <p className="mt-1.5 text-[10px] text-slate-500">
+              Öneri: <span className="font-medium text-slate-700">{suggestion.send}</span> gönder →{" "}
+              <span className="font-medium text-slate-700">{suggestion.request}</span> iste
+            </p>
+          )}
+        </div>
+      )}
+
+      <Field label="Gönderilen *">
+        <input
+          value={tripForm.sentItem}
+          onChange={(e) =>
+            setTripForm((p) => {
+              const nextSentItem = e.target.value;
+              return {
+                ...p,
+                sentItem: nextSentItem,
+                impressionMethod: isMeasurementStep(nextSentItem) ? p.impressionMethod : "",
+              };
+            })
+          }
+          className="field"
+          placeholder="Ölçü, zirkon alt yapı, prova…"
+          autoFocus
+        />
+        <SpoonRequestQuickPicks
+          selected={tripForm.requestedItem}
+          onPick={(item) =>
+            setTripForm((p) => ({
+              ...p,
+              sentItem: "Ölçü",
+              requestedItem: item,
+            }))
+          }
+        />
+      </Field>
+      <Field label="İstenen (Labdan Beklenen)">
+        <input
+          value={tripForm.requestedItem}
+          onChange={(e) => setTripForm((p) => ({ ...p, requestedItem: e.target.value }))}
+          className="field"
+          placeholder="Zirkon alt yapı, dentin prova, glaze…"
+        />
+      </Field>
+      {isMeasurementStep(tripForm.sentItem) && (
+        <Field label="Ölçü Yöntemi">
+          <select
+            value={tripForm.impressionMethod}
+            onChange={(e) => setTripForm((p) => ({ ...p, impressionMethod: e.target.value as ImpressionMethod }))}
+            className="field"
+          >
+            <option value="">Seçiniz</option>
+            <option value="KLASIK_OLCU">Klasik Ölçü</option>
+            <option value="DIJITAL_TARAMA">Dijital Tarama</option>
+          </select>
+        </Field>
+      )}
+      <Field label="Gidiş Tarihi *">
+        <input
+          type="date"
+          value={tripForm.sentAt}
+          onChange={(e) => setTripForm((p) => ({ ...p, sentAt: e.target.value }))}
+          className="field"
+        />
+      </Field>
+      <Field label="Teknik Not">
+        <input
+          value={tripForm.sentNote}
+          onChange={(e) => setTripForm((p) => ({ ...p, sentNote: e.target.value }))}
+          className="field"
+          placeholder="Renk kodu, özel ölçü notu…"
+        />
+      </Field>
+    </div>
+  );
+}
+

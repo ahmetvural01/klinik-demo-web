@@ -1,0 +1,51 @@
+2026-05-07 22:34:35.299 +03 [28844] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-05-07 22:34:35.303 +03 [28844] LOG:  listening on IPv6 address "::1", port 5432
+2026-05-07 22:34:35.303 +03 [28844] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-05-07 22:34:35.359 +03 [17496] LOG:  database system was interrupted; last known up at 2026-05-07 22:19:11 +03
+2026-05-07 22:34:41.235 +03 [17496] LOG:  could not open file "./postgres.log": sharing violation
+2026-05-07 22:34:41.235 +03 [17496] DETAIL:  Continuing to retry for 30 seconds.
+2026-05-07 22:34:41.235 +03 [17496] HINT:  You might have antivirus, backup, or similar software interfering with the database system.
+2026-05-07 22:34:50.688 +03 [9020] FATAL:  the database system is starting up
+2026-05-07 22:34:50.810 +03 [2076] FATAL:  the database system is starting up
+2026-05-07 22:34:50.896 +03 [22316] FATAL:  the database system is starting up
+2026-05-07 22:34:51.016 +03 [24152] FATAL:  the database system is starting up
+2026-05-07 22:34:51.080 +03 [5632] FATAL:  the database system is starting up
+2026-05-07 22:34:51.101 +03 [19760] FATAL:  the database system is starting up
+2026-05-07 22:34:51.158 +03 [24764] FATAL:  the database system is starting up
+2026-05-07 22:34:51.176 +03 [31720] FATAL:  the database system is starting up
+2026-05-07 22:35:07.137 +03 [17496] LOG:  syncing data directory (fsync), elapsed time: 31.77 s, current path: ./postgresql.auto.conf
+2026-05-07 22:35:07.143 +03 [17496] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-05-07 22:35:07.152 +03 [17496] LOG:  redo starts at 0/541A3E8
+2026-05-07 22:35:07.153 +03 [17496] LOG:  invalid record length at 0/541A4F0: expected at least 24, got 0
+2026-05-07 22:35:07.153 +03 [17496] LOG:  redo done at 0/541A4B8 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-05-07 22:35:07.169 +03 [19616] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-05-07 22:35:07.191 +03 [19616] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.003 s, sync=0.005 s, total=0.035 s; sync files=2, longest=0.004 s, average=0.003 s; distance=0 kB, estimate=0 kB; lsn=0/541A4F0, redo lsn=0/541A4F0
+2026-05-07 22:35:07.209 +03 [28844] LOG:  database system is ready to accept connections
+2026-05-07 22:40:07.192 +03 [19616] LOG:  checkpoint starting: time
+2026-05-07 22:40:07.313 +03 [19616] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.106 s, sync=0.003 s, total=0.122 s; sync files=2, longest=0.002 s, average=0.002 s; distance=3 kB, estimate=3 kB; lsn=0/541B3B0, redo lsn=0/541B358
+2026-05-07 22:45:07.316 +03 [19616] LOG:  checkpoint starting: time
+2026-05-07 22:45:07.439 +03 [19616] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.101 s, sync=0.004 s, total=0.124 s; sync files=2, longest=0.003 s, average=0.002 s; distance=4 kB, estimate=4 kB; lsn=0/541C5A8, redo lsn=0/541C550
+2026-05-07 22:50:07.441 +03 [19616] LOG:  checkpoint starting: time
+2026-05-07 22:50:08.097 +03 [19616] LOG:  checkpoint complete: wrote 6 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.624 s, sync=0.010 s, total=0.657 s; sync files=7, longest=0.003 s, average=0.002 s; distance=14 kB, estimate=14 kB; lsn=0/541FF20, redo lsn=0/541FEC8
+2026-05-07 22:59:41.260 +03 [32360] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-07 22:59:41.260 +03 [14720] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-07 22:59:41.260 +03 [30908] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-07 22:59:41.260 +03 [30724] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-07 22:59:41.260 +03 [3896] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-07 23:11:45.584 +03 [24012] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-07 23:11:45.584 +03 [19276] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-07 23:11:45.585 +03 [30292] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-07 23:11:45.585 +03 [12352] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-07 23:11:45.584 +03 [10356] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-07 23:20:48.661 +03 [19616] LOG:  checkpoint starting: time
+2026-05-07 23:20:49.625 +03 [19616] LOG:  checkpoint complete: wrote 9 buffers (0.1%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.938 s, sync=0.014 s, total=0.968 s; sync files=10, longest=0.004 s, average=0.002 s; distance=21 kB, estimate=21 kB; lsn=0/5425630, redo lsn=0/54255D8
