@@ -233,3 +233,91 @@
 	
 2026-05-06 21:31:45.934 +03 [16528] LOG:  checkpoint starting: time
 2026-05-06 21:31:46.060 +03 [16528] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.106 s, sync=0.005 s, total=0.127 s; sync files=2, longest=0.003 s, average=0.003 s; distance=1 kB, estimate=1247 kB; lsn=0/5369D40, redo lsn=0/5369CE8
+2026-05-06 21:52:09.377 +03 [8524] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 21:53:42.690 +03 [3312] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 21:53:42.690 +03 [13756] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 21:53:42.690 +03 [21672] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 21:54:46.135 +03 [21568] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 21:57:01.852 +03 [15996] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 21:57:01.853 +03 [8196] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:06:45.633 +03 [12336] ERROR:  duplicate key value violates unique constraint "Institution_name_key"
+2026-05-06 22:06:45.633 +03 [12336] DETAIL:  Key (name)=(whitedental) already exists.
+2026-05-06 22:06:45.633 +03 [12336] STATEMENT:  INSERT INTO "public"."Institution" ("id","name","email","phone","address","subscriptionPlan","smsBalance","isActive","createdAt","updatedAt","adIntensity","adsEnabled","serviceMode","throttleMs") VALUES ($1,$2,$3,$4,$5,CAST($6::text AS "public"."SubscriptionPlan"),$7,$8,$9,$10,CAST($11::text AS "public"."AdIntensity"),$12,CAST($13::text AS "public"."ServiceMode"),$14) RETURNING "public"."Institution"."id"
+2026-05-06 22:06:45.644 +03 [12336] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:08:57.451 +03 [24676] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:09:42.815 +03 [19020] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:11:45.112 +03 [16528] LOG:  checkpoint starting: time
+2026-05-06 22:11:45.348 +03 [16528] LOG:  checkpoint complete: wrote 2 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.216 s, sync=0.007 s, total=0.240 s; sync files=3, longest=0.004 s, average=0.003 s; distance=1 kB, estimate=1122 kB; lsn=0/536A1F0, redo lsn=0/536A198
+2026-05-06 22:19:20.738 +03 [23984] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:19:20.739 +03 [27192] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:19:20.739 +03 [27140] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:19:20.739 +03 [27128] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:19:27.030 +03 [23400] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:20:28.862 +03 [23040] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:20:28.862 +03 [16892] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:20:28.862 +03 [20436] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:21:16.152 +03 [15996] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:21:16.152 +03 [23456] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:22:05.723 +03 [22256] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:22:05.723 +03 [6480] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:22:33.718 +03 [26892] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:31:36.721 +03 [20804] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:31:42.844 +03 [22752] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:31:42.844 +03 [21680] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:31:45.376 +03 [16528] LOG:  checkpoint starting: time
+2026-05-06 22:31:50.537 +03 [16528] LOG:  checkpoint complete: wrote 49 buffers (0.3%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=5.108 s, sync=0.043 s, total=5.161 s; sync files=43, longest=0.002 s, average=0.001 s; distance=275 kB, estimate=1037 kB; lsn=0/53AEE30, redo lsn=0/53AEDD8
+2026-05-06 22:32:14.437 +03 [27380] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:32:27.730 +03 [18572] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-06 22:36:45.541 +03 [16528] LOG:  checkpoint starting: time
+2026-05-06 22:36:46.703 +03 [16528] LOG:  checkpoint complete: wrote 11 buffers (0.1%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=1.144 s, sync=0.008 s, total=1.163 s; sync files=8, longest=0.002 s, average=0.001 s; distance=55 kB, estimate=939 kB; lsn=0/53BCA88, redo lsn=0/53BCA30
+2026-05-07 00:28:54.128 +03 [26128] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-07 00:28:54.128 +03 [22144] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-07 00:28:54.145 +03 [16464] LOG:  client backend (PID 10912) was terminated by exception 0x40010004
+2026-05-07 00:28:54.145 +03 [16464] DETAIL:  Failed process was running: SELECT "public"."User"."id", "public"."User"."identityNo", "public"."User"."fullName", "public"."User"."email", "public"."User"."passwordHash", "public"."User"."role"::text, "public"."User"."isActive", "public"."User"."createdAt", "public"."User"."updatedAt", "public"."User"."institutionId", "public"."User"."genelYuzde", "public"."User"."kkYuzde", "public"."User"."maasYuzde" FROM "public"."User" WHERE "public"."User"."id" IN ($1) OFFSET $2
+2026-05-07 00:28:54.145 +03 [16464] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-05-07 00:28:54.146 +03 [16464] LOG:  terminating any other active server processes
+2026-05-07 00:28:54.235 +03 [16464] LOG:  all server processes terminated; reinitializing
+2026-05-07 00:28:54.316 +03 [16464] LOG:  startup process (PID 900) was terminated by exception 0xC000026B
+2026-05-07 00:28:54.316 +03 [16464] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-05-07 00:28:54.317 +03 [16464] LOG:  aborting startup due to startup process failure
+2026-05-07 00:28:54.323 +03 [16464] LOG:  database system is shut down
+2026-05-07 00:31:07.936 +03 [17352] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-05-07 00:31:07.949 +03 [17352] LOG:  could not bind IPv6 address "::1": Only one usage of each socket address (protocol/network address/port) is normally permitted.
+	
+2026-05-07 00:31:07.949 +03 [17352] HINT:  Is another postmaster already running on port 5432? If not, wait a few seconds and retry.
+2026-05-07 00:31:07.949 +03 [17352] LOG:  could not bind IPv4 address "127.0.0.1": Only one usage of each socket address (protocol/network address/port) is normally permitted.
+	
+2026-05-07 00:31:07.949 +03 [17352] HINT:  Is another postmaster already running on port 5432? If not, wait a few seconds and retry.
+2026-05-07 00:31:07.950 +03 [17352] WARNING:  could not create listen socket for "localhost"
+2026-05-07 00:31:07.950 +03 [17352] FATAL:  could not create any TCP/IP sockets
+2026-05-07 00:31:07.951 +03 [17352] LOG:  database system is shut down

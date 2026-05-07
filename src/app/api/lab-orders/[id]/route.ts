@@ -7,7 +7,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
 
   const body = await req.json();
-  const { status, price, invoiceNo } = body;
+  const { status, price, invoiceNo, appendInvoice } = body;
 
   // Mevcut siparişi al — firma entegrasyonu için önceki fatura durumuna bakıyoruz
   const existing = await (prisma as any).labOrder.findUnique({
@@ -25,11 +25,25 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     where: { id: params.id },
     data,
     include: {
+      invoices: { orderBy: { issuedAt: "asc" } },
       patient: { select: { id: true, fullName: true } },
       doctor:  { select: { id: true, fullName: true } },
       trips:   { orderBy: { order: "asc" } },
     },
   });
+
+  if (appendInvoice?.item && appendInvoice?.amount) {
+    await (prisma as any).labOrderInvoice.create({
+      data: {
+        labOrderId: params.id,
+        item: appendInvoice.item,
+        amount: Number(appendInvoice.amount),
+        invoiceNo: appendInvoice.invoiceNo || null,
+        issuedAt: appendInvoice.issuedAt ? new Date(appendInvoice.issuedAt) : new Date(),
+        note: appendInvoice.note || null,
+      },
+    });
+  }
 
   // ── Fatura ekleniyorsa → firma cari borç oluştur ───────────────────────
   // Daha önce faturası olmayan ve şimdi hem price hem invoiceNo geliyorsa tetikle
@@ -60,5 +74,15 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
   }
 
-  return NextResponse.json(order);
+  const fresh = await (prisma as any).labOrder.findUnique({
+    where: { id: params.id },
+    include: {
+      invoices: { orderBy: { issuedAt: "asc" } },
+      patient: { select: { id: true, fullName: true } },
+      doctor:  { select: { id: true, fullName: true } },
+      trips:   { orderBy: { order: "asc" } },
+    },
+  });
+
+  return NextResponse.json(fresh || order);
 }

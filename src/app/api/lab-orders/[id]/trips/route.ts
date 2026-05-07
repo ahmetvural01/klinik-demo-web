@@ -7,7 +7,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
 
   const body = await req.json();
-  const { description, sentAt, expectedAt, sentNote } = body;
+  const { description, sentAt, sentNote } = body;
 
   if (!description) return NextResponse.json({ error: "description zorunlu" }, { status: 400 });
 
@@ -25,7 +25,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       order:      nextOrder,
       description,
       sentAt:     sentAt     ? new Date(sentAt)     : new Date(),
-      expectedAt: expectedAt ? new Date(expectedAt) : null,
       sentNote:   sentNote   || null,
     },
   });

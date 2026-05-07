@@ -9,6 +9,7 @@ export async function GET(req: NextRequest) {
 
   const orders = await (prisma as any).labOrder.findMany({
     include: {
+      invoices: { orderBy: { issuedAt: "asc" } },
       patient: { select: { id: true, fullName: true, phone: true } },
       doctor:  { select: { id: true, fullName: true } },
       trips:   { orderBy: { order: "asc" } },
@@ -30,7 +31,7 @@ export async function POST(req: NextRequest) {
   const user = auth.user;
 
   const body = await req.json();
-  const { patientId, doctorId, labName, labType, teeth, notes, price, invoiceNo, firstTrip } = body;
+  const { patientId, doctorId, labName, labType, teeth, notes, price, invoiceNo, firstTrip, firstInvoice } = body;
 
   if (!patientId || !doctorId || !labName || !labType) {
     return NextResponse.json({ error: "Zorunlu alanlar eksik" }, { status: 400 });
@@ -44,19 +45,36 @@ export async function POST(req: NextRequest) {
       labType,
       teeth,
       notes,
-      price:     price ? Number(price) : null,
-      invoiceNo: invoiceNo || null,
+      price:     price ? Number(price) : firstInvoice?.amount ? Number(firstInvoice.amount) : null,
+      invoiceNo: invoiceNo || firstInvoice?.invoiceNo || null,
+      invoices: firstInvoice?.item && firstInvoice?.amount ? {
+        create: [{
+          item: firstInvoice.item,
+          amount: Number(firstInvoice.amount),
+          invoiceNo: firstInvoice.invoiceNo || null,
+          issuedAt: firstInvoice.issuedAt ? new Date(firstInvoice.issuedAt) : new Date(),
+          note: firstInvoice.note || null,
+        }],
+      } : price ? {
+        create: [{
+          item: labType,
+          amount: Number(price),
+          invoiceNo: invoiceNo || null,
+          issuedAt: new Date(),
+          note: null,
+        }],
+      } : undefined,
       trips: firstTrip?.description ? {
         create: [{
           order:       1,
           description: firstTrip.description,
           sentAt:      firstTrip.sentAt     ? new Date(firstTrip.sentAt)     : new Date(),
-          expectedAt:  firstTrip.expectedAt ? new Date(firstTrip.expectedAt) : null,
           sentNote:    firstTrip.sentNote || null,
         }],
       } : undefined,
     },
     include: {
+      invoices: { orderBy: { issuedAt: "asc" } },
       patient: { select: { id: true, fullName: true, phone: true } },
       doctor:  { select: { id: true, fullName: true } },
       trips:   { orderBy: { order: "asc" } },

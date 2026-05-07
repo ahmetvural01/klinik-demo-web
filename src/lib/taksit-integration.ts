@@ -6,6 +6,8 @@
  * Prisma transaction içinde kullanılmak üzere tasarlanmıştır.
  */
 
+import type { PaymentMethod, Prisma } from "@prisma/client";
+
 export interface TaksitApplyResult {
   /** Taksitlere uygulanan toplam tutar */
   applied: number;
@@ -27,11 +29,10 @@ export interface TaksitApplyResult {
  * @param tarih     - Ödeme tarihi (default: şimdi)
  */
 export async function applyTaksitIntegration(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tx: any,
+  tx: Prisma.TransactionClient,
   patientId: string,
   amount: number,
-  method: string,
+  method: PaymentMethod,
   posId?: string | null,
   tarih?: Date,
 ): Promise<TaksitApplyResult> {
@@ -115,11 +116,10 @@ export async function applyTaksitIntegration(
  * Plan tamamlandıysa plan durumunu da günceller.
  */
 export async function payTaksit(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  tx: any,
+  tx: Prisma.TransactionClient,
   taksitId: string,
   amount: number,
-  method: string,
+  method: PaymentMethod,
   posId?: string | null,
   tarih?: Date,
 ): Promise<{ updated: boolean; planCompleted: boolean }> {

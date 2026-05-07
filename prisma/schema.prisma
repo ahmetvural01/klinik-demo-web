@@ -636,6 +636,7 @@ model LabOrder {
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
   doctor    User           @relation("LabOrderDoctor", fields: [doctorId], references: [id])
+  invoices  LabOrderInvoice[]
   patient   Patient        @relation(fields: [patientId], references: [id])
   trips     LabTrip[]
 
@@ -657,6 +658,21 @@ model LabTrip {
   labOrder     LabOrder  @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
 
   @@index([labOrderId])
+}
+
+model LabOrderInvoice {
+  id        String   @id @default(cuid())
+  labOrderId String
+  item      String
+  amount    Decimal  @db.Decimal(10, 2)
+  invoiceNo String?
+  issuedAt  DateTime @default(now())
+  note      String?
+  createdAt DateTime @default(now())
+  labOrder  LabOrder @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
+
+  @@index([labOrderId])
+  @@index([issuedAt])
 }
 
 model StockItem {
