@@ -38,7 +38,6 @@ async function cleanupVisibleMarkerText() {
     { table: "TaksitOdeme", column: "note" },
     { table: "Reminder", column: "note" },
     { table: "Expense", column: "description" },
-    { table: "Firma", column: "name" },
     { table: "Firma", column: "notes" },
     { table: "FirmaIslem", column: "urunHizmet" },
     { table: "FirmaIslem", column: "aciklama" },
@@ -61,10 +60,15 @@ async function cleanupVisibleMarkerText() {
   ];
 
   for (const target of targets) {
-    await prisma.$executeRawUnsafe(
-      `UPDATE "${target.table}" SET "${target.column}" = NULLIF(BTRIM(REGEXP_REPLACE(REPLACE("${target.column}", $1, ''), '\\s{2,}', ' ', 'g')), '') WHERE "${target.column}" IS NOT NULL AND "${target.column}" LIKE '%' || $1 || '%'`,
-      MARKER,
-    );
+    try {
+      await prisma.$executeRawUnsafe(
+        `UPDATE "${target.table}" SET "${target.column}" = NULLIF(BTRIM(REGEXP_REPLACE(REPLACE("${target.column}", $1, ''), '\\s{2,}', ' ', 'g')), '') WHERE "${target.column}" IS NOT NULL AND "${target.column}" LIKE '%' || $1 || '%'`,
+        MARKER,
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      console.warn(`[demo-cleanup-skip] ${target.table}.${target.column}: ${detail}`);
+    }
   }
 }
 
@@ -339,10 +343,10 @@ async function main() {
   await upsertExpenseByMarker(expenseCategory.id, `${MARKER}-EXP-1`);
 
   const firma = await prisma.firma.upsert({
-    where: { name: `Demo Tedarikci ${MARKER}` },
+    where: { name: "Demo Tedarikci" },
     update: { isActive: true, phone: "02120000000" },
     create: {
-      name: `Demo Tedarikci ${MARKER}`,
+      name: "Demo Tedarikci",
       phone: "02120000000",
       notes: `${MARKER} Demo firma`,
       isActive: true,

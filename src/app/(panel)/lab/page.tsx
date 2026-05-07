@@ -39,6 +39,7 @@ type Doctor = { id: string; fullName: string; role: string };
 
 const LAB_TYPES = ["Kronkopru", "Zirkon", "Veneer", "Protez", "Braket", "İmplant Üstü", "Beyazlatma", "Diğer"];
 const CUR = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 0 });
+const NEW_LAB_VALUE = "__new_lab__";
 
 function today() {
   return new Date().toISOString().slice(0, 10);
@@ -58,6 +59,7 @@ const emptyOrderForm = {
   patientId: "",
   doctorId: "",
   labName: "",
+  customLabName: "",
   labType: "",
   teeth: "",
   notes: "",
@@ -96,7 +98,9 @@ export default function LabPage() {
   const [orders, setOrders] = useState<LabOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [activeLab, setActiveLab] = useState<string>("all");
 
   const [patients, setPatients] = useState<Patient[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
@@ -113,13 +117,28 @@ export default function LabPage() {
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<"all" | "fresh" | "atLab" | "returned" | "completed">("all");
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     setLoading(true);
-    fetch("/api/lab-orders")
-      .then((r) => r.json())
-      .then((d) => setOrders(Array.isArray(d) ? d : []))
-      .catch(() => {})
-      .finally(() => setLoading(false));
+    setLoadError(null);
+
+    try {
+      const response = await fetch("/api/lab-orders");
+      const payload = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+            ? payload.error
+            : null) || "Laboratuvar verileri alınamadı.",
+        );
+      }
+
+      setOrders(Array.isArray(payload) ? payload : []);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Laboratuvar verileri alınamadı.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -135,7 +154,7 @@ export default function LabPage() {
       .catch(() => {});
   }, [load]);
 
-  const visibleOrders = useMemo(() => {
+  const searchedOrders = useMemo(() => {
     const q = search.trim().toLowerCase();
     return orders
       .filter((o) => o.status !== "IPTAL")
@@ -148,6 +167,39 @@ export default function LabPage() {
         );
       });
   }, [orders, search]);
+
+  const labOverview = useMemo(() => {
+    const map = new Map<string, { name: string; total: number; waiting: number; overdue: number }>();
+
+    for (const order of searchedOrders) {
+      const key = order.labName.trim() || "Laboratuvar belirtilmedi";
+      const pendingTrip = order.trips.find((trip) => !trip.receivedAt);
+      const current = map.get(key) || { name: key, total: 0, waiting: 0, overdue: 0 };
+      current.total += 1;
+      if (pendingTrip) {
+        current.waiting += 1;
+        if (daysSince(pendingTrip.sentAt) >= 4) current.overdue += 1;
+      }
+      map.set(key, current);
+    }
+
+    return Array.from(map.values()).sort((a, b) => {
+      if (b.waiting !== a.waiting) return b.waiting - a.waiting;
+      if (b.total !== a.total) return b.total - a.total;
+      return a.name.localeCompare(b.name, "tr");
+    });
+  }, [searchedOrders]);
+
+  const knownLabs = useMemo(() => labOverview.map((item) => item.name), [labOverview]);
+  const resolvedLabName = useMemo(() => {
+    if (orderForm.labName === NEW_LAB_VALUE) return orderForm.customLabName.trim();
+    return orderForm.labName.trim();
+  }, [orderForm.customLabName, orderForm.labName]);
+
+  const visibleOrders = useMemo(() => {
+    if (activeLab === "all") return searchedOrders;
+    return searchedOrders.filter((order) => order.labName === activeLab);
+  }, [activeLab, searchedOrders]);
 
   const allPendingTrips = useMemo(() => {
     const pending: (LabTrip & { labOrder: LabOrder })[] = [];
@@ -167,6 +219,21 @@ export default function LabPage() {
     const active = visibleOrders.length - done;
     return { active, waiting: allPendingTrips.length, done };
   }, [visibleOrders, allPendingTrips.length]);
+
+  const attentionQueue = useMemo(
+    () =>
+      allPendingTrips
+        .map((trip) => ({
+          ...trip,
+          pendingDays: daysSince(trip.sentAt),
+        }))
+        .sort((a, b) => {
+          if (b.pendingDays !== a.pendingDays) return b.pendingDays - a.pendingDays;
+          return new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime();
+        })
+        .slice(0, 4),
+    [allPendingTrips],
+  );
 
   const workflowBoard = useMemo(() => {
     const fresh: LabOrder[] = [];
@@ -228,7 +295,7 @@ export default function LabPage() {
   };
 
   async function createOrder() {
-    if (!orderForm.patientId || !orderForm.doctorId || !orderForm.labName || !orderForm.labType) return;
+    if (!orderForm.patientId || !orderForm.doctorId || !resolvedLabName || !orderForm.labType) return;
     setSaving(true);
     const res = await fetch("/api/lab-orders", {
       method: "POST",
@@ -236,7 +303,7 @@ export default function LabPage() {
       body: JSON.stringify({
         patientId: orderForm.patientId,
         doctorId: orderForm.doctorId,
-        labName: orderForm.labName,
+        labName: resolvedLabName,
         labType: orderForm.labType,
         teeth: orderForm.teeth || null,
         notes: orderForm.notes || null,
@@ -386,7 +453,13 @@ export default function LabPage() {
             />
           </div>
           <button
-            onClick={() => { setOrderForm(emptyOrderForm); setModal("new"); }}
+            onClick={() => {
+              setOrderForm({
+                ...emptyOrderForm,
+                labName: activeLab !== "all" ? activeLab : knownLabs[0] || "",
+              });
+              setModal("new");
+            }}
             className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 text-[13px] font-medium text-white shadow-sm transition hover:bg-slate-700 active:scale-95"
           >
             <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
@@ -409,6 +482,116 @@ export default function LabPage() {
             <p className={`mt-1 text-2xl font-bold ${s.color}`}>{s.value}</p>
           </div>
         ))}
+      </div>
+
+      <div className="mb-5 grid gap-3 lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Laboratuvarlar</p>
+              <p className="mt-1 text-[13px] text-slate-500">Birden fazla laboratuvarla çalışırken görünümü tek tıkla sadeleştir.</p>
+            </div>
+            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+              {labOverview.length} aktif laboratuvar
+            </span>
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => setActiveLab("all")}
+              className={`rounded-xl border px-3 py-2 text-left transition ${
+                activeLab === "all"
+                  ? "border-slate-900 bg-slate-900 text-white"
+                  : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-slate-100"
+              }`}
+            >
+              <p className="text-[12px] font-semibold">Tüm laboratuvarlar</p>
+              <p className={`mt-1 text-[11px] ${activeLab === "all" ? "text-slate-300" : "text-slate-500"}`}>
+                {searchedOrders.length} iş · {allPendingTrips.length} bekleyen adım
+              </p>
+            </button>
+
+            {labOverview.map((lab) => {
+              const isActive = activeLab === lab.name;
+              return (
+                <button
+                  key={lab.name}
+                  onClick={() => setActiveLab(lab.name)}
+                  className={`min-w-[170px] rounded-xl border px-3 py-2 text-left transition ${
+                    isActive
+                      ? "border-slate-900 bg-slate-900 text-white"
+                      : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="truncate text-[12px] font-semibold">{lab.name}</p>
+                    {lab.overdue > 0 && (
+                      <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${isActive ? "bg-white/15 text-white" : "bg-red-50 text-red-600"}`}>
+                        {lab.overdue} geciken
+                      </span>
+                    )}
+                  </div>
+                  <p className={`mt-1 text-[11px] ${isActive ? "text-slate-300" : "text-slate-500"}`}>
+                    {lab.total} iş · {lab.waiting} labda
+                  </p>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">Öncelikli Takip</p>
+              <p className="mt-1 text-[13px] text-slate-500">Bugün aksiyon gerektiren işleri en üste taşı.</p>
+            </div>
+            {attentionQueue.length > 0 && (
+              <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
+                {attentionQueue.length} kritik adım
+              </span>
+            )}
+          </div>
+
+          {attentionQueue.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-5 text-sm text-slate-400">
+              Bekleyen kritik adım yok.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {attentionQueue.map((trip) => (
+                <button
+                  key={trip.id}
+                  onClick={() => {
+                    setActiveFilter("atLab");
+                    setExpandedOrderId(trip.labOrder.id);
+                    setActiveLab(trip.labOrder.labName);
+                  }}
+                  className="flex w-full items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition hover:border-slate-300 hover:bg-slate-100"
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-[12px] font-semibold text-slate-800">{trip.labOrder.patient.fullName}</p>
+                    <p className="mt-0.5 truncate text-[11px] text-slate-500">
+                      {trip.labOrder.labName} · #{trip.order} · {trip.description}
+                    </p>
+                  </div>
+                  <div className="shrink-0 text-right">
+                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      trip.pendingDays >= 7
+                        ? "bg-red-50 text-red-600"
+                        : trip.pendingDays >= 4
+                        ? "bg-orange-50 text-orange-600"
+                        : "bg-amber-50 text-amber-700"
+                    }`}>
+                      {trip.pendingDays === 0 ? "bugün" : `${trip.pendingDays} gün`}
+                    </span>
+                    <p className="mt-1 text-[10px] text-slate-400">{fmt(trip.sentAt)}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
       </div>
 
       {/* ── Filter Tabs ── */}
@@ -447,6 +630,26 @@ export default function LabPage() {
               <path d="M21 12a9 9 0 11-6.219-8.56"/>
             </svg>
             Yükleniyor…
+          </div>
+        ) : loadError ? (
+          <div className="flex min-h-40 flex-col items-center justify-center gap-3 px-6 py-8 text-center">
+            <div className="rounded-full bg-red-50 p-2 text-red-600">
+              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                <circle cx="12" cy="12" r="10"/>
+                <line x1="12" y1="8" x2="12" y2="12"/>
+                <line x1="12" y1="16" x2="12.01" y2="16"/>
+              </svg>
+            </div>
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Laboratuvar verileri yüklenemedi</p>
+              <p className="mt-1 text-sm text-slate-500">{loadError}</p>
+            </div>
+            <button
+              onClick={() => void load()}
+              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              Tekrar dene
+            </button>
           </div>
         ) : filteredOrders.length === 0 ? (
           <div className="flex h-40 flex-col items-center justify-center gap-2 text-sm text-slate-400">
@@ -503,7 +706,33 @@ export default function LabPage() {
               </select>
             </Field>
             <Field label="Laboratuvar Adı *">
-              <input value={orderForm.labName} onChange={(e) => setOrderForm((p) => ({ ...p, labName: e.target.value }))} className="field" />
+              <select
+                value={orderForm.labName}
+                onChange={(e) =>
+                  setOrderForm((p) => ({
+                    ...p,
+                    labName: e.target.value,
+                    customLabName: e.target.value === NEW_LAB_VALUE ? p.customLabName : "",
+                  }))
+                }
+                className="field"
+              >
+                <option value="">Laboratuvar seçiniz</option>
+                {knownLabs.map((lab) => <option key={lab} value={lab}>{lab}</option>)}
+                <option value={NEW_LAB_VALUE}>+ Yeni laboratuvar ekle</option>
+              </select>
+              {orderForm.labName === NEW_LAB_VALUE && (
+                <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-2.5">
+                  <p className="mb-2 text-[11px] font-medium text-slate-500">Listede yoksa yeni laboratuvar adını gir.</p>
+                  <input
+                    value={orderForm.customLabName}
+                    onChange={(e) => setOrderForm((p) => ({ ...p, customLabName: e.target.value }))}
+                    className="field"
+                    placeholder="Örn. Özel Teknik Laboratuvar"
+                    autoFocus
+                  />
+                </div>
+              )}
             </Field>
             <Field label="İş Türü *">
               <select value={orderForm.labType} onChange={(e) => setOrderForm((p) => ({ ...p, labType: e.target.value }))} className="field">
@@ -520,7 +749,7 @@ export default function LabPage() {
               </Field>
             </div>
           </div>
-          <ModalActions onClose={closeModal} onSave={createOrder} saving={saving} saveText="Oluştur" disabled={!orderForm.patientId || !orderForm.doctorId || !orderForm.labName || !orderForm.labType} />
+          <ModalActions onClose={closeModal} onSave={createOrder} saving={saving} saveText="Oluştur" disabled={!orderForm.patientId || !orderForm.doctorId || !resolvedLabName || !orderForm.labType} />
         </Modal>
       )}
 
