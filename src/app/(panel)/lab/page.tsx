@@ -78,6 +78,15 @@ const emptyInvoiceForm = {
   note: "",
 };
 
+const emptyEditTripForm = {
+  description: "",
+  sentAt: today(),
+  sentNote: "",
+  hasReceived: false,
+  receivedAt: today(),
+  receivedNote: "",
+};
+
 export default function LabPage() {
   const [orders, setOrders] = useState<LabOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -87,7 +96,7 @@ export default function LabPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
 
-  const [modal, setModal] = useState<"new" | "trip" | "receive" | "invoice" | null>(null);
+  const [modal, setModal] = useState<"new" | "trip" | "receive" | "invoice" | "editTrip" | null>(null);
   const [activeOrder, setActiveOrder] = useState<LabOrder | null>(null);
   const [activeTrip, setActiveTrip] = useState<(LabTrip & { labOrder: LabOrder }) | null>(null);
 
@@ -95,6 +104,8 @@ export default function LabPage() {
   const [tripForm, setTripForm] = useState(emptyTripForm);
   const [receiveForm, setReceiveForm] = useState(emptyReceiveForm);
   const [invoiceForm, setInvoiceForm] = useState(emptyInvoiceForm);
+  const [editTripForm, setEditTripForm] = useState(emptyEditTripForm);
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -144,10 +155,57 @@ export default function LabPage() {
   }, [visibleOrders]);
 
   const stats = useMemo(() => {
-    const active = orders.filter((o) => o.status !== "HASTAYA_TAKILDI" && o.status !== "IPTAL").length;
-    const done = orders.filter((o) => o.status === "HASTAYA_TAKILDI").length;
+    const done = visibleOrders.filter(
+      (order) => order.status === "HASTAYA_TAKILDI" && !order.trips.some((trip) => !trip.receivedAt),
+    ).length;
+    const active = visibleOrders.length - done;
     return { active, waiting: allPendingTrips.length, done };
-  }, [orders, allPendingTrips.length]);
+  }, [visibleOrders, allPendingTrips.length]);
+
+  const workflowBoard = useMemo(() => {
+    const fresh: LabOrder[] = [];
+    const atLab: LabOrder[] = [];
+    const returned: LabOrder[] = [];
+    const completed: LabOrder[] = [];
+
+    const sortValue = (order: LabOrder) => {
+      const dates = [
+        ...order.trips.map((trip) => trip.receivedAt || trip.sentAt),
+        ...order.invoices.map((invoice) => invoice.issuedAt),
+      ].filter(Boolean) as string[];
+
+      if (dates.length === 0) return 0;
+      return Math.max(...dates.map((value) => new Date(value).getTime()));
+    };
+
+    for (const order of visibleOrders) {
+      const hasPendingTrip = order.trips.some((trip) => !trip.receivedAt);
+
+      if (order.trips.length === 0) {
+        fresh.push(order);
+      } else if (hasPendingTrip) {
+        atLab.push(order);
+      } else if (order.status === "HASTAYA_TAKILDI") {
+        completed.push(order);
+      } else {
+        returned.push(order);
+      }
+    }
+
+    const sorter = (a: LabOrder, b: LabOrder) => sortValue(b) - sortValue(a);
+
+    return {
+      fresh: fresh.sort(sorter),
+      atLab: atLab.sort(sorter),
+      returned: returned.sort(sorter),
+      completed: completed.sort(sorter),
+    };
+  }, [visibleOrders]);
+
+  const orderedVisibleOrders = useMemo(
+    () => [...workflowBoard.fresh, ...workflowBoard.atLab, ...workflowBoard.returned, ...workflowBoard.completed],
+    [workflowBoard],
+  );
 
   const closeModal = () => {
     setModal(null);
@@ -237,6 +295,28 @@ export default function LabPage() {
     load();
   }
 
+  async function updateTrip() {
+    if (!activeTrip || !editTripForm.description) return;
+
+    setSaving(true);
+    await fetch(`/api/lab-orders/${activeTrip.labOrder.id}/trips/${activeTrip.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        description: editTripForm.description,
+        sentAt: editTripForm.sentAt,
+        sentNote: editTripForm.sentNote || null,
+        receivedAt: editTripForm.hasReceived ? editTripForm.receivedAt : null,
+        receivedNote: editTripForm.hasReceived ? editTripForm.receivedNote || null : null,
+      }),
+    });
+    setSaving(false);
+
+    setEditTripForm({ ...emptyEditTripForm, sentAt: today(), receivedAt: today() });
+    closeModal();
+    load();
+  }
+
   async function markCompleted(orderId: string) {
     await fetch(`/api/lab-orders/${orderId}`, {
       method: "PATCH",
@@ -247,183 +327,79 @@ export default function LabPage() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-4 pb-8">
-      <header className="rounded-xl border border-slate-200 bg-white p-4">
+    <div className="mx-auto max-w-4xl space-y-4 pb-8">
+      <header className="rounded-2xl border border-slate-200 bg-white p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-xl font-semibold text-slate-900">Laboratuvar Süreci</h1>
-            <p className="mt-1 text-xs text-slate-500">Gidiş notu al, geldiğinde işaretle, prova-randevu akışını kaçırma.</p>
+            <h1 className="text-lg font-semibold text-slate-900">Laboratuvar</h1>
+            <p className="mt-1 text-sm text-slate-500">Sadece gerekli kayıtlar, tek listede.</p>
           </div>
           <button
             onClick={() => {
               setOrderForm(emptyOrderForm);
               setModal("new");
             }}
-            className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-700"
+            className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-700"
           >
             + Yeni İş
           </button>
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          <StatBox label="Aktif İş" value={stats.active} tone="blue" />
-          <StatBox label="Labda Bekleyen" value={stats.waiting} tone="amber" />
-          <StatBox label="Tamamlanan" value={stats.done} tone="emerald" />
+        <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Hasta ara"
+            className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 outline-none ring-slate-200 transition focus:ring-2"
+          />
+          <p className="text-xs text-slate-500">{stats.active} aktif · {stats.done} tamamlanan</p>
         </div>
       </header>
 
-      <section className="rounded-xl border border-slate-200 bg-white p-3">
-        <input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Hasta, lab veya iş türü ara"
-          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 outline-none ring-slate-200 transition focus:ring-2"
-        />
-      </section>
-
-      {allPendingTrips.length > 0 && (
-        <section className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-          <h2 className="text-xs font-semibold text-amber-700">Bugün takip edilecek gelişler</h2>
-          <div className="mt-2 space-y-2">
-            {allPendingTrips.slice(0, 6).map((trip) => (
-              <div key={trip.id} className="flex items-center justify-between rounded-lg border border-amber-100 bg-white px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium text-slate-800">{trip.labOrder.patient.fullName}</p>
-                  <p className="text-xs text-slate-500">{trip.description} · {fmt(trip.sentAt)}</p>
-                </div>
-                <button
-                  onClick={() => {
-                    setActiveTrip(trip);
-                    setReceiveForm({ ...emptyReceiveForm, receivedAt: today() });
-                    setModal("receive");
-                  }}
-                  className="rounded-md border border-emerald-300 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
-                >
-                  Geldi
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section className="space-y-2">
+      <main className="space-y-3">
         {loading ? (
-          <div className="rounded-xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-400">Yükleniyor...</div>
-        ) : visibleOrders.length === 0 ? (
-          <div className="rounded-xl border border-slate-200 bg-white p-6 text-center text-sm text-slate-400">Kayıt bulunamadı.</div>
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-400">Yükleniyor...</div>
+        ) : orderedVisibleOrders.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-400">Kayıt bulunamadı.</div>
         ) : (
-          visibleOrders.map((order) => {
-            const pending = order.trips.filter((t) => !t.receivedAt);
-            const completedSteps = order.trips.filter((t) => !!t.receivedAt).length;
-            const totalInvoice = order.invoices.reduce((sum, i) => sum + Number(i.amount || 0), 0);
-            const isDone = order.status === "HASTAYA_TAKILDI";
-
-            return (
-              <article key={order.id} className="rounded-xl border border-slate-200 bg-white p-3">
-                <div className="flex flex-wrap items-start justify-between gap-2">
-                  <div>
-                    <h3 className="text-sm font-semibold text-slate-900">{order.patient.fullName}</h3>
-                    <p className="text-xs text-slate-500">{order.labName} · {order.labType} · {order.doctor.fullName}</p>
-                  </div>
-                  <div className="flex flex-wrap gap-1">
-                    {order.teeth && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">Diş {order.teeth}</span>}
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">Aşama {completedSteps}/{order.trips.length || 0}</span>
-                    {totalInvoice > 0 && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] text-blue-700">{CUR.format(totalInvoice)}</span>}
-                    {isDone && <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">Tamamlandı</span>}
-                  </div>
-                </div>
-
-                <div className="mt-3 grid gap-3 md:grid-cols-2">
-                  <div className="rounded-lg border border-slate-200 p-2.5">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Gidiş - Geliş</p>
-                    <div className="mt-2 space-y-2">
-                      {order.trips.length === 0 ? (
-                        <p className="text-xs text-slate-400">Henüz gidiş kaydı yok.</p>
-                      ) : (
-                        order.trips.map((trip) => (
-                          <div key={trip.id} className="rounded-md border border-slate-100 p-2">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-xs font-medium text-slate-700">#{trip.order} · {trip.description}</p>
-                              {trip.receivedAt ? (
-                                <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700">Geldi - Prova/Randevu</span>
-                              ) : (
-                                <button
-                                  onClick={() => {
-                                    setActiveTrip({ ...trip, labOrder: order });
-                                    setReceiveForm({ ...emptyReceiveForm, receivedAt: today() });
-                                    setModal("receive");
-                                  }}
-                                  className="rounded-md border border-emerald-300 px-2 py-0.5 text-[10px] font-medium text-emerald-700 hover:bg-emerald-50"
-                                >
-                                  Geldi
-                                </button>
-                              )}
-                            </div>
-                            <p className="mt-1 text-[11px] text-slate-500">Gidiş: {fmt(trip.sentAt)}</p>
-                            {trip.sentNote && <p className="mt-1 text-[11px] text-slate-500">Not: {trip.sentNote}</p>}
-                            {trip.receivedNote && <p className="mt-1 text-[11px] text-amber-700">Geliş notu: {trip.receivedNote}</p>}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border border-slate-200 p-2.5">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Fatura Kalemleri</p>
-                    <div className="mt-2 space-y-2">
-                      {order.invoices.length === 0 ? (
-                        <p className="text-xs text-slate-400">Henüz fatura girilmedi.</p>
-                      ) : (
-                        order.invoices.map((inv) => (
-                          <div key={inv.id} className="rounded-md border border-slate-100 p-2">
-                            <p className="text-xs font-medium text-slate-700">{inv.item}</p>
-                            <p className="text-[11px] text-slate-500">{CUR.format(inv.amount)} · {fmt(inv.issuedAt)} {inv.invoiceNo ? `· ${inv.invoiceNo}` : ""}</p>
-                            {inv.note && <p className="mt-1 text-[11px] text-slate-500">{inv.note}</p>}
-                          </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {!isDone && (
-                    <button
-                      onClick={() => {
-                        setActiveOrder(order);
-                        setTripForm({ ...emptyTripForm, sentAt: today() });
-                        setModal("trip");
-                      }}
-                      className="rounded-md border border-slate-300 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50"
-                    >
-                      + Gidiş Ekle
-                    </button>
-                  )}
-                  <button
-                    onClick={() => {
-                      setActiveOrder(order);
-                      setInvoiceForm({ ...emptyInvoiceForm, item: order.labType, issuedAt: today() });
-                      setModal("invoice");
-                    }}
-                    className="rounded-md border border-slate-300 px-2.5 py-1 text-xs text-slate-700 hover:bg-slate-50"
-                  >
-                    + Fatura Kalemi
-                  </button>
-                  {!isDone && (
-                    <button
-                      onClick={() => markCompleted(order.id)}
-                      className="rounded-md border border-emerald-300 px-2.5 py-1 text-xs text-emerald-700 hover:bg-emerald-50"
-                    >
-                      Simante edildi
-                    </button>
-                  )}
-                </div>
-              </article>
-            );
-          })
+          orderedVisibleOrders.map((order) => (
+            <SimpleOrderCard
+              key={order.id}
+              order={order}
+              expanded={expandedOrderId === order.id}
+              onToggleExpand={() => setExpandedOrderId((current) => (current === order.id ? null : order.id))}
+              onAddTrip={(selectedOrder) => {
+                setActiveOrder(selectedOrder);
+                setTripForm({ ...emptyTripForm, sentAt: today() });
+                setModal("trip");
+              }}
+              onAddInvoice={(selectedOrder) => {
+                setActiveOrder(selectedOrder);
+                setInvoiceForm({ ...emptyInvoiceForm, item: selectedOrder.labType, issuedAt: today() });
+                setModal("invoice");
+              }}
+              onReceive={(selectedOrder, trip) => {
+                setActiveTrip({ ...trip, labOrder: selectedOrder });
+                setReceiveForm({ ...emptyReceiveForm, receivedAt: today() });
+                setModal("receive");
+              }}
+              onEditTrip={(selectedOrder, trip) => {
+                setActiveTrip({ ...trip, labOrder: selectedOrder });
+                setEditTripForm({
+                  description: trip.description,
+                  sentAt: trip.sentAt ? new Date(trip.sentAt).toISOString().slice(0, 10) : today(),
+                  sentNote: trip.sentNote || "",
+                  hasReceived: Boolean(trip.receivedAt),
+                  receivedAt: trip.receivedAt ? new Date(trip.receivedAt).toISOString().slice(0, 10) : today(),
+                  receivedNote: trip.receivedNote || "",
+                });
+                setModal("editTrip");
+              }}
+              onComplete={markCompleted}
+            />
+          ))
         )}
-      </section>
+      </main>
 
       {modal === "new" && (
         <Modal title="Yeni Laboratuvar İşi" onClose={closeModal}>
@@ -624,6 +600,74 @@ export default function LabPage() {
         </Modal>
       )}
 
+      {modal === "editTrip" && activeTrip && (
+        <Modal title="Süreç Adımını Düzenle" subtitle={`${activeTrip.labOrder.patient.fullName} · #${activeTrip.order}`} onClose={closeModal}>
+          <div className="space-y-3">
+            <Field label="Açıklama *">
+              <input
+                value={editTripForm.description}
+                onChange={(e) => setEditTripForm((p) => ({ ...p, description: e.target.value }))}
+                className="field"
+              />
+            </Field>
+
+            <Field label="Gidiş Tarihi *">
+              <input
+                type="date"
+                value={editTripForm.sentAt}
+                onChange={(e) => setEditTripForm((p) => ({ ...p, sentAt: e.target.value }))}
+                className="field"
+              />
+            </Field>
+
+            <Field label="Gidiş Notu">
+              <input
+                value={editTripForm.sentNote}
+                onChange={(e) => setEditTripForm((p) => ({ ...p, sentNote: e.target.value }))}
+                className="field"
+              />
+            </Field>
+
+            <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs text-slate-700">
+              <input
+                type="checkbox"
+                checked={editTripForm.hasReceived}
+                onChange={(e) => setEditTripForm((p) => ({ ...p, hasReceived: e.target.checked }))}
+              />
+              Bu adım geldi olarak işaretli
+            </label>
+
+            {editTripForm.hasReceived && (
+              <>
+                <Field label="Geliş Tarihi">
+                  <input
+                    type="date"
+                    value={editTripForm.receivedAt}
+                    onChange={(e) => setEditTripForm((p) => ({ ...p, receivedAt: e.target.value }))}
+                    className="field"
+                  />
+                </Field>
+
+                <Field label="Geliş Notu">
+                  <input
+                    value={editTripForm.receivedNote}
+                    onChange={(e) => setEditTripForm((p) => ({ ...p, receivedNote: e.target.value }))}
+                    className="field"
+                  />
+                </Field>
+              </>
+            )}
+          </div>
+          <ModalActions
+            onClose={closeModal}
+            onSave={updateTrip}
+            saving={saving}
+            saveText="Adımı Güncelle"
+            disabled={!editTripForm.description}
+          />
+        </Modal>
+      )}
+
       <style jsx global>{`
         .field {
           width: 100%;
@@ -656,6 +700,204 @@ function StatBox({ label, value, tone }: { label: string; value: number; tone: "
       <p className="text-[11px] font-medium uppercase tracking-wide">{label}</p>
       <p className="mt-0.5 text-lg font-semibold">{value}</p>
     </div>
+  );
+}
+
+function SimpleOrderCard({
+  order,
+  expanded,
+  onToggleExpand,
+  onAddTrip,
+  onAddInvoice,
+  onReceive,
+  onEditTrip,
+  onComplete,
+}: {
+  order: LabOrder;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onAddTrip: (order: LabOrder) => void;
+  onAddInvoice: (order: LabOrder) => void;
+  onReceive: (order: LabOrder, trip: LabTrip) => void;
+  onEditTrip: (order: LabOrder, trip: LabTrip) => void;
+  onComplete: (orderId: string) => void;
+}) {
+  const firstTrip = [...order.trips].sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime())[0];
+  const pendingTrip = [...order.trips].reverse().find((trip) => !trip.receivedAt);
+  const latestTrip = [...order.trips].reverse()[0];
+  const currentTask = pendingTrip?.description || order.labType;
+  const firstDate = firstTrip?.sentAt;
+  const isDone = order.status === "HASTAYA_TAKILDI" && !pendingTrip;
+  const totalInvoices = order.invoices.length;
+  const totalAmount = order.invoices.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+  const statusLabel = isDone ? "Tamamlandı" : pendingTrip ? "Labda" : firstTrip ? "Klinikte" : "Yeni";
+
+  return (
+    <article className={`rounded-2xl border px-4 py-3 ${isDone ? "border-slate-200 bg-slate-50" : "border-slate-200 bg-white"}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex items-center gap-2">
+            <h2 className="truncate text-base font-semibold text-slate-900">{order.patient.fullName}</h2>
+            <span className={`rounded-full px-2 py-0.5 text-[11px] ${isDone ? "bg-slate-200 text-slate-600" : pendingTrip ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{statusLabel}</span>
+          </div>
+          <p className="text-sm text-slate-700">{currentTask}</p>
+          <p className="text-sm text-slate-500">İlk işlem tarihi: {firstDate ? fmt(firstDate) : "Henüz girilmedi"}</p>
+          <p className="text-xs text-slate-400">{order.labName} · {order.trips.length} süreç adımı · {totalInvoices} fatura</p>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {!isDone && (
+            <button
+              onClick={() => onAddTrip(order)}
+              className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+            >
+              Gidiş Ekle
+            </button>
+          )}
+
+          {!isDone && pendingTrip && (
+            <button
+              onClick={() => onReceive(order, pendingTrip)}
+              className="rounded-lg border border-emerald-300 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-50"
+            >
+              Geldi
+            </button>
+          )}
+
+          <button
+            onClick={() => onAddInvoice(order)}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Fatura
+          </button>
+
+          {!isDone && (
+            <button
+              onClick={() => onComplete(order.id)}
+              disabled={Boolean(pendingTrip)}
+              className="rounded-lg border border-slate-900 px-3 py-1.5 text-xs font-medium text-slate-900 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Tamamla
+            </button>
+          )}
+
+          <button
+            onClick={onToggleExpand}
+            className="rounded-lg border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+          >
+            {expanded ? "Süreci Gizle" : "Süreci Gör"}
+          </button>
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="mt-4 grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-slate-700">Süreç Akışı</p>
+              {latestTrip && <p className="text-[11px] text-slate-400">Son işlem: {fmt(latestTrip.receivedAt || latestTrip.sentAt)}</p>}
+            </div>
+
+            {order.trips.length === 0 ? (
+              <div className="rounded-xl bg-white px-3 py-4 text-sm text-slate-400">Henüz süreç adımı eklenmedi.</div>
+            ) : (
+              <div className="space-y-2">
+                {order.trips.map((trip) => {
+                  const waiting = !trip.receivedAt;
+
+                  return (
+                    <div key={trip.id} className="rounded-xl bg-white px-3 py-3">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-slate-800">#{trip.order} · {trip.description}</p>
+                          <p className="mt-1 text-xs text-slate-500">Gidiş: {fmt(trip.sentAt)}{trip.receivedAt ? ` · Geliş: ${fmt(trip.receivedAt)}` : " · Bekleniyor"}</p>
+                          {trip.sentNote && <p className="mt-1 text-xs text-slate-500">Gidiş notu: {trip.sentNote}</p>}
+                          {trip.receivedNote && <p className="mt-1 text-xs text-slate-500">Geliş notu: {trip.receivedNote}</p>}
+                        </div>
+
+                        {waiting ? (
+                          <div className="flex shrink-0 items-center gap-1">
+                            <button
+                              onClick={() => onReceive(order, trip)}
+                              className="rounded-lg border border-emerald-300 px-2.5 py-1 text-[11px] font-medium text-emerald-700 hover:bg-emerald-50"
+                            >
+                              Geldi
+                            </button>
+                            <button
+                              onClick={() => onEditTrip(order, trip)}
+                              className="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                            >
+                              Düzenle
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex shrink-0 items-center gap-1">
+                            <span className="rounded-full bg-emerald-100 px-2 py-1 text-[11px] text-emerald-700">Tamam</span>
+                            <button
+                              onClick={() => onEditTrip(order, trip)}
+                              className="rounded-lg border border-slate-300 px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+                            >
+                              Düzenle
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-3">
+            <div className="rounded-xl bg-white px-3 py-3">
+              <p className="text-xs font-semibold text-slate-700">Özet</p>
+              <div className="mt-2 space-y-2 text-sm text-slate-600">
+                <div className="flex items-center justify-between">
+                  <span>Lab</span>
+                  <span className="font-medium text-slate-800">{order.labName}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>İş türü</span>
+                  <span className="font-medium text-slate-800">{order.labType}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Toplam gidiş</span>
+                  <span className="font-medium text-slate-800">{order.trips.length}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Bekleyen adım</span>
+                  <span className="font-medium text-slate-800">{pendingTrip ? `#${pendingTrip.order}` : "Yok"}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Fatura adedi</span>
+                  <span className="font-medium text-slate-800">{totalInvoices}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Fatura toplamı</span>
+                  <span className="font-medium text-slate-800">{totalAmount ? CUR.format(totalAmount) : "—"}</span>
+                </div>
+              </div>
+            </div>
+
+            {order.invoices.length > 0 && (
+              <div className="rounded-xl bg-white px-3 py-3">
+                <p className="text-xs font-semibold text-slate-700">Fatura Geçmişi</p>
+                <div className="mt-2 space-y-2">
+                  {order.invoices.map((invoice) => (
+                    <div key={invoice.id} className="border-b border-slate-100 pb-2 last:border-b-0 last:pb-0">
+                      <p className="text-sm font-medium text-slate-800">{invoice.item}</p>
+                      <p className="mt-1 text-xs text-slate-500">{fmt(invoice.issuedAt)}{invoice.invoiceNo ? ` · ${invoice.invoiceNo}` : ""}</p>
+                      <p className="mt-1 text-xs text-slate-700">{CUR.format(invoice.amount)}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </article>
   );
 }
 

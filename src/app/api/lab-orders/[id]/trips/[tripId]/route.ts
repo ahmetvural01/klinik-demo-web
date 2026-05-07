@@ -10,14 +10,33 @@ export async function PATCH(
   if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
 
   const body = await req.json();
-  const { receivedAt, receivedNote } = body;
+
+  const existing = await (prisma as any).labTrip.findUnique({
+    where: { id: params.tripId },
+    select: { id: true, labOrderId: true },
+  });
+
+  if (!existing || existing.labOrderId !== params.id) {
+    return NextResponse.json({ error: "Adım bulunamadı" }, { status: 404 });
+  }
+
+  const data: Record<string, any> = {};
+
+  if ("description" in body) data.description = body.description;
+  if ("sentAt" in body) data.sentAt = body.sentAt ? new Date(body.sentAt) : new Date();
+  if ("sentNote" in body) data.sentNote = body.sentNote || null;
+  if ("receivedAt" in body) data.receivedAt = body.receivedAt ? new Date(body.receivedAt) : null;
+  if ("receivedNote" in body) data.receivedNote = body.receivedNote || null;
+
+  // Backward compatibility: legacy receive action sends only receivedAt/receivedNote.
+  if (!Object.keys(data).length) {
+    data.receivedAt = new Date();
+    data.receivedNote = null;
+  }
 
   const trip = await (prisma as any).labTrip.update({
     where: { id: params.tripId },
-    data: {
-      receivedAt:   receivedAt   ? new Date(receivedAt) : new Date(),
-      receivedNote: receivedNote || null,
-    },
+    data,
   });
 
   return NextResponse.json(trip);
