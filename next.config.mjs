@@ -1,4 +1,5 @@
 const nextConfig = {
+  distDir: ".next-dev",
   experimental: {
     serverActions: {
       bodySizeLimit: "2mb",

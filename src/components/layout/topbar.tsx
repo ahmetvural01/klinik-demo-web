@@ -62,6 +62,9 @@ type TopbarQuickAction = { href: string; label: string; className: string };
 type TopbarPageConfig = {
   showDateTime: boolean;
   showAlerts: boolean;
+  showPageTitle: boolean;
+  showSearch: boolean;
+  compact: boolean;
   searchPlaceholder: string;
   quickActions: TopbarQuickAction[];
 };
@@ -70,6 +73,9 @@ function getTopbarConfig(pathname: string): TopbarPageConfig {
   const base: TopbarPageConfig = {
     showDateTime: true,
     showAlerts: true,
+    showPageTitle: true,
+    showSearch: true,
+    compact: false,
     searchPlaceholder: "Isim, TC veya telefon ile hasta ara...",
     quickActions: [
       { href: "/randevu", label: "+ Randevu", className: "rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100" },
@@ -117,6 +123,9 @@ function getTopbarConfig(pathname: string): TopbarPageConfig {
   if (pathname.startsWith("/lab") || pathname.startsWith("/stok") || pathname.startsWith("/muhasebe")) {
     return {
       ...base,
+      showPageTitle: pathname.startsWith("/lab") ? false : base.showPageTitle,
+      showSearch: pathname.startsWith("/lab") ? true : base.showSearch,
+      compact: pathname.startsWith("/lab") ? true : base.compact,
       quickActions: [
         { href: "/gorevler", label: "Gorev Merkezi", className: "rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100" },
       ],
@@ -349,13 +358,13 @@ export function Topbar({ user }: Props) {
   const initials = displayName.split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase();
 
   return (
-    <header className="flex h-14 items-center justify-between gap-4 border-b border-slate-200 bg-white px-5 shadow-sm">
+    <header className={`flex items-center justify-between border-b border-slate-200 bg-white shadow-sm ${pageConfig.compact ? "h-11 gap-3 px-4" : "h-14 gap-4 px-5"}`}>
       {/* Sol: Sayfa başlığı veya arama */}
-      <div className="flex flex-1 items-center gap-4">
-        {pageTitle && (
+      <div className={`flex flex-1 items-center ${pageConfig.compact ? "gap-2" : "gap-4"}`}>
+        {pageConfig.showPageTitle && pageTitle && (
           <span className="hidden text-sm font-semibold text-slate-700 md:block">{pageTitle}</span>
         )}
-        <div className="relative flex max-w-sm flex-1">
+        {pageConfig.showSearch && <div className="relative flex max-w-sm flex-1">
           <form onSubmit={search} className="w-full">
             <div ref={searchRef} className="relative flex items-center gap-2 rounded-lg border-2 border-blue-200 bg-blue-50 px-3 py-1.5 shadow-sm">
               <svg className="h-4 w-4 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -426,11 +435,11 @@ export function Topbar({ user }: Props) {
               )}
             </div>
           </form>
-        </div>
+        </div>}
       </div>
 
       {/* Sağ taraf */}
-      <div className="flex items-center gap-3">
+      <div className={`flex items-center ${pageConfig.compact ? "gap-2" : "gap-3"}`}>
         {/* Hızlı Erişim */}
         {pageConfig.quickActions.length > 0 && (
           <div className="hidden items-center gap-2 md:flex">

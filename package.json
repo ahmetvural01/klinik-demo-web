@@ -4,6 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "dev:3001": "next dev -p 3001",
+    "dev:stable": "node scripts/dev-stable.mjs",
     "build": "next build",
     "build:clean": "node scripts/clean-next.mjs && next build",
     "start": "next start",
@@ -20,7 +22,8 @@
     "worker:sms": "tsx scripts/sms-worker.ts",
     "verify:redis:realtime": "tsx scripts/verify-redis-realtime.ts",
     "test:integration": "tsx scripts/integration-basic.ts",
-    "preflight:prod": "tsx scripts/preflight-prod.ts"
+    "preflight:prod": "tsx scripts/preflight-prod.ts",
+    "backup:db": "node scripts/backup-postgres.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

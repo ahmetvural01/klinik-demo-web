@@ -1,5 +1,6 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type LabInvoice = {
@@ -231,12 +232,18 @@ function normalizeWorkflowText(value: string) {
     .replace(/glaze/g, "glazeli bitim")
     .replace(/zirkon\s+alt\s*yapi/g, "zirkonyum alt yapi")
     .replace(/zirkon\s+altyapi/g, "zirkonyum alt yapi")
+    .replace(/(acik|kisisel)\s+kasik\s+ile\s+olcu/g, "olcu")
+    .replace(/(acik|kisisel)\s+kasik\s+olcu/g, "olcu")
     .replace(/\s+/g, " ")
     .trim();
 }
 
 function isSameWorkflowValue(left: string, right: string) {
   return normalizeWorkflowText(left) === normalizeWorkflowText(right);
+}
+
+function isSpoonRequestItem(value: string) {
+  return SPOON_REQUEST_OPTIONS.some((item) => isSameWorkflowValue(item, value));
 }
 
 function getNextTemplateStepIndex(labType: string, trips: { description: string }[]) {
@@ -248,6 +255,8 @@ function getNextTemplateStepIndex(labType: string, trips: { description: string 
     if (cursor >= template.length) break;
 
     const { sentItem, requestedItem } = parseDesc(trip.description);
+    if (isSpoonRequestItem(requestedItem || "")) continue;
+
     const expected = template[cursor];
     const isMatch =
       isSameWorkflowValue(sentItem, expected.send) &&
@@ -256,8 +265,6 @@ function getNextTemplateStepIndex(labType: string, trips: { description: string 
     if (isMatch) cursor += 1;
   }
 
-  // Legacy/serbest metin kayıtlarda tamamen eşleşme yoksa eski davranışa yakın kal.
-  if (cursor === 0 && trips.length > 0) return Math.min(trips.length, template.length);
   return cursor;
 }
 
@@ -314,6 +321,52 @@ function daysSince(iso?: string) {
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
 }
 
+function isRptOrder(order: Pick<LabOrder, "notes">) {
+  return /(^|\s|\[)RPT(\]|\s|$)/i.test(order.notes || "");
+}
+
+function getCurrentCycleTrips(trips: LabTrip[]) {
+  const sorted = [...trips].sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime());
+  let startIndex = 0;
+
+  for (let i = 0; i < sorted.length; i += 1) {
+    if ((sorted[i].sentNote || "").includes("RPT_RESET_START")) {
+      startIndex = i;
+    }
+  }
+
+  return sorted.slice(startIndex);
+}
+
+function getOrderSummary(order: LabOrder) {
+  const sortedTrips = getCurrentCycleTrips(order.trips);
+  const pendingTrip = sortedTrips.slice().reverse().find((trip) => !trip.receivedAt);
+  const doneCount = sortedTrips.filter((trip) => trip.receivedAt).length;
+  const isDone = order.status === "HASTAYA_TAKILDI" && !pendingTrip;
+  const firstTrip = sortedTrips[0];
+  const lastTrip = sortedTrips[sortedTrips.length - 1];
+  const pendingDays = pendingTrip ? daysSince(pendingTrip.sentAt) : 0;
+  const totalAmount = order.invoices.reduce((sum, inv) => sum + Number(inv.amount || 0), 0);
+
+  const template = WORKFLOW_TEMPLATES[order.labType] ?? [];
+  const stepIndex = getNextTemplateStepIndex(order.labType, sortedTrips);
+  const nextStep = template[stepIndex] ?? null;
+  const totalCount = Math.max(template.length, sortedTrips.length);
+
+  return {
+    sortedTrips,
+    pendingTrip,
+    doneCount,
+    totalCount,
+    isDone,
+    firstTrip,
+    lastTrip,
+    pendingDays,
+    totalAmount,
+    nextStep,
+  };
+}
+
 const emptyOrderForm = {
   patientId: "",
   doctorId: "",
@@ -362,6 +415,11 @@ const emptyEditTripForm = {
 };
 
 export default function LabPage() {
+  const searchParams = useSearchParams();
+  const autoNewFromPatient = searchParams.get("new") === "1";
+  const prefillPatientId = searchParams.get("patientId") || "";
+  const focusOrderId = searchParams.get("orderId") || "";
+
   const [orders, setOrders] = useState<LabOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -383,6 +441,16 @@ export default function LabPage() {
   const [editTripForm, setEditTripForm] = useState(emptyEditTripForm);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<"all" | "fresh" | "atLab" | "returned" | "completed">("all");
+  const [viewMode, setViewMode] = useState<"pro" | "classic">("pro");
+  const [focusedOrderId, setFocusedOrderId] = useState<string | null>(null);
+  const [confirmState, setConfirmState] = useState<
+    | { type: "complete"; order: LabOrder }
+    | { type: "rpt"; order: LabOrder }
+    | null
+  >(null);
+  const [rptReason, setRptReason] = useState("");
+  const prefillHandledRef = useRef(false);
+  const focusedOrderFromQueryRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -468,6 +536,47 @@ export default function LabPage() {
     return searchedOrders.filter((order) => order.labName === activeLab);
   }, [activeLab, searchedOrders]);
 
+  useEffect(() => {
+    if (!autoNewFromPatient || prefillHandledRef.current) return;
+    if (patients.length === 0 || doctors.length === 0) return;
+
+    const patientExists = prefillPatientId ? patients.some((patient) => patient.id === prefillPatientId) : false;
+    const defaultDoctorId = doctors[0]?.id || "";
+
+    setOrderForm({
+      ...emptyOrderForm,
+      patientId: patientExists ? prefillPatientId : "",
+      doctorId: defaultDoctorId,
+      labName: activeLab !== "all" ? activeLab : knownLabs[0] || "",
+    });
+    setModal("new");
+    prefillHandledRef.current = true;
+
+    const params = new URLSearchParams(window.location.search);
+    params.delete("new");
+    params.delete("patientId");
+    const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
+    window.history.replaceState(null, "", nextUrl);
+  }, [autoNewFromPatient, prefillPatientId, patients, doctors, activeLab, knownLabs]);
+
+  useEffect(() => {
+    if (!focusOrderId || orders.length === 0) return;
+    if (focusedOrderFromQueryRef.current === focusOrderId) return;
+
+    const targetOrder = orders.find((order) => order.id === focusOrderId);
+    if (!targetOrder) return;
+
+    setActiveLab(targetOrder.labName || "all");
+    setActiveFilter("all");
+    setFocusedOrderId(targetOrder.id);
+    focusedOrderFromQueryRef.current = focusOrderId;
+
+    const params = new URLSearchParams(window.location.search);
+    params.delete("orderId");
+    const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
+    window.history.replaceState(null, "", nextUrl);
+  }, [focusOrderId, orders]);
+
   const allPendingTrips = useMemo(() => {
     const pending: (LabTrip & { labOrder: LabOrder })[] = [];
     for (const order of visibleOrders) {
@@ -539,6 +648,23 @@ export default function LabPage() {
     if (activeFilter === "completed") return workflowBoard.completed;
     return orderedVisibleOrders;
   }, [activeFilter, orderedVisibleOrders, workflowBoard]);
+
+  useEffect(() => {
+    if (filteredOrders.length === 0) {
+      setFocusedOrderId(null);
+      return;
+    }
+
+    setFocusedOrderId((current) => {
+      if (current && filteredOrders.some((order) => order.id === current)) return current;
+      return filteredOrders[0].id;
+    });
+  }, [filteredOrders]);
+
+  const focusedOrder = useMemo(
+    () => filteredOrders.find((order) => order.id === focusedOrderId) ?? null,
+    [filteredOrders, focusedOrderId],
+  );
 
   const closeModal = () => {
     setModal(null);
@@ -680,45 +806,203 @@ export default function LabPage() {
     load();
   }
 
+  async function reopenAsRpt(order: LabOrder) {
+    const reason = rptReason.trim();
+    if (!reason) {
+      alert("RPT nedeni zorunludur.");
+      return;
+    }
+
+    const firstStep = (WORKFLOW_TEMPLATES[order.labType] || [])[0];
+    const restartDescription = firstStep
+      ? `${firstStep.send} → ${firstStep.request}`
+      : "Ölçü";
+
+    const res = await fetch(`/api/lab-orders/${order.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "RPT_REOPEN",
+        reason,
+        restartDescription,
+      }),
+    });
+
+    if (!res.ok) {
+      const payload = await res.json().catch(() => null);
+      alert(payload?.error || "RPT yeniden başlatma sırasında hata oluştu.");
+      return;
+    }
+
+    setConfirmState(null);
+    setRptReason("");
+    await load();
+  }
+
+  const requestComplete = (order: LabOrder) => setConfirmState({ type: "complete", order });
+  const requestRpt = (order: LabOrder) => {
+    setRptReason("");
+    setConfirmState({ type: "rpt", order });
+  };
+
+  const openTripModal = (order: LabOrder) => {
+    setActiveOrder(order);
+    setTripForm({ ...emptyTripForm, sentAt: today() });
+    setModal("trip");
+  };
+
+  const openInvoiceModal = (order: LabOrder) => {
+    setActiveOrder(order);
+    setInvoiceForm({ ...emptyInvoiceForm, item: order.labType, issuedAt: today() });
+    setModal("invoice");
+  };
+
+  const openReceiveModal = (order: LabOrder, trip: LabTrip) => {
+    setActiveTrip({ ...trip, labOrder: order });
+    setReceiveForm({ ...emptyReceiveForm, receivedAt: today() });
+    setModal("receive");
+  };
+
+  const openEditTripModal = (order: LabOrder, trip: LabTrip) => {
+    setActiveTrip({ ...trip, labOrder: order });
+    const { sentItem, requestedItem } = parseDesc(trip.description);
+    const parsedSent = parseMeasurementFromSentNote(trip.sentNote);
+    setEditTripForm({
+      sentItem,
+      requestedItem,
+      impressionMethod: parsedSent.method,
+      sentAt: trip.sentAt ? new Date(trip.sentAt).toISOString().slice(0, 10) : today(),
+      sentNote: parsedSent.cleanNote,
+      hasReceived: Boolean(trip.receivedAt),
+      receivedAt: trip.receivedAt ? new Date(trip.receivedAt).toISOString().slice(0, 10) : today(),
+      receivedNote: trip.receivedNote || "",
+    });
+    setModal("editTrip");
+  };
+
   const renderRow = (order: LabOrder) => (
     <OrderRow
       key={order.id}
       order={order}
       expanded={expandedOrderId === order.id}
       onToggleExpand={() => setExpandedOrderId((cur) => (cur === order.id ? null : order.id))}
-      onAddTrip={(o) => { setActiveOrder(o); setTripForm({ ...emptyTripForm, sentAt: today() }); setModal("trip"); }}
-      onAddInvoice={(o) => { setActiveOrder(o); setInvoiceForm({ ...emptyInvoiceForm, item: o.labType, issuedAt: today() }); setModal("invoice"); }}
-      onReceive={(o, t) => { setActiveTrip({ ...t, labOrder: o }); setReceiveForm({ ...emptyReceiveForm, receivedAt: today() }); setModal("receive"); }}
-      onEditTrip={(o, t) => {
-        setActiveTrip({ ...t, labOrder: o });
-        const { sentItem, requestedItem } = parseDesc(t.description);
-        const parsedSent = parseMeasurementFromSentNote(t.sentNote);
-        setEditTripForm({
-          sentItem,
-          requestedItem,
-          impressionMethod: parsedSent.method,
-          sentAt: t.sentAt ? new Date(t.sentAt).toISOString().slice(0, 10) : today(),
-          sentNote: parsedSent.cleanNote,
-          hasReceived: Boolean(t.receivedAt),
-          receivedAt: t.receivedAt ? new Date(t.receivedAt).toISOString().slice(0, 10) : today(),
-          receivedNote: t.receivedNote || "",
-        });
-        setModal("editTrip");
-      }}
-      onComplete={markCompleted}
+      onAddTrip={openTripModal}
+      onAddInvoice={openInvoiceModal}
+      onReceive={openReceiveModal}
+      onEditTrip={openEditTripModal}
+      onComplete={requestComplete}
     />
   );
 
-  return (
-    <div className="mx-auto max-w-5xl space-y-0 pb-10">
-      {/* ── Top Bar ── */}
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900">Laboratuvar</h1>
-          <p className="mt-0.5 text-sm text-slate-500">İşleri izle, süreci yönet, geçmişi gör.</p>
+  const renderProRow = (order: LabOrder) => {
+    const summary = getOrderSummary(order);
+    const statusLabel = summary.isDone
+      ? "Tamamlandı"
+      : summary.pendingTrip
+      ? summary.pendingDays >= 4
+        ? "Gecikiyor"
+        : "Labda"
+      : summary.totalCount > 0
+      ? "Klinikte"
+      : "Yeni";
+
+    const statusStyle = summary.isDone
+      ? "bg-emerald-100 text-emerald-700"
+      : summary.pendingTrip
+      ? summary.pendingDays >= 4
+        ? "bg-red-100 text-red-700"
+        : "bg-amber-100 text-amber-700"
+      : summary.totalCount > 0
+      ? "bg-blue-100 text-blue-700"
+      : "bg-slate-200 text-slate-700";
+
+    const cardTone = summary.isDone
+      ? {
+          wrap: "border-emerald-200 bg-emerald-50/70 hover:bg-emerald-50",
+          line: "border-l-emerald-500",
+          selected: "ring-2 ring-emerald-300",
+        }
+      : summary.pendingTrip
+      ? summary.pendingDays >= 4
+        ? {
+            wrap: "border-red-200 bg-red-50/70 hover:bg-red-50",
+            line: "border-l-red-500",
+            selected: "ring-2 ring-red-300",
+          }
+        : {
+            wrap: "border-amber-200 bg-amber-50/70 hover:bg-amber-50",
+            line: "border-l-amber-500",
+            selected: "ring-2 ring-amber-300",
+          }
+      : summary.totalCount > 0
+      ? {
+          wrap: "border-blue-200 bg-blue-50/70 hover:bg-blue-50",
+          line: "border-l-blue-500",
+          selected: "ring-2 ring-blue-300",
+        }
+      : {
+          wrap: "border-slate-200 bg-slate-50/80 hover:bg-slate-50",
+          line: "border-l-slate-400",
+          selected: "ring-2 ring-slate-300",
+        };
+
+    const nextLabel = summary.nextStep
+      ? `${summary.nextStep.send} → ${summary.nextStep.request}`
+      : "Süreç tamamlandı / serbest akış";
+
+    return (
+      <button
+        key={order.id}
+        type="button"
+        onClick={() => setFocusedOrderId(order.id)}
+        className={`mb-1.5 w-full rounded-lg border border-l-4 px-3 py-2 text-left shadow-sm transition last:mb-0 ${cardTone.wrap} ${cardTone.line} ${
+          focusedOrderId === order.id ? cardTone.selected : ""
+        }`}
+      >
+        <div className="flex items-start justify-between gap-1.5">
+          <div className="min-w-0">
+            <p className="truncate text-[12px] font-semibold text-slate-900">{order.patient.fullName}</p>
+            <p className="truncate text-[10.5px] text-slate-500">
+              {order.labType} · {order.labName}
+            </p>
+          </div>
+          <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${statusStyle}`}>
+            {statusLabel}
+          </span>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="relative">
+
+        <div className="mt-1 grid grid-cols-2 gap-1 text-[10px] text-slate-500">
+          <p>
+            Adım: <span className="font-semibold text-slate-700">{summary.doneCount}/{summary.totalCount}</span>
+          </p>
+          <p className="text-right">
+            {summary.totalAmount > 0 ? CUR.format(summary.totalAmount) : "Fatura yok"}
+          </p>
+        </div>
+
+        <p className="mt-1 truncate text-[10.5px] text-slate-600">
+          Sıradaki: <span className="font-medium text-slate-700">{nextLabel}</span>
+        </p>
+
+        {summary.pendingTrip && (
+          <p className={`mt-0.5 text-[10px] ${summary.pendingDays >= 4 ? "text-red-600" : "text-amber-600"}`}>
+            Bekleyen: {parseDesc(summary.pendingTrip.description).sentItem}
+            {summary.pendingDays > 0 ? ` · ${summary.pendingDays}g` : ""}
+          </p>
+        )}
+      </button>
+    );
+  };
+
+  return (
+    <div className="mx-auto max-w-5xl space-y-0 pb-8">
+      <div className="sticky top-0 z-20 mb-0 space-y-1 rounded-xl border border-slate-200/80 bg-gradient-to-b from-white to-slate-50 p-2 shadow-sm backdrop-blur">
+        <div className="flex items-center justify-between">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Üst İşlem Paneli</p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          <div className="relative min-w-[180px] flex-1 sm:w-60 sm:flex-none">
             <svg className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
@@ -726,7 +1010,7 @@ export default function LabPage() {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Hasta veya lab ara…"
-              className="h-8 rounded-lg border border-slate-200 bg-white pl-8 pr-3 text-[13px] text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+              className="h-6 w-full rounded-md border border-slate-200 bg-white pl-8 pr-2.5 text-[11px] text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
             />
           </div>
           <button
@@ -737,7 +1021,7 @@ export default function LabPage() {
               });
               setModal("new");
             }}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-slate-900 px-3.5 text-[13px] font-medium text-white shadow-sm transition hover:bg-slate-700 active:scale-95"
+            className="inline-flex h-6 items-center gap-1 rounded-md bg-slate-900 px-2.5 text-[11px] font-medium text-white shadow-sm transition hover:bg-slate-700 active:scale-95"
           >
             <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -745,132 +1029,242 @@ export default function LabPage() {
             Yeni İş
           </button>
         </div>
-      </div>
 
-      {/* ── Stats strip ── */}
-      <div className="mb-4 grid grid-cols-3 gap-2">
-        {[
-          { label: "Aktif İş", value: stats.active, color: "text-blue-700", bg: "bg-blue-50 border-blue-100" },
-          { label: "Labda Bekleyen", value: stats.waiting, color: "text-amber-700", bg: "bg-amber-50 border-amber-100" },
-          { label: "Tamamlanan", value: stats.done, color: "text-emerald-700", bg: "bg-emerald-50 border-emerald-100" },
-        ].map((s) => (
-          <div key={s.label} className={`flex items-center justify-between rounded-xl border px-4 py-2.5 ${s.bg}`}>
-            <p className="text-[12px] font-medium text-slate-500">{s.label}</p>
-            <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
-          </div>
-        ))}
-      </div>
-
-      {/* ── Lab filter bar ── */}
-      <div className="mb-3 flex items-center gap-2">
-        <label className="shrink-0 text-[11px] font-semibold uppercase tracking-widest text-slate-400">Laboratuvar</label>
-        <select
-          value={activeLab}
-          onChange={(e) => setActiveLab(e.target.value)}
-          className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-[13px] text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-        >
-          <option value="all">Tümü ({searchedOrders.length} iş)</option>
-          {labOverview.map((lab) => (
-            <option key={lab.name} value={lab.name}>
-              {lab.name} — {lab.total} iş{lab.overdue > 0 ? `, ${lab.overdue} geciken` : ""}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {/* ── Filter Tabs ── */}
-      <div className="mb-2 flex items-center gap-1 overflow-x-auto">
-        {([
-          { key: "all" as const, label: "Tümü", count: orderedVisibleOrders.length },
-          { key: "atLab" as const, label: "Labda", count: workflowBoard.atLab.length },
-          { key: "returned" as const, label: "Klinikte", count: workflowBoard.returned.length },
-          { key: "completed" as const, label: "Tamamlandı", count: workflowBoard.completed.length },
-        ]).map((tab) => (
-          <button
-            key={tab.key}
-            onClick={() => setActiveFilter(tab.key)}
-            className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-[13px] font-medium transition ${
-              activeFilter === tab.key
-                ? "bg-slate-900 text-white"
-                : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
-            }`}
+        <div className="flex flex-wrap items-center gap-0.5">
+          <select
+            value={activeLab}
+            onChange={(e) => setActiveLab(e.target.value)}
+            className="h-6 rounded-md border border-slate-200 bg-white px-2 text-[11px] text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
           >
-            {tab.label}
-            {tab.count > 0 && (
-              <span className={`min-w-[18px] rounded-full px-1 py-0.5 text-center text-[11px] leading-none ${activeFilter === tab.key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>
-                {tab.count}
-              </span>
-            )}
-          </button>
-        ))}
+            <option value="all">Tümü ({searchedOrders.length} iş)</option>
+            {labOverview.map((lab) => (
+              <option key={lab.name} value={lab.name}>
+                {lab.name} — {lab.total} iş{lab.overdue > 0 ? `, ${lab.overdue} geciken` : ""}
+              </option>
+            ))}
+          </select>
+          <div className="flex items-center gap-1 overflow-x-auto">
+            {([
+              { key: "all" as const, label: "Tümü", count: orderedVisibleOrders.length },
+              { key: "atLab" as const, label: "Labda", count: workflowBoard.atLab.length },
+              { key: "returned" as const, label: "Klinikte", count: workflowBoard.returned.length },
+              { key: "completed" as const, label: "Tamamlandı", count: workflowBoard.completed.length },
+            ]).map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setActiveFilter(tab.key)}
+                className={`flex h-6 items-center gap-1 whitespace-nowrap rounded-md px-2 py-0 text-[11px] font-medium transition ${
+                  activeFilter === tab.key
+                    ? "bg-slate-900 text-white"
+                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                }`}
+              >
+                {tab.label}
+                {tab.count > 0 && (
+                  <span className={`min-w-[14px] rounded-full px-1 py-0 text-center text-[9px] leading-4 ${activeFilter === tab.key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>
+                    {tab.count}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       {/* ── List ── */}
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-        {loading ? (
-          <div className="flex h-40 items-center justify-center text-sm text-slate-400">
-            <svg className="mr-2 h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-              <path d="M21 12a9 9 0 11-6.219-8.56"/>
-            </svg>
-            Yükleniyor…
-          </div>
-        ) : loadError ? (
-          <div className="flex min-h-40 flex-col items-center justify-center gap-3 px-6 py-8 text-center">
-            <div className="rounded-full bg-red-50 p-2 text-red-600">
-              <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="12" y1="8" x2="12" y2="12"/>
-                <line x1="12" y1="16" x2="12.01" y2="16"/>
-              </svg>
-            </div>
-            <div>
-              <p className="text-sm font-semibold text-slate-800">Laboratuvar verileri yüklenemedi</p>
-              <p className="mt-1 text-sm text-slate-500">{loadError}</p>
-            </div>
-            <button
-              onClick={() => void load()}
-              className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-medium text-slate-700 transition hover:bg-slate-50"
-            >
-              Tekrar dene
-            </button>
-          </div>
-        ) : filteredOrders.length === 0 ? (
-          <div className="flex h-40 flex-col items-center justify-center gap-2 text-sm text-slate-400">
-            <svg className="h-8 w-8 opacity-30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}>
-              <rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>
-            </svg>
-            Kayıt bulunamadı
-          </div>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {activeFilter === "all" ? (
-              <>
-                {([
-                  { key: "fresh", label: "Yeni", dot: "bg-slate-400", orders: workflowBoard.fresh },
-                  { key: "atLab", label: "Labda", dot: "bg-amber-400", orders: workflowBoard.atLab },
-                  { key: "returned", label: "Klinikte", dot: "bg-blue-500", orders: workflowBoard.returned },
-                  { key: "completed", label: "Tamamlandı", dot: "bg-emerald-500", orders: workflowBoard.completed },
-                ]).map(({ key, label, dot, orders: groupOrders }) =>
-                  groupOrders.length > 0 ? (
-                    <div key={key}>
-                      <div className="flex items-center gap-2 bg-slate-50/80 px-5 py-2">
-                        <span className={`h-2 w-2 rounded-full ${dot}`} />
-                        <span className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">{label}</span>
-                        <span className="text-[11px] text-slate-400">{groupOrders.length}</span>
-                      </div>
-                      <div className="divide-y divide-slate-100">
-                        {groupOrders.map((order) => renderRow(order))}
-                      </div>
-                    </div>
-                  ) : null
-                )}
-              </>
+        <div className="grid gap-1 lg:h-[calc(100vh-175px)] lg:grid-cols-[minmax(0,1fr)_290px]">
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm lg:min-h-0 lg:overflow-y-auto">
+            {loading ? (
+              <div className="flex h-40 items-center justify-center text-sm text-slate-400">
+                <svg className="mr-2 h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <path d="M21 12a9 9 0 11-6.219-8.56"/>
+                </svg>
+                Yükleniyor…
+              </div>
+            ) : loadError ? (
+              <div className="flex min-h-40 flex-col items-center justify-center gap-3 px-6 py-8 text-center">
+                <p className="text-sm font-semibold text-slate-800">Laboratuvar verileri yüklenemedi</p>
+                <p className="text-sm text-slate-500">{loadError}</p>
+                <button
+                  onClick={() => void load()}
+                  className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[13px] font-medium text-slate-700 transition hover:bg-slate-50"
+                >
+                  Tekrar dene
+                </button>
+              </div>
+            ) : filteredOrders.length === 0 ? (
+              <div className="flex h-40 items-center justify-center text-sm text-slate-400">Kayıt bulunamadı</div>
             ) : (
-              filteredOrders.map((order) => renderRow(order))
+              <div>
+                {activeFilter === "all" ? (
+                  <>
+                    {([
+                      { key: "fresh", label: "Yeni", tone: "text-slate-600", orders: workflowBoard.fresh },
+                      { key: "atLab", label: "Labda", tone: "text-amber-700", orders: workflowBoard.atLab },
+                      { key: "returned", label: "Klinikte", tone: "text-blue-700", orders: workflowBoard.returned },
+                      { key: "completed", label: "Tamamlandı", tone: "text-emerald-700", orders: workflowBoard.completed },
+                    ]).map((group) =>
+                      group.orders.length > 0 ? (
+                        <div key={group.key} className="mb-1.5 last:mb-0">
+                          <p className={`mb-0.5 px-1 text-[10px] font-semibold uppercase tracking-widest ${group.tone}`}>
+                            {group.label} · {group.orders.length}
+                          </p>
+                          {group.orders.map((order) => renderProRow(order))}
+                        </div>
+                      ) : null,
+                    )}
+                  </>
+                ) : (
+                  filteredOrders.map((order) => renderProRow(order))
+                )}
+              </div>
             )}
           </div>
-        )}
-      </div>
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-2.5 shadow-sm lg:min-h-0 lg:overflow-y-auto">
+            {!focusedOrder ? (
+              <p className="text-sm text-slate-500">Detay için soldan bir iş seçin.</p>
+            ) : (() => {
+              const summary = getOrderSummary(focusedOrder);
+              const pendingDesc = summary.pendingTrip ? parseDesc(summary.pendingTrip.description) : null;
+              const rpt = isRptOrder(focusedOrder);
+              return (
+                <div className="space-y-2">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Seçili İş</p>
+                    <h3 className="mt-1 text-[14px] font-semibold text-slate-900">{focusedOrder.patient.fullName}</h3>
+                    <p className="text-[11.5px] text-slate-500">{focusedOrder.labType} · {focusedOrder.labName}</p>
+                    {rpt && (
+                      <span className="mt-1 inline-flex rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">
+                        RPT · Ücretsiz Tekrar
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2 text-[11px]">
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                      <p className="text-slate-500">İlerleme</p>
+                      <p className="mt-0.5 font-semibold text-slate-800">{summary.doneCount}/{summary.totalCount}</p>
+                    </div>
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                      <p className="text-slate-500">Bekleyen</p>
+                      <p className="mt-0.5 font-semibold text-slate-800">{summary.pendingTrip ? `${summary.pendingDays}g` : "Yok"}</p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Sıradaki Beklenen</p>
+                    <p className="mt-1 text-[12px] font-medium text-slate-700">
+                      {summary.nextStep ? `${summary.nextStep.send} → ${summary.nextStep.request}` : "Süreç tamamlandı / serbest akış"}
+                    </p>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    {summary.sortedTrips.slice().reverse().map((trip) => {
+                      const parts = parseDesc(trip.description);
+                      const done = Boolean(trip.receivedAt);
+                      const isCycleStart = (trip.sentNote || "").includes("RPT_RESET_START");
+                      return (
+                        <div key={trip.id} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[11px] font-semibold text-slate-800">{parts.sentItem}</p>
+                          {parts.requestedItem && <p className="text-[11px] text-slate-500">→ {parts.requestedItem}</p>}
+                          <p className="mt-0.5 text-[10px] text-slate-400">{fmt(trip.sentAt)}{trip.receivedAt ? ` · ${fmt(trip.receivedAt)}` : " · bekleniyor"}</p>
+                              {isCycleStart && (
+                                <span className="mt-1 inline-flex rounded bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold text-violet-700">
+                                  RPT başlangıcı
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex shrink-0 gap-1">
+                              {!done && (
+                                <button
+                                  type="button"
+                                  onClick={() => openReceiveModal(focusedOrder, trip)}
+                                  className="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                                >
+                                  Geldi
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => openEditTripModal(focusedOrder, trip)}
+                                className="rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-700 transition hover:bg-slate-50"
+                              >
+                                Düzenle
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {summary.sortedTrips.length === 0 && (
+                      <p className="text-[12px] text-slate-400">Henüz adım eklenmedi.</p>
+                    )}
+                  </div>
+
+                  {(() => {
+                    const pendingTrip = summary.pendingTrip;
+                    return (
+                      <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => openTripModal(focusedOrder)}
+                      className="rounded-lg bg-slate-900 px-3 py-1.5 text-[12px] font-medium text-white transition hover:bg-slate-700"
+                    >
+                      Gidiş Ekle
+                    </button>
+                    {pendingTrip && (
+                      <button
+                        type="button"
+                        onClick={() => openReceiveModal(focusedOrder, pendingTrip)}
+                        className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[12px] font-medium text-emerald-700 transition hover:bg-emerald-100"
+                      >
+                        Geldi İşaretle
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => openInvoiceModal(focusedOrder)}
+                      disabled={rpt}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12px] font-medium text-slate-700 transition hover:bg-slate-50"
+                    >
+                      {rpt ? "RPT (Ücretsiz)" : "Fatura Ekle"}
+                    </button>
+                    {!summary.isDone && (
+                      <button
+                        type="button"
+                        onClick={() => requestComplete(focusedOrder)}
+                        disabled={Boolean(pendingTrip)}
+                        className="rounded-lg border border-slate-300 px-3 py-1.5 text-[12px] font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                      >
+                        Tamamla
+                      </button>
+                    )}
+                    {summary.isDone && (
+                      <button
+                        type="button"
+                        onClick={() => requestRpt(focusedOrder)}
+                        className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-[12px] font-semibold text-violet-700 transition hover:bg-violet-100"
+                      >
+                        RPT Olarak Yeniden Aç
+                      </button>
+                    )}
+                      </div>
+                    );
+                  })()}
+
+                  {pendingDesc && (
+                    <p className="text-[11px] text-amber-700">
+                      Bekleyen adım: {pendingDesc.sentItem}{pendingDesc.requestedItem ? ` → ${pendingDesc.requestedItem}` : ""}
+                    </p>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
 
       {/* ── Modals ── */}
       {modal === "new" && (
@@ -1134,6 +1528,82 @@ export default function LabPage() {
         </Modal>
       )}
 
+      {confirmState?.type === "complete" && (
+        <Modal
+          title="Tamamlandı Olarak İşaretle"
+          subtitle={`${confirmState.order.patient.fullName} · ${confirmState.order.labType}`}
+          onClose={() => setConfirmState(null)}
+        >
+          <div className="space-y-3">
+            <p className="text-sm text-slate-600">
+              Bu işlem işi <span className="font-semibold">tamamlandı</span> durumuna alır. Bekleyen adım olmadığına emin misiniz?
+            </p>
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+              Kritik işlem: Daha sonra gerekirse bu işi RPT olarak tekrar açabilirsiniz.
+            </div>
+          </div>
+          <div className="mt-5 flex gap-2 border-t border-slate-100 pt-4">
+            <button
+              onClick={() => setConfirmState(null)}
+              className="flex-1 rounded-lg border border-slate-200 py-2 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50"
+            >
+              Vazgeç
+            </button>
+            <button
+              onClick={async () => {
+                const id = confirmState.order.id;
+                setConfirmState(null);
+                await markCompleted(id);
+              }}
+              className="flex-1 rounded-lg bg-slate-900 py-2 text-[13px] font-medium text-white shadow-sm transition hover:bg-slate-700"
+            >
+              Evet, Tamamla
+            </button>
+          </div>
+        </Modal>
+      )}
+
+      {confirmState?.type === "rpt" && (
+        <Modal
+          title="RPT Olarak Yeniden Aç"
+          subtitle={`${confirmState.order.patient.fullName} · ${confirmState.order.labType}`}
+          onClose={() => setConfirmState(null)}
+        >
+          <div className="space-y-3">
+            <p className="text-sm text-slate-600">
+              RPT (Repeat/Redo Treatment) olarak açılan iş, tekrar üretim sürecidir ve laboratuvar için <span className="font-semibold">ücretsiz</span> takip edilir.
+            </p>
+            <Field label="RPT Nedeni *">
+              <input
+                value={rptReason}
+                onChange={(e) => setRptReason(e.target.value)}
+                className="field"
+                placeholder="Örn. Takılan restorasyon kırıldı / revizyon gerekli"
+                autoFocus
+              />
+            </Field>
+            <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-xs text-violet-700">
+              Onay sonrası süreç en baştan başlatılır, yeni döngü adımı oluşturulur ve bu işte yeni fatura engellenir.
+            </div>
+          </div>
+          <div className="mt-5 flex gap-2 border-t border-slate-100 pt-4">
+            <button
+              onClick={() => setConfirmState(null)}
+              className="flex-1 rounded-lg border border-slate-200 py-2 text-[13px] font-medium text-slate-600 transition hover:bg-slate-50"
+            >
+              Vazgeç
+            </button>
+            <button
+              onClick={() => void reopenAsRpt(confirmState.order)}
+              className="flex-1 rounded-lg bg-violet-700 py-2 text-[13px] font-medium text-white shadow-sm transition hover:bg-violet-600 disabled:opacity-40"
+              disabled={!rptReason.trim()}
+            >
+              RPT Olarak Aç
+            </button>
+          </div>
+        </Modal>
+      )}
+
       <style jsx global>{`
         .field {
           width: 100%;
@@ -1176,9 +1646,9 @@ function OrderRow({
   onAddInvoice: (order: LabOrder) => void;
   onReceive: (order: LabOrder, trip: LabTrip) => void;
   onEditTrip: (order: LabOrder, trip: LabTrip) => void;
-  onComplete: (orderId: string) => void;
+  onComplete: (order: LabOrder) => void;
 }) {
-  const sortedTrips = useMemo(() => [...order.trips].sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime()), [order.trips]);
+  const sortedTrips = useMemo(() => getCurrentCycleTrips(order.trips), [order.trips]);
   const pendingTrip = sortedTrips.slice().reverse().find((t) => !t.receivedAt);
   const doneCount = sortedTrips.filter((t) => t.receivedAt).length;
   const totalCount = sortedTrips.length;
@@ -1201,6 +1671,7 @@ function OrderRow({
   const teethLabel = order.teeth
     ? `${order.teeth.split(",").map((s) => s.trim()).filter(Boolean).length} üye ${order.labType}`
     : order.labType;
+  const rpt = isRptOrder(order);
 
   return (
     <div>
@@ -1275,13 +1746,13 @@ function OrderRow({
               </svg>
             </ActionBtn>
           )}
-          <ActionBtn onClick={(e) => { e.stopPropagation(); onAddInvoice(order); }} title="Fatura ekle">
+          <ActionBtn onClick={(e) => { e.stopPropagation(); onAddInvoice(order); }} title={rpt ? "RPT iş ücretsiz" : "Fatura ekle"} disabled={rpt}>
             <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
               <rect x="5" y="2" width="14" height="20" rx="2"/><line x1="9" y1="7" x2="15" y2="7"/><line x1="9" y1="11" x2="15" y2="11"/><line x1="9" y1="15" x2="12" y2="15"/>
             </svg>
           </ActionBtn>
           {!isDone && (
-            <ActionBtn onClick={(e) => { e.stopPropagation(); onComplete(order.id); }} title={pendingTrip ? "Bekleyen adım var" : "Tamamla"} disabled={Boolean(pendingTrip)} accent={pendingTrip ? undefined : "slate"}>
+            <ActionBtn onClick={(e) => { e.stopPropagation(); onComplete(order); }} title={pendingTrip ? "Bekleyen adım var" : "Tamamla"} disabled={Boolean(pendingTrip)} accent={pendingTrip ? undefined : "slate"}>
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
               </svg>
@@ -1426,7 +1897,7 @@ function OrderRow({
 
               {!isDone && (
                 <button
-                  onClick={() => onComplete(order.id)}
+                  onClick={() => onComplete(order)}
                   disabled={Boolean(pendingTrip)}
                   className="w-full rounded-lg border border-slate-300 py-2 text-[13px] font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
                 >
@@ -1685,13 +2156,21 @@ function TripFormContent({
   tripForm,
   setTripForm,
 }: {
-  order: { labType: string; trips: { description: string }[] };
+  order: { labType: string; trips: { description: string; receivedAt?: string | null }[] };
   tripForm: { sentItem: string; requestedItem: string; impressionMethod: ImpressionMethod; sentAt: string; sentNote: string };
   setTripForm: React.Dispatch<React.SetStateAction<typeof tripForm>>;
 }) {
   const template = WORKFLOW_TEMPLATES[order.labType] ?? [];
   const stepIndex = getNextTemplateStepIndex(order.labType, order.trips);
   const suggestion = template[stepIndex] ?? null;
+  const receivedSpoonItem = [...order.trips]
+    .reverse()
+    .map((trip) => ({ ...trip, parts: parseDesc(trip.description) }))
+    .find((trip) => Boolean(trip.receivedAt) && isSpoonRequestItem(trip.parts.requestedItem || ""))?.parts.requestedItem;
+  const suggestedSendValue =
+    suggestion && stepIndex === 0 && receivedSpoonItem
+      ? `${receivedSpoonItem} ile Ölçü`
+      : suggestion?.send;
 
   // Öneri henüz uygulanmadıysa auto-fill yap
   const [suggested, setSuggested] = useState(false);
@@ -1699,7 +2178,7 @@ function TripFormContent({
     if (!suggested && suggestion && !tripForm.sentItem) {
       setTripForm((p) => ({
         ...p,
-        sentItem: suggestion.send,
+        sentItem: suggestedSendValue || suggestion.send,
         requestedItem: suggestion.request,
       }));
       setSuggested(true);
@@ -1733,7 +2212,7 @@ function TripFormContent({
           </div>
           {suggestion && (
             <p className="mt-1.5 text-[10px] text-slate-500">
-              Öneri: <span className="font-medium text-slate-700">{suggestion.send}</span> gönder →{" "}
+              Öneri: <span className="font-medium text-slate-700">{suggestedSendValue || suggestion.send}</span> gönder →{" "}
               <span className="font-medium text-slate-700">{suggestion.request}</span> iste
             </p>
           )}

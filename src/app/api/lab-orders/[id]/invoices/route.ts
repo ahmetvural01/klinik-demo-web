@@ -13,6 +13,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: "item ve amount zorunlu" }, { status: 400 });
   }
 
+  const orderMeta = await (prisma as any).labOrder.findUnique({
+    where: { id: params.id },
+    select: { notes: true },
+  });
+
+  if (!orderMeta) {
+    return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
+  }
+
+  if (/(^|\s|\[)RPT(\]|\s|$)/i.test(orderMeta.notes || "")) {
+    return NextResponse.json({ error: "RPT işlerde laboratuvar ücreti/fatura eklenemez" }, { status: 400 });
+  }
+
   const invoice = await (prisma as any).labOrderInvoice.create({
     data: {
       labOrderId: params.id,

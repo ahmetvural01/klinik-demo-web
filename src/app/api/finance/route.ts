@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
     createdAt: { ...(fromDate ? { gte: fromDate } : {}), ...(toDate ? { lte: toDate } : {}) }
   } : {};
 
-  const [examinations, doctorPayments, allPatientPayments] = await Promise.all([
+  const [examinations, doctorPayments, allPatientPayments, labInvoices] = await Promise.all([
     // Bu doktorun yaptığı muayeneler
     prisma.examination.findMany({
       where: { doctorId, ...dateFilter },
@@ -39,6 +39,24 @@ export async function GET(request: NextRequest) {
       where: { doctorId: null, ...payDateFilter },
       include: { patient: true },
       orderBy: { createdAt: "desc" }
+    }),
+    prisma.labOrderInvoice.findMany({
+      where: {
+        labOrder: {
+          doctorId,
+        },
+        ...(fromDate || toDate
+          ? {
+              issuedAt: {
+                ...(fromDate ? { gte: fromDate } : {}),
+                ...(toDate ? { lte: toDate } : {}),
+              },
+            }
+          : {}),
+      },
+      select: {
+        amount: true,
+      },
     })
   ]);
 
@@ -49,10 +67,11 @@ export async function GET(request: NextRequest) {
   const patientPayments = allPatientPayments.filter(p => p.patientId && patientIds.includes(p.patientId));
 
   const totalTreatments = examinations.reduce((sum, e) => sum + Number(e.amount), 0);
+  const labCost = labInvoices.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
   const received = patientPayments.reduce((sum, p) => sum + Number(p.amount), 0);
   const earned = doctorPayments.reduce((sum, p) => sum + Number(p.amount), 0);
   const toReceive = Math.max(0, totalTreatments - received);
-  const receivable = Math.max(0, totalTreatments - earned);
+  const receivable = Math.max(0, totalTreatments - labCost - earned);
 
   // En çok yapılan muayene türleri
   const treatmentCounts: Record<string, number> = {};
@@ -83,6 +102,7 @@ export async function GET(request: NextRequest) {
     received,
     toReceive,
     totalTreatments,
+    labCost,
     earned,
     topExaminations,
     topTeeth,

@@ -90,6 +90,7 @@ KlinikSistem benzeri tum ana modulleri iceren modern full-stack klinik paneli.
 ## Disaster Recovery
 
 - Felaket kurtarma proseduru: [docs/DR-RUNBOOK.md](docs/DR-RUNBOOK.md)
+- Backup proseduru: [docs/BACKUP-RUNBOOK.md](docs/BACKUP-RUNBOOK.md)
 
 ## Demo Giris
 

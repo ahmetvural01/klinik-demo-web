@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 type Doctor = { id: string; fullName: string; role?: string; institutionId?: string };
-type FinanceData = { receivable: number; received: number; toReceive: number; totalTreatments: number; earned: number; topExaminations: any[]; topTeeth: any[]; payments: any[]; patientPayments: any[] };
+type FinanceData = { receivable: number; received: number; toReceive: number; totalTreatments: number; labCost: number; earned: number; topExaminations: any[]; topTeeth: any[]; payments: any[]; patientPayments: any[] };
 
 export default function FinansPage() {
   const [staff, setStaff] = useState<Doctor[]>([]);
@@ -43,7 +43,7 @@ export default function FinansPage() {
     fetch(`/api/finance?${params.toString()}`)
       .then((r) => r.json())
       .then((d) => setData(d))
-      .catch(() => setData({ receivable: 0, received: 0, toReceive: 0, totalTreatments: 0, earned: 0, topExaminations: [], topTeeth: [], payments: [], patientPayments: [] }))
+      .catch(() => setData({ receivable: 0, received: 0, toReceive: 0, totalTreatments: 0, labCost: 0, earned: 0, topExaminations: [], topTeeth: [], payments: [], patientPayments: [] }))
       .finally(() => setLoading(false));
   };
 
@@ -98,13 +98,14 @@ export default function FinansPage() {
       {!loading && data && (
         <div className="space-y-5">
           {/* KPI kartları */}
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
             {[
               { label: "Toplam Muayene Cirosu",   val: data.totalTreatments, color: "text-slate-800",   bg: "bg-slate-50",    help: "Seçilen dönemde yapılan tüm muayenelerin toplam tutarı" },
               { label: "Hastalardan Tahsil",        val: data.received,        color: "text-emerald-700", bg: "bg-emerald-50",  help: "Bu doktorun hastalarından tahsil edilen toplam ödeme" },
               { label: "Hastalardan Alacak",        val: data.toReceive,       color: "text-amber-700",  bg: "bg-amber-50",    help: "Hastalardan henüz tahsil edilemeyen kalan bakiye" },
+              { label: "Lab Maliyeti",              val: data.labCost,         color: "text-rose-700",   bg: "bg-rose-50",     help: "Bu doktora ait laboratuvar faturalarının toplam maliyeti" },
               { label: "Klinikten Alınan Hakediş",  val: data.earned,          color: "text-primary",    bg: "bg-primary/8",   help: "Klinik tarafından doktora yapılan toplam hakediş ödemesi" },
-              { label: "Klinik Net Alacağı",        val: data.receivable,      color: "text-violet-700", bg: "bg-violet-50",   help: "Toplam ciro eksi ödenen hakediş: doktorun klinikten kalan alacağı" },
+              { label: "Net Hekim Alacağı",         val: data.receivable,      color: "text-violet-700", bg: "bg-violet-50",   help: "Toplam ciro eksi lab maliyeti eksi ödenen hakediş" },
             ].map(c => (
               <article key={c.label} className={"rounded-xl border border-slate-100 bg-white p-4 shadow-sm"} title={c.help}>
                 <p className="text-[11px] font-medium text-slate-500">{c.label}</p>

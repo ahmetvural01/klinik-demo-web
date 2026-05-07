@@ -3,7 +3,7 @@
 ## 1) Ortam Hazirligi
 1. `.env.production.example` baz alinarak production env dosyasi hazirlandi.
 2. `DATABASE_URL`, `JWT_SECRET`, `REDIS_URL`, `APP_URL` dolduruldu.
-3. PostgreSQL backup ve WAL politikasi aktif.
+3. PostgreSQL backup ve WAL politikasi aktif (bkz. [BACKUP-RUNBOOK.md](BACKUP-RUNBOOK.md)).
 4. Redis erisimi dogrulandi.
 
 ## 2) Build ve Migrasyon

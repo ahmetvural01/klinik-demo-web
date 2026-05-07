@@ -2,13 +2,39 @@
 
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState, useRef } from "react";
+import { Suspense, useEffect, useMemo, useState, useRef } from "react";
 import { TeethMap, ToothButton, ToothStatus as TSType, TOOTH_STATUS_LABELS, TOOTH_STATUS_BADGE } from "@/components/ToothChart";
 import PhoneInput from "@/components/PhoneInput";
 import { MEDICATION_TEMPLATES } from "@/lib/medications";
 import { ACTIVE_PRICE_LIST_STORAGE_KEY, CUSTOM_DENTAL_TREATMENT_TEMPLATES, TDB_2026_CORE_PRICE_CATALOG } from "@/lib/dental-treatment-catalog";
 
-type LabOrder = { id: string; labType: string; status: string; price?: number | null; notes?: string | null; createdAt: string; doctor?: { fullName: string } | null };
+type LabOrder = { id: string; labName?: string; labType: string; status: string; price?: number | null; notes?: string | null; createdAt: string; doctor?: { fullName: string } | null };
+type LabTrip = {
+  id: string;
+  order: number;
+  description: string;
+  sentAt: string;
+  receivedAt?: string | null;
+  sentNote?: string | null;
+  receivedNote?: string | null;
+};
+type LabInvoice = {
+  id: string;
+  item: string;
+  amount: number;
+  invoiceNo?: string | null;
+  issuedAt: string;
+  note?: string | null;
+};
+type LabOrderDetail = LabOrder & {
+  labName?: string;
+  teeth?: string | null;
+  invoiceNo?: string | null;
+  patient?: { id: string; fullName: string; phone?: string | null } | null;
+  doctor?: { id?: string; fullName: string } | null;
+  trips: LabTrip[];
+  invoices: LabInvoice[];
+};
 type TaksitItem = {
   id: string;
   amount?: number | string | null;
@@ -97,6 +123,154 @@ const TASK_STATUS_LABELS: Record<ClinicTask["status"], string> = {
   IPTAL: "İptal",
 };
 
+const UPPER_RIGHT = [18, 17, 16, 15, 14, 13, 12, 11];
+const UPPER_LEFT = [21, 22, 23, 24, 25, 26, 27, 28];
+const LOWER_LEFT = [31, 32, 33, 34, 35, 36, 37, 38];
+const LOWER_RIGHT = [48, 47, 46, 45, 44, 43, 42, 41];
+
+const LAB_CATEGORIES = [
+  {
+    group: "Sabit Restorasyon",
+    items: ["Zirkonyum", "E-max", "Metal Destekli Porselen", "Full Metal", "Kuron Tamir"],
+  },
+  { group: "Veneer", items: ["Veneer (Laminat)"] },
+  {
+    group: "Protez",
+    items: ["Tam Protez", "Hareketli Kısmi Protez", "Hareketli Kısmi Protez (Metal Kroşe)", "Protez Tamir", "İmmediyat Protez"],
+  },
+  {
+    group: "İmplant Üstü Restorasyon",
+    items: ["İmplant Üstü Sabit Restorasyon", "İmplant Üstü Hareketli Protez"],
+  },
+  {
+    group: "Aparey ve Plak",
+    items: ["Gece Plağı", "Kas Gevşetici Splint (Michigan)", "Şeffaf Plak (Aligner)", "Braket Reteyner", "Bruksizm Plağı"],
+  },
+  {
+    group: "Estetik & Diğer",
+    items: ["Beyazlatma Atel", "Zirkon Alt Yapı", "Braket", "Diğer"],
+  },
+];
+
+const WORKFLOW_FIRST_STEP: Record<string, { send: string; request: string }> = {
+  Zirkonyum: { send: "Ölçü", request: "Zirkonyum Alt Yapı" },
+  "E-max": { send: "Ölçü", request: "E-max Prova" },
+  "Metal Destekli Porselen": { send: "Ölçü", request: "Metal Alt Yapı Prova" },
+  "Full Metal": { send: "Ölçü", request: "Metal Prova" },
+  "Veneer (Laminat)": { send: "Ölçü", request: "Wax-up / Mock-up Prova" },
+  "İmplant Üstü Sabit Restorasyon": { send: "İmplant Ölçüsü (Scanbody / Transfer)", request: "Altyapı Prova" },
+};
+
+const SPOON_REQUEST_OPTIONS = ["Açık Kaşık", "Kişisel Kaşık"];
+
+type ImpressionMethod = "" | "KLASIK_OLCU" | "DIJITAL_TARAMA";
+
+function isMeasurementStep(sentItem: string) {
+  return /(ölçü|olcu|tarama|scan)/i.test(sentItem);
+}
+
+function buildSentNote(baseNote: string, method: ImpressionMethod, sentItem: string) {
+  const methodLabel = method === "KLASIK_OLCU" ? "Klasik Ölçü" : method === "DIJITAL_TARAMA" ? "Dijital Tarama" : "";
+  const methodPart = methodLabel && isMeasurementStep(sentItem) ? `Ölçü Yöntemi: ${methodLabel}` : "";
+  return [methodPart, baseNote.trim()].filter(Boolean).join(" | ") || null;
+}
+
+function splitTripDescription(description: string) {
+  const parts = String(description || "").split("→");
+  const sentItem = (parts[0] || "").trim();
+  const requestedItem = (parts[1] || "").trim();
+  return { sentItem, requestedItem };
+}
+
+function LabDentalChart({ selected, onChange }: { selected: number[]; onChange: (nums: number[]) => void }) {
+  const toggle = (num: number) => {
+    if (selected.includes(num)) {
+      onChange(selected.filter((n) => n !== num));
+    } else {
+      onChange([...selected, num].sort((a, b) => a - b));
+    }
+  };
+
+  const selectGroup = (group: number[]) => {
+    const allSelected = group.every((n) => selected.includes(n));
+    if (allSelected) {
+      onChange(selected.filter((n) => !group.includes(n)));
+    } else {
+      onChange(Array.from(new Set([...selected, ...group])).sort((a, b) => a - b));
+    }
+  };
+
+  const ToothBtn = ({ num }: { num: number }) => {
+    const active = selected.includes(num);
+    return (
+      <button
+        type="button"
+        onClick={() => toggle(num)}
+        className={`flex h-8 w-8 items-center justify-center rounded-lg border text-[10px] font-semibold transition-all ${
+          active ? "border-transparent bg-slate-800 text-white shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:bg-slate-50"
+        }`}
+        title={`Diş ${num}`}
+      >
+        {num}
+      </button>
+    );
+  };
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+      <div className="mb-2.5 flex flex-wrap gap-1.5">
+        {[
+          { label: "Üst Çene", group: [...UPPER_RIGHT, ...UPPER_LEFT] },
+          { label: "Alt Çene", group: [...LOWER_LEFT, ...LOWER_RIGHT] },
+          { label: "Tüm Çene", group: [...UPPER_RIGHT, ...UPPER_LEFT, ...LOWER_LEFT, ...LOWER_RIGHT] },
+        ].map(({ label, group }) => (
+          <button
+            key={label}
+            type="button"
+            onClick={() => selectGroup(group)}
+            className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-100 hover:border-slate-300"
+          >
+            {label}
+          </button>
+        ))}
+        {selected.length > 0 && (
+          <button
+            type="button"
+            onClick={() => onChange([])}
+            className="rounded-md border border-red-100 bg-red-50 px-2.5 py-1 text-[11px] font-medium text-red-500 transition hover:bg-red-100"
+          >
+            Temizle
+          </button>
+        )}
+      </div>
+
+      <div className="mb-1.5">
+        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Üst Çene</p>
+        <div className="flex gap-1">
+          {UPPER_RIGHT.map((n) => <ToothBtn key={n} num={n} />)}
+          <div className="mx-1 border-l border-dashed border-slate-300" />
+          {UPPER_LEFT.map((n) => <ToothBtn key={n} num={n} />)}
+        </div>
+      </div>
+
+      <div className="mt-1.5">
+        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Alt Çene</p>
+        <div className="flex gap-1">
+          {LOWER_RIGHT.map((n) => <ToothBtn key={n} num={n} />)}
+          <div className="mx-1 border-l border-dashed border-slate-300" />
+          {LOWER_LEFT.map((n) => <ToothBtn key={n} num={n} />)}
+        </div>
+      </div>
+
+      {selected.length > 0 && (
+        <p className="mt-2 text-[11px] text-slate-500">
+          <span className="font-semibold text-slate-700">{selected.length} diş</span> seçili: {selected.join(", ")}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function HastaDetayContent() {
   const router = useRouter();
   const search = useSearchParams();
@@ -183,6 +357,7 @@ function HastaDetayContent() {
   const [treatToothType, setTreatToothType] = useState<"adult"|"child"|"general">("adult");
   const [treatDoctorId, setTreatDoctorId] = useState("");
   const [doctorOptions, setDoctorOptions] = useState<StaffLite[]>([]);
+  const [globalLabNames, setGlobalLabNames] = useState<string[]>([]);
   const [clinicName, setClinicName] = useState("");
   const [activePriceList, setActivePriceList] = useState<"standard" | "custom">("standard");
   const [priceListSourceReady, setPriceListSourceReady] = useState(false);
@@ -201,6 +376,40 @@ function HastaDetayContent() {
     notes: ""
   });
   const [installmentPreview, setInstallmentPreview] = useState<{date: string; amount: number}[]>([]);
+
+  // Laboratuvar süreç yönetimi (hasta-detay içi)
+  const [labDetailModalOpen, setLabDetailModalOpen] = useState(false);
+  const [labDetailLoading, setLabDetailLoading] = useState(false);
+  const [labActionSaving, setLabActionSaving] = useState(false);
+  const [labActionError, setLabActionError] = useState("");
+  const [labOrderDetail, setLabOrderDetail] = useState<LabOrderDetail | null>(null);
+  const [labCreateModalOpen, setLabCreateModalOpen] = useState(false);
+  const [labCreateSaving, setLabCreateSaving] = useState(false);
+  const [labCreateError, setLabCreateError] = useState("");
+  const [labNewForm, setLabNewForm] = useState({
+    doctorId: "",
+    labName: "",
+    customLabName: "",
+    labType: "",
+    teeth: "",
+    notes: "",
+    sentItem: "",
+    requestedItem: "",
+    impressionMethod: "" as ImpressionMethod,
+  });
+  const [labTripForm, setLabTripForm] = useState({
+    sentItem: "",
+    requestedItem: "",
+    sentAt: new Date().toISOString().slice(0, 10),
+    sentNote: "",
+  });
+  const [editingTripId, setEditingTripId] = useState<string | null>(null);
+  const [labTripEditForm, setLabTripEditForm] = useState({
+    sentItem: "",
+    requestedItem: "",
+    sentAt: new Date().toISOString().slice(0, 10),
+    sentNote: "",
+  });
 
   const toNumber = (value: unknown) => {
     const numeric = Number(value);
@@ -224,6 +433,11 @@ function HastaDetayContent() {
     if (remainingFromItems > 0) return remainingFromItems;
     return Math.max(getPlanTotal(plan) - toNumber(plan.pesnat), 0);
   };
+
+  const knownLabs = useMemo(() => {
+    const patientLabs = (data?.labOrders || []).map((order) => order.labName || "").filter(Boolean);
+    return Array.from(new Set([...globalLabNames, ...patientLabs]));
+  }, [data?.labOrders, globalLabNames]);
 
   const syncTabInUrl = (nextTab: Tab) => {
     const params = new URLSearchParams(window.location.search);
@@ -296,6 +510,200 @@ function HastaDetayContent() {
     setTab(requestedTab);
   }, [requestedTab]);
 
+  const refreshLabOrderDetail = async (orderId: string) => {
+    const response = await fetch(`/api/lab-orders/${orderId}`);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(payload?.error || "Laboratuvar detayı alınamadı");
+    }
+
+    const detail = payload as LabOrderDetail;
+    setLabOrderDetail(detail);
+  };
+
+  const openLabCreateModal = () => {
+    setLabCreateError("");
+    setLabNewForm({
+      doctorId: doctorOptions[0]?.id || "",
+      labName: knownLabs[0] || "",
+      customLabName: "",
+      labType: "",
+      teeth: "",
+      notes: "",
+      sentItem: "",
+      requestedItem: "",
+      impressionMethod: "",
+    });
+    setLabCreateModalOpen(true);
+  };
+
+  const closeLabCreateModal = () => {
+    setLabCreateModalOpen(false);
+    setLabCreateSaving(false);
+    setLabCreateError("");
+  };
+
+  const createOrderFromPatientDetail = async () => {
+    const resolvedLabName = labNewForm.labName === "__new_lab__" ? labNewForm.customLabName.trim() : labNewForm.labName.trim();
+    if (!id || !labNewForm.doctorId || !resolvedLabName || !labNewForm.labType.trim()) return;
+
+    setLabCreateSaving(true);
+    setLabCreateError("");
+    try {
+      const createResponse = await fetch("/api/lab-orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patientId: id,
+          doctorId: labNewForm.doctorId,
+          labName: resolvedLabName,
+          labType: labNewForm.labType.trim(),
+          teeth: labNewForm.teeth.trim() || null,
+          notes: labNewForm.notes.trim() || null,
+        }),
+      });
+
+      const createdPayload = await createResponse.json().catch(() => null);
+      if (!createResponse.ok) throw new Error(createdPayload?.error || "Laboratuvar işi oluşturulamadı");
+
+      if (createdPayload?.id && labNewForm.sentItem.trim()) {
+        const description = labNewForm.requestedItem.trim()
+          ? `${labNewForm.sentItem.trim()} → ${labNewForm.requestedItem.trim()}`
+          : labNewForm.sentItem.trim();
+
+        const tripResponse = await fetch(`/api/lab-orders/${createdPayload.id}/trips`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            description,
+            sentNote: buildSentNote("", labNewForm.impressionMethod, labNewForm.sentItem),
+          }),
+        });
+        const tripPayload = await tripResponse.json().catch(() => null);
+        if (!tripResponse.ok) throw new Error(tripPayload?.error || "İlk adım eklenemedi");
+      }
+
+      await load();
+      closeLabCreateModal();
+      showToast("success", "Laboratuvar işi oluşturuldu");
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Laboratuvar işi oluşturulamadı";
+      setLabCreateError(msg);
+      showToast("error", msg);
+    } finally {
+      setLabCreateSaving(false);
+    }
+  };
+
+  const openLabDetailModal = async (orderId: string) => {
+    setLabDetailModalOpen(true);
+    setLabDetailLoading(true);
+    setLabActionError("");
+    setEditingTripId(null);
+    try {
+      await refreshLabOrderDetail(orderId);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Laboratuvar detayı alınamadı";
+      setLabActionError(msg);
+      showToast("error", msg);
+    } finally {
+      setLabDetailLoading(false);
+    }
+  };
+
+  const closeLabDetailModal = () => {
+    setLabDetailModalOpen(false);
+    setLabDetailLoading(false);
+    setLabActionSaving(false);
+    setLabActionError("");
+    setLabOrderDetail(null);
+    setLabTripForm({ sentItem: "", requestedItem: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
+    setLabTripEditForm({ sentItem: "", requestedItem: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
+    setEditingTripId(null);
+  };
+
+  const createTripFromPatientDetail = async () => {
+    if (!labOrderDetail || !labTripForm.sentItem.trim()) return;
+    setLabActionSaving(true);
+    setLabActionError("");
+    try {
+      const description = labTripForm.requestedItem.trim()
+        ? `${labTripForm.sentItem.trim()} → ${labTripForm.requestedItem.trim()}`
+        : labTripForm.sentItem.trim();
+
+      const response = await fetch(`/api/lab-orders/${labOrderDetail.id}/trips`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description,
+          sentAt: labTripForm.sentAt,
+          sentNote: labTripForm.sentNote.trim() || null,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error || "Gidiş adımı eklenemedi");
+
+      await Promise.all([refreshLabOrderDetail(labOrderDetail.id), load()]);
+      setLabTripForm({ sentItem: "", requestedItem: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
+      showToast("success", "Gidiş adımı eklendi");
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Gidiş adımı eklenemedi";
+      setLabActionError(msg);
+      showToast("error", msg);
+    } finally {
+      setLabActionSaving(false);
+    }
+  };
+
+  const startEditTripFromPatientDetail = (trip: LabTrip) => {
+    const parsed = splitTripDescription(trip.description);
+    setEditingTripId(trip.id);
+    setLabTripEditForm({
+      sentItem: parsed.sentItem,
+      requestedItem: parsed.requestedItem,
+      sentAt: trip.sentAt ? new Date(trip.sentAt).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+      sentNote: trip.sentNote || "",
+    });
+  };
+
+  const cancelEditTripFromPatientDetail = () => {
+    setEditingTripId(null);
+    setLabTripEditForm({ sentItem: "", requestedItem: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
+  };
+
+  const saveTripEditFromPatientDetail = async () => {
+    if (!labOrderDetail || !editingTripId || !labTripEditForm.sentItem.trim()) return;
+    setLabActionSaving(true);
+    setLabActionError("");
+    try {
+      const description = labTripEditForm.requestedItem.trim()
+        ? `${labTripEditForm.sentItem.trim()} → ${labTripEditForm.requestedItem.trim()}`
+        : labTripEditForm.sentItem.trim();
+
+      const response = await fetch(`/api/lab-orders/${labOrderDetail.id}/trips/${editingTripId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description,
+          sentAt: labTripEditForm.sentAt,
+          sentNote: labTripEditForm.sentNote.trim() || null,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error || "Adım güncellenemedi");
+
+      await Promise.all([refreshLabOrderDetail(labOrderDetail.id), load()]);
+      cancelEditTripFromPatientDetail();
+      showToast("success", "Adım güncellendi");
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : "Adım güncellenemedi";
+      setLabActionError(msg);
+      showToast("error", msg);
+    } finally {
+      setLabActionSaving(false);
+    }
+  };
+
   // Installment modal Escape key handler
   useEffect(() => {
     if (!installmentModalOpen) return;
@@ -336,6 +744,16 @@ function HastaDetayContent() {
     fetch("/api/staff")
       .then(r => r.ok ? r.json() : [])
       .then((list: StaffLite[]) => setDoctorOptions((list || []).filter(s => s.role === "DOKTOR" || s.role === "YONETICI")))
+      .catch(() => {});
+
+    fetch("/api/lab-orders")
+      .then(r => r.ok ? r.json() : [])
+      .then((list: Array<{ labName?: string }>) => {
+        const names = (Array.isArray(list) ? list : [])
+          .map((item) => (item?.labName || "").trim())
+          .filter(Boolean);
+        setGlobalLabNames(Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, "tr")));
+      })
       .catch(() => {});
 
     fetch("/api/settings")
@@ -1943,7 +2361,14 @@ function HastaDetayContent() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-slate-800">Laboratuvar İşleri</h3>
-            <Link href="/lab" className="text-xs text-primary hover:underline">Laboratuvar Sayfasına Git →</Link>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={openLabCreateModal}
+                className="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
+              >
+                Hasta İçin Yeni İş
+              </button>
+            </div>
           </div>
           {(!data.labOrders || data.labOrders.length === 0) ? (
             <div className="rounded-xl border bg-white p-8 text-center text-slate-400">
@@ -1952,7 +2377,7 @@ function HastaDetayContent() {
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
                 <div className="rounded-lg bg-blue-50 border border-blue-100 p-3 text-center">
                   <p className="text-xs text-blue-500 font-bold uppercase">Toplam Kayıt</p>
                   <p className="text-2xl font-black text-blue-700">{data.labOrders.length}</p>
@@ -1965,16 +2390,44 @@ function HastaDetayContent() {
                   <p className="text-xs text-amber-500 font-bold uppercase">Bekleyen</p>
                   <p className="text-2xl font-black text-amber-700">{data.labOrders.filter(l=>l.status!=="HASTAYA_TAKILDI"&&l.status!=="IPTAL").length}</p>
                 </div>
+                <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-3 text-center">
+                  <p className="text-xs text-emerald-500 font-bold uppercase">Çalışılan Lab</p>
+                  <p className="text-2xl font-black text-emerald-700">{new Set(data.labOrders.map((l) => (l.labName || "").trim()).filter(Boolean)).size}</p>
+                </div>
+                <div className="rounded-lg bg-violet-50 border border-violet-100 p-3 text-center">
+                  <p className="text-xs text-violet-500 font-bold uppercase">İş Türü Çeşidi</p>
+                  <p className="text-2xl font-black text-violet-700">{new Set(data.labOrders.map((l) => (l.labType || "").trim()).filter(Boolean)).size}</p>
+                </div>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">İş Türü Adet Dağılımı</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {Object.entries(
+                    data.labOrders.reduce((acc, order) => {
+                      const key = (order.labType || "Belirsiz").trim() || "Belirsiz";
+                      acc[key] = (acc[key] || 0) + 1;
+                      return acc;
+                    }, {} as Record<string, number>)
+                  )
+                    .sort((a, b) => b[1] - a[1])
+                    .map(([type, count]) => (
+                      <span key={type} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                        {count} {type}
+                      </span>
+                    ))}
+                </div>
               </div>
               <div className="rounded-xl border bg-white overflow-hidden shadow-sm">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 border-b text-xs uppercase text-slate-500">
                     <tr>
                       <th className="px-3 py-2 text-left">Tarih</th>
+                      <th className="px-3 py-2 text-left">Laboratuvar Adı</th>
                       <th className="px-3 py-2 text-left">Lab Türü</th>
                       <th className="px-3 py-2 text-left">Doktor</th>
                       <th className="px-3 py-2 text-right">Fiyat</th>
                       <th className="px-3 py-2 text-left">Durum</th>
+                      <th className="px-3 py-2 text-right">İşlem</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
@@ -1987,13 +2440,41 @@ function HastaDetayContent() {
                         IPTAL: "bg-gray-100 text-gray-500",
                       };
                       return (
-                        <tr key={l.id} className="hover:bg-slate-50 transition">
+                        <tr
+                          key={l.id}
+                          className="cursor-pointer hover:bg-slate-50 transition"
+                          onClick={() => openLabDetailModal(l.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              openLabDetailModal(l.id);
+                            }
+                          }}
+                          tabIndex={0}
+                          role="button"
+                          aria-label={`Laboratuvar işi ${l.labType} detayını aç`}
+                        >
                           <td className="px-3 py-2 text-xs">{new Date(l.createdAt).toLocaleDateString("tr-TR")}</td>
-                          <td className="px-3 py-2 font-medium">{l.labType}</td>
+                          <td className="px-3 py-2 text-slate-700">{l.labName || "—"}</td>
+                          <td className="px-3 py-2 font-medium">
+                            <div>{l.labType}</div>
+                            {l.notes && <p className="line-clamp-1 text-[11px] font-normal text-slate-500">{l.notes}</p>}
+                          </td>
                           <td className="px-3 py-2 text-slate-600">{l.doctor?.fullName || "—"}</td>
                           <td className="px-3 py-2 text-right font-bold text-red-600">{l.price ? `₺${Number(l.price).toLocaleString("tr-TR")}` : "—"}</td>
                           <td className="px-3 py-2">
                             <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusCls[l.status] || "bg-gray-100 text-gray-600"}`}>{l.status.replace(/_/g," ")}</span>
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openLabDetailModal(l.id);
+                              }}
+                              className="text-xs font-semibold text-slate-700 hover:text-slate-900"
+                            >
+                              Yönet
+                            </button>
                           </td>
                         </tr>
                       );
@@ -2039,6 +2520,353 @@ function HastaDetayContent() {
             <div className="md:col-span-2"><label className="text-xs text-gray-600">Notlar</label><textarea value={editForm.notes||""} onChange={e=>setEditForm({...editForm,notes:e.target.value})} rows={2} className="mt-1 w-full rounded border px-3 py-2" /></div>
           </div>
           <button onClick={saveEdit} disabled={editLoading} className="mt-4 rounded bg-primary px-4 py-2 text-white disabled:opacity-50">{editLoading?"Kaydediliyor...":"Kaydet"}</button>
+        </div>
+      )}
+
+      {labCreateModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" onClick={closeLabCreateModal}>
+          <div className="w-full max-w-2xl rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Yeni laboratuvar işi">
+            <div className="flex items-center justify-between border-b px-5 py-3">
+              <h3 className="text-base font-semibold text-slate-900">Hasta İçin Yeni Laboratuvar İşi</h3>
+              <button onClick={closeLabCreateModal} className="text-lg text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <div className="space-y-3 p-5">
+              {labCreateError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{labCreateError}</div>
+              )}
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor *</label>
+                  <select
+                    value={labNewForm.doctorId}
+                    onChange={(e) => setLabNewForm((prev) => ({ ...prev, doctorId: e.target.value }))}
+                    className="w-full rounded border px-2.5 py-2 text-sm"
+                  >
+                    <option value="">Seçiniz</option>
+                    {doctorOptions.map((doctor) => (
+                      <option key={doctor.id} value={doctor.id}>{doctor.fullName}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Laboratuvar Adı *</label>
+                  <select
+                    value={labNewForm.labName}
+                    onChange={(e) => setLabNewForm((prev) => ({ ...prev, labName: e.target.value, customLabName: e.target.value === "__new_lab__" ? prev.customLabName : "" }))}
+                    className="w-full rounded border px-2.5 py-2 text-sm"
+                  >
+                    <option value="">Laboratuvar seçiniz</option>
+                    {knownLabs.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                    <option value="__new_lab__">+ Yeni laboratuvar ekle</option>
+                  </select>
+                  {labNewForm.labName === "__new_lab__" && (
+                    <input
+                      value={labNewForm.customLabName}
+                      onChange={(e) => setLabNewForm((prev) => ({ ...prev, customLabName: e.target.value }))}
+                      placeholder="Örn. Özel Teknik Laboratuvar"
+                      className="mt-2 w-full rounded border px-2.5 py-2 text-sm"
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">İş Türü *</label>
+                  <select
+                    value={labNewForm.labType}
+                    onChange={(e) => {
+                      const selected = e.target.value;
+                      const first = WORKFLOW_FIRST_STEP[selected];
+                      setLabNewForm((prev) => ({
+                        ...prev,
+                        labType: selected,
+                        sentItem: first ? first.send : prev.sentItem,
+                        requestedItem: first ? first.request : prev.requestedItem,
+                      }));
+                    }}
+                    className="w-full rounded border px-2.5 py-2 text-sm"
+                  >
+                    <option value="">Seçiniz</option>
+                    {LAB_CATEGORIES.map((category) => (
+                      <optgroup key={category.group} label={category.group}>
+                        {category.items.map((type) => (
+                          <option key={type} value={type}>{type}</option>
+                        ))}
+                      </optgroup>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Diş (opsiyonel)</label>
+                  <LabDentalChart
+                    selected={labNewForm.teeth ? labNewForm.teeth.split(",").map((t) => Number(t.trim())).filter(Boolean) : []}
+                    onChange={(nums) => setLabNewForm((prev) => ({ ...prev, teeth: nums.join(", ") }))}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">İlk Gönderilen (opsiyonel)</label>
+                  <input
+                    value={labNewForm.sentItem}
+                    onChange={(e) => {
+                      const value = e.target.value;
+                      setLabNewForm((prev) => ({
+                        ...prev,
+                        sentItem: value,
+                        impressionMethod: isMeasurementStep(value) ? prev.impressionMethod : "",
+                      }));
+                    }}
+                    placeholder="Ölçü"
+                    className="w-full rounded border px-2.5 py-2 text-sm"
+                  />
+                  <div className="mt-2 flex flex-wrap gap-1">
+                    {SPOON_REQUEST_OPTIONS.map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => setLabNewForm((prev) => ({ ...prev, sentItem: "Ölçü", requestedItem: opt }))}
+                        className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-700"
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">İlk İstenen (opsiyonel)</label>
+                  <input
+                    value={labNewForm.requestedItem}
+                    onChange={(e) => setLabNewForm((prev) => ({ ...prev, requestedItem: e.target.value }))}
+                    placeholder="Zirkonyum Alt Yapı"
+                    className="w-full rounded border px-2.5 py-2 text-sm"
+                  />
+                </div>
+                {isMeasurementStep(labNewForm.sentItem) && (
+                  <div className="md:col-span-2">
+                    <label className="mb-1 block text-xs font-semibold text-slate-600">Ölçü Yöntemi</label>
+                    <select
+                      value={labNewForm.impressionMethod}
+                      onChange={(e) => setLabNewForm((prev) => ({ ...prev, impressionMethod: e.target.value as ImpressionMethod }))}
+                      className="w-full rounded border px-2.5 py-2 text-sm"
+                    >
+                      <option value="">Seçiniz</option>
+                      <option value="KLASIK_OLCU">Klasik Ölçü</option>
+                      <option value="DIJITAL_TARAMA">Dijital Tarama</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Not (opsiyonel)</label>
+                <textarea
+                  value={labNewForm.notes}
+                  onChange={(e) => setLabNewForm((prev) => ({ ...prev, notes: e.target.value }))}
+                  rows={2}
+                  className="w-full rounded border px-2.5 py-2 text-sm"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-1">
+                <button onClick={closeLabCreateModal} className="rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700">Vazgeç</button>
+                <button
+                  onClick={createOrderFromPatientDetail}
+                  disabled={labCreateSaving || !labNewForm.doctorId || !(labNewForm.labName === "__new_lab__" ? labNewForm.customLabName.trim() : labNewForm.labName.trim()) || !labNewForm.labType.trim()}
+                  className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  {labCreateSaving ? "Oluşturuluyor..." : "Oluştur"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {labDetailModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4" onClick={closeLabDetailModal}>
+          <div
+            className="w-full max-w-4xl rounded-xl bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Laboratuvar süreç yönetimi"
+          >
+            <div className="flex items-center justify-between border-b px-5 py-3">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">Laboratuvar Süreç Yönetimi</h3>
+                {labOrderDetail && (
+                  <p className="text-xs text-slate-500">
+                    {labOrderDetail.patient?.fullName || data?.fullName} · {labOrderDetail.labType}
+                  </p>
+                )}
+              </div>
+              <button onClick={closeLabDetailModal} className="text-lg text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+
+            <div className="max-h-[78vh] overflow-y-auto p-5">
+              {labDetailLoading ? (
+                <p className="text-sm text-slate-500">Laboratuvar detayı yükleniyor...</p>
+              ) : !labOrderDetail ? (
+                <p className="text-sm text-red-600">Laboratuvar detayı yüklenemedi.</p>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid gap-3 md:grid-cols-4">
+                    <div className="rounded-lg border bg-slate-50 p-3">
+                      <p className="text-[11px] uppercase text-slate-500">Durum</p>
+                      <p className="text-sm font-semibold text-slate-800">{labOrderDetail.status.replace(/_/g, " ")}</p>
+                    </div>
+                    <div className="rounded-lg border bg-slate-50 p-3">
+                      <p className="text-[11px] uppercase text-slate-500">Lab</p>
+                      <p className="text-sm font-semibold text-slate-800">{labOrderDetail.labName || "—"}</p>
+                    </div>
+                    <div className="rounded-lg border bg-slate-50 p-3">
+                      <p className="text-[11px] uppercase text-slate-500">Toplam Adım</p>
+                      <p className="text-sm font-semibold text-slate-800">{labOrderDetail.trips.length}</p>
+                    </div>
+                    <div className="rounded-lg border bg-slate-50 p-3">
+                      <p className="text-[11px] uppercase text-slate-500">Son Hareket</p>
+                      <p className="text-sm font-semibold text-slate-800">
+                        {(() => {
+                          const latestTs = (labOrderDetail.trips || []).reduce((acc, trip) => {
+                            const sentTs = trip.sentAt ? new Date(trip.sentAt).getTime() : 0;
+                            const receivedTs = trip.receivedAt ? new Date(trip.receivedAt).getTime() : 0;
+                            return Math.max(acc, sentTs, receivedTs);
+                          }, 0);
+                          return latestTs ? new Date(latestTs).toLocaleDateString("tr-TR") : "—";
+                        })()}
+                      </p>
+                    </div>
+                  </div>
+
+                  {labActionError && (
+                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{labActionError}</div>
+                  )}
+
+                  <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    <p className="font-semibold">Asistan Ekranı</p>
+                    <p className="mt-0.5">Bu ekranda sadece geçmiş adımları görür, adım düzenler ve yeni gidiş eklersiniz.</p>
+                  </div>
+
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-lg border p-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Yeni Gidiş Ekle</p>
+                      <div className="space-y-2">
+                        <input
+                          value={labTripForm.sentItem}
+                          onChange={(e) => setLabTripForm((prev) => ({ ...prev, sentItem: e.target.value }))}
+                          placeholder="Laba gönderilen"
+                          className="w-full rounded border px-2.5 py-2 text-sm"
+                        />
+                        <input
+                          value={labTripForm.requestedItem}
+                          onChange={(e) => setLabTripForm((prev) => ({ ...prev, requestedItem: e.target.value }))}
+                          placeholder="Labdan beklenen"
+                          className="w-full rounded border px-2.5 py-2 text-sm"
+                        />
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <input
+                            type="date"
+                            value={labTripForm.sentAt}
+                            onChange={(e) => setLabTripForm((prev) => ({ ...prev, sentAt: e.target.value }))}
+                            className="w-full rounded border px-2.5 py-2 text-sm"
+                          />
+                          <input
+                            value={labTripForm.sentNote}
+                            onChange={(e) => setLabTripForm((prev) => ({ ...prev, sentNote: e.target.value }))}
+                            placeholder="Not (opsiyonel)"
+                            className="w-full rounded border px-2.5 py-2 text-sm"
+                          />
+                        </div>
+                        <button
+                          onClick={createTripFromPatientDetail}
+                          disabled={labActionSaving || !labTripForm.sentItem.trim()}
+                          className="w-full rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                        >
+                          Gidiş Adımı Ekle
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="rounded-lg border">
+                      <div className="border-b px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Gidiş-Geliş Geçmişi</div>
+                      <div className="max-h-[52vh] space-y-2 overflow-y-auto p-3">
+                        {labOrderDetail.trips.length === 0 ? (
+                          <p className="text-xs text-slate-500">Henüz adım yok.</p>
+                        ) : (
+                          labOrderDetail.trips.map((trip) => {
+                            const parsed = splitTripDescription(trip.description);
+                            return (
+                              <div key={trip.id} className="rounded border border-slate-200 p-2.5 text-xs">
+                                <div className="flex items-start justify-between gap-2">
+                                  <p className="font-semibold text-slate-800">#{trip.order} · {parsed.sentItem || "Adım"}</p>
+                                  <button
+                                    onClick={() => startEditTripFromPatientDetail(trip)}
+                                    className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                                  >
+                                    Düzenle
+                                  </button>
+                                </div>
+                                <p className="mt-1 text-slate-600">Giden: {parsed.sentItem || "—"}</p>
+                                <p className="text-slate-600">Beklenen: {parsed.requestedItem || "—"}</p>
+                                <p className="mt-1 text-slate-500">Gönderim Tarihi: {new Date(trip.sentAt).toLocaleDateString("tr-TR")}</p>
+                                <p className="text-slate-500">Geliş Tarihi: {trip.receivedAt ? new Date(trip.receivedAt).toLocaleDateString("tr-TR") : "Henüz gelmedi"}</p>
+                                {trip.sentNote && <p className="text-slate-500">Gönderim Notu: {trip.sentNote}</p>}
+                                {trip.receivedNote && <p className="text-slate-500">Geliş Notu: {trip.receivedNote}</p>}
+
+                                {editingTripId === trip.id && (
+                                  <div className="mt-2 space-y-2 rounded border border-amber-200 bg-amber-50 p-2.5">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800">Adım Düzenle</p>
+                                    <input
+                                      value={labTripEditForm.sentItem}
+                                      onChange={(e) => setLabTripEditForm((prev) => ({ ...prev, sentItem: e.target.value }))}
+                                      placeholder="Laba gönderilen"
+                                      className="w-full rounded border px-2 py-1.5 text-xs"
+                                    />
+                                    <input
+                                      value={labTripEditForm.requestedItem}
+                                      onChange={(e) => setLabTripEditForm((prev) => ({ ...prev, requestedItem: e.target.value }))}
+                                      placeholder="Labdan beklenen"
+                                      className="w-full rounded border px-2 py-1.5 text-xs"
+                                    />
+                                    <div className="grid gap-2 sm:grid-cols-2">
+                                      <input
+                                        type="date"
+                                        value={labTripEditForm.sentAt}
+                                        onChange={(e) => setLabTripEditForm((prev) => ({ ...prev, sentAt: e.target.value }))}
+                                        className="w-full rounded border px-2 py-1.5 text-xs"
+                                      />
+                                      <input
+                                        value={labTripEditForm.sentNote}
+                                        onChange={(e) => setLabTripEditForm((prev) => ({ ...prev, sentNote: e.target.value }))}
+                                        placeholder="Gönderim notu"
+                                        className="w-full rounded border px-2 py-1.5 text-xs"
+                                      />
+                                    </div>
+                                    <div className="flex items-center justify-end gap-2">
+                                      <button
+                                        onClick={cancelEditTripFromPatientDetail}
+                                        className="rounded border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-700"
+                                      >
+                                        Vazgeç
+                                      </button>
+                                      <button
+                                        onClick={saveTripEditFromPatientDetail}
+                                        disabled={labActionSaving || !labTripEditForm.sentItem.trim()}
+                                        className="rounded bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white disabled:opacity-50"
+                                      >
+                                        Değişikliği Kaydet
+                                      </button>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
 
