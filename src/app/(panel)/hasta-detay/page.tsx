@@ -389,6 +389,7 @@ function HastaDetayContent() {
   const [labDetailLoading, setLabDetailLoading] = useState(false);
   const [labActionSaving, setLabActionSaving] = useState(false);
   const [labActionError, setLabActionError] = useState("");
+  const [labSelectedOrderId, setLabSelectedOrderId] = useState("");
   const [labOrderDetail, setLabOrderDetail] = useState<LabOrderDetail | null>(null);
   const [labCreateModalOpen, setLabCreateModalOpen] = useState(false);
   const [labCreateSaving, setLabCreateSaving] = useState(false);
@@ -527,14 +528,35 @@ function HastaDetayContent() {
   }, [requestedTab]);
 
   const refreshLabOrderDetail = async (orderId: string) => {
-    const response = await fetch(`/api/lab-orders/${orderId}`);
-    const payload = await response.json().catch(() => null);
-    if (!response.ok) {
-      throw new Error(payload?.error || "Laboratuvar detayı alınamadı");
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const response = await fetch(`/api/lab-orders/${orderId}`, { cache: "no-store" });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) {
+          const err = new Error(payload?.error || "Laboratuvar detayı alınamadı");
+          // Geçici sunucu/bağlantı hatalarında 1 kez otomatik yeniden dene.
+          if (response.status >= 500 && attempt < 2) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            continue;
+          }
+          throw err;
+        }
+
+        const detail = payload as LabOrderDetail;
+        setLabOrderDetail(detail);
+        return;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error("Laboratuvar detayı alınamadı");
+        if (attempt < 2) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          continue;
+        }
+      }
     }
 
-    const detail = payload as LabOrderDetail;
-    setLabOrderDetail(detail);
+    throw lastError || new Error("Laboratuvar detayı alınamadı");
   };
 
   const openLabCreateModal = () => {
@@ -612,6 +634,7 @@ function HastaDetayContent() {
   };
 
   const openLabDetailModal = async (orderId: string) => {
+    setLabSelectedOrderId(orderId);
     setLabDetailModalOpen(true);
     setLabDetailLoading(true);
     setLabActionError("");
@@ -632,6 +655,7 @@ function HastaDetayContent() {
     setLabDetailLoading(false);
     setLabActionSaving(false);
     setLabActionError("");
+    setLabSelectedOrderId("");
     setLabOrderDetail(null);
     setLabTripForm({ sentItem: "", requestedItem: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
     setLabTripEditForm({ sentItem: "", requestedItem: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
@@ -2856,7 +2880,18 @@ function HastaDetayContent() {
               {labDetailLoading ? (
                 <p className="text-sm text-slate-500">Laboratuvar detayı yükleniyor...</p>
               ) : !labOrderDetail ? (
-                <p className="text-sm text-red-600">Laboratuvar detayı yüklenemedi.</p>
+                <div className="space-y-3">
+                  <p className="text-sm text-red-600">{labActionError || "Laboratuvar detayı yüklenemedi."}</p>
+                  {!!labSelectedOrderId && (
+                    <button
+                      type="button"
+                      onClick={() => openLabDetailModal(labSelectedOrderId)}
+                      className="rounded border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Tekrar Dene
+                    </button>
+                  )}
+                </div>
               ) : (
                 <div className="space-y-4">
                   <div className="grid gap-3 md:grid-cols-4">

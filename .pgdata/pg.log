@@ -331,3 +331,51 @@
 2026-05-08 08:40:18.523 +03 [20004] WARNING:  could not create listen socket for "localhost"
 2026-05-08 08:40:18.523 +03 [20004] FATAL:  could not create any TCP/IP sockets
 2026-05-08 08:40:18.525 +03 [20004] LOG:  database system is shut down
+2026-05-08 08:50:14.574 +03 [23736] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-05-08 08:50:14.577 +03 [23736] LOG:  listening on IPv6 address "::1", port 5432
+2026-05-08 08:50:14.577 +03 [23736] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-05-08 08:50:14.629 +03 [22304] LOG:  database system was interrupted; last known up at 2026-05-08 08:38:40 +03
+2026-05-08 08:50:16.838 +03 [17904] FATAL:  the database system is starting up
+2026-05-08 08:50:16.857 +03 [23616] FATAL:  the database system is starting up
+2026-05-08 08:50:22.892 +03 [22304] LOG:  could not open file "./pg.log": sharing violation
+2026-05-08 08:50:22.892 +03 [22304] DETAIL:  Continuing to retry for 30 seconds.
+2026-05-08 08:50:22.892 +03 [22304] HINT:  You might have antivirus, backup, or similar software interfering with the database system.
+2026-05-08 08:50:39.984 +03 [9676] FATAL:  the database system is starting up
+2026-05-08 08:50:39.997 +03 [16116] FATAL:  the database system is starting up
+2026-05-08 08:50:46.832 +03 [22312] FATAL:  the database system is starting up
+2026-05-08 08:50:46.847 +03 [5124] FATAL:  the database system is starting up
+2026-05-08 08:50:48.801 +03 [22304] LOG:  syncing data directory (fsync), elapsed time: 34.17 s, current path: ./pg_commit_ts
+2026-05-08 08:50:48.837 +03 [22304] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-05-08 08:50:48.843 +03 [22304] LOG:  redo starts at 0/546CDD0
+2026-05-08 08:50:48.843 +03 [22304] LOG:  invalid record length at 0/546CE08: expected at least 24, got 0
+2026-05-08 08:50:48.843 +03 [22304] LOG:  redo done at 0/546CDD0 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-05-08 08:50:48.849 +03 [2096] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-05-08 08:50:48.873 +03 [2096] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.005 s, total=0.028 s; sync files=2, longest=0.003 s, average=0.003 s; distance=0 kB, estimate=0 kB; lsn=0/546CE08, redo lsn=0/546CE08
+2026-05-08 08:50:48.890 +03 [23736] LOG:  database system is ready to accept connections
+2026-05-08 08:51:23.028 +03 [8048] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-08 08:51:26.543 +03 [23424] ERROR:  duplicate key value violates unique constraint "Institution_name_key"
+2026-05-08 08:51:26.543 +03 [23424] DETAIL:  Key (name)=(whitedental) already exists.
+2026-05-08 08:51:26.543 +03 [23424] STATEMENT:  INSERT INTO "public"."Institution" ("id","name","email","phone","address","subscriptionPlan","smsBalance","isActive","createdAt","updatedAt","adIntensity","adsEnabled","serviceMode","throttleMs") VALUES ($1,$2,$3,$4,$5,CAST($6::text AS "public"."SubscriptionPlan"),$7,$8,$9,$10,CAST($11::text AS "public"."AdIntensity"),$12,CAST($13::text AS "public"."ServiceMode"),$14) RETURNING "public"."Institution"."id"
+2026-05-08 08:51:26.554 +03 [23424] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-08 08:51:40.134 +03 [13152] LOG:  could not receive data from client: An existing connection was forcibly closed by the remote host.
+	
+2026-05-08 08:51:45.066 +03 [14552] ERROR:  unterminated quoted identifier at or near "" Patient\)" at character 30
+2026-05-08 08:51:45.066 +03 [14552] STATEMENT:  SELECT (SELECT COUNT(*) FROM " Patient\)
+2026-05-08 08:51:50.993 +03 [24124] ERROR:  relation "patient" does not exist at character 30
+2026-05-08 08:51:50.993 +03 [24124] STATEMENT:  SELECT (SELECT COUNT(*) FROM Patient) AS patients, (SELECT COUNT(*) FROM Appointment) AS appointments, (SELECT COUNT(*) FROM Examination) AS exams, (SELECT COUNT(*) FROM Payment) AS payments;
+2026-05-08 08:51:55.336 +03 [20684] ERROR:  relation "patient" does not exist at character 30
+2026-05-08 08:51:55.336 +03 [20684] STATEMENT:  SELECT (SELECT COUNT(*) FROM Patient) AS patients;
+2026-05-08 08:55:48.875 +03 [2096] LOG:  checkpoint starting: time
+2026-05-08 08:55:49.213 +03 [2096] LOG:  checkpoint complete: wrote 3 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.312 s, sync=0.009 s, total=0.338 s; sync files=4, longest=0.003 s, average=0.003 s; distance=7 kB, estimate=7 kB; lsn=0/546EB18, redo lsn=0/546EAC0
+2026-05-08 09:00:48.210 +03 [2096] LOG:  checkpoint starting: time
+2026-05-08 09:00:48.442 +03 [2096] LOG:  checkpoint complete: wrote 2 buffers (0.0%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.216 s, sync=0.003 s, total=0.233 s; sync files=2, longest=0.002 s, average=0.002 s; distance=4 kB, estimate=6 kB; lsn=0/546FB78, redo lsn=0/546FB20
+2026-05-08 09:05:48.456 +03 [2096] LOG:  checkpoint starting: time
+2026-05-08 09:05:48.573 +03 [2096] LOG:  checkpoint complete: wrote 1 buffers (0.0%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.103 s, sync=0.002 s, total=0.118 s; sync files=1, longest=0.002 s, average=0.002 s; distance=1 kB, estimate=6 kB; lsn=0/546FF80, redo lsn=0/546FF28
+2026-05-08 09:10:48.576 +03 [2096] LOG:  checkpoint starting: time
+2026-05-08 09:10:49.362 +03 [2096] LOG:  checkpoint complete: wrote 7 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.737 s, sync=0.021 s, total=0.787 s; sync files=8, longest=0.006 s, average=0.003 s; distance=19 kB, estimate=19 kB; lsn=0/5474CF0, redo lsn=0/5474C98
+2026-05-08 09:15:48.366 +03 [2096] LOG:  checkpoint starting: time
+2026-05-08 09:15:49.553 +03 [2096] LOG:  checkpoint complete: wrote 11 buffers (0.1%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=1.146 s, sync=0.026 s, total=1.187 s; sync files=12, longest=0.003 s, average=0.003 s; distance=25 kB, estimate=25 kB; lsn=0/547B328, redo lsn=0/547B2D0
+2026-05-08 09:20:48.559 +03 [2096] LOG:  checkpoint starting: time
+2026-05-08 09:20:49.003 +03 [2096] LOG:  checkpoint complete: wrote 4 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.415 s, sync=0.012 s, total=0.445 s; sync files=5, longest=0.003 s, average=0.003 s; distance=12 kB, estimate=24 kB; lsn=0/547E4E0, redo lsn=0/547E488

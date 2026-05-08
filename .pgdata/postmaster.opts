@@ -1,1 +1,1 @@
-C:/Program Files/PostgreSQL/18/bin/postgres.exe "-D" "c:\Users\ahmet\OneDrive\Desktop\web calýsma\.pgdata"
+C:/Program Files/PostgreSQL/18/bin/postgres.exe "-D" ".pgdata"

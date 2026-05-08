@@ -50,6 +50,66 @@
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(panel)/anasayfa/page.js"
+    ],
+    "/(panel)/hasta-detay/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(panel)/hasta-detay/page.js"
+    ],
+    "/(panel)/gorevler/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(panel)/gorevler/page.js"
+    ],
+    "/(panel)/hasta-takip/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(panel)/hasta-takip/page.js"
+    ],
+    "/(panel)/lab/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(panel)/lab/page.js"
+    ],
+    "/(panel)/muhasebe/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(panel)/muhasebe/page.js"
+    ],
+    "/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/page.js"
+    ],
+    "/klinik/giris/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/klinik/giris/page.js"
+    ],
+    "/superadmin/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/superadmin/page.js"
+    ],
+    "/superadmin/layout": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/superadmin/layout.js"
+    ],
+    "/superadmin/panel/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/superadmin/panel/page.js"
+    ],
+    "/superadmin/role-permissions/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/superadmin/role-permissions/page.js"
+    ],
+    "/(panel)/recete/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(panel)/recete/page.js"
     ]
   }
 }
