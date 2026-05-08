@@ -807,17 +807,17 @@ video {
 .mt-auto{
   margin-top: auto;
 }
-.line-clamp-2{
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
 .line-clamp-1{
   overflow: hidden;
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 1;
+}
+.line-clamp-2{
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 .block{
   display: block;
@@ -3169,6 +3169,10 @@ video {
   --tw-text-opacity: 1;
   color: rgb(167 139 250 / var(--tw-text-opacity));
 }
+.text-violet-500{
+  --tw-text-opacity: 1;
+  color: rgb(139 92 246 / var(--tw-text-opacity));
+}
 .text-violet-700{
   --tw-text-opacity: 1;
   color: rgb(109 40 217 / var(--tw-text-opacity));
@@ -3201,10 +3205,6 @@ video {
 .text-yellow-800{
   --tw-text-opacity: 1;
   color: rgb(133 77 14 / var(--tw-text-opacity));
-}
-.text-violet-500{
-  --tw-text-opacity: 1;
-  color: rgb(139 92 246 / var(--tw-text-opacity));
 }
 .underline{
   text-decoration-line: underline;
@@ -4396,6 +4396,10 @@ body {
     grid-template-columns: repeat(5, minmax(0, 1fr));
   }
 
+  .lg\:grid-cols-6{
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
   .lg\:grid-cols-\[0\.9fr_0\.6fr_1fr_1fr\]{
     grid-template-columns: 0.9fr 0.6fr 1fr 1fr;
   }
@@ -4414,10 +4418,6 @@ body {
 
   .lg\:grid-cols-\[minmax\(0\2c 1fr\)_290px\]{
     grid-template-columns: minmax(0,1fr) 290px;
-  }
-
-  .lg\:grid-cols-6{
-    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 
   .lg\:items-start{

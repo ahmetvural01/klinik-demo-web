@@ -34,6 +34,14 @@ export async function GET(request: NextRequest) {
   const yearStart = new Date(`${pivotYear}-01-01T00:00:00Z`);
   const yearEnd   = new Date(`${pivotYear}-12-31T23:59:59Z`);
 
+  const treatmentOnlyWhere = {
+    NOT: [
+      { status: { contains: "diagnoz", mode: "insensitive" as const } },
+      { status: { contains: "ön teşhis", mode: "insensitive" as const } },
+      { status: { contains: "on teshis", mode: "insensitive" as const } },
+    ],
+  };
+
   // ── Paralel sorgular ──────────────────────────────────────────────────────
   const [payments, examinations, labOrders, expenses, firmaIslemler, newPatients, taksitler, doctors] =
     await Promise.all([
@@ -42,7 +50,7 @@ export async function GET(request: NextRequest) {
         include: { patient: { select: { id: true } } },
       }),
       prisma.examination.findMany({
-        where: { diagnosedAt: dateFilter },
+        where: { diagnosedAt: dateFilter, ...treatmentOnlyWhere },
         include: {
           doctor: { select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true } },
           patient: { select: { id: true } },

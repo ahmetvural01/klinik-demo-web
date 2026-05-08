@@ -141,7 +141,6 @@ export default function PrescriptionPage() {
         <span>${(patient.gender==="ERKEK"||patient.gender==="M")?"Erkek":"Kadın"}${age ? `, ${age} yaş` : ""}</span>
         ${patient.birthDate ? `<span>D.T.: <strong>${new Date(patient.birthDate).toLocaleDateString("tr-TR")}</strong></span>` : ""}
         ${!hidePhone && patient.phone ? `<span>Tel: <strong>${patient.phone}</strong></span>` : ""}
-        ${patient.insurance ? `<span>Kurum: <strong>${patient.insurance}</strong></span>` : ""}
       </div>
       <div class="rx-content">
         <div class="rx-drugs-title">İlaç Listesi</div>
@@ -218,7 +217,6 @@ export default function PrescriptionPage() {
               <div><span className="text-slate-400">Cinsiyet: </span><span className="text-slate-700">{(patient.gender === "ERKEK" || patient.gender === "M") ? "Erkek" : "Kadın"}</span></div>
               <div><span className="text-slate-400">Doğum Tarihi: </span><span className="text-slate-700">{patient.birthDate ? new Date(patient.birthDate).toLocaleDateString("tr-TR") : "—"}</span></div>
               {!hidePhone && patient.phone && <div><span className="text-slate-400">Telefon: </span><span className="text-slate-700">{patient.phone}</span></div>}
-              {patient.insurance && <div><span className="text-slate-400">Kurum: </span><span className="text-slate-700">{patient.insurance}</span></div>}
               {patient.address && <div className="col-span-2"><span className="text-slate-400">Adres: </span><span className="text-slate-700">{patient.address}</span></div>}
             </div>
           </div>

@@ -11,9 +11,18 @@ export async function GET() {
   const auth = await requireAuth("finance:read");
   if (auth.error) return auth.error;
 
-  // Tüm muayeneleri (tedavi tutarları)
+  const treatmentOnlyWhere = {
+    NOT: [
+      { status: { contains: "diagnoz", mode: "insensitive" as const } },
+      { status: { contains: "ön teşhis", mode: "insensitive" as const } },
+      { status: { contains: "on teshis", mode: "insensitive" as const } },
+    ],
+  };
+
+  // Sadece ücretlendirmeye dahil tedaviler (diagnoz/muayene hariç)
   const examGroups = await prisma.examination.groupBy({
     by: ["patientId"],
+    where: treatmentOnlyWhere,
     _sum: { amount: true },
   });
 

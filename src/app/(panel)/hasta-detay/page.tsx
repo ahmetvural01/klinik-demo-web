@@ -108,6 +108,13 @@ const TAB_ITEMS: { key: Tab; label: string }[] = [
 
 const isValidTab = (value: string | null): value is Tab => TAB_ITEMS.some(item => item.key === value);
 
+const isDiagnosisStatus = (status: string | null | undefined) => {
+  const normalized = String(status || "").toLocaleLowerCase("tr-TR");
+  return normalized.includes("diagnoz") || normalized.includes("ön teşhis") || normalized.includes("on teshis");
+};
+
+const isChargeableTreatment = (status: string | null | undefined) => !isDiagnosisStatus(status);
+
 const TASK_TYPE_LABELS: Record<ClinicTask["type"], string> = {
   PARCA_SIPARIS: "Parça Sipariş",
   LAB: "Laboratuvar",
@@ -345,7 +352,7 @@ function HastaDetayContent() {
   const [selectedPayForPrint, setSelectedPayForPrint] = useState<string[]>([]);
   const [showPricesInPrint, setShowPricesInPrint] = useState(true);
   // Muayene listesi inline düzenleme
-  const [examInlineEdits, setExamInlineEdits] = useState<Record<string, {amount: string; doctorId: string}>>({});
+  const [examInlineEdits, setExamInlineEdits] = useState<Record<string, { amount: string; doctorId: string; toothNo?: string; treatmentName?: string; diagnosedAt?: string }>>({});
   const [selectedDiagnozIds, setSelectedDiagnozIds] = useState<string[]>([]);
   const [bulkConverting, setBulkConverting] = useState(false);
   const [examSavingId, setExamSavingId] = useState<string | null>(null);
@@ -432,6 +439,15 @@ function HastaDetayContent() {
     const remainingFromItems = (plan.taksitler || []).reduce((sum, item) => sum + toNumber(item.kalan), 0);
     if (remainingFromItems > 0) return remainingFromItems;
     return Math.max(getPlanTotal(plan) - toNumber(plan.pesnat), 0);
+  };
+
+  const toDateInputValue = (value: string) => {
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return "";
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
   };
 
   const knownLabs = useMemo(() => {
@@ -993,14 +1009,14 @@ function HastaDetayContent() {
   };
 
   const openTreatmentPrint = () => {
-    const list = (data?.examinations || []).filter(e => e.status !== "DIAGNOZ" && e.status !== "Diagnoz (Ön Teşhis)");
+    const list = (data?.examinations || []).filter(e => isChargeableTreatment(e.status));
     setSelectedTreatForPrint(list.map(t => t.id));
     setTreatmentPrintOpen(true);
   };
 
   const doPrintTreatments = () => {
     if (!data) return;
-    const selected = (data.examinations || []).filter(e => e.status !== "DIAGNOZ" && e.status !== "Diagnoz (Ön Teşhis)" && selectedTreatForPrint.includes(e.id));
+    const selected = (data.examinations || []).filter(e => isChargeableTreatment(e.status) && selectedTreatForPrint.includes(e.id));
     const total = selected.reduce((s, e) => s + Number(e.amount), 0);
     const discounted = total * (1 - Number(data.discountRate || 0) / 100);
     const chartHtml = Object.keys(toothMap).length > 0 ? `<div class="sec-title">Diş Şeması</div>${buildToothChartHtml(toothMap)}` : "";
@@ -1033,6 +1049,9 @@ function HastaDetayContent() {
     const editVals = examInlineEdits[exam.id];
     const amount = editVals ? (Number(editVals.amount) || 0) : Number(exam.amount || 0);
     const doctorId = editVals?.doctorId || exam.doctorId || currentUserId;
+    const toothNo = editVals?.toothNo ?? exam.toothNo ?? undefined;
+    const treatmentName = (editVals?.treatmentName ?? exam.treatmentName).trim() || exam.treatmentName;
+    const diagnosedAt = editVals?.diagnosedAt ? new Date(`${editVals.diagnosedAt}T12:00:00.000Z`).toISOString() : exam.diagnosedAt;
     if (!doctorId) return showToast("error", "Doktor seçilmedi");
 
     setExamSavingId(exam.id);
@@ -1041,10 +1060,10 @@ function HastaDetayContent() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         status: "Tedavi (Ücretli)",
-        treatmentName: exam.treatmentName,
-        toothNo: exam.toothNo,
+        treatmentName,
+        toothNo,
         amount,
-        diagnosedAt: exam.diagnosedAt,
+        diagnosedAt,
         doctorId,
       })
     });
@@ -1055,7 +1074,7 @@ function HastaDetayContent() {
       return showToast("error", err.message || "Tedaviye aktarma başarısız");
     }
 
-    showToast("success", `"${exam.treatmentName}" tedaviye aktarıldı`);
+    showToast("success", `"${treatmentName}" tedaviye aktarıldı`);
     setExamInlineEdits(prev => { const n = {...prev}; delete n[exam.id]; return n; });
     setSelectedDiagnozIds(prev => prev.filter(x => x !== exam.id));
     void load();
@@ -1064,16 +1083,20 @@ function HastaDetayContent() {
   const saveExamInlineEdit = async (exam: Exam) => {
     const editVals = examInlineEdits[exam.id];
     if (!editVals) return;
+    const toothNo = editVals.toothNo ?? exam.toothNo ?? undefined;
+    const treatmentName = (editVals.treatmentName ?? exam.treatmentName).trim();
+    if (!treatmentName) return showToast("error", "Tedavi adı boş olamaz");
+    const diagnosedAt = editVals.diagnosedAt ? new Date(`${editVals.diagnosedAt}T12:00:00.000Z`).toISOString() : exam.diagnosedAt;
     setExamSavingId(exam.id);
     const res = await fetch("/api/examinations/" + exam.id, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         status: exam.status,
-        treatmentName: exam.treatmentName,
-        toothNo: exam.toothNo,
+        treatmentName,
+        toothNo,
         amount: Number(editVals.amount) || 0,
-        diagnosedAt: exam.diagnosedAt,
+        diagnosedAt,
         doctorId: editVals.doctorId || exam.doctorId || currentUserId,
       })
     });
@@ -1088,7 +1111,7 @@ function HastaDetayContent() {
     if (selectedDiagnozIds.length === 0) return;
     if (!window.confirm(`${selectedDiagnozIds.length} muayene kaydı tedaviye aktarılsın mı?`)) return;
     setBulkConverting(true);
-    const examList = (data?.examinations || []).filter(e => e.status === "DIAGNOZ" || e.status === "Diagnoz (Ön Teşhis)");
+    const examList = (data?.examinations || []).filter(e => isDiagnosisStatus(e.status));
     let errCount = 0;
     for (const eId of selectedDiagnozIds) {
       const exam = examList.find(e => e.id === eId);
@@ -1096,15 +1119,19 @@ function HastaDetayContent() {
       const editVals = examInlineEdits[eId];
       const amount = editVals ? (Number(editVals.amount) || 0) : Number(exam.amount || 0);
       const doctorId = editVals?.doctorId || exam.doctorId || currentUserId;
+      const toothNo = editVals?.toothNo ?? exam.toothNo ?? undefined;
+      const treatmentName = (editVals?.treatmentName ?? exam.treatmentName).trim() || exam.treatmentName;
+      const diagnosedAt = editVals?.diagnosedAt ? new Date(`${editVals.diagnosedAt}T12:00:00.000Z`).toISOString() : exam.diagnosedAt;
+      if (!doctorId) { errCount++; continue; }
       const res = await fetch("/api/examinations/" + eId, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           status: "Tedavi (Ücretli)",
-          treatmentName: exam.treatmentName,
-          toothNo: exam.toothNo,
+          treatmentName,
+          toothNo,
           amount,
-          diagnosedAt: exam.diagnosedAt,
+          diagnosedAt,
           doctorId,
         })
       });
@@ -1366,11 +1393,11 @@ function HastaDetayContent() {
   if (!data) return <section className="rounded-xl bg-white border border-slate-100 p-6 shadow-sm"><p>{loadError || "Hasta bulunamadı"}. <Link href="/hasta" className="text-primary underline">Geri Dön</Link></p></section>;
 
   const totalPaid = data.payments.reduce((s, p) => s + Number(p.amount), 0);
-  const totalCharged = data.examinations.reduce((s, e) => s + Number(e.amount), 0);
+  const diagnozlar = data.examinations.filter(e => isDiagnosisStatus(e.status));
+  const tedaviler = data.examinations.filter(e => isChargeableTreatment(e.status));
+  const totalCharged = tedaviler.reduce((s, e) => s + Number(e.amount), 0);
   const discountedTotal = totalCharged * (1 - (Number(data.discountRate || 0) / 100));
   const totalDebt = discountedTotal - totalPaid;
-  const diagnozlar = data.examinations.filter(e => e.status === "DIAGNOZ" || e.status === "Diagnoz (Ön Teşhis)");
-  const tedaviler = data.examinations.filter(e => e.status !== "DIAGNOZ" && e.status !== "Diagnoz (Ön Teşhis)");
 
   const healthFlags = ([
     ["Alerji", data.hasAllergy], ["Hepatit", data.hasHepatitis], ["Böbrek", data.hasKidney],
@@ -1597,7 +1624,11 @@ function HastaDetayContent() {
         const UPPER_C = ["55","54","53","52","51","61","62","63","64","65"];
         const LOWER_C = ["85","84","83","82","81","71","72","73","74","75"];
         const fallbackTreatmentPool = activePriceList === "custom" ? CUSTOM_DENTAL_TREATMENT_TEMPLATES : TDB_2026_CORE_PRICE_CATALOG;
-        const treatmentPool = priceList.length > 0 ? priceList : fallbackTreatmentPool;
+        // Katalog + DB listesini birleştir: DB'de eksik kayıt olsa bile tüm tedaviler görünür.
+        const treatmentMap = new Map<string, { id: string; treatment: string; amount: number }>();
+        for (const item of fallbackTreatmentPool) treatmentMap.set(item.id, item);
+        for (const item of priceList) treatmentMap.set(item.id, item);
+        const treatmentPool = Array.from(treatmentMap.values()).sort((a, b) => a.treatment.localeCompare(b.treatment, "tr"));
         const onToothPick = async (n: string) => {
           if (treatmentSaving) return;
           await addDirectToExaminationList(n);
@@ -1784,7 +1815,11 @@ function HastaDetayContent() {
                           value={currentAmount}
                           onChange={ev => setExamInlineEdits(prev => ({
                             ...prev,
-                            [e.id]: { ...(prev[e.id] ?? { doctorId: e.doctorId ?? "" }), amount: ev.target.value }
+                            [e.id]: {
+                              ...(prev[e.id] ?? {}),
+                              amount: ev.target.value,
+                              doctorId: prev[e.id]?.doctorId ?? (e.doctorId ?? ""),
+                            }
                           }))}
                           className="w-24 rounded border border-transparent bg-transparent px-2 py-1 text-right text-xs font-semibold hover:border-gray-300 focus:border-blue-400 focus:bg-white focus:outline-none"
                         />
@@ -1794,7 +1829,11 @@ function HastaDetayContent() {
                           value={currentDoctorId}
                           onChange={ev => setExamInlineEdits(prev => ({
                             ...prev,
-                            [e.id]: { ...(prev[e.id] ?? { amount: String(Number(e.amount || 0)) }), doctorId: ev.target.value }
+                            [e.id]: {
+                              ...(prev[e.id] ?? {}),
+                              amount: prev[e.id]?.amount ?? String(Number(e.amount || 0)),
+                              doctorId: ev.target.value,
+                            }
                           }))}
                           className="w-full min-w-[110px] rounded border border-transparent bg-transparent px-2 py-1 text-xs hover:border-gray-300 focus:border-blue-400 focus:bg-white focus:outline-none"
                         >
@@ -1844,20 +1883,133 @@ function HastaDetayContent() {
             </div>
             <table className="w-full text-sm">
               <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
-                <tr><th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Tedavi</th><th className="px-3 py-2 text-left">Diş No</th><th className="px-3 py-2 text-right">Tutar</th><th className="px-3 py-2 text-left">Doktor</th><th className="px-3 py-2 text-center">Sil</th></tr>
+                <tr><th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Tedavi</th><th className="px-3 py-2 text-left">Diş No</th><th className="px-3 py-2 text-right">Tutar</th><th className="px-3 py-2 text-left">Doktor</th><th className="px-3 py-2 text-center">İşlem</th></tr>
               </thead>
               <tbody>
                 {tedaviler.length === 0 && <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">Henüz yapılan tedavi kaydı yok</td></tr>}
-                {tedaviler.map(e => (
-                  <tr key={e.id} className="border-b hover:bg-gray-50">
-                    <td className="px-3 py-2 text-xs">{new Date(e.diagnosedAt).toLocaleDateString("tr-TR")}</td>
-                    <td className="px-3 py-2">{e.treatmentName}</td>
-                    <td className="px-3 py-2 font-mono text-xs">{e.toothNo||"—"}</td>
-                    <td className="px-3 py-2 text-right font-semibold">{Number(e.amount).toFixed(2)} TL</td>
-                    <td className="px-3 py-2 text-xs">{e.doctor?.fullName||"—"}</td>
-                    <td className="px-3 py-2 text-center"><button onClick={() => { void deleteExamRecord(e.id, true); }} className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-600 hover:bg-red-200">Sil</button></td>
-                  </tr>
-                ))}
+                {tedaviler.map(e => {
+                  const editVals = examInlineEdits[e.id];
+                  const currentDiagnosedAt = editVals?.diagnosedAt ?? toDateInputValue(e.diagnosedAt);
+                  const currentTreatmentName = editVals?.treatmentName ?? e.treatmentName;
+                  const currentToothNo = editVals?.toothNo ?? (e.toothNo || "");
+                  const currentAmount = editVals?.amount ?? String(Number(e.amount || 0));
+                  const currentDoctorId = editVals?.doctorId ?? e.doctorId ?? "";
+                  const hasEdits = !!editVals;
+                  const isSaving = examSavingId === e.id;
+
+                  return (
+                    <tr key={e.id} className="border-b hover:bg-gray-50">
+                      <td className="px-2 py-1.5">
+                        <input
+                          type="date"
+                          value={currentDiagnosedAt}
+                          onChange={ev => setExamInlineEdits(prev => ({
+                            ...prev,
+                            [e.id]: {
+                              ...(prev[e.id] ?? {}),
+                              diagnosedAt: ev.target.value,
+                              treatmentName: prev[e.id]?.treatmentName ?? e.treatmentName,
+                              toothNo: prev[e.id]?.toothNo ?? (e.toothNo || ""),
+                              amount: prev[e.id]?.amount ?? String(Number(e.amount || 0)),
+                              doctorId: prev[e.id]?.doctorId ?? (e.doctorId || ""),
+                            },
+                          }))}
+                          className="rounded border border-transparent bg-transparent px-2 py-1 text-xs hover:border-gray-300 focus:border-blue-400 focus:bg-white focus:outline-none"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <input
+                          value={currentTreatmentName}
+                          onChange={ev => setExamInlineEdits(prev => ({
+                            ...prev,
+                            [e.id]: {
+                              ...(prev[e.id] ?? {}),
+                              treatmentName: ev.target.value,
+                              diagnosedAt: prev[e.id]?.diagnosedAt ?? toDateInputValue(e.diagnosedAt),
+                              toothNo: prev[e.id]?.toothNo ?? (e.toothNo || ""),
+                              amount: prev[e.id]?.amount ?? String(Number(e.amount || 0)),
+                              doctorId: prev[e.id]?.doctorId ?? (e.doctorId || ""),
+                            },
+                          }))}
+                          className="w-full rounded border border-transparent bg-transparent px-2 py-1 text-sm hover:border-gray-300 focus:border-blue-400 focus:bg-white focus:outline-none"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <input
+                          value={currentToothNo}
+                          onChange={ev => setExamInlineEdits(prev => ({
+                            ...prev,
+                            [e.id]: {
+                              ...(prev[e.id] ?? {}),
+                              diagnosedAt: prev[e.id]?.diagnosedAt ?? toDateInputValue(e.diagnosedAt),
+                              treatmentName: prev[e.id]?.treatmentName ?? e.treatmentName,
+                              amount: prev[e.id]?.amount ?? String(Number(e.amount || 0)),
+                              doctorId: prev[e.id]?.doctorId ?? (e.doctorId || ""),
+                              toothNo: ev.target.value,
+                            },
+                          }))}
+                          placeholder="—"
+                          className="w-20 rounded border border-transparent bg-transparent px-2 py-1 font-mono text-xs hover:border-gray-300 focus:border-blue-400 focus:bg-white focus:outline-none"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={currentAmount}
+                          onChange={ev => setExamInlineEdits(prev => ({
+                            ...prev,
+                            [e.id]: {
+                              ...(prev[e.id] ?? {}),
+                              diagnosedAt: prev[e.id]?.diagnosedAt ?? toDateInputValue(e.diagnosedAt),
+                              treatmentName: prev[e.id]?.treatmentName ?? e.treatmentName,
+                              amount: ev.target.value,
+                              doctorId: prev[e.id]?.doctorId ?? (e.doctorId || ""),
+                              toothNo: prev[e.id]?.toothNo ?? (e.toothNo || ""),
+                            },
+                          }))}
+                          className="w-24 rounded border border-transparent bg-transparent px-2 py-1 text-right text-xs font-semibold hover:border-gray-300 focus:border-blue-400 focus:bg-white focus:outline-none"
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <select
+                          value={currentDoctorId}
+                          onChange={ev => setExamInlineEdits(prev => ({
+                            ...prev,
+                            [e.id]: {
+                              ...(prev[e.id] ?? {}),
+                              diagnosedAt: prev[e.id]?.diagnosedAt ?? toDateInputValue(e.diagnosedAt),
+                              treatmentName: prev[e.id]?.treatmentName ?? e.treatmentName,
+                              amount: prev[e.id]?.amount ?? String(Number(e.amount || 0)),
+                              doctorId: ev.target.value,
+                              toothNo: prev[e.id]?.toothNo ?? (e.toothNo || ""),
+                            },
+                          }))}
+                          className="w-full min-w-[110px] rounded border border-transparent bg-transparent px-2 py-1 text-xs hover:border-gray-300 focus:border-blue-400 focus:bg-white focus:outline-none"
+                        >
+                          <option value="">— Seçin —</option>
+                          {doctorOptions.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          {hasEdits && (
+                            <button
+                              onClick={() => { void saveExamInlineEdit(e); }}
+                              disabled={isSaving}
+                              title="Değişiklikleri kaydet"
+                              className="rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700 hover:bg-blue-200 disabled:opacity-50"
+                            >
+                              {isSaving ? "⏳" : "💾"}
+                            </button>
+                          )}
+                          <button onClick={() => { void deleteExamRecord(e.id, true); }} disabled={isSaving} className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-600 hover:bg-red-200 disabled:opacity-50">Sil</button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
               <tfoot className="border-t bg-gray-50"><tr><td colSpan={3} className="px-3 py-2 text-right text-xs font-semibold">Toplam:</td><td className="px-3 py-2 text-right font-bold">{totalCharged.toFixed(2)} TL</td><td colSpan={2} /></tr></tfoot>
             </table>
@@ -2889,9 +3041,9 @@ function HastaDetayContent() {
             <div className="flex items-center justify-between mb-2">
               <label className="flex items-center gap-2 text-sm cursor-pointer">
                 <input type="checkbox"
-                  checked={selectedTreatForPrint.length === (data?.examinations||[]).filter(e=>e.status!=="DIAGNOZ"&&e.status!=="Diagnoz (Ön Teşhis)").length && selectedTreatForPrint.length > 0}
+                  checked={selectedTreatForPrint.length === (data?.examinations||[]).filter(e=>isChargeableTreatment(e.status)).length && selectedTreatForPrint.length > 0}
                   onChange={e => {
-                    const list = (data?.examinations||[]).filter(e=>e.status!=="DIAGNOZ"&&e.status!=="Diagnoz (Ön Teşhis)");
+                    const list = (data?.examinations||[]).filter(e=>isChargeableTreatment(e.status));
                     setSelectedTreatForPrint(e.target.checked ? list.map(t=>t.id) : []);
                   }}
                   className="rounded"
@@ -2901,7 +3053,7 @@ function HastaDetayContent() {
               <span className="text-xs text-slate-500">{selectedTreatForPrint.length} seçili</span>
             </div>
             <div className="overflow-y-auto flex-1 space-y-0.5 border rounded-lg p-2">
-              {(data?.examinations||[]).filter(e=>e.status!=="DIAGNOZ"&&e.status!=="Diagnoz (Ön Teşhis)").map(t => (
+              {(data?.examinations||[]).filter(e=>isChargeableTreatment(e.status)).map(t => (
                 <label key={t.id} className="flex items-center gap-2 p-2 rounded hover:bg-slate-50 cursor-pointer text-sm">
                   <input type="checkbox"
                     checked={selectedTreatForPrint.includes(t.id)}
@@ -2917,7 +3069,7 @@ function HastaDetayContent() {
                   <span className="text-sm font-semibold text-slate-700">₺{Number(t.amount).toLocaleString("tr-TR")}</span>
                 </label>
               ))}
-              {(data?.examinations||[]).filter(e=>e.status!=="DIAGNOZ"&&e.status!=="Diagnoz (Ön Teşhis)").length === 0 && <p className="text-center text-sm text-slate-400 p-4">Tedavi kaydı yok</p>}
+              {(data?.examinations||[]).filter(e=>isChargeableTreatment(e.status)).length === 0 && <p className="text-center text-sm text-slate-400 p-4">Tedavi kaydı yok</p>}
             </div>
             <div className="mt-4 flex gap-2 justify-end">
               <button onClick={() => setTreatmentPrintOpen(false)} className="rounded border border-slate-300 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Kapat</button>

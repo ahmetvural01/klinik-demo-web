@@ -22,10 +22,18 @@ export async function GET(request: NextRequest) {
     createdAt: { ...(fromDate ? { gte: fromDate } : {}), ...(toDate ? { lte: toDate } : {}) }
   } : {};
 
+  const treatmentOnlyWhere = {
+    NOT: [
+      { status: { contains: "diagnoz", mode: "insensitive" as const } },
+      { status: { contains: "ön teşhis", mode: "insensitive" as const } },
+      { status: { contains: "on teshis", mode: "insensitive" as const } },
+    ],
+  };
+
   const [examinations, doctorPayments, allPatientPayments, labInvoices] = await Promise.all([
-    // Bu doktorun yaptığı muayeneler
+    // Bu doktorun yaptığı ücretlendirilebilir tedaviler
     prisma.examination.findMany({
-      where: { doctorId, ...dateFilter },
+      where: { doctorId, ...dateFilter, ...treatmentOnlyWhere },
       include: { patient: true },
       orderBy: { diagnosedAt: "desc" }
     }),

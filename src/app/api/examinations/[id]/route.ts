@@ -21,6 +21,10 @@ function fmtStatus(v: string): string {
   return EXAM_STATUS_LABELS[v] || v;
 }
 
+function normalizeOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
 export async function GET(_: NextRequest, { params }: Params) {
   const auth = await requireAuth("examinations:read");
   if (auth.error) return auth.error;
@@ -54,11 +58,11 @@ export async function PUT(request: NextRequest, { params }: Params) {
     patientId: body.patientId ?? existing.patientId,
     doctorId: body.doctorId ?? existing.doctorId,
     treatmentName: body.treatmentName ?? existing.treatmentName,
-    toothNo: body.toothNo !== undefined ? body.toothNo : existing.toothNo,
+    toothNo: body.toothNo !== undefined ? normalizeOptionalString(body.toothNo) : normalizeOptionalString(existing.toothNo),
     amount: body.amount !== undefined ? Number(body.amount) : Number(existing.amount),
     status: body.status ?? existing.status,
     diagnosedAt: body.diagnosedAt ? body.diagnosedAt : existing.diagnosedAt.toISOString(),
-    note: body.note !== undefined ? body.note : existing.note,
+    note: body.note !== undefined ? normalizeOptionalString(body.note) : normalizeOptionalString(existing.note),
   };
 
   const parsed = examinationSchema.safeParse(merged);

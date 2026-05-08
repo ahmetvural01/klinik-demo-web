@@ -5,10 +5,10 @@
       "static/chunks/main-app.js",
       "static/chunks/app/global-error.js"
     ],
-    "/(panel)/hasta-detay/page": [
+    "/(panel)/randevu/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
-      "static/chunks/app/(panel)/hasta-detay/page.js"
+      "static/chunks/app/(panel)/randevu/page.js"
     ],
     "/(panel)/layout": [
       "static/chunks/webpack.js",
@@ -41,15 +41,15 @@
       "static/chunks/main-app.js",
       "static/chunks/app/not-found.js"
     ],
-    "/(panel)/lab/page": [
-      "static/chunks/webpack.js",
-      "static/chunks/main-app.js",
-      "static/chunks/app/(panel)/lab/page.js"
-    ],
     "/(panel)/hasta/page": [
       "static/chunks/webpack.js",
       "static/chunks/main-app.js",
       "static/chunks/app/(panel)/hasta/page.js"
+    ],
+    "/(panel)/anasayfa/page": [
+      "static/chunks/webpack.js",
+      "static/chunks/main-app.js",
+      "static/chunks/app/(panel)/anasayfa/page.js"
     ]
   }
 }

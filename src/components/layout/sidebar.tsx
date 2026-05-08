@@ -85,7 +85,6 @@ function buildNavGroups(role: string): NavGroup[] {
     groups.push({
       label: "Tedavi",
       items: [
-        { href: "/tedavi-plani", label: "Tedavi Planı", icon: "clipboard" },
         { href: "/lab",          label: "Laboratuvar",  icon: "flask" },
       ],
     });
