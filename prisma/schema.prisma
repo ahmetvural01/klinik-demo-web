@@ -511,7 +511,7 @@ model AuditLog {
   action    String
   detail    String?
   createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id])
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([createdAt])
@@ -657,6 +657,7 @@ model LabTrip {
   createdAt    DateTime  @default(now())
   labOrder     LabOrder  @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
 
+  @@unique([labOrderId, order])
   @@index([labOrderId])
 }
 
@@ -671,6 +672,7 @@ model LabOrderInvoice {
   createdAt DateTime @default(now())
   labOrder  LabOrder @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
 
+  @@unique([labOrderId, invoiceNo])
   @@index([labOrderId])
   @@index([issuedAt])
 }
@@ -839,8 +841,8 @@ model Reminder {
   status       ReminderStatus @default(AKTIF)
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
-  patient      Patient?       @relation(fields: [patientId], references: [id])
-  plan         TaksitPlan?    @relation(fields: [planId], references: [id])
+  patient      Patient?       @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  plan         TaksitPlan?    @relation(fields: [planId], references: [id], onDelete: Cascade)
 
   @@index([reminderDate])
   @@index([status])

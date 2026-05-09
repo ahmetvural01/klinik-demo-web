@@ -234,9 +234,28 @@ export async function POST(request: NextRequest) {
     }, { status: 409 });
   }
 
-  const appointment = await prisma.appointment.create({
-    data: { ...parsed.data, startAt, endAt },
-    include: { patient: true, doctor: true },
+  const appointment = await prisma.$transaction(async (tx) => {
+    const appt = await tx.appointment.create({
+      data: { ...parsed.data, startAt, endAt },
+      include: { patient: true, doctor: true },
+    });
+
+    // Reminder'ı transaction içinde oluştur - bir başarısızsa ikisi de rollback
+    if (parsed.data.smsReminder) {
+      const reminderDate = new Date(startAt);
+      reminderDate.setDate(reminderDate.getDate() - 1);
+      
+      await tx.reminder.create({
+        data: {
+          patientId: appt.patientId,
+          note: `[APPT_REMINDER]:${appt.id}`,
+          reminderDate,
+          status: "AKTIF",
+        },
+      });
+    }
+
+    return appt;
   });
 
   if (auth.user.institutionId) {
@@ -249,17 +268,6 @@ export async function POST(request: NextRequest) {
     } catch {
       // SMS hatası randevu oluşturmayı kırmamalı.
     }
-  }
-
-  try {
-    await scheduleAppointmentReminder({
-      id: appointment.id,
-      patientId: appointment.patientId,
-      startAt: appointment.startAt,
-      smsReminder: appointment.smsReminder,
-    });
-  } catch {
-    // Reminder kaydı hatası randevu oluşturmayı kırmamalı.
   }
 
   await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${appointment.patient.fullName} icin randevu`);

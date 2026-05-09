@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string; tripId: string } }
 ) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("appointments:write");
+  if (auth.error) return auth.error;
 
   const body = await req.json();
 

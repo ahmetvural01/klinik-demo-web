@@ -6,11 +6,11 @@
  */
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 export async function POST() {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("payments:write");
+  if (auth.error) return auth.error;
 
   const now = new Date();
 
@@ -43,8 +43,8 @@ export async function POST() {
 }
 
 export async function GET() {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("payments:read");
+  if (auth.error) return auth.error;
 
   const now = new Date();
   const count = await (prisma as any).taksit.count({

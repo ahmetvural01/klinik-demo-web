@@ -675,6 +675,9 @@ export default function LabPage() {
   async function createOrder() {
     if (!orderForm.patientId || !orderForm.doctorId || !resolvedLabName || !orderForm.labType || !orderForm.sentItem) return;
     setSaving(true);
+    const firstDescription = orderForm.requestedItem
+      ? `${orderForm.sentItem} → ${orderForm.requestedItem}`
+      : orderForm.sentItem;
     const res = await fetch("/api/lab-orders", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -685,23 +688,13 @@ export default function LabPage() {
         labType: orderForm.labType,
         teeth: orderForm.teeth || null,
         notes: orderForm.notes || null,
+        firstTrip: {
+          description: firstDescription,
+          sentNote: buildSentNote("", orderForm.impressionMethod, orderForm.sentItem),
+        },
       }),
     });
     if (res.ok) {
-      const newOrder = await res.json().catch(() => null);
-      if (newOrder?.id && orderForm.sentItem) {
-        const description = orderForm.requestedItem
-          ? `${orderForm.sentItem} → ${orderForm.requestedItem}`
-          : orderForm.sentItem;
-        await fetch(`/api/lab-orders/${newOrder.id}/trips`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            description,
-            sentNote: buildSentNote("", orderForm.impressionMethod, orderForm.sentItem),
-          }),
-        });
-      }
       setOrderForm({ ...emptyOrderForm });
       closeModal();
       load();

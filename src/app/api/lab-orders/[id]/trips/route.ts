@@ -1,33 +1,50 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("appointments:write");
+  if (auth.error) return auth.error;
 
   const body = await req.json();
   const { description, sentAt, sentNote } = body;
 
   if (!description) return NextResponse.json({ error: "description zorunlu" }, { status: 400 });
 
-  // Determine next order number
-  const last = await (prisma as any).labTrip.findFirst({
-    where:   { labOrderId: params.id },
-    orderBy: { order: "desc" },
-    select:  { order: true },
+  const order = await (prisma as any).labOrder.findUnique({
+    where: { id: params.id },
+    select: { id: true },
   });
-  const nextOrder = (last?.order ?? 0) + 1;
+  if (!order) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
 
-  const trip = await (prisma as any).labTrip.create({
-    data: {
-      labOrderId: params.id,
-      order:      nextOrder,
-      description,
-      sentAt:     sentAt     ? new Date(sentAt)     : new Date(),
-      sentNote:   sentNote   || null,
-    },
-  });
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    try {
+      const trip = await (prisma as any).$transaction(async (tx: any) => {
+        const last = await tx.labTrip.findFirst({
+          where: { labOrderId: params.id },
+          orderBy: { order: "desc" },
+          select: { order: true },
+        });
+        const nextOrder = (last?.order ?? 0) + 1;
 
-  return NextResponse.json(trip, { status: 201 });
+        return tx.labTrip.create({
+          data: {
+            labOrderId: params.id,
+            order: nextOrder,
+            description,
+            sentAt: sentAt ? new Date(sentAt) : new Date(),
+            sentNote: sentNote || null,
+          },
+        });
+      });
+
+      return NextResponse.json(trip, { status: 201 });
+    } catch (error: any) {
+      // Unique(labOrderId, order) çakışırsa yeniden sıra hesaplayıp tekrar dene.
+      if (error?.code === "P2002" && attempt < 4) continue;
+      throw error;
+    }
+  }
+
+  return NextResponse.json({ error: "Gidiş adımı oluşturulamadı, lütfen tekrar deneyin" }, { status: 409 });
 }

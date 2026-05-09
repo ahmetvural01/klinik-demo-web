@@ -168,6 +168,110 @@ const WORKFLOW_FIRST_STEP: Record<string, { send: string; request: string }> = {
   "İmplant Üstü Sabit Restorasyon": { send: "İmplant Ölçüsü (Scanbody / Transfer)", request: "Altyapı Prova" },
 };
 
+// Tam adım zincirleri — laboratuvar sayfasıyla aynı şablon
+const WORKFLOW_TEMPLATES: Record<string, { send: string; request: string }[]> = {
+  Zirkonyum: [
+    { send: "Ölçü", request: "Zirkonyum Alt Yapı" },
+    { send: "Zirkonyum Alt Yapı", request: "Dentin Prova" },
+    { send: "Dentin Prova", request: "Glazeli Bitim" },
+  ],
+  "E-max": [
+    { send: "Ölçü", request: "E-max Prova" },
+    { send: "E-max Prova", request: "Glazeli Bitim" },
+  ],
+  "Metal Destekli Porselen": [
+    { send: "Ölçü", request: "Metal Alt Yapı Prova" },
+    { send: "Metal Alt Yapı Prova", request: "Dentin Prova" },
+    { send: "Dentin Prova", request: "Glazeli Bitim" },
+  ],
+  "Full Metal": [
+    { send: "Ölçü", request: "Metal Prova" },
+    { send: "Metal Prova", request: "Final Bitim" },
+  ],
+  "Kuron Tamir": [{ send: "Kırık/Hasarlı Kronkopru", request: "Onarılmış Kronkopru" }],
+  "Veneer (Laminat)": [
+    { send: "Ölçü", request: "Wax-up / Mock-up Prova" },
+    { send: "Mock-up Onayı", request: "Laminat Prova" },
+    { send: "Laminat Prova", request: "Glazeli Bitim" },
+  ],
+  "Tam Protez": [
+    { send: "Primer Ölçü", request: "Bireysel Kaşık" },
+    { send: "Fonksiyonel Ölçü", request: "Mum Prova" },
+    { send: "Mum Prova", request: "Akrilik Prova" },
+    { send: "Akrilik Prova", request: "Tam Protez Bitim" },
+  ],
+  "Hareketli Kısmi Protez": [
+    { send: "Ölçü", request: "Altyapı Prova" },
+    { send: "Altyapı Prova", request: "Diş Dizimi Mum Prova" },
+    { send: "Diş Dizimi Mum Prova", request: "Final Protez" },
+  ],
+  "Hareketli Kısmi Protez (Metal Kroşe)": [
+    { send: "Ölçü", request: "Kroşe Altyapı Prova" },
+    { send: "Kroşe Altyapı Prova", request: "Diş Dizimi Mum Prova" },
+    { send: "Diş Dizimi Mum Prova", request: "Final Protez" },
+  ],
+  "Protez Tamir": [{ send: "Kırık Protez", request: "Tamir Edilmiş Protez" }],
+  "İmplant Üstü Sabit Restorasyon": [
+    { send: "İmplant Ölçüsü (Scanbody / Transfer)", request: "Altyapı Prova" },
+    { send: "Altyapı Prova", request: "Dentin Prova" },
+    { send: "Dentin Prova", request: "Glazeli Bitim" },
+  ],
+  "İmplant Üstü Hareketli Protez": [
+    { send: "Ölçü + Bar Ölçüsü", request: "Bar Prova" },
+    { send: "Bar Prova", request: "Diş Dizimi Mum Prova" },
+    { send: "Diş Dizimi Mum Prova", request: "Final Protez" },
+  ],
+  "Gece Plağı": [{ send: "Ölçü", request: "Gece Plağı" }],
+  "Kas Gevşetici Splint (Michigan)": [
+    { send: "Ölçü", request: "Michigan Splint" },
+    { send: "Splint Prova", request: "Oklüzal Ayarlama" },
+  ],
+  "Şeffaf Plak (Aligner)": [{ send: "Dijital Tarama / Ölçü", request: "Aligner Seti" }],
+  "Braket Reteyner": [{ send: "Ölçü", request: "Reteyner" }],
+  "Bruksizm Plağı": [{ send: "Ölçü", request: "Bruksizm Plağı" }],
+  "Beyazlatma Atel": [{ send: "Ölçü", request: "Beyazlatma Atel" }],
+};
+
+function normalizeWorkflowText(value: string) {
+  return value
+    .toLocaleLowerCase("tr-TR")
+    .replace(/ı/g, "i").replace(/ğ/g, "g").replace(/ş/g, "s")
+    .replace(/ç/g, "c").replace(/ö/g, "o").replace(/ü/g, "u")
+    .replace(/\(final\)/g, "")
+    .replace(/son duzeltme\s*\/\s*glaze/g, "glazeli bitim")
+    .replace(/glaze/g, "glazeli bitim")
+    .replace(/zirkon\s+alt\s*yapi/g, "zirkonyum alt yapi")
+    .replace(/zirkon\s+altyapi/g, "zirkonyum alt yapi")
+    .replace(/(acik|kisisel)\s+kasik\s+ile\s+olcu/g, "olcu")
+    .replace(/(acik|kisisel)\s+kasik\s+olcu/g, "olcu")
+    .replace(/\s+/g, " ").trim();
+}
+
+function isSameWorkflowValue(left: string, right: string) {
+  return normalizeWorkflowText(left) === normalizeWorkflowText(right);
+}
+
+function isSpoonRequestItem(value: string) {
+  return SPOON_REQUEST_OPTIONS_LAB.some((item) => isSameWorkflowValue(item, value));
+}
+
+function getNextTemplateStepIndex(labType: string, trips: { description: string }[]) {
+  const template = WORKFLOW_TEMPLATES[labType] ?? [];
+  if (template.length === 0) return 0;
+  let cursor = 0;
+  for (const trip of trips) {
+    if (cursor >= template.length) break;
+    const { sentItem, requestedItem } = splitTripDescription(trip.description);
+    if (isSpoonRequestItem(requestedItem || "")) continue;
+    const expected = template[cursor];
+    if (isSameWorkflowValue(sentItem, expected.send)) {
+      cursor += 1;
+    }
+  }
+  return cursor;
+}
+
+const SPOON_REQUEST_OPTIONS_LAB = ["Açık Kaşık", "Kişisel Kaşık"];
 const SPOON_REQUEST_OPTIONS = ["Açık Kaşık", "Kişisel Kaşık"];
 
 type ImpressionMethod = "" | "KLASIK_OLCU" | "DIJITAL_TARAMA";
@@ -408,9 +512,11 @@ function HastaDetayContent() {
   const [labTripForm, setLabTripForm] = useState({
     sentItem: "",
     requestedItem: "",
+    impressionMethod: "" as ImpressionMethod,
     sentAt: new Date().toISOString().slice(0, 10),
     sentNote: "",
   });
+  const [labTripSuggested, setLabTripSuggested] = useState(false);
   const [editingTripId, setEditingTripId] = useState<string | null>(null);
   const [labTripEditForm, setLabTripEditForm] = useState({
     sentItem: "",
@@ -527,6 +633,32 @@ function HastaDetayContent() {
     setTab(requestedTab);
   }, [requestedTab]);
 
+  // Lab gidiş formu otomatik taslak doldurma
+  useEffect(() => {
+    if (!labOrderDetail || labTripSuggested) return;
+    const template = WORKFLOW_TEMPLATES[labOrderDetail.labType] ?? [];
+    const stepIndex = getNextTemplateStepIndex(labOrderDetail.labType, labOrderDetail.trips);
+    const suggestion = template[stepIndex] ?? null;
+    if (!suggestion || labTripForm.sentItem) return;
+
+    const receivedSpoonItem = [...labOrderDetail.trips]
+      .reverse()
+      .map((t) => ({ ...t, parts: splitTripDescription(t.description) }))
+      .find((t) => Boolean(t.receivedAt) && isSpoonRequestItem(t.parts.requestedItem || ""))
+      ?.parts.requestedItem;
+    const suggestedSend =
+      suggestion && stepIndex === 0 && receivedSpoonItem
+        ? `${receivedSpoonItem} ile Ölçü`
+        : suggestion.send;
+
+    setLabTripForm((prev) => ({
+      ...prev,
+      sentItem: suggestedSend,
+      requestedItem: suggestion.request,
+    }));
+    setLabTripSuggested(true);
+  }, [labOrderDetail]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const refreshLabOrderDetail = async (orderId: string) => {
     let lastError: Error | null = null;
 
@@ -588,6 +720,10 @@ function HastaDetayContent() {
     setLabCreateSaving(true);
     setLabCreateError("");
     try {
+      const firstDescription = labNewForm.requestedItem.trim()
+        ? `${labNewForm.sentItem.trim()} → ${labNewForm.requestedItem.trim()}`
+        : labNewForm.sentItem.trim();
+
       const createResponse = await fetch("/api/lab-orders", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -598,28 +734,17 @@ function HastaDetayContent() {
           labType: labNewForm.labType.trim(),
           teeth: labNewForm.teeth.trim() || null,
           notes: labNewForm.notes.trim() || null,
+          firstTrip: labNewForm.sentItem.trim()
+            ? {
+                description: firstDescription,
+                sentNote: buildSentNote("", labNewForm.impressionMethod, labNewForm.sentItem),
+              }
+            : null,
         }),
       });
 
       const createdPayload = await createResponse.json().catch(() => null);
       if (!createResponse.ok) throw new Error(createdPayload?.error || "Laboratuvar işi oluşturulamadı");
-
-      if (createdPayload?.id && labNewForm.sentItem.trim()) {
-        const description = labNewForm.requestedItem.trim()
-          ? `${labNewForm.sentItem.trim()} → ${labNewForm.requestedItem.trim()}`
-          : labNewForm.sentItem.trim();
-
-        const tripResponse = await fetch(`/api/lab-orders/${createdPayload.id}/trips`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            description,
-            sentNote: buildSentNote("", labNewForm.impressionMethod, labNewForm.sentItem),
-          }),
-        });
-        const tripPayload = await tripResponse.json().catch(() => null);
-        if (!tripResponse.ok) throw new Error(tripPayload?.error || "İlk adım eklenemedi");
-      }
 
       await load();
       closeLabCreateModal();
@@ -657,7 +782,8 @@ function HastaDetayContent() {
     setLabActionError("");
     setLabSelectedOrderId("");
     setLabOrderDetail(null);
-    setLabTripForm({ sentItem: "", requestedItem: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
+    setLabTripForm({ sentItem: "", requestedItem: "", impressionMethod: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
+    setLabTripSuggested(false);
     setLabTripEditForm({ sentItem: "", requestedItem: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
     setEditingTripId(null);
   };
@@ -677,14 +803,15 @@ function HastaDetayContent() {
         body: JSON.stringify({
           description,
           sentAt: labTripForm.sentAt,
-          sentNote: labTripForm.sentNote.trim() || null,
+          sentNote: buildSentNote(labTripForm.sentNote.trim(), labTripForm.impressionMethod, labTripForm.sentItem) || null,
         }),
       });
       const payload = await response.json().catch(() => null);
       if (!response.ok) throw new Error(payload?.error || "Gidiş adımı eklenemedi");
 
       await Promise.all([refreshLabOrderDetail(labOrderDetail.id), load()]);
-      setLabTripForm({ sentItem: "", requestedItem: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
+      setLabTripForm({ sentItem: "", requestedItem: "", impressionMethod: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
+      setLabTripSuggested(false);
       showToast("success", "Gidiş adımı eklendi");
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Gidiş adımı eklenemedi";
@@ -2795,16 +2922,31 @@ function HastaDetayContent() {
                     className="w-full rounded border px-2.5 py-2 text-sm"
                   />
                   <div className="mt-2 flex flex-wrap gap-1">
-                    {SPOON_REQUEST_OPTIONS.map((opt) => (
-                      <button
-                        key={opt}
-                        type="button"
-                        onClick={() => setLabNewForm((prev) => ({ ...prev, sentItem: "Ölçü", requestedItem: opt }))}
-                        className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] text-slate-700"
-                      >
-                        {opt}
-                      </button>
-                    ))}
+                    {SPOON_REQUEST_OPTIONS.map((opt) => {
+                      const isActive = labNewForm.requestedItem === opt;
+                      return (
+                        <button
+                          key={opt}
+                          type="button"
+                          onClick={() => {
+                            if (isActive) {
+                              // Seçimi kaldır — labType'a göre varsayılan öneriye dön
+                              const defaultRequest = WORKFLOW_FIRST_STEP[labNewForm.labType]?.request || "";
+                              setLabNewForm((prev) => ({ ...prev, requestedItem: defaultRequest }));
+                            } else {
+                              setLabNewForm((prev) => ({ ...prev, sentItem: "Ölçü", requestedItem: opt }));
+                            }
+                          }}
+                          className={`rounded border px-2 py-1 text-[11px] transition ${
+                            isActive
+                              ? "border-slate-800 bg-slate-800 text-white"
+                              : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
+                          }`}
+                        >
+                          {opt}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
                 <div>
@@ -2935,12 +3077,80 @@ function HastaDetayContent() {
                     <div className="rounded-lg border p-3">
                       <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Yeni Gidiş Ekle</p>
                       <div className="space-y-2">
+                        {/* Workflow öneri şeridi */}
+                        {(() => {
+                          const template = WORKFLOW_TEMPLATES[labOrderDetail.labType] ?? [];
+                          const stepIndex = getNextTemplateStepIndex(labOrderDetail.labType, labOrderDetail.trips);
+                          const suggestion = template[stepIndex] ?? null;
+                          const receivedSpoonItem = [...labOrderDetail.trips]
+                            .reverse()
+                            .map((t) => ({ ...t, parts: splitTripDescription(t.description) }))
+                            .find((t) => Boolean(t.receivedAt) && isSpoonRequestItem(t.parts.requestedItem || ""))
+                            ?.parts.requestedItem;
+                          const suggestedSend =
+                            suggestion && stepIndex === 0 && receivedSpoonItem
+                              ? `${receivedSpoonItem} ile Ölçü`
+                              : suggestion?.send;
+                          return template.length > 0 ? (
+                            <div className="rounded-lg border border-slate-100 bg-slate-50 p-2">
+                              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                                {labOrderDetail.labType} · Adım {Math.min(stepIndex + 1, template.length)}/{template.length}
+                              </p>
+                              <div className="flex gap-1">
+                                {template.map((step, i) => (
+                                  <div
+                                    key={i}
+                                    title={`${step.send} → ${step.request}`}
+                                    className={`flex-1 rounded px-1 py-1 text-center text-[10px] leading-tight ${
+                                      i < stepIndex
+                                        ? "bg-emerald-100 text-emerald-700"
+                                        : i === stepIndex
+                                        ? "bg-slate-800 text-white font-semibold"
+                                        : "bg-slate-200 text-slate-400"
+                                    }`}
+                                  >
+                                    {i + 1}
+                                  </div>
+                                ))}
+                              </div>
+                              {suggestion && (
+                                <p className="mt-1 text-[10px] text-slate-500">
+                                  Öneri:{" "}
+                                  <span className="font-medium text-slate-700">{suggestedSend || suggestion.send}</span> gönder →{" "}
+                                  <span className="font-medium text-slate-700">{suggestion.request}</span> iste
+                                </p>
+                              )}
+                            </div>
+                          ) : null;
+                        })()}
                         <input
                           value={labTripForm.sentItem}
-                          onChange={(e) => setLabTripForm((prev) => ({ ...prev, sentItem: e.target.value }))}
+                          onChange={(e) => setLabTripForm((prev) => ({
+                            ...prev,
+                            sentItem: e.target.value,
+                            impressionMethod: isMeasurementStep(e.target.value) ? prev.impressionMethod : "",
+                          }))}
                           placeholder="Laba gönderilen"
                           className="w-full rounded border px-2.5 py-2 text-sm"
                         />
+                        {isMeasurementStep(labTripForm.sentItem) && (
+                          <div className="flex gap-2">
+                            {(["KLASIK_OLCU", "DIJITAL_TARAMA"] as ImpressionMethod[]).map((m) => (
+                              <button
+                                key={m}
+                                type="button"
+                                onClick={() => setLabTripForm((prev) => ({ ...prev, impressionMethod: prev.impressionMethod === m ? "" : m }))}
+                                className={`flex-1 rounded border px-2 py-1.5 text-xs font-semibold transition ${
+                                  labTripForm.impressionMethod === m
+                                    ? "border-slate-800 bg-slate-800 text-white"
+                                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                                }`}
+                              >
+                                {m === "KLASIK_OLCU" ? "Klasik Ölçü" : "Dijital Tarama"}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                         <input
                           value={labTripForm.requestedItem}
                           onChange={(e) => setLabTripForm((prev) => ({ ...prev, requestedItem: e.target.value }))}

@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
 
   // ── Lab fatura → Firma cari borç otomasyonu ────────────────────────────
   // Fatura No ve fiyat varsa, aynı isimli firmanın cari hesabına otomatik yaz
-  let firmaIntegration: { firmaId: string; firmaName: string } | null = null;
+  let firmaIntegration: { firmaId: string; firmaName: string; error?: string } | null = null;
   if (price && invoiceNo && labName) {
     try {
       const matchedFirma = await (prisma as any).firma.findFirst({
@@ -93,21 +93,25 @@ export async function POST(req: NextRequest) {
       if (matchedFirma) {
         await (prisma as any).firmaIslem.create({
           data: {
-            firmaId:   matchedFirma.id,
-            tarih:     new Date(),
-            islemTipi: "HIZMET",
+            firmaId:    matchedFirma.id,
+            tarih:      new Date(),
+            islemTipi:  "HIZMET",
             urunHizmet: `Lab: ${labType}${order.patient ? ` — ${order.patient.fullName}` : ""}`,
-            tutar:     Number(price),
-            faturaNo:  invoiceNo,
-            status:    "AKTIF",
-            kdvOrani:  0,
+            tutar:      Number(price),
+            faturaNo:   invoiceNo,
+            status:     "AKTIF",
+            kdvOrani:   0,
           },
         });
         firmaIntegration = { firmaId: matchedFirma.id, firmaName: matchedFirma.name };
+      } else {
+        firmaIntegration = { firmaId: "", firmaName: "", error: "Eşleşen firma bulunamadı" };
       }
     } catch (integrationErr) {
-      // Entegrasyon hatası lab kaydını engellemez — loglayıp devam et
-      console.error("[lab-orders] firma entegrasyonu hatası:", integrationErr);
+      const errMsg = integrationErr instanceof Error ? integrationErr.message : "Bilinmeyen hata";
+      firmaIntegration = { firmaId: "", firmaName: "", error: `Firma entegrasyon hatası: ${errMsg}` };
+      // Loglama - production'da centralized logging'e git
+      console.error("[lab-orders POST] firma entegrasyonu hatası:", integrationErr);
     }
   }
 

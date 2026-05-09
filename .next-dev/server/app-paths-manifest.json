@@ -1,22 +1,3 @@
 {
-  "/api/messages/route": "app/api/messages/route.js",
-  "/api/lab-orders/route": "app/api/lab-orders/route.js",
-  "/api/clinic-tasks/route": "app/api/clinic-tasks/route.js",
-  "/api/lab-orders/[id]/trips/[tripId]/route": "app/api/lab-orders/[id]/trips/[tripId]/route.js",
-  "/api/staff/route": "app/api/staff/route.js",
-  "/api/patients/route": "app/api/patients/route.js",
-  "/api/pos-devices/route": "app/api/pos-devices/route.js",
-  "/api/lab-orders/[id]/route": "app/api/lab-orders/[id]/route.js",
-  "/api/patients/[id]/route": "app/api/patients/[id]/route.js",
-  "/api/auth/me/route": "app/api/auth/me/route.js",
-  "/api/prices/route": "app/api/prices/route.js",
-  "/api/settings/route": "app/api/settings/route.js",
-  "/api/taksit-plani/route": "app/api/taksit-plani/route.js",
-  "/api/stock/route": "app/api/stock/route.js",
-  "/api/lab-orders/[id]/trips/route": "app/api/lab-orders/[id]/trips/route.js",
-  "/superadmin/role-permissions/page": "app/superadmin/role-permissions/page.js",
-  "/(panel)/hasta-detay/page": "app/(panel)/hasta-detay/page.js",
-  "/(panel)/lab/page": "app/(panel)/lab/page.js",
-  "/(panel)/hasta/page": "app/(panel)/hasta/page.js",
-  "/(panel)/recete/page": "app/(panel)/recete/page.js"
+  "/api/system/health/route": "app/api/system/health/route.js"
 }

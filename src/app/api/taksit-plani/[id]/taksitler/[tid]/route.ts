@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 // PATCH: Taksit öde (kısmi veya tam)
 export async function PATCH(
@@ -8,8 +8,8 @@ export async function PATCH(
   { params }: { params: { id: string; tid: string } }
 ) {
   try {
-    const user = await getCurrentUser();
-    if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    const auth = await requireAuth("payments:write");
+    if (auth.error) return auth.error;
 
     const body = await req.json();
     const { tutar, yontem = "NAKIT", posId, note } = body;
