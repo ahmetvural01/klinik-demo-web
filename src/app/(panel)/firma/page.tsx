@@ -3,19 +3,45 @@ import { useState, useEffect, useCallback } from "react";
 
 type Toast = { type: "success" | "error" | "info"; text: string };
 
+type FirmaKontakt = {
+  id: string; ad: string; unvan?: string; email?: string; telefon?: string;
+  rol?: string; isPrimary: boolean; isActive: boolean;
+};
+
 type Firma = {
   id: string; name: string; phone?: string; iban?: string; ibanName?: string;
-  notes?: string; isActive: boolean; createdAt: string;
+  notes?: string; kategori: string; paymentTerms: string; vendorScore: number;
+  isActive: boolean; createdAt: string;
   borc: number; odenen: number; bakiye: number;
+  primaryKontakt?: FirmaKontakt | null; toplamKontakt: number;
 };
+
 type Islem = {
   id: string; firmaId: string; tarih: string; islemTipi: string;
   urunHizmet?: string; aciklama?: string; tutar: number;
   faturaNo?: string; yontem?: string; kdvOrani: number;
   status: string; cumBakiye?: number;
 };
+
 type Ekstre = { islemler: Islem[]; topBorc: number; topOdeme: number; netBakiye: number };
-type StockItem = { id: string; name: string; category: string; unit: string; quantity: number };
+
+const FIRMA_KATEGORILERI: Record<string, string> = {
+  TEDARICI: "Tedarici",
+  HIZMET_SAGLAYICI: "Hizmet Sağlayıcı",
+  LAB: "Laboratuvar",
+  KONTRAKTOR: "Kontraktor",
+  BANK: "Banka",
+  DIGER: "Diğer"
+};
+
+const PAYMENT_TERMS: Record<string, { label: string; days: number }> = {
+  COD: { label: "Nakit Ödeme", days: 0 },
+  NET_15: { label: "Net 15", days: 15 },
+  NET_30: { label: "Net 30", days: 30 },
+  NET_60: { label: "Net 60", days: 60 },
+  NET_90: { label: "Net 90", days: 90 },
+  EOM: { label: "Ay Sonu", days: 30 }
+};
 
 const ISLEM_TIPI: Record<string, string> = { ALIM: "Alım", HIZMET: "Hizmet", ODEME: "Ödeme" };
 const YONTEMLER: Record<string, string> = {
@@ -27,18 +53,32 @@ const TIPI_COLOR: Record<string, string> = {
   HIZMET: "bg-amber-100 text-amber-700",
   ODEME: "bg-emerald-100 text-emerald-700"
 };
+
+const SCORE_COLOR = (score: number): string => {
+  if (score >= 80) return "text-emerald-700 bg-emerald-50";
+  if (score >= 60) return "text-amber-700 bg-amber-50";
+  return "text-red-700 bg-red-50";
+};
+
+const renderScore = (s: number) => {
+  const filled = Math.round(s / 20);
+  return "★".repeat(filled) + "☆".repeat(5 - filled);
+};
+
 const fmt = (n: number) =>
   "₺" + new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 2 }).format(n);
 const fmtDate = (d: string) => new Date(d).toLocaleDateString("tr-TR");
 
 export default function FirmaPage() {
   const [firmas, setFirmas] = useState<Firma[]>([]);
-  const [stockItems, setStockItems] = useState<StockItem[]>([]);
   const [selected, setSelected] = useState<Firma | null>(null);
   const [ekstre, setEkstre] = useState<Ekstre | null>(null);
+  const [kontaktler, setKontaktler] = useState<FirmaKontakt[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingEkstre, setLoadingEkstre] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
+  const [selectedTab, setSelectedTab] = useState<"ekstre" | "kontakt">("ekstre");
+
   const showToast = (type: Toast["type"], text: string) => {
     setToast({ type, text });
     setTimeout(() => setToast(null), 3500);
@@ -50,35 +90,36 @@ export default function FirmaPage() {
   const [showAddFirma, setShowAddFirma] = useState(false);
   const [showAddIslem, setShowAddIslem] = useState(false);
   const [showEditFirma, setShowEditFirma] = useState(false);
+  const [showAddKontakt, setShowAddKontakt] = useState(false);
 
   // Forms
   const [firmaForm, setFirmaForm] = useState({
-    name: "", phone: "", iban: "", ibanName: "", notes: ""
+    name: "", phone: "", iban: "", ibanName: "", notes: "",
+    kategori: "TEDARICI", paymentTerms: "NET_30"
   });
+
   const [islemForm, setIslemForm] = useState({
     tarih: new Date().toISOString().split("T")[0],
     islemTipi: "ALIM", urunHizmet: "", aciklama: "", tutar: "",
     faturaNo: "", yontem: "NAKIT", kdvOrani: "0", stockItemId: "", stockQuantity: ""
   });
-  const [editForm, setEditForm] = useState({ name: "", phone: "", iban: "", ibanName: "", notes: "" });
+
+  const [editForm, setEditForm] = useState({
+    name: "", phone: "", iban: "", ibanName: "", notes: "",
+    kategori: "TEDARICI", paymentTerms: "NET_30"
+  });
+
+  const [kontaktForm, setKontaktForm] = useState({
+    ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false
+  });
 
   const loadFirmas = useCallback(async () => {
     setLoading(true);
     try {
       const r = await fetch("/api/firma");
       const d = await r.json();
-      setFirmas(d);
+      setFirmas(Array.isArray(d) ? d : []);
     } finally { setLoading(false); }
-  }, []);
-
-  const loadStockItems = useCallback(async () => {
-    try {
-      const r = await fetch("/api/stock");
-      const d = await r.json();
-      setStockItems(Array.isArray(d) ? d : []);
-    } catch {
-      setStockItems([]);
-    }
   }, []);
 
   const loadEkstre = useCallback(async (id: string) => {
@@ -90,7 +131,17 @@ export default function FirmaPage() {
     } finally { setLoadingEkstre(false); }
   }, []);
 
-  useEffect(() => { loadFirmas(); loadStockItems(); }, [loadFirmas, loadStockItems]);
+  const loadKontaktler = useCallback(async (id: string) => {
+    try {
+      const r = await fetch(`/api/firma/${id}/kontaktler`);
+      const d = await r.json();
+      setKontaktler(Array.isArray(d) ? d : []);
+    } catch {
+      setKontaktler([]);
+    }
+  }, []);
+
+  useEffect(() => { loadFirmas(); }, [loadFirmas]);
 
   const selectFirma = (f: Firma) => {
     setSelected(f);

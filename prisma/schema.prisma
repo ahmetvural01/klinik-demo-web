@@ -800,16 +800,25 @@ model Expense {
 }
 
 model Firma {
-  id        String       @id @default(cuid())
-  name      String       @unique
-  phone     String?
-  iban      String?
-  ibanName  String?
-  notes     String?
-  isActive  Boolean      @default(true)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
-  islemler  FirmaIslem[]
+  id                String              @id @default(cuid())
+  name              String              @unique
+  phone             String?
+  iban              String?
+  ibanName          String?
+  notes             String?
+  kategori          FirmaKategori       @default(TEDARICI)
+  paymentTerms      PaymentTermType?    @default(NET_30)
+  customPaymentDays Int?
+  vendorScore       Int                 @default(0)
+  scoreUpdatedAt    DateTime?
+  isActive          Boolean             @default(true)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  islemler          FirmaIslem[]
+  kontaktler        FirmaKontakt[]
+
+  @@index([kategori])
+  @@index([vendorScore])
 }
 
 model FirmaIslem {
@@ -830,6 +839,24 @@ model FirmaIslem {
 
   @@index([firmaId])
   @@index([tarih])
+}
+
+model FirmaKontakt {
+  id        String    @id @default(cuid())
+  firmaId   String
+  ad        String
+  unvan     String?
+  email     String?
+  telefon   String?
+  rol       String?
+  isPrimary Boolean   @default(false)
+  isActive  Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  firma     Firma     @relation(fields: [firmaId], references: [id], onDelete: Cascade)
+
+  @@index([firmaId])
+  @@index([email])
 }
 
 model Reminder {
@@ -965,4 +992,24 @@ enum FirmaIslemTipi {
   ALIM
   HIZMET
   ODEME
+}
+
+enum FirmaKategori {
+  TEDARICI
+  HIZMET_SAGLAYICI
+  LAB
+  KONTRAKTOR
+  BANK
+  DIGER
+}
+
+enum PaymentTermType {
+  COD
+  NET_15
+  NET_30
+  NET_60
+  NET_90
+  NET_120
+  EOM
+  CUSTOM
 }

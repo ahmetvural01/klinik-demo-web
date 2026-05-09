@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const user = await getCurrentUser();
-    if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    const auth = await requireAuth("finance:read");
+    if (auth.error) return auth.error;
 
     const firma = await (prisma as any).firma.findUnique({
       where: { id: params.id },
@@ -13,6 +13,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
         islemler: {
           where: { status: "AKTIF" },
           orderBy: { tarih: "asc" }
+        },
+        kontaktler: {
+          where: { isActive: true },
+          orderBy: { isPrimary: "desc" }
         }
       }
     });
@@ -25,12 +29,25 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const user = await getCurrentUser();
-    if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    const auth = await requireAuth("finance:write");
+    if (auth.error) return auth.error;
+    
     const body = await req.json();
+    const { kategori, paymentTerms, customPaymentDays, ...rest } = body;
+    
     const firma = await (prisma as any).firma.update({
       where: { id: params.id },
-      data: body
+      data: {
+        ...rest,
+        kategori: kategori || undefined,
+        paymentTerms: paymentTerms || undefined,
+        customPaymentDays: customPaymentDays || undefined
+      },
+      include: {
+        kontaktler: {
+          where: { isActive: true }
+        }
+      }
     });
     return NextResponse.json(firma);
   } catch (e) {
