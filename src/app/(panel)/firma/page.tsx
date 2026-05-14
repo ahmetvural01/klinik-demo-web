@@ -146,15 +146,19 @@ export default function FirmaPage() {
   const selectFirma = (f: Firma) => {
     setSelected(f);
     loadEkstre(f.id);
+    loadKontaktler(f.id);
+    setSelectedTab("ekstre");
   };
 
   // KPI
   const topBorc = firmas.reduce((s, f) => s + f.borc, 0);
   const topOdeme = firmas.reduce((s, f) => s + f.odenen, 0);
   const topBakiye = firmas.reduce((s, f) => s + f.bakiye, 0);
+  const avgScore = firmas.length > 0 ? Math.round(firmas.reduce((s, f) => s + f.vendorScore, 0) / firmas.length) : 0;
 
   const filteredFirmas = firmas.filter(f =>
-    !search || f.name.toLowerCase().includes(search.toLowerCase())
+    !search || f.name.toLowerCase().includes(search.toLowerCase()) ||
+    FIRMA_KATEGORILERI[f.kategori]?.toLowerCase().includes(search.toLowerCase())
   );
 
   const handleAddFirma = async () => {
@@ -166,11 +170,15 @@ export default function FirmaPage() {
     });
     if (r.ok) {
       setShowAddFirma(false);
-      setFirmaForm({ name: "", phone: "", iban: "", ibanName: "", notes: "" });
+      setFirmaForm({
+        name: "", phone: "", iban: "", ibanName: "", notes: "",
+        kategori: "TEDARICI", paymentTerms: "NET_30"
+      });
       showToast("success", "Firma eklendi");
       loadFirmas();
     } else {
-      const e = await r.json(); showToast("error", e.error || "Hata oluştu");
+      const e = await r.json();
+      showToast("error", e.error || "Hata oluştu");
     }
   };
 
@@ -259,16 +267,17 @@ export default function FirmaPage() {
         </button>
       </div>
 
-      {/* KPI */}
-      <div className="grid grid-cols-3 gap-3">
+      {/* KPI Cards */}
+      <div className="grid grid-cols-4 gap-3">
         {[
           { label: "Toplam Borç", value: fmt(topBorc), color: "text-red-700", bg: "bg-red-50" },
           { label: "Ödenen", value: fmt(topOdeme), color: "text-emerald-700", bg: "bg-emerald-50" },
           { label: "Net Bakiye", value: fmt(topBakiye), color: "text-amber-700", bg: "bg-amber-50" },
+          { label: "Ort. Skor", value: avgScore.toString(), color: "text-blue-700", bg: "bg-blue-50" }
         ].map(k => (
           <div key={k.label} className={`${k.bg} rounded-xl p-3 border border-slate-100`}>
             <p className="text-[10px] text-slate-500 font-medium uppercase">{k.label}</p>
-            <p className={`text-xl font-bold ${k.color} mt-0.5`}>{k.value}</p>
+            <p className={`text-lg font-bold ${k.color} mt-0.5`}>{k.value}</p>
           </div>
         ))}
       </div>
@@ -304,12 +313,19 @@ export default function FirmaPage() {
             filteredFirmas.map(f => (
               <div key={f.id}
                 onClick={() => selectFirma(f)}
-                className={`cursor-pointer rounded-xl border p-3 transition-all ${selected?.id === f.id ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
-                <p className="text-xs font-semibold text-slate-800 truncate">{f.name}</p>
-                {f.phone && <p className="text-[10px] text-slate-500 mt-0.5">{f.phone}</p>}
-                <div className="flex justify-between mt-1">
-                  <span className="text-[10px] text-red-600 font-semibold">{fmt(f.bakiye)}</span>
-                  <span className="text-[10px] text-slate-400">bakiye</span>
+                className={`cursor-pointer rounded-xl border-2 p-3 transition-all ${selected?.id === f.id ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-slate-800 truncate">{f.name}</p>
+                    <p className="text-[10px] text-slate-500 mt-1">{FIRMA_KATEGORILERI[f.kategori]}</p>
+                    <p className={`text-[10px] font-semibold mt-1 ${f.vendorScore >= 80 ? "text-emerald-700" : f.vendorScore >= 60 ? "text-amber-700" : "text-red-700"}`}>
+                      {renderScore(f.vendorScore)} {f.vendorScore}
+                    </p>
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-[10px] font-semibold text-slate-600">{fmt(f.bakiye)}</p>
+                    <p className="text-[10px] text-slate-400">bakiye</p>
+                  </div>
                 </div>
               </div>
             ))
