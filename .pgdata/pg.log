@@ -429,4 +429,32 @@
 2026-05-08 10:22:19.290 +03 [23736] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
 2026-05-08 10:22:19.290 +03 [23736] LOG:  terminating any other active server processes
 2026-05-08 10:22:19.306 +03 [23736] LOG:  received fast shutdown request
-^C
+^C2026-05-16 22:57:59.045 +03 [24236] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-05-16 22:57:59.055 +03 [24236] LOG:  listening on IPv6 address "::1", port 5432
+2026-05-16 22:57:59.055 +03 [24236] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-05-16 22:57:59.215 +03 [14536] LOG:  database system was interrupted; last known up at 2026-05-08 10:19:29 +03
+2026-05-16 22:58:12.432 +03 [14536] LOG:  could not open file "./pg.log": sharing violation
+2026-05-16 22:58:12.432 +03 [14536] DETAIL:  Continuing to retry for 30 seconds.
+2026-05-16 22:58:12.432 +03 [14536] HINT:  You might have antivirus, backup, or similar software interfering with the database system.
+2026-05-16 22:58:39.880 +03 [14536] LOG:  syncing data directory (fsync), elapsed time: 40.66 s, current path: ./pg_commit_ts
+2026-05-16 22:58:39.948 +03 [14536] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-05-16 22:58:39.977 +03 [14536] LOG:  redo starts at 0/6123668
+2026-05-16 22:58:39.978 +03 [14536] LOG:  invalid record length at 0/6123770: expected at least 24, got 0
+2026-05-16 22:58:39.979 +03 [14536] LOG:  redo done at 0/6123738 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-05-16 22:58:39.993 +03 [28744] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-05-16 22:58:40.026 +03 [28744] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.007 s, total=0.037 s; sync files=2, longest=0.004 s, average=0.004 s; distance=0 kB, estimate=0 kB; lsn=0/6123770, redo lsn=0/6123770
+2026-05-16 22:58:40.063 +03 [24236] LOG:  database system is ready to accept connections
+2026-05-16 22:58:45.750 +03 [24236] LOG:  background worker "logical replication launcher" (PID 13956) was terminated by exception 0xC000013A
+2026-05-16 22:58:45.750 +03 [24236] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-05-16 22:58:45.750 +03 [24236] LOG:  terminating any other active server processes
+2026-05-16 22:58:45.767 +03 [24236] LOG:  received fast shutdown request
+^C2026-05-16 23:20:39.028 +03 [15168] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-05-16 23:20:39.051 +03 [15168] LOG:  could not bind IPv6 address "::1": Only one usage of each socket address (protocol/network address/port) is normally permitted.
+	
+2026-05-16 23:20:39.051 +03 [15168] HINT:  Is another postmaster already running on port 5432? If not, wait a few seconds and retry.
+2026-05-16 23:20:39.051 +03 [15168] LOG:  could not bind IPv4 address "127.0.0.1": Only one usage of each socket address (protocol/network address/port) is normally permitted.
+	
+2026-05-16 23:20:39.051 +03 [15168] HINT:  Is another postmaster already running on port 5432? If not, wait a few seconds and retry.
+2026-05-16 23:20:39.051 +03 [15168] WARNING:  could not create listen socket for "localhost"
+2026-05-16 23:20:39.051 +03 [15168] FATAL:  could not create any TCP/IP sockets
+2026-05-16 23:20:39.054 +03 [15168] LOG:  database system is shut down
