@@ -479,3 +479,13 @@
 2026-05-17 11:46:52.317 +03 [8928] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
 2026-05-17 11:46:52.318 +03 [8928] LOG:  aborting startup due to startup process failure
 2026-05-17 11:46:52.321 +03 [8928] LOG:  database system is shut down
+2026-05-17 12:04:46.506 +03 [8160] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-05-17 12:04:46.523 +03 [8160] LOG:  could not bind IPv6 address "::1": Only one usage of each socket address (protocol/network address/port) is normally permitted.
+	
+2026-05-17 12:04:46.523 +03 [8160] HINT:  Is another postmaster already running on port 5432? If not, wait a few seconds and retry.
+2026-05-17 12:04:46.523 +03 [8160] LOG:  could not bind IPv4 address "127.0.0.1": Only one usage of each socket address (protocol/network address/port) is normally permitted.
+	
+2026-05-17 12:04:46.523 +03 [8160] HINT:  Is another postmaster already running on port 5432? If not, wait a few seconds and retry.
+2026-05-17 12:04:46.523 +03 [8160] WARNING:  could not create listen socket for "localhost"
+2026-05-17 12:04:46.523 +03 [8160] FATAL:  could not create any TCP/IP sockets
+2026-05-17 12:04:46.525 +03 [8160] LOG:  database system is shut down

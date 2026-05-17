@@ -1,3 +1,20 @@
 {
-  "/api/system/health/route": "app/api/system/health/route.js"
+  "/klinik/giris/page": "app/klinik/giris/page.js",
+  "/page": "app/page.js",
+  "/api/messages/route": "app/api/messages/route.js",
+  "/api/lab-orders/route": "app/api/lab-orders/route.js",
+  "/api/staff/route": "app/api/staff/route.js",
+  "/api/settings/route": "app/api/settings/route.js",
+  "/api/taksit-plani/route": "app/api/taksit-plani/route.js",
+  "/api/auth/me/route": "app/api/auth/me/route.js",
+  "/api/profile/route": "app/api/profile/route.js",
+  "/api/patients/route": "app/api/patients/route.js",
+  "/api/doctor-blocks/route": "app/api/doctor-blocks/route.js",
+  "/api/appointments/route": "app/api/appointments/route.js",
+  "/api/stock/route": "app/api/stock/route.js",
+  "/api/realtime/stream/route": "app/api/realtime/stream/route.js",
+  "/(panel)/randevu/page": "app/(panel)/randevu/page.js",
+  "/(panel)/anasayfa/page": "app/(panel)/anasayfa/page.js",
+  "/(panel)/profil/page": "app/(panel)/profil/page.js",
+  "/(panel)/hasta/page": "app/(panel)/hasta/page.js"
 }
