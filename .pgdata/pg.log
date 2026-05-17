@@ -458,3 +458,13 @@
 2026-05-16 23:20:39.051 +03 [15168] WARNING:  could not create listen socket for "localhost"
 2026-05-16 23:20:39.051 +03 [15168] FATAL:  could not create any TCP/IP sockets
 2026-05-16 23:20:39.054 +03 [15168] LOG:  database system is shut down
+2026-05-17 08:36:25.250 +03 [22292] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-05-17 08:36:25.265 +03 [22292] LOG:  could not bind IPv6 address "::1": Only one usage of each socket address (protocol/network address/port) is normally permitted.
+	
+2026-05-17 08:36:25.265 +03 [22292] HINT:  Is another postmaster already running on port 5432? If not, wait a few seconds and retry.
+2026-05-17 08:36:25.265 +03 [22292] LOG:  could not bind IPv4 address "127.0.0.1": Only one usage of each socket address (protocol/network address/port) is normally permitted.
+	
+2026-05-17 08:36:25.265 +03 [22292] HINT:  Is another postmaster already running on port 5432? If not, wait a few seconds and retry.
+2026-05-17 08:36:25.265 +03 [22292] WARNING:  could not create listen socket for "localhost"
+2026-05-17 08:36:25.265 +03 [22292] FATAL:  could not create any TCP/IP sockets
+2026-05-17 08:36:25.267 +03 [22292] LOG:  database system is shut down
