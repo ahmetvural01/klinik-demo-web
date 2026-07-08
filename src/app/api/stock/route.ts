@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { applyStockMovement } from "@/lib/stock-ledger";
 
 export async function GET(req: NextRequest) {
@@ -76,5 +76,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Stok kaydı oluşturulamadı" }, { status: 503 });
   }
 
+  await writeAudit(auth.user.id, "STOCK_ITEM_CREATE", `"${name}" stok kalemi oluşturuldu`);
   return NextResponse.json(item, { status: 201 });
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth("appointments:write");
@@ -87,5 +87,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     console.error("[lab-orders/[id]/invoices] firma entegrasyonu hatası:", err);
   }
 
+  await writeAudit(auth.user.id, "LAB_ORDER_INVOICE_CREATE", `Laboratuvar faturası eklendi (${params.id})`);
   return NextResponse.json(invoice, { status: 201 });
 }

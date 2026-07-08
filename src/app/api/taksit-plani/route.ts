@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function GET(req: NextRequest) {
   try {
@@ -155,6 +155,7 @@ export async function POST(req: NextRequest) {
       }
     });
 
+    await writeAudit(auth.user.id, "TAKSIT_PLAN_CREATE", `${toplamBorc} TL taksit planı oluşturuldu`);
     return NextResponse.json(plan, { status: 201 });
   } catch (e) {
     console.error("[taksit-plani POST] fallback:", e);

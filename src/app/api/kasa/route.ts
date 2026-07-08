@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { createIntegratedPayment } from "@/lib/payment-ledger";
 
 export async function GET(req: NextRequest) {
@@ -107,5 +107,6 @@ export async function POST(req: NextRequest) {
     })
   );
 
+  await writeAudit(auth.user.id, "KASA_PAYMENT_CREATE", `${numericAmount} TL kasa tahsilatı eklendi`);
   return NextResponse.json({ ...payment, taksitInfo }, { status: 201 });
 }

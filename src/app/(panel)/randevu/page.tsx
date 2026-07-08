@@ -1655,7 +1655,7 @@ export default function RandevuPage() {
       {view === "GUN" && workingDayIndexes.has(date.getDay()) && (
         <div className="overflow-auto rounded-xl border bg-white">
           <table className="min-w-full border-collapse text-xs">
-            <thead className="sticky top-0 z-10 bg-gray-100">
+            <thead className="bg-gray-100">
               <tr>
                 <th className="border px-2 py-2 text-left text-gray-500 w-16">Saat</th>
                 {doctors.length === 0 ? <th className="border px-2 py-2 text-gray-400">Doktor bulunamadı</th> :
@@ -1729,7 +1729,7 @@ export default function RandevuPage() {
       {view === "HAFTA" && (
         <div className="overflow-auto rounded-xl border bg-white">
           <table className="min-w-full border-collapse text-xs">
-              <thead className="sticky top-0 z-10 bg-gray-100">
+              <thead className="bg-gray-100">
                 <tr>
                 <th className="border px-2 py-2 text-left text-gray-500 w-16">Saat</th>
                 {weekDays.map((d, i) => {

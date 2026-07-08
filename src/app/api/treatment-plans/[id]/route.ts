@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 function treatmentPlanTenantWhere(id: string, institutionId: string | null | undefined, role: string) {
   return {
@@ -77,6 +77,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     },
   });
 
+  await writeAudit(auth.user.id, "TREATMENT_PLAN_UPDATE", `Tedavi planı güncellendi (${params.id})`);
   return NextResponse.json(plan);
 }
 
@@ -94,5 +95,6 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
   await (prisma as any).treatmentPlan.delete({ where: { id: params.id } });
+  await writeAudit(auth.user.id, "TREATMENT_PLAN_DELETE", `Tedavi planı silindi (${params.id})`);
   return NextResponse.json({ ok: true });
 }

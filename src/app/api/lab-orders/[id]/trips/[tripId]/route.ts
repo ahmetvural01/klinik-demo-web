@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function PATCH(
   req: NextRequest,
@@ -39,5 +39,6 @@ export async function PATCH(
     data,
   });
 
+  await writeAudit(auth.user.id, "LAB_TRIP_UPDATE", `Laboratuvar gidiş adımı güncellendi (${params.tripId})`);
   return NextResponse.json(trip);
 }

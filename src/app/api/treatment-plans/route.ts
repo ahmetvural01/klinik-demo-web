@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth("treatment:read");
@@ -95,5 +95,6 @@ export async function POST(req: NextRequest) {
     },
   });
 
+  await writeAudit(auth.user.id, "TREATMENT_PLAN_CREATE", `"${title}" tedavi planı oluşturuldu`);
   return NextResponse.json(plan, { status: 201 });
 }

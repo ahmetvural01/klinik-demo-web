@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth("appointments:read");
@@ -98,6 +98,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       });
     });
 
+    await writeAudit(auth.user.id, "LAB_ORDER_RPT_REOPEN", `Laboratuvar siparişi RPT ile yeniden açıldı (${params.id})`);
     return NextResponse.json(reopened);
   }
 
@@ -176,5 +177,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     },
   });
 
+  await writeAudit(auth.user.id, "LAB_ORDER_UPDATE", `Laboratuvar siparişi güncellendi (${params.id})`);
   return NextResponse.json(fresh || updated);
 }

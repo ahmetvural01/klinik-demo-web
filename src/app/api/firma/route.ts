@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 type FirmaIslem = { islemTipi: string; tutar: unknown };
 type RawFirma = {
@@ -93,6 +93,7 @@ export async function POST(req: NextRequest) {
         kontaktler: true
       }
     });
+    await writeAudit(auth.user.id, "FIRMA_CREATE", `"${name}" tedarikçi kaydı oluşturuldu`);
     return NextResponse.json(firma, { status: 201 });
   } catch (e: unknown) {
     const err = e as { code?: string };

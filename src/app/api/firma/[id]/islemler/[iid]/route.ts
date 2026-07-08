@@ -48,6 +48,8 @@ export async function PATCH(
         "FIRMA_ISLEM_CANCEL",
         `${existing.firma?.name || "Firma"} işlemi iptal edildi.\nOtomatik işlemler geri alındı.`
       );
+    } else {
+      await writeAudit(auth.user.id, "FIRMA_ISLEM_UPDATE", `${existing.firma?.name || "Firma"} cari işlemi güncellendi`);
     }
 
     return NextResponse.json({ islem, message: isCancelling ? "İşlem iptal edildi ve otomatik etkiler geri alındı" : "İşlem güncellendi" });

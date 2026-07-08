@@ -689,6 +689,29 @@ export default function MuhasebePage() {
   useEffect(() => { if (taksitSubTab === "hatirlatma") loadReminders(); }, [taksitSubTab, loadReminders]);
   useEffect(() => { if (activeTab === "taksit") loadTaksitPlans(); }, [activeTab, loadTaksitPlans]);
 
+  // Başka bir personel ödeme/gider/taksit/borç kaydı ekleyince aktif sekmeyi
+  // sessizce (sayfa yenilemeden) tazele.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onRealtime = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        refreshSummary();
+        if (activeTab === "gelir") loadPayments();
+        if (activeTab === "gider") { loadExpenses(); loadGiderKats(); }
+        if (activeTab === "taksit") loadTaksitPlans();
+        if (activeTab === "alacak") loadAlacaklar();
+        if (activeTab === "hakedis" && selectedDoctor) loadDoctorFinance(selectedDoctor);
+      }, 500);
+    };
+    window.addEventListener("ks:realtime-sync", onRealtime);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("ks:realtime-sync", onRealtime);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, selectedDoctor]);
+
   // ─── RENDER ──────────────────────────────────────────────────────────────────
   return (
     <div className="space-y-5">

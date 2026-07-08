@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 function taksitPlanTenantWhere(id: string, institutionId: string | null | undefined, role: string) {
   return {
@@ -69,6 +69,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         ...(notes !== undefined && { notes })
       }
     });
+    await writeAudit(auth.user.id, "TAKSIT_PLAN_UPDATE", `Taksit planı güncellendi (${params.id})`);
     return NextResponse.json(plan);
   } catch (e) {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
@@ -95,6 +96,7 @@ export async function DELETE(_: NextRequest, { params }: { params: { id: string 
       await (tx as any).taksitPlan.delete({ where: { id: params.id } });
     });
 
+    await writeAudit(auth.user.id, "TAKSIT_PLAN_DELETE", `Taksit planı silindi (${params.id})`);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });

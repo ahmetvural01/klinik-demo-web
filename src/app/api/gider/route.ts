@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function GET(req: NextRequest) {
   try {
@@ -63,6 +63,7 @@ export async function POST(req: NextRequest) {
         status: "AKTIF"
       }
     });
+    await writeAudit(auth.user.id, "GIDER_CREATE", `${tutar} TL gider eklendi (${category})`);
     return NextResponse.json(expense, { status: 201 });
   } catch (e) {
     console.error(e);

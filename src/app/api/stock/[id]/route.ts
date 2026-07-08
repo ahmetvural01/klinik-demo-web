@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { applyStockMovement } from "@/lib/stock-ledger";
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
@@ -48,6 +48,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
     },
   });
 
+  await writeAudit(auth.user.id, "STOCK_ITEM_UPDATE", `Stok kalemi güncellendi (${params.id})`);
   return NextResponse.json(updated);
 }
 
@@ -77,6 +78,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       });
     });
 
+    await writeAudit(auth.user.id, "STOCK_MOVEMENT", `${type === "GIRIS" ? "Stok girişi" : "Stok çıkışı"}: ${quantity} adet (${params.id})`);
     return NextResponse.json({ ...result.item, isCritical: result.isCritical });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Stok hareketi kaydedilemedi" }, { status: 400 });
@@ -101,5 +103,6 @@ export async function DELETE(_req: NextRequest, { params }: { params: { id: stri
     data:  { isActive: false },
   });
 
+  await writeAudit(auth.user.id, "STOCK_ITEM_DELETE", `Stok kalemi pasifleştirildi (${params.id})`);
   return NextResponse.json({ ok: true });
 }

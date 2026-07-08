@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 // PATCH: Taksit öde (kısmi veya tam)
 export async function PATCH(
@@ -86,6 +86,8 @@ export async function PATCH(
       where: { id: params.tid },
       include: { odemeler: { orderBy: { tarih: "asc" } } }
     });
+
+    await writeAudit(auth.user.id, "TAKSIT_ODEME", `${odemeAmt} TL taksit ödemesi alındı (${params.tid})`);
     return NextResponse.json(updated);
   } catch (e) {
     console.error(e);

@@ -6,7 +6,7 @@
  */
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, bumpRealtimeInstitution } from "@/lib/api";
 
 export async function POST() {
   try {
@@ -47,6 +47,9 @@ export async function POST() {
       }
     }
 
+    if (result.count > 0) {
+      bumpRealtimeInstitution(auth.user.institutionId);
+    }
     return NextResponse.json({ updated: result.count });
   } catch {
     return NextResponse.json({ updated: 0 });

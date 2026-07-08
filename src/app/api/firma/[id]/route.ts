@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -60,6 +60,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         }
       }
     });
+    await writeAudit(auth.user.id, "FIRMA_UPDATE", `Tedarikçi güncellendi (${params.id})`);
     return NextResponse.json(firma);
   } catch (e) {
     return NextResponse.json({ error: "Firma guncellenemedi" }, { status: 503 });

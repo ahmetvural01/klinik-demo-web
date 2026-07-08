@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth("appointments:read");
@@ -150,5 +150,6 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  await writeAudit(auth.user.id, "LAB_ORDER_CREATE", `${labName} (${labType}) laboratuvar siparişi oluşturuldu`);
   return NextResponse.json({ ...order, firmaIntegration }, { status: 201 });
 }

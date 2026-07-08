@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -41,6 +41,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       data: body,
       include: { expenseCategory: { select: { id: true, name: true } } }
     });
+    await writeAudit(auth.user.id, "GIDER_UPDATE", `Gider güncellendi (${params.id})`);
     return NextResponse.json(expense);
   } catch (e) {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
@@ -66,6 +67,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
       where: { id: existing.id },
       data: { status: "IPTAL" }
     });
+    await writeAudit(auth.user.id, "GIDER_DELETE", `Gider iptal edildi (${params.id})`);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });

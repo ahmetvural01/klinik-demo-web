@@ -28,6 +28,21 @@ export default function StokPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchItems(); }, [category]);
 
+  // Başka bir personel stok girişi/çıkışı yaptığında listeyi tazele.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onRealtime = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { fetchItems(); }, 400);
+    };
+    window.addEventListener("ks:realtime-sync", onRealtime);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("ks:realtime-sync", onRealtime);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [category]);
+
   function fetchItems() {
     setLoading(true);
     const qs = category !== "Tümü" ? `?category=${encodeURIComponent(category)}` : "";

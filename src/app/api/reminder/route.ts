@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 // GET hatırlatmalar, POST ekle
 export async function GET(req: NextRequest) {
@@ -67,6 +67,7 @@ export async function POST(req: NextRequest) {
         note, reminderDate: new Date(reminderDate), status: "AKTIF"
       }
     });
+    await writeAudit(auth.user.id, "REMINDER_CREATE", "Hatırlatma eklendi");
     return NextResponse.json(r, { status: 201 });
   } catch (e) {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });

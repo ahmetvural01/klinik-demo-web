@@ -614,9 +614,9 @@ function HastaDetayContent() {
     });
   };
 
-  const load = async () => {
+  const load = async (silent = false) => {
     if (!id) return;
-    setLoading(true);
+    if (!silent) setLoading(true);
     setLoadError("");
     try {
       const [res, taskRes] = await Promise.all([
@@ -642,16 +642,20 @@ function HastaDetayContent() {
       };
       setData(normalizedData);
       setClinicTasks(Array.isArray(taskJson) ? taskJson : []);
-      setEditForm({
-        fullName: normalizedData.fullName, tcNo: normalizedData.tcNo, phone: normalizedData.phone, gender: normalizedData.gender,
-        address: normalizedData.address || "", insurance: normalizedData.insurance || "", referrer: normalizedData.referrer || "",
-        discountRate: normalizedData.discountRate, notes: normalizedData.notes || "",
-        surgeries: normalizedData.surgeries || "", medications: normalizedData.medications || "",
-        otherDiseases: normalizedData.otherDiseases || "", bloodType: normalizedData.bloodType || "",
-        birthDate: normalizedData.birthDate ? new Date(normalizedData.birthDate).toISOString().slice(0, 10) : "",
-        hasAllergy: normalizedData.hasAllergy, hasHepatitis: normalizedData.hasHepatitis, hasKidney: normalizedData.hasKidney,
-        hasDiabetes: normalizedData.hasDiabetes, hasHeart: normalizedData.hasHeart, hasBloodIssue: normalizedData.hasBloodIssue
-      });
+      // Sessiz (gerçek zamanlı) yenilemede duzenle formunu ezmiyoruz — kullanıcı o an
+      // formu dolduruyor olabilir.
+      if (!silent || tab !== "duzenle") {
+        setEditForm({
+          fullName: normalizedData.fullName, tcNo: normalizedData.tcNo, phone: normalizedData.phone, gender: normalizedData.gender,
+          address: normalizedData.address || "", insurance: normalizedData.insurance || "", referrer: normalizedData.referrer || "",
+          discountRate: normalizedData.discountRate, notes: normalizedData.notes || "",
+          surgeries: normalizedData.surgeries || "", medications: normalizedData.medications || "",
+          otherDiseases: normalizedData.otherDiseases || "", bloodType: normalizedData.bloodType || "",
+          birthDate: normalizedData.birthDate ? new Date(normalizedData.birthDate).toISOString().slice(0, 10) : "",
+          hasAllergy: normalizedData.hasAllergy, hasHepatitis: normalizedData.hasHepatitis, hasKidney: normalizedData.hasKidney,
+          hasDiabetes: normalizedData.hasDiabetes, hasHeart: normalizedData.hasHeart, hasBloodIssue: normalizedData.hasBloodIssue
+        });
+      }
       if (normalizedData.toothChart) {
         try { setToothMap(JSON.parse(normalizedData.toothChart)); } catch { setToothMap({}); }
       } else {
@@ -668,6 +672,22 @@ function HastaDetayContent() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void load(); }, [id]);
+
+  // Başka bir personel bu hastaya ödeme/borç/randevu/tedavi kaydı eklediğinde
+  // sayfayı sessizce (tam ekran yenileme olmadan) güncelle.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onRealtime = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { void load(true); }, 400);
+    };
+    window.addEventListener("ks:realtime-sync", onRealtime);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("ks:realtime-sync", onRealtime);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   useEffect(() => {
     if (!isValidTab(requestedTab)) return;

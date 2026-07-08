@@ -541,6 +541,20 @@ export default function LabPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load]);
 
+  // Başka bir personel laboratuvar siparişi ekleyip güncellediğinde listeyi tazele.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onRealtime = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { void load(); }, 400);
+    };
+    window.addEventListener("ks:realtime-sync", onRealtime);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("ks:realtime-sync", onRealtime);
+    };
+  }, [load]);
+
   useEffect(() => {
     writeLabCache({ orders, patients, doctors });
   }, [orders, patients, doctors]);

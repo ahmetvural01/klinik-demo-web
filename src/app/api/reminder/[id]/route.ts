@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 function reminderTenantWhere(id: string, institutionId: string | null | undefined, role: string) {
   return {
@@ -39,6 +39,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
         ...(body.status !== undefined ? { status: body.status } : {}),
       }
     });
+    await writeAudit(auth.user.id, "REMINDER_UPDATE", `Hatırlatma güncellendi (${params.id})`);
     return NextResponse.json(r);
   } catch (e) {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
@@ -60,6 +61,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     if (!existing) return NextResponse.json({ error: "Hatırlatma bulunamadı" }, { status: 404 });
 
     await (prisma as any).reminder.delete({ where: { id: params.id } });
+    await writeAudit(auth.user.id, "REMINDER_DELETE", `Hatırlatma silindi (${params.id})`);
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
