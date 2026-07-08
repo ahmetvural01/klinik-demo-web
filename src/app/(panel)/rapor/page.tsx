@@ -187,7 +187,7 @@ export default function RaporPage() {
       </div>
 
       {/* Tabs */}
-      <div className="sticky top-0 z-20 flex gap-1 rounded-2xl border border-slate-100 bg-white/95 p-1 shadow-sm overflow-x-auto backdrop-blur">
+      <div className="sticky top-0 z-20 flex gap-1 rounded-2xl border border-slate-100 bg-white p-1 shadow-sm overflow-x-auto">
         {TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition ${tab === t.id ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>

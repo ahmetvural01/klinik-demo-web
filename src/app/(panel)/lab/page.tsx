@@ -1059,7 +1059,7 @@ export default function LabPage() {
 
   return (
     <div className="mx-auto max-w-6xl space-y-4 pb-8">
-      <div className="sticky top-0 z-20 mb-0 space-y-3 rounded-2xl border border-slate-200/80 bg-white p-3 shadow-sm backdrop-blur">
+      <div className="sticky top-0 z-20 mb-0 space-y-3 rounded-2xl border border-slate-200/80 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-lg font-black text-slate-900">Laboratuvar</h1>

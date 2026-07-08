@@ -42,7 +42,7 @@ export default async function RootPage() {
     <main className="min-h-screen bg-white text-slate-900 antialiased">
 
       {/* ─── STICKY NAVBAR ─── */}
-      <nav className="sticky top-0 z-50 border-b border-slate-200/80 bg-white/90 backdrop-blur-md">
+      <nav className="sticky top-0 z-50 border-b border-slate-200/80 bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-3.5">
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-600">

@@ -249,7 +249,7 @@ export default function RolePermissionsPage() {
       </div>
 
       {/* ── KONTROL BANDI ──────────────────────────────────────────────── */}
-      <div className="sticky top-0 z-10 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur-sm">
+      <div className="sticky top-0 z-10 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           {/* Kategori Sekmeleri */}
           <div className="flex flex-wrap gap-1">

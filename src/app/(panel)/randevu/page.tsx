@@ -1319,7 +1319,7 @@ export default function RandevuPage() {
 
   return (
     <section className="space-y-4">
-      <div className="sticky top-[72px] z-20 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur sm:p-4">
+      <div className="sticky top-[72px] z-20 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
         <div className="flex flex-wrap items-center gap-2">
           <div className="min-w-[170px]">
             <div className="flex flex-wrap items-center gap-2">
