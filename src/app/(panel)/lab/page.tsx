@@ -1180,8 +1180,8 @@ export default function LabPage() {
                     <h3 className="mt-1 text-xl font-black text-slate-900">{focusedOrder.patient.fullName}</h3>
                     <p className="mt-0.5 text-sm text-slate-500">{focusedOrder.labType} · {focusedOrder.labName}</p>
                     {rpt && (
-                      <span className="mt-1 inline-flex rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-violet-700">
-                        RPT · Ücretsiz Tekrar
+                      <span title="RPT: Hatalı/uyumsuz çıkan işin laboratuvara ücretsiz olarak yeniden yaptırılması" className="mt-1 inline-flex rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-violet-700">
+                        RPT (Ücretsiz Tekrar)
                       </span>
                     )}
                   </div>
@@ -1217,8 +1217,8 @@ export default function LabPage() {
                           {parts.requestedItem && <p className="text-sm text-slate-500">{parts.requestedItem}</p>}
                           <p className="mt-0.5 text-xs text-slate-400">{fmt(trip.sentAt)}{trip.receivedAt ? ` · ${fmt(trip.receivedAt)}` : " · laboratuvarda bekliyor"}</p>
                               {isCycleStart && (
-                                <span className="mt-1 inline-flex rounded bg-violet-100 px-2 py-1 text-xs font-semibold text-violet-700">
-                                  RPT başlangıcı
+                                <span title="RPT: Hatalı/uyumsuz çıkan işin laboratuvara ücretsiz olarak yeniden yaptırılması" className="mt-1 inline-flex rounded bg-violet-100 px-2 py-1 text-xs font-semibold text-violet-700">
+                                  RPT (Ücretsiz Tekrar) başlangıcı
                                 </span>
                               )}
                             </div>
@@ -1978,7 +1978,7 @@ function ActionBtn({
       ? "text-slate-800 hover:bg-slate-200"
       : "text-slate-500 hover:bg-slate-100 hover:text-slate-700";
   return (
-    <button onClick={onClick} title={title} disabled={disabled} className={`${base} ${colors}`}>
+    <button onClick={onClick} title={title} aria-label={title} disabled={disabled} className={`${base} ${colors}`}>
       {children}
     </button>
   );

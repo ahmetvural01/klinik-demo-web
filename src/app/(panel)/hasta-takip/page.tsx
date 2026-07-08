@@ -566,7 +566,7 @@ export default function HastaTakipPage() {
         .then(async (r) => {
           const body = await r.json().catch(() => ({}));
           if (!r.ok) {
-            throw new Error(body?.message || "Hasta arama icin yetki veya erisim hatasi olustu.");
+            throw new Error(body?.message || "Hasta arama için yetki veya erişim hatası oluştu.");
           }
           return body;
         })
@@ -585,7 +585,7 @@ export default function HastaTakipPage() {
         })
         .catch((e: unknown) => {
           setPatientResults([]);
-          setPatientSearchError(e instanceof Error ? e.message : "Hasta arama yapilamadi.");
+          setPatientSearchError(e instanceof Error ? e.message : "Hasta arama yapılamadı.");
         })
         .finally(() => setPatientSearchLoading(false));
     }, 250);
@@ -1002,7 +1002,7 @@ export default function HastaTakipPage() {
 
     const win = window.open("", "_blank", "width=1200,height=820");
     if (!win) {
-      setError("Yazdirma penceresi acilamadi.");
+      setError("Yazdırma penceresi açılamadı. Tarayıcınızın açılır pencere (pop-up) engelleyicisini bu site için kapatıp tekrar deneyin.");
       return;
     }
 
@@ -1020,7 +1020,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
 @media print{thead{display:table-header-group}tr{page-break-inside:avoid}}
 </style></head><body>
 <div class="page">
-  <div class="head"><div><div class="h1">KlinikModern</div><div class="sub">Hasta Takip Raporu</div></div><div class="sub">Olusturma: ${new Date().toLocaleString("tr-TR")}</div></div>
+  <div class="head"><div><div class="h1">KlinikModern</div><div class="sub">Hasta Takip Raporu</div></div><div class="sub">Oluşturma: ${new Date().toLocaleString("tr-TR")}</div></div>
   <div class="stats">
     <div class="box"><div class="num">${stats.total}</div><div class="lbl">Toplam</div></div>
     <div class="box"><div class="num">${stats.open}</div><div class="lbl">Açık</div></div>
@@ -1200,6 +1200,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
 
   const deleteFollowUpEvent = async (eventId: string) => {
     if (!activeHistoryFollowUpId) return;
+    if (!window.confirm("Bu süreç notu silinsin mi? Bu işlem geri alınamaz.")) return;
     setEventBusy(true);
     setError("");
     setSuccessWithToast("");
@@ -1251,7 +1252,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
 
       const win = window.open("", "_blank", "width=1200,height=820");
       if (!win) {
-        setError("PDF penceresi acilamadi.");
+        setError("PDF penceresi açılamadı. Tarayıcınızın açılır pencere (pop-up) engelleyicisini bu site için kapatıp tekrar deneyin.");
         return;
       }
 
@@ -1267,7 +1268,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
 <div class="page">
   <div class="head">
     <div><div class="h1">Hasta Süreç Takip Özeti</div><div class="sub">KlinikModern</div></div>
-    <div class="sub">Olusturma: ${new Date().toLocaleString("tr-TR")}</div>
+    <div class="sub">Oluşturma: ${new Date().toLocaleString("tr-TR")}</div>
   </div>
   <p><strong>Hasta:</strong> ${esc(item.patientName)} | <strong>Takip:</strong> ${esc(item.followUpLabel)} | <strong>Durum:</strong> ${esc(item.statusLabel)}</p>
   <table>

@@ -11,7 +11,7 @@ function HastaEkleContent() {
   const isEdit = !!editId;
 
   const [form, setForm] = useState({
-    tcNo: "", fullName: "", phone: "", gender: "ERKEK",
+    tcNo: "", fullName: "", phone: "", gender: "",
     birthDate: "", insurance: "", referrer: "", discountRate: 0, address: "", notes: "",
     surgeries: "", medications: "", bloodType: "", otherDiseases: "",
     hasAllergy: false, hasHepatitis: false, hasKidney: false,
@@ -31,7 +31,7 @@ function HastaEkleContent() {
           tcNo: d.tcNo || "",
           fullName: d.fullName || "",
           phone: d.phone || "",
-          gender: d.gender || "ERKEK",
+          gender: d.gender || "",
           birthDate: d.birthDate ? new Date(d.birthDate).toISOString().slice(0,10) : "",
           insurance: d.insurance || "",
           referrer: d.referrer || "",
@@ -56,7 +56,9 @@ function HastaEkleContent() {
 
   const onSave = async () => {
     if (!form.fullName.trim()) return setError("Ad Soyad zorunludur");
+    if (!/^[1-9]\d{10}$/.test(form.tcNo)) return setError("TC Kimlik No 11 haneli olmalı ve rakamla başlamalıdır (0 hariç)");
     if (!/^0\d{10}$/.test(form.phone)) return setError("Telefon 11 haneli olmalı ve 0 ile başlamalıdır");
+    if (!form.gender) return setError("Cinsiyet seçimi zorunludur");
     setSaving(true);
     setError(null);
 
@@ -93,20 +95,31 @@ function HastaEkleContent() {
 
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">TC Kimlik No</label>
-          <input className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="11 haneli TC No" maxLength={11} value={form.tcNo} onChange={(e) => setForm((p) => ({ ...p, tcNo: e.target.value }))} />
+          <label className="mb-1 block text-sm font-medium text-gray-700">TC Kimlik No *</label>
+          <input
+            className={`w-full rounded-lg border px-3 py-2 text-sm font-mono ${form.tcNo && !/^[1-9]\d{10}$/.test(form.tcNo) ? "border-red-300 bg-red-50 text-red-900" : "border-gray-300"}`}
+            placeholder="11 haneli TC No"
+            inputMode="numeric"
+            maxLength={11}
+            value={form.tcNo}
+            onChange={(e) => setForm((p) => ({ ...p, tcNo: e.target.value.replace(/\D/g, "").slice(0, 11) }))}
+          />
+          {form.tcNo && !/^[1-9]\d{10}$/.test(form.tcNo) && (
+            <p className="mt-1 text-xs text-amber-600">TC Kimlik No 11 haneli olmalı ve rakamla başlamalıdır (0 hariç).</p>
+          )}
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">Ad Soyad *</label>
           <input className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Ad Soyad" value={form.fullName} onChange={(e) => setForm((p) => ({ ...p, fullName: e.target.value }))} />
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">Telefon</label>
+          <label className="mb-1 block text-sm font-medium text-gray-700">Telefon *</label>
           <PhoneInput value={form.phone} onChange={(phone) => setForm((p) => ({ ...p, phone }))} label={""} />
         </div>
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">Cinsiyet</label>
+          <label className="mb-1 block text-sm font-medium text-gray-700">Cinsiyet *</label>
           <select className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" value={form.gender} onChange={(e) => setForm((p) => ({ ...p, gender: e.target.value }))}>
+            <option value="">Seçiniz</option>
             <option value="ERKEK">Erkek</option>
             <option value="KADIN">Kadın</option>
           </select>
@@ -125,7 +138,7 @@ function HastaEkleContent() {
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">İndirim Oranı (%)</label>
-          <input type="number" min={0} max={100} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="0" value={form.discountRate} onChange={(e) => setForm((p) => ({ ...p, discountRate: Number(e.target.value || 0) }))} />
+          <input type="number" min={0} max={100} className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="0" value={form.discountRate} onChange={(e) => setForm((p) => ({ ...p, discountRate: Math.min(100, Math.max(0, Number(e.target.value || 0))) }))} />
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">Kan Grubu</label>

@@ -30,6 +30,10 @@ yarn-debug.log*
 yarn-error.log*
 postgres-direct.out.log
 postgres-direct.err.log
+dev-server.log
+
+# TypeScript incremental build cache
+tsconfig.tsbuildinfo
 
 # OS
 .DS_Store

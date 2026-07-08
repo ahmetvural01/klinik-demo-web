@@ -10,7 +10,6 @@ function PersonelEkleContent() {
   const isEdit = !!editId;
 
   const [form, setForm] = useState({
-    institution: "whitedental",
     identityNo: "",
     fullName: "",
     role: "ASISTAN",
@@ -27,7 +26,6 @@ function PersonelEkleContent() {
       .then(r => r.json())
       .then(d => {
         setForm({
-          institution: d.institution || "whitedental",
           identityNo: d.identityNo || "",
           fullName: d.fullName || "",
           role: d.role || "ASISTAN",
@@ -43,7 +41,6 @@ function PersonelEkleContent() {
     setError(null);
 
     const body: Record<string, unknown> = {
-      institution: form.institution,
       identityNo: form.identityNo,
       fullName: form.fullName,
       role: form.role
@@ -80,12 +77,18 @@ function PersonelEkleContent() {
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">Kurum</label>
-          <input className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="Kurum kodu" value={form.institution} onChange={(e) => setForm((p) => ({ ...p, institution: e.target.value }))} />
-        </div>
-        <div>
-          <label className="mb-1 block text-sm font-medium text-gray-700">Kimlik No (TC)</label>
-          <input className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm" placeholder="11 haneli TC No" maxLength={11} value={form.identityNo} onChange={(e) => setForm((p) => ({ ...p, identityNo: e.target.value }))} />
+          <label className="mb-1 block text-sm font-medium text-gray-700">Kimlik No (TC) *</label>
+          <input
+            className={`w-full rounded-lg border px-3 py-2 text-sm font-mono ${form.identityNo && !/^\d{11}$/.test(form.identityNo) ? "border-red-300 bg-red-50 text-red-900" : "border-gray-300"}`}
+            placeholder="11 haneli TC No"
+            inputMode="numeric"
+            maxLength={11}
+            value={form.identityNo}
+            onChange={(e) => setForm((p) => ({ ...p, identityNo: e.target.value.replace(/\D/g, "").slice(0, 11) }))}
+          />
+          {form.identityNo && !/^\d{11}$/.test(form.identityNo) && (
+            <p className="mt-1 text-xs text-amber-600">TC Kimlik No 11 haneli olmalıdır.</p>
+          )}
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">Ad Soyad *</label>

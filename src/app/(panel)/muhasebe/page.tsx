@@ -116,13 +116,13 @@ function readMuhasebeCache() {
 }
 
 const TABS = [
-  { id: "genel",    label: "Genel Bakış"      },
-  { id: "gelir",    label: "Gelir / Tahsilat" },
-  { id: "gider",    label: "Gider"             },
-  { id: "taksit",   label: "Taksit / Alacak"  },
-  { id: "alacak",   label: "Hasta Alacakları" },
-  { id: "cari",     label: "Tedarikçi / Cari" },
-  { id: "hakedis",  label: "Hakedişler"       },
+  { id: "genel",    label: "Genel Bakış",      hint: "Tüm finansal özet" },
+  { id: "gelir",    label: "Gelir / Tahsilat", hint: "Hasta ödemeleri ve kasa hareketleri" },
+  { id: "gider",    label: "Gider",            hint: "Klinik giderleri" },
+  { id: "taksit",   label: "Taksit / Alacak",  hint: "Taksitli ödeme planları" },
+  { id: "alacak",   label: "Hasta Alacakları", hint: "Taksit dışı dahil, tüm hasta borç bakiyeleri" },
+  { id: "cari",     label: "Tedarikçi / Cari", hint: "Tedarikçilerle olan cari hesap bakiyeleri" },
+  { id: "hakedis",  label: "Hakedişler",       hint: "Doktorların işlem başına kazanç/komisyon dökümü" },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -775,7 +775,7 @@ export default function MuhasebePage() {
       {/* Tab Navigation */}
         <div className="sticky top-0 z-20 flex gap-1 overflow-x-auto rounded-2xl border border-slate-100 bg-white/95 p-1.5 shadow-sm backdrop-blur">
         {visibleTabs.map(tab => (
-          <button key={tab.id} onClick={() => changeTab(tab.id)}
+          <button key={tab.id} onClick={() => changeTab(tab.id)} title={tab.hint}
             className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition ${activeTab === tab.id ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"}`}>
             {tab.label}
           </button>

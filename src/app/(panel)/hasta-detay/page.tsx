@@ -107,6 +107,7 @@ type PatientDetailData = Patient & {
 const TAB_ITEMS: { key: Tab; label: string }[] = [
   { key: "bilgi", label: "Özet" },
   { key: "randevular", label: "Randevular" },
+  { key: "gorevler", label: "Görevler" },
   { key: "tedavi", label: "Tedavi" },
   { key: "odeme", label: "Finans" },
   { key: "recete", label: "Reçete" },
@@ -136,6 +137,27 @@ const TASK_STATUS_LABELS: Record<ClinicTask["status"], string> = {
   ACIK: "Açık",
   BEKLEMEDE: "Beklemede",
   TAMAMLANDI: "Tamamlandı",
+  IPTAL: "İptal",
+};
+
+const TAKSIT_PLAN_STATUS_LABELS: Record<string, string> = {
+  AKTIF: "Aktif",
+  TAMAMLANDI: "Tamamlandı",
+  IPTAL: "İptal",
+  DEVAM_EDIYOR: "Devam Ediyor",
+};
+
+const TAKSIT_ITEM_STATUS_LABELS: Record<string, string> = {
+  ODENDI: "Ödendi",
+  BEKLIYOR: "Bekliyor",
+  GECIKTI: "Gecikti",
+  IPTAL: "İptal",
+};
+
+const APPOINTMENT_STATUS_LABELS: Record<string, string> = {
+  BEKLIYOR: "Bekliyor",
+  GELDI: "Geldi",
+  GELMEDI: "Gelmedi",
   IPTAL: "İptal",
 };
 
@@ -1711,7 +1733,7 @@ function HastaDetayContent() {
                   <td className="px-3 py-2">{new Date(a.startAt).toLocaleString("tr-TR")}</td>
                   <td className="px-3 py-2">{a.doctor?.fullName || "-"}</td>
                   <td className="px-3 py-2"><span className={"rounded-full px-2 py-0.5 text-xs " + (a.type==="ACIL"?"bg-red-100 text-red-700":a.type==="KONTROL"?"bg-yellow-100 text-yellow-700":"bg-blue-100 text-blue-700")}>{a.type}</span></td>
-                  <td className="px-3 py-2"><span className={"rounded-full px-2 py-0.5 text-xs " + (a.status==="GELDI"?"bg-green-100 text-green-700":a.status==="GELMEDI"?"bg-red-100 text-red-700":a.status==="IPTAL"?"bg-gray-200 text-gray-600":"bg-yellow-100 text-yellow-700")}>{a.status||"Bekliyor"}</span></td>
+                  <td className="px-3 py-2"><span className={"rounded-full px-2 py-0.5 text-xs " + (a.status==="GELDI"?"bg-green-100 text-green-700":a.status==="GELMEDI"?"bg-red-100 text-red-700":a.status==="IPTAL"?"bg-gray-200 text-gray-600":"bg-yellow-100 text-yellow-700")}>{APPOINTMENT_STATUS_LABELS[a.status || ""] || a.status || "Bekliyor"}</span></td>
                 </tr>
               ))}
             </tbody>
@@ -2508,7 +2530,7 @@ function HastaDetayContent() {
                         </div>
                         <div className="flex items-center gap-2">
                           {overdue > 0 && <span className="text-xs font-bold text-red-600">{overdue} gecikmiş!</span>}
-                          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusCls[plan.status] || "bg-gray-100 text-gray-600"}`}>{plan.status}</span>
+                          <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusCls[plan.status] || "bg-gray-100 text-gray-600"}`}>{TAKSIT_PLAN_STATUS_LABELS[plan.status] || plan.status}</span>
                           <button onClick={() => printInstallmentPlan(plan)} className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">🖨 Yazdır</button>
                           <button
                             onClick={async () => {
@@ -2543,7 +2565,7 @@ function HastaDetayContent() {
                                     <td className="px-3 py-1.5">{new Date(getItemDueDate(t)).toLocaleDateString("tr-TR")}</td>
                                     <td className="px-3 py-1.5 text-right font-bold">₺{getItemAmount(t).toLocaleString("tr-TR")}</td>
                                     <td className="px-3 py-1.5 text-slate-500">{getItemPaidAt(t) ? new Date(getItemPaidAt(t)).toLocaleDateString("tr-TR") : "—"}</td>
-                                    <td className="px-3 py-1.5"><span className={`rounded-full px-2 py-0.5 font-semibold ${sc[t.status] || "bg-gray-100 text-gray-600"}`}>{t.status}</span></td>
+                                    <td className="px-3 py-1.5"><span className={`rounded-full px-2 py-0.5 font-semibold ${sc[t.status] || "bg-gray-100 text-gray-600"}`}>{TAKSIT_ITEM_STATUS_LABELS[t.status] || t.status}</span></td>
                                   </tr>
                                 );
                               })}
@@ -2624,6 +2646,8 @@ function HastaDetayContent() {
                         <td className="px-3 py-2 text-center">
                           <button
                             onClick={() => removeDrugFromList(idx)}
+                            aria-label="İlacı listeden kaldır"
+                            title="İlacı listeden kaldır"
                             className="text-red-600 hover:text-red-800 font-semibold text-sm"
                           >
                             ✕
@@ -2844,7 +2868,7 @@ function HastaDetayContent() {
           <h3 className="mb-4 font-semibold">Hasta Bilgilerini Düzenle</h3>
           <div className="grid gap-3 md:grid-cols-2">
             <div><label className="text-xs text-gray-600">Ad Soyad</label><input value={editForm.fullName||""} onChange={e=>setEditForm({...editForm,fullName:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" /></div>
-            <div><label className="text-xs text-gray-600">TC Kimlik No</label><input value={editForm.tcNo||""} onChange={e=>setEditForm({...editForm,tcNo:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" /></div>
+            <div><label className="text-xs text-gray-600">TC Kimlik No</label><input value={editForm.tcNo||""} inputMode="numeric" maxLength={11} onChange={e=>setEditForm({...editForm,tcNo:e.target.value.replace(/\D/g,"").slice(0,11)})} className="mt-1 w-full rounded border px-3 py-2 font-mono" /></div>
             {currentUserRole !== "DOKTOR" && currentUserRole !== "ASISTAN" && (
               <div><PhoneInput label="Telefon" value={editForm.phone||""} onChange={phone=>setEditForm({...editForm,phone})} /></div>
             )}
@@ -2853,7 +2877,7 @@ function HastaDetayContent() {
             <div><label className="text-xs text-gray-600">Kan Grubu</label><select value={(editForm as any).bloodType||""} onChange={e=>setEditForm({...editForm,...{bloodType:e.target.value}})} className="mt-1 w-full rounded border px-3 py-2"><option value="">Bilinmiyor</option>{["A+","A-","B+","B-","AB+","AB-","0+","0-"].map(g=><option key={g} value={g}>{g}</option>)}</select></div>
             <div><label className="text-xs text-gray-600">Anlaşmalı Kurum</label><input value={editForm.insurance||""} onChange={e=>setEditForm({...editForm,insurance:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" /></div>
             <div><label className="text-xs text-gray-600">Referans Eden Kişi</label><input value={(editForm as any).referrer||""} onChange={e=>setEditForm({...editForm,...{referrer:e.target.value}})} className="mt-1 w-full rounded border px-3 py-2" /></div>
-            <div><label className="text-xs text-gray-600">İndirim Oranı (%)</label><input type="number" value={editForm.discountRate||0} onChange={e=>setEditForm({...editForm,discountRate:parseInt(e.target.value)||0})} className="mt-1 w-full rounded border px-3 py-2" /></div>
+            <div><label className="text-xs text-gray-600">İndirim Oranı (%)</label><input type="number" min={0} max={100} value={editForm.discountRate||0} onChange={e=>setEditForm({...editForm,discountRate:Math.min(100,Math.max(0,parseInt(e.target.value)||0))})} className="mt-1 w-full rounded border px-3 py-2" /></div>
             <div className="md:col-span-2"><label className="text-xs text-gray-600">Adres</label><input value={editForm.address||""} onChange={e=>setEditForm({...editForm,address:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" /></div>
             <div><label className="text-xs text-gray-600">Geçirdiği Ameliyatlar</label><input value={editForm.surgeries||""} onChange={e=>setEditForm({...editForm,surgeries:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" /></div>
             <div><label className="text-xs text-gray-600">Kullandığı İlaçlar</label><input value={editForm.medications||""} onChange={e=>setEditForm({...editForm,medications:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" /></div>
@@ -2880,7 +2904,7 @@ function HastaDetayContent() {
           <div className="w-full max-w-2xl rounded-xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Yeni laboratuvar işi">
             <div className="flex items-center justify-between border-b px-5 py-3">
               <h3 className="text-base font-semibold text-slate-900">Hasta İçin Yeni Laboratuvar İşi</h3>
-              <button onClick={closeLabCreateModal} className="text-lg text-slate-400 hover:text-slate-600">✕</button>
+              <button onClick={closeLabCreateModal} aria-label="Kapat" title="Kapat" className="text-lg text-slate-400 hover:text-slate-600">✕</button>
             </div>
             <div className="space-y-3 p-5">
               {labCreateError && (
@@ -3064,7 +3088,7 @@ function HastaDetayContent() {
                   </p>
                 )}
               </div>
-              <button onClick={closeLabDetailModal} className="text-lg text-slate-400 hover:text-slate-600">✕</button>
+              <button onClick={closeLabDetailModal} aria-label="Kapat" title="Kapat" className="text-lg text-slate-400 hover:text-slate-600">✕</button>
             </div>
 
             <div className="max-h-[78vh] overflow-y-auto p-5">
@@ -3325,7 +3349,7 @@ function HastaDetayContent() {
           <div className="w-full max-w-lg rounded-xl bg-white shadow-2xl p-6 max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold text-slate-900">Tedavi Raporu Yazdır</h2>
-              <button onClick={() => setTreatmentPrintOpen(false)} className="text-slate-400 hover:text-slate-600 text-xl">✕</button>
+              <button onClick={() => setTreatmentPrintOpen(false)} aria-label="Kapat" title="Kapat" className="text-slate-400 hover:text-slate-600 text-xl">✕</button>
             </div>
             <p className="text-xs text-slate-500 mb-3">Yazdırmak istediğiniz tedavileri seçin. Varsayılan olarak tüm tedaviler seçilidir.</p>
             <div className="flex items-center gap-3 bg-slate-50 rounded-lg p-2.5 mb-3">
@@ -3382,7 +3406,7 @@ function HastaDetayContent() {
           <div className="w-full max-w-lg rounded-xl bg-white shadow-2xl p-6 max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold text-slate-900">Ödeme Geçmişi Yazdır</h2>
-              <button onClick={() => setPaymentPrintOpen(false)} className="text-slate-400 hover:text-slate-600 text-xl">✕</button>
+              <button onClick={() => setPaymentPrintOpen(false)} aria-label="Kapat" title="Kapat" className="text-slate-400 hover:text-slate-600 text-xl">✕</button>
             </div>
             <p className="text-xs text-slate-500 mb-3">Yazdırmak istediğiniz ödemeleri seçin. Varsayılan olarak tüm ödemeler seçilidir.</p>
             <div className="flex items-center justify-between mb-2">

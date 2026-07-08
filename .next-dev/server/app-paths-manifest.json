@@ -1,7 +1,0 @@
-{
-  "/api/stock/route": "app/api/stock/route.js",
-  "/giris/page": "app/giris/page.js",
-  "/api/taksit-plani/route": "app/api/taksit-plani/route.js",
-  "/klinik/giris/page": "app/klinik/giris/page.js",
-  "/(panel)/hasta-takip/page": "app/(panel)/hasta-takip/page.js"
-}
