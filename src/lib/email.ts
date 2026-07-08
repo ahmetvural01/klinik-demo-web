@@ -132,7 +132,7 @@ export function buildInvoiceReminderSms(params: {
   const amountStr = `₺${Number(amount).toLocaleString("tr-TR")}`;
 
   if (isOverdue) {
-    return `Klinik Modern: ${invoiceNo} no'lu faturaniz (${amountStr}) ${Math.abs(daysLeft)} gun gecikti. Lutfen en kisa surede odeme yapiniz.`;
+    return `Klinik Modern: ${invoiceNo} no'lu faturanız (${amountStr}) ${Math.abs(daysLeft)} gün gecikti. Lütfen en kısa sürede ödeme yapınız.`;
   }
   return `Klinik Modern: ${invoiceNo} no'lu faturanizin (${amountStr}) son odeme tarihi ${daysLeft} gun icinde dolmaktadir.`;
 }

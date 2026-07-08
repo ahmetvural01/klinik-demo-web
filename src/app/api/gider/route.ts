@@ -6,14 +6,15 @@ export async function GET(req: NextRequest) {
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
-    const user = auth.user;
-
     const { searchParams } = new URL(req.url);
     const categoryId = searchParams.get("categoryId");
     const from = searchParams.get("from");
     const to = searchParams.get("to");
 
-    const where: Record<string, unknown> = { status: "AKTIF" };
+    const where: Record<string, unknown> = {
+      status: "AKTIF",
+      ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+    };
     if (categoryId) where.categoryId = categoryId;
     if (from || to) {
       where.tarih = {
@@ -51,6 +52,7 @@ export async function POST(req: NextRequest) {
     const expense = await (prisma as any).expense.create({
       data: {
         tarih: new Date(tarih),
+        institutionId: auth.user.institutionId,
         categoryId: categoryId || null,
         category,
         description: description || null,

@@ -1,32 +1,86 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { decodeTokenUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 export async function GET() {
-  const announcements = await prisma.announcement.findMany({
-    orderBy: { createdAt: "desc" },
-    take: 10,
-  });
-  return NextResponse.json(announcements);
+  const auth = await requireAuth("announcements:read");
+  if (auth.error) return auth.error;
+  if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
+    return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+  }
+
+  try {
+    const now = new Date();
+    const announcements = await prisma.announcement.findMany({
+      where: {
+        isActive: true,
+        ...(auth.user.role !== "SUPERADMIN" || auth.user.institutionId
+          ? { institutionId: auth.user.institutionId }
+          : { institutionId: { not: null } }),
+        OR: [
+          { startsAt: null },
+          { startsAt: { lte: now } },
+        ],
+        AND: [
+          {
+            OR: [
+              { endsAt: null },
+              { endsAt: { gte: now } },
+            ],
+          },
+        ],
+      },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+    });
+    return NextResponse.json(announcements);
+  } catch (error) {
+    console.error("[announcements GET] fallback:", error);
+    return NextResponse.json([]);
+  }
 }
 
 export async function POST(req: Request) {
-  const user = decodeTokenUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
-  if (user.role !== "YONETICI") return NextResponse.json({ error: "Yetersiz yetki" }, { status: 403 });
+  const auth = await requireAuth("announcements:write");
+  if (auth.error) return auth.error;
+  if (!auth.user.institutionId) {
+    return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+  }
 
   const { text } = await req.json();
   if (!text?.trim()) return NextResponse.json({ error: "Duyuru boş olamaz" }, { status: 400 });
 
-  const ann = await prisma.announcement.create({ data: { text: text.trim() } });
-  return NextResponse.json(ann);
+  try {
+    const ann = await prisma.announcement.create({
+      data: {
+        institutionId: auth.user.institutionId,
+        text: text.trim(),
+        createdById: auth.user.id,
+      },
+    });
+    return NextResponse.json(ann);
+  } catch (error) {
+    console.error("[announcements POST] fallback:", error);
+    return NextResponse.json({ error: "Duyuru oluşturulamadı" }, { status: 503 });
+  }
 }
 
 export async function DELETE(req: Request) {
-  const user = decodeTokenUser();
-  if (!user || user.role !== "YONETICI") return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("announcements:write");
+  if (auth.error) return auth.error;
+  if (!auth.user.institutionId) {
+    return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+  }
 
   const { id } = await req.json();
-  await prisma.announcement.delete({ where: { id } });
-  return NextResponse.json({ ok: true });
+  try {
+    await prisma.announcement.updateMany({
+      where: { id, institutionId: auth.user.institutionId },
+      data: { isActive: false },
+    });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error("[announcements DELETE] fallback:", error);
+    return NextResponse.json({ error: "Duyuru silinemedi" }, { status: 503 });
+  }
 }

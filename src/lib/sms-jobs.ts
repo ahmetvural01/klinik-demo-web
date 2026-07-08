@@ -32,7 +32,7 @@ function getRedis() {
 export async function enqueueSmsDispatchJob(job: SmsDispatchJob) {
   const redis = getRedis();
   if (!redis) {
-    return { queued: false, reason: "Redis tanimli degil" };
+    return { queued: false, reason: "Redis tanımlı değil" };
   }
 
   try {
@@ -94,9 +94,9 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
       const dateText = new Date(appt.startAt).toLocaleString("tr-TR");
       const institutionName = settings.institutionName || institution.name;
       const fallbackMessage = job.smsType === "BILGI"
-        ? `${institutionName}: Sayin ${appt.patient.fullName}, randevunuz olusturuldu. Tarih: ${dateText}.`
+        ? `${institutionName}: Sayın ${appt.patient.fullName}, randevunuz oluşturuldu. Tarih: ${dateText}.`
         : job.smsType === "HATIRLATMA"
-          ? `${institutionName}: Sayin ${appt.patient.fullName}, randevu hatirlatmasi. Tarih: ${dateText}, Doktor: ${appt.doctor.fullName}.`
+          ? `${institutionName}: Sayın ${appt.patient.fullName}, randevu hatırlatması. Tarih: ${dateText}, Doktor: ${appt.doctor.fullName}.`
           : `${institutionName}: Randevunuz tamamlandi. Degerlendirmeniz bizim icin cok degerli.`;
 
       const message = smsTemplate
@@ -147,7 +147,7 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
 
 export async function runSmsWorker() {
   const redis = getRedis();
-  if (!redis) throw new Error("REDIS_URL tanimli degil");
+  if (!redis) throw new Error("REDIS_URL tanımlı değil");
 
   while (true) {
     const popped = await redis.brpop(SMS_QUEUE_KEY, 5);

@@ -7,8 +7,11 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
 
-    const expense = await (prisma as any).expense.findUnique({
-      where: { id: params.id },
+    const expense = await (prisma as any).expense.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
       include: { expenseCategory: { select: { id: true, name: true } } }
     });
     if (!expense) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
@@ -24,8 +27,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (auth.error) return auth.error;
 
     const body = await req.json();
+    const existing = await (prisma as any).expense.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
+      select: { id: true },
+    });
+    if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
+
     const expense = await (prisma as any).expense.update({
-      where: { id: params.id },
+      where: { id: existing.id },
       data: body,
       include: { expenseCategory: { select: { id: true, name: true } } }
     });
@@ -41,8 +53,17 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     if (auth.error) return auth.error;
 
     // Soft delete (status = IPTAL)
+    const existing = await (prisma as any).expense.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
+      select: { id: true },
+    });
+    if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
+
     await (prisma as any).expense.update({
-      where: { id: params.id },
+      where: { id: existing.id },
       data: { status: "IPTAL" }
     });
     return NextResponse.json({ ok: true });

@@ -1,7 +1,8 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { showToastSafe } from "@/lib/toast-client";
 
 type LabInvoice = {
   id: string;
@@ -209,6 +210,39 @@ const LOWER_RIGHT = [48, 47, 46, 45, 44, 43, 42, 41];
 
 const CUR = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 0 });
 const NEW_LAB_VALUE = "__new_lab__";
+const LAB_CACHE_KEY = "lab:orders:v1";
+
+type LabCache = {
+  orders: LabOrder[];
+  patients: Patient[];
+  doctors: Doctor[];
+};
+
+function readLabCache(): LabCache | null {
+  if (typeof window === "undefined") return null;
+  const raw = sessionStorage.getItem(LAB_CACHE_KEY);
+  if (!raw) return null;
+
+  try {
+    const cached = JSON.parse(raw) as Partial<LabCache>;
+    return {
+      orders: Array.isArray(cached.orders) ? cached.orders : [],
+      patients: Array.isArray(cached.patients) ? cached.patients : [],
+      doctors: Array.isArray(cached.doctors) ? cached.doctors : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeLabCache(value: LabCache) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(LAB_CACHE_KEY, JSON.stringify(value));
+  } catch {
+    // Cache kritik değil.
+  }
+}
 
 /** Yeni format: "Ölçü → Metal Alt Yapı" → {sentItem, requestedItem} 
  *  Eski format: "Olcu gonderimi -TRIP" → {sentItem: aynen, requestedItem: ""} */
@@ -375,7 +409,7 @@ const emptyOrderForm = {
   labType: "",
   teeth: "",
   notes: "",
-  // İlk gidiş adımı
+  // İlk laboratuvar gönderimi
   sentItem: "",
   requestedItem: "",
   impressionMethod: "" as ImpressionMethod,
@@ -421,7 +455,7 @@ export default function LabPage() {
   const focusOrderId = searchParams.get("orderId") || "";
 
   const [orders, setOrders] = useState<LabOrder[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
@@ -451,9 +485,19 @@ export default function LabPage() {
   const [rptReason, setRptReason] = useState("");
   const prefillHandledRef = useRef(false);
   const focusedOrderFromQueryRef = useRef<string | null>(null);
+  const hasLabCacheRef = useRef(false);
+
+  useLayoutEffect(() => {
+    const cached = readLabCache();
+    if (!cached) return;
+    hasLabCacheRef.current = true;
+    setOrders(cached.orders);
+    setPatients(cached.patients);
+    setDoctors(cached.doctors);
+    setLoading(false);
+  }, []);
 
   const load = useCallback(async () => {
-    setLoading(true);
     setLoadError(null);
 
     try {
@@ -468,7 +512,8 @@ export default function LabPage() {
         );
       }
 
-      setOrders(Array.isArray(payload) ? payload : []);
+      const nextOrders = Array.isArray(payload) ? payload : [];
+      setOrders(nextOrders);
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "Laboratuvar verileri alınamadı.");
     } finally {
@@ -480,14 +525,25 @@ export default function LabPage() {
     load();
     fetch("/api/patients?limit=200")
       .then((r) => r.json())
-      .then((d) => setPatients(Array.isArray(d) ? d : d.patients || []))
+      .then((d) => {
+        const nextPatients = Array.isArray(d) ? d : d.patients || [];
+        setPatients(nextPatients);
+      })
       .catch(() => {});
 
     fetch("/api/staff")
       .then((r) => r.json())
-      .then((d) => setDoctors((Array.isArray(d) ? d : []).filter((u: Doctor) => u.role === "DOKTOR")))
+      .then((d) => {
+        const nextDoctors = (Array.isArray(d) ? d : []).filter((u: Doctor) => u.role === "DOKTOR");
+        setDoctors(nextDoctors);
+      })
       .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load]);
+
+  useEffect(() => {
+    writeLabCache({ orders, patients, doctors });
+  }, [orders, patients, doctors]);
 
   const searchedOrders = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -802,7 +858,7 @@ export default function LabPage() {
   async function reopenAsRpt(order: LabOrder) {
     const reason = rptReason.trim();
     if (!reason) {
-      alert("RPT nedeni zorunludur.");
+      showToastSafe({ title: "RPT nedeni gerekli", message: "Lütfen işlemi yeniden başlatma nedenini yazın.", type: "error" });
       return;
     }
 
@@ -823,7 +879,7 @@ export default function LabPage() {
 
     if (!res.ok) {
       const payload = await res.json().catch(() => null);
-      alert(payload?.error || "RPT yeniden başlatma sırasında hata oluştu.");
+      showToastSafe({ title: "İşlem başlatılamadı", message: payload?.error || "RPT yeniden başlatma sırasında hata oluştu.", type: "error" });
       return;
     }
 
@@ -894,7 +950,7 @@ export default function LabPage() {
       : summary.pendingTrip
       ? summary.pendingDays >= 4
         ? "Gecikiyor"
-        : "Labda"
+        : "Laboratuvarda"
       : summary.totalCount > 0
       ? "Klinikte"
       : "Yeni";
@@ -941,44 +997,44 @@ export default function LabPage() {
 
     const nextLabel = summary.nextStep
       ? `${summary.nextStep.send} → ${summary.nextStep.request}`
-      : "Süreç tamamlandı / serbest akış";
+      : "Süreç tamamlandı";
 
     return (
       <button
         key={order.id}
         type="button"
         onClick={() => setFocusedOrderId(order.id)}
-        className={`mb-1.5 w-full rounded-lg border border-l-4 px-3 py-2 text-left shadow-sm transition last:mb-0 ${cardTone.wrap} ${cardTone.line} ${
+        className={`mb-2 w-full rounded-2xl border border-l-4 px-4 py-3 text-left shadow-sm transition last:mb-0 ${cardTone.wrap} ${cardTone.line} ${
           focusedOrderId === order.id ? cardTone.selected : ""
         }`}
       >
-        <div className="flex items-start justify-between gap-1.5">
+        <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="truncate text-[12px] font-semibold text-slate-900">{order.patient.fullName}</p>
-            <p className="truncate text-[10.5px] text-slate-500">
+            <p className="truncate text-base font-black text-slate-900">{order.patient.fullName}</p>
+            <p className="mt-0.5 truncate text-sm text-slate-500">
               {order.labType} · {order.labName}
             </p>
           </div>
-          <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${statusStyle}`}>
+          <span className={`shrink-0 rounded-lg px-2.5 py-1.5 text-xs font-bold uppercase tracking-wide ${statusStyle}`}>
             {statusLabel}
           </span>
         </div>
 
-        <div className="mt-1 grid grid-cols-2 gap-1 text-[10px] text-slate-500">
+        <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-600">
           <p>
-            Adım: <span className="font-semibold text-slate-700">{summary.doneCount}/{summary.totalCount}</span>
+            İlerleme: <span className="font-bold text-slate-800">{summary.doneCount}/{summary.totalCount}</span>
           </p>
-          <p className="text-right">
+          <p className="text-right font-semibold text-slate-800">
             {summary.totalAmount > 0 ? CUR.format(summary.totalAmount) : "Fatura yok"}
           </p>
         </div>
 
-        <p className="mt-1 truncate text-[10.5px] text-slate-600">
-          Sıradaki: <span className="font-medium text-slate-700">{nextLabel}</span>
+        <p className="mt-2 truncate text-sm text-slate-600">
+          Sıradaki işlem: <span className="font-semibold text-slate-800">{nextLabel}</span>
         </p>
 
         {summary.pendingTrip && (
-          <p className={`mt-0.5 text-[10px] ${summary.pendingDays >= 4 ? "text-red-600" : "text-amber-600"}`}>
+          <p className={`mt-1 text-sm font-semibold ${summary.pendingDays >= 4 ? "text-red-600" : "text-amber-600"}`}>
             Bekleyen: {parseDesc(summary.pendingTrip.description).sentItem}
             {summary.pendingDays > 0 ? ` · ${summary.pendingDays}g` : ""}
           </p>
@@ -988,23 +1044,15 @@ export default function LabPage() {
   };
 
   return (
-    <div className="mx-auto max-w-5xl space-y-0 pb-8">
-      <div className="sticky top-0 z-20 mb-0 space-y-1 rounded-xl border border-slate-200/80 bg-gradient-to-b from-white to-slate-50 p-2 shadow-sm backdrop-blur">
-        <div className="flex items-center justify-between">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">Üst İşlem Paneli</p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          <div className="relative min-w-[180px] flex-1 sm:w-60 sm:flex-none">
-            <svg className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Hasta veya lab ara…"
-              className="h-6 w-full rounded-md border border-slate-200 bg-white pl-8 pr-2.5 text-[11px] text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
-            />
+    <div className="mx-auto max-w-6xl space-y-4 pb-8">
+      <div className="sticky top-0 z-20 mb-0 space-y-3 rounded-2xl border border-slate-200/80 bg-white p-3 shadow-sm backdrop-blur">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-lg font-black text-slate-900">Laboratuvar</h1>
+            <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{filteredOrders.length} iş</span>
+            {allPendingTrips.length > 0 && (
+              <span className="rounded-full bg-amber-100 px-3 py-1 text-sm font-semibold text-amber-700">{allPendingTrips.length} bekleyen adım</span>
+            )}
           </div>
           <button
             onClick={() => {
@@ -1014,20 +1062,31 @@ export default function LabPage() {
               });
               setModal("new");
             }}
-            className="inline-flex h-6 items-center gap-1 rounded-md bg-slate-900 px-2.5 text-[11px] font-medium text-white shadow-sm transition hover:bg-slate-700 active:scale-95"
+            className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-slate-700 active:scale-95"
           >
-            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
               <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
             </svg>
-            Yeni İş
+            Yeni Laboratuvar İşi
           </button>
         </div>
 
-        <div className="flex flex-wrap items-center gap-0.5">
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative min-w-[180px] flex-1 sm:w-60 sm:flex-none">
+            <svg className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Hasta veya laboratuvar ara"
+              className="h-11 w-full rounded-xl border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            />
+          </div>
           <select
             value={activeLab}
             onChange={(e) => setActiveLab(e.target.value)}
-            className="h-6 rounded-md border border-slate-200 bg-white px-2 text-[11px] text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
           >
             <option value="all">Tümü ({searchedOrders.length} iş)</option>
             {labOverview.map((lab) => (
@@ -1036,17 +1095,17 @@ export default function LabPage() {
               </option>
             ))}
           </select>
-          <div className="flex items-center gap-1 overflow-x-auto">
+          <div className="flex flex-1 items-center gap-2 overflow-x-auto">
             {([
               { key: "all" as const, label: "Tümü", count: orderedVisibleOrders.length },
-              { key: "atLab" as const, label: "Labda", count: workflowBoard.atLab.length },
+              { key: "atLab" as const, label: "Laboratuvarda", count: workflowBoard.atLab.length },
               { key: "returned" as const, label: "Klinikte", count: workflowBoard.returned.length },
               { key: "completed" as const, label: "Tamamlandı", count: workflowBoard.completed.length },
             ]).map((tab) => (
               <button
                 key={tab.key}
                 onClick={() => setActiveFilter(tab.key)}
-                className={`flex h-6 items-center gap-1 whitespace-nowrap rounded-md px-2 py-0 text-[11px] font-medium transition ${
+                className={`flex min-h-11 items-center gap-2 whitespace-nowrap rounded-xl px-4 py-2 text-sm font-bold transition ${
                   activeFilter === tab.key
                     ? "bg-slate-900 text-white"
                     : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
@@ -1054,7 +1113,7 @@ export default function LabPage() {
               >
                 {tab.label}
                 {tab.count > 0 && (
-                  <span className={`min-w-[14px] rounded-full px-1 py-0 text-center text-[9px] leading-4 ${activeFilter === tab.key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>
+                  <span className={`min-w-[18px] rounded-full px-1.5 py-0.5 text-center text-xs leading-4 ${activeFilter === tab.key ? "bg-white/20 text-white" : "bg-slate-100 text-slate-500"}`}>
                     {tab.count}
                   </span>
                 )}
@@ -1065,16 +1124,9 @@ export default function LabPage() {
       </div>
 
       {/* ── List ── */}
-        <div className="grid gap-1 lg:h-[calc(100vh-175px)] lg:grid-cols-[minmax(0,1fr)_290px]">
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-sm lg:min-h-0 lg:overflow-y-auto">
-            {loading ? (
-              <div className="flex h-40 items-center justify-center text-sm text-slate-400">
-                <svg className="mr-2 h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
-                  <path d="M21 12a9 9 0 11-6.219-8.56"/>
-                </svg>
-                Yükleniyor…
-              </div>
-            ) : loadError ? (
+        <div className="grid gap-4 lg:h-[calc(100vh-210px)] lg:grid-cols-[minmax(0,1fr)_390px]">
+          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white p-3 shadow-sm lg:min-h-0 lg:overflow-y-auto">
+            {loadError ? (
               <div className="flex min-h-40 flex-col items-center justify-center gap-3 px-6 py-8 text-center">
                 <p className="text-sm font-semibold text-slate-800">Laboratuvar verileri yüklenemedi</p>
                 <p className="text-sm text-slate-500">{loadError}</p>
@@ -1086,20 +1138,20 @@ export default function LabPage() {
                 </button>
               </div>
             ) : filteredOrders.length === 0 ? (
-              <div className="flex h-40 items-center justify-center text-sm text-slate-400">Kayıt bulunamadı</div>
+              <div className="flex h-40 items-center justify-center text-sm text-slate-400">Bu filtrede laboratuvar işi yok</div>
             ) : (
               <div>
                 {activeFilter === "all" ? (
                   <>
                     {([
                       { key: "fresh", label: "Yeni", tone: "text-slate-600", orders: workflowBoard.fresh },
-                      { key: "atLab", label: "Labda", tone: "text-amber-700", orders: workflowBoard.atLab },
+                      { key: "atLab", label: "Laboratuvarda", tone: "text-amber-700", orders: workflowBoard.atLab },
                       { key: "returned", label: "Klinikte", tone: "text-blue-700", orders: workflowBoard.returned },
                       { key: "completed", label: "Tamamlandı", tone: "text-emerald-700", orders: workflowBoard.completed },
                     ]).map((group) =>
                       group.orders.length > 0 ? (
-                        <div key={group.key} className="mb-1.5 last:mb-0">
-                          <p className={`mb-0.5 px-1 text-[10px] font-semibold uppercase tracking-widest ${group.tone}`}>
+                        <div key={group.key} className="mb-4 last:mb-0">
+                          <p className={`mb-2 px-1 text-xs font-black uppercase tracking-widest ${group.tone}`}>
                             {group.label} · {group.orders.length}
                           </p>
                           {group.orders.map((order) => renderProRow(order))}
@@ -1114,58 +1166,58 @@ export default function LabPage() {
             )}
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-2.5 shadow-sm lg:min-h-0 lg:overflow-y-auto">
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm lg:min-h-0 lg:overflow-y-auto">
             {!focusedOrder ? (
-              <p className="text-sm text-slate-500">Detay için soldan bir iş seçin.</p>
+              <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-500">Bir laboratuvar işi seçin; gönderim, geliş ve ücret detayları burada görünür.</p>
             ) : (() => {
               const summary = getOrderSummary(focusedOrder);
               const pendingDesc = summary.pendingTrip ? parseDesc(summary.pendingTrip.description) : null;
               const rpt = isRptOrder(focusedOrder);
               return (
-                <div className="space-y-2">
+                <div className="space-y-4">
                   <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-400">Seçili İş</p>
-                    <h3 className="mt-1 text-[14px] font-semibold text-slate-900">{focusedOrder.patient.fullName}</h3>
-                    <p className="text-[11.5px] text-slate-500">{focusedOrder.labType} · {focusedOrder.labName}</p>
+                    <p className="text-xs font-black uppercase tracking-widest text-slate-400">Seçili İş</p>
+                    <h3 className="mt-1 text-xl font-black text-slate-900">{focusedOrder.patient.fullName}</h3>
+                    <p className="mt-0.5 text-sm text-slate-500">{focusedOrder.labType} · {focusedOrder.labName}</p>
                     {rpt && (
-                      <span className="mt-1 inline-flex rounded-md border border-violet-200 bg-violet-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-700">
+                      <span className="mt-1 inline-flex rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-xs font-semibold uppercase tracking-wide text-violet-700">
                         RPT · Ücretsiz Tekrar
                       </span>
                     )}
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2 text-[11px]">
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
                       <p className="text-slate-500">İlerleme</p>
                       <p className="mt-0.5 font-semibold text-slate-800">{summary.doneCount}/{summary.totalCount}</p>
                     </div>
-                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
                       <p className="text-slate-500">Bekleyen</p>
                       <p className="mt-0.5 font-semibold text-slate-800">{summary.pendingTrip ? `${summary.pendingDays}g` : "Yok"}</p>
                     </div>
                   </div>
 
-                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
-                    <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">Sıradaki Beklenen</p>
-                    <p className="mt-1 text-[12px] font-medium text-slate-700">
-                      {summary.nextStep ? `${summary.nextStep.send} → ${summary.nextStep.request}` : "Süreç tamamlandı / serbest akış"}
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">Sıradaki İşlem</p>
+                    <p className="mt-1 text-sm font-semibold text-slate-800">
+                      {summary.nextStep ? `${summary.nextStep.send} → ${summary.nextStep.request}` : "Süreç tamamlandı"}
                     </p>
                   </div>
 
-                  <div className="space-y-1.5">
+                  <div className="space-y-2">
                     {summary.sortedTrips.slice().reverse().map((trip) => {
                       const parts = parseDesc(trip.description);
                       const done = Boolean(trip.receivedAt);
                       const isCycleStart = (trip.sentNote || "").includes("RPT_RESET_START");
                       return (
-                        <div key={trip.id} className="rounded-lg border border-slate-200 bg-white px-2 py-1.5">
+                        <div key={trip.id} className="rounded-xl border border-slate-200 bg-white px-3 py-2.5">
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0 flex-1">
-                              <p className="text-[11px] font-semibold text-slate-800">{parts.sentItem}</p>
-                          {parts.requestedItem && <p className="text-[11px] text-slate-500">→ {parts.requestedItem}</p>}
-                          <p className="mt-0.5 text-[10px] text-slate-400">{fmt(trip.sentAt)}{trip.receivedAt ? ` · ${fmt(trip.receivedAt)}` : " · bekleniyor"}</p>
+                              <p className="text-sm font-bold text-slate-800">{parts.sentItem}</p>
+                          {parts.requestedItem && <p className="text-sm text-slate-500">{parts.requestedItem}</p>}
+                          <p className="mt-0.5 text-xs text-slate-400">{fmt(trip.sentAt)}{trip.receivedAt ? ` · ${fmt(trip.receivedAt)}` : " · laboratuvarda bekliyor"}</p>
                               {isCycleStart && (
-                                <span className="mt-1 inline-flex rounded bg-violet-100 px-1.5 py-0.5 text-[9px] font-semibold text-violet-700">
+                                <span className="mt-1 inline-flex rounded bg-violet-100 px-2 py-1 text-xs font-semibold text-violet-700">
                                   RPT başlangıcı
                                 </span>
                               )}
@@ -1175,15 +1227,15 @@ export default function LabPage() {
                                 <button
                                   type="button"
                                   onClick={() => openReceiveModal(focusedOrder, trip)}
-                                  className="rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 transition hover:bg-emerald-100"
+                                  className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100"
                                 >
-                                  Geldi
+                                  Laboratuvardan Geldi
                                 </button>
                               )}
                               <button
                                 type="button"
                                 onClick={() => openEditTripModal(focusedOrder, trip)}
-                                className="rounded border border-slate-200 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-700 transition hover:bg-slate-50"
+                                className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50"
                               >
                                 Düzenle
                               </button>
@@ -1193,7 +1245,7 @@ export default function LabPage() {
                       );
                     })}
                     {summary.sortedTrips.length === 0 && (
-                      <p className="text-[12px] text-slate-400">Henüz adım eklenmedi.</p>
+                      <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-4 text-center text-sm text-slate-400">Henüz lab gönderimi eklenmedi.</p>
                     )}
                   </div>
 
@@ -1204,24 +1256,24 @@ export default function LabPage() {
                     <button
                       type="button"
                       onClick={() => openTripModal(focusedOrder)}
-                      className="rounded-lg bg-slate-900 px-3 py-1.5 text-[12px] font-medium text-white transition hover:bg-slate-700"
+                      className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-bold text-white transition hover:bg-slate-700"
                     >
-                      Gidiş Ekle
+                      Laboratuvara Gönder
                     </button>
                     {pendingTrip && (
                       <button
                         type="button"
                         onClick={() => openReceiveModal(focusedOrder, pendingTrip)}
-                        className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[12px] font-medium text-emerald-700 transition hover:bg-emerald-100"
+                        className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700 transition hover:bg-emerald-100"
                       >
-                        Geldi İşaretle
+                        Laboratuvardan Geldi
                       </button>
                     )}
                     <button
                       type="button"
                       onClick={() => openInvoiceModal(focusedOrder)}
                       disabled={rpt}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[12px] font-medium text-slate-700 transition hover:bg-slate-50"
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
                     >
                       {rpt ? "RPT (Ücretsiz)" : "Fatura Ekle"}
                     </button>
@@ -1230,7 +1282,7 @@ export default function LabPage() {
                         type="button"
                         onClick={() => requestComplete(focusedOrder)}
                         disabled={Boolean(pendingTrip)}
-                        className="rounded-lg border border-slate-300 px-3 py-1.5 text-[12px] font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
                       >
                         Tamamla
                       </button>
@@ -1239,7 +1291,7 @@ export default function LabPage() {
                       <button
                         type="button"
                         onClick={() => requestRpt(focusedOrder)}
-                        className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-[12px] font-semibold text-violet-700 transition hover:bg-violet-100"
+                        className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-bold text-violet-700 transition hover:bg-violet-100"
                       >
                         RPT Olarak Yeniden Aç
                       </button>
@@ -1249,7 +1301,7 @@ export default function LabPage() {
                   })()}
 
                   {pendingDesc && (
-                    <p className="text-[11px] text-amber-700">
+                    <p className="text-sm font-semibold text-amber-700">
                       Bekleyen adım: {pendingDesc.sentItem}{pendingDesc.requestedItem ? ` → ${pendingDesc.requestedItem}` : ""}
                     </p>
                   )}
@@ -1289,11 +1341,11 @@ export default function LabPage() {
               >
                 <option value="">Laboratuvar seçiniz</option>
                 {knownLabs.map((lab) => <option key={lab} value={lab}>{lab}</option>)}
-                <option value={NEW_LAB_VALUE}>+ Yeni laboratuvar ekle</option>
+                <option value={NEW_LAB_VALUE}>Yeni laboratuvar ekle</option>
               </select>
               {orderForm.labName === NEW_LAB_VALUE && (
                 <div className="mt-2 rounded-xl border border-slate-200 bg-slate-50 p-2.5">
-                  <p className="mb-2 text-[11px] font-medium text-slate-500">Listede yoksa yeni laboratuvar adını gir.</p>
+                  <p className="mb-2 text-xs font-medium text-slate-500">Listede yoksa yeni laboratuvar adını girin.</p>
                   <input
                     value={orderForm.customLabName}
                     onChange={(e) => setOrderForm((p) => ({ ...p, customLabName: e.target.value }))}
@@ -1337,7 +1389,7 @@ export default function LabPage() {
             </Field>
             {/* ── İlk Adım ── */}
             <div className="rounded-xl border border-blue-100 bg-blue-50/60 p-3 space-y-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-blue-600">İlk Gidiş Adımı</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">İlk Laboratuvar Gönderimi</p>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Gönderilen *">
                   <input
@@ -1366,7 +1418,7 @@ export default function LabPage() {
                     }
                   />
                 </Field>
-                <Field label="İstenen (Labdan)">
+                <Field label="Laboratuvardan Beklenen">
                   <input
                     value={orderForm.requestedItem}
                     onChange={(e) => setOrderForm((p) => ({ ...p, requestedItem: e.target.value }))}
@@ -1403,18 +1455,18 @@ export default function LabPage() {
       )}
 
       {modal === "trip" && activeOrder && (
-        <Modal title="Gidiş Kaydı Ekle" subtitle={`${activeOrder.patient.fullName} · ${activeOrder.labName} · ${activeOrder.labType}`} onClose={closeModal}>
+        <Modal title="Laboratuvara Gönderim Ekle" subtitle={`${activeOrder.patient.fullName} · ${activeOrder.labName} · ${activeOrder.labType}`} onClose={closeModal}>
           <TripFormContent
             order={activeOrder}
             tripForm={tripForm}
             setTripForm={setTripForm}
           />
-          <ModalActions onClose={closeModal} onSave={createTrip} saving={saving} saveText="Gidişi Kaydet" disabled={!tripForm.sentItem} />
+          <ModalActions onClose={closeModal} onSave={createTrip} saving={saving} saveText="Gönderimi Kaydet" disabled={!tripForm.sentItem} />
         </Modal>
       )}
 
       {modal === "receive" && activeTrip && (
-        <Modal title="Geri Geldi Olarak İşaretle" subtitle={`${activeTrip.labOrder.patient.fullName} · ${parseDesc(activeTrip.description).sentItem}${parseDesc(activeTrip.description).requestedItem ? " → " + parseDesc(activeTrip.description).requestedItem : ""}`} onClose={closeModal}>
+        <Modal title="Laboratuvardan Geldi" subtitle={`${activeTrip.labOrder.patient.fullName} · ${parseDesc(activeTrip.description).sentItem}${parseDesc(activeTrip.description).requestedItem ? " → " + parseDesc(activeTrip.description).requestedItem : ""}`} onClose={closeModal}>
           <div className="space-y-3">
             <Field label="Geliş Tarihi">
               <input type="date" value={receiveForm.receivedAt} onChange={(e) => setReceiveForm((p) => ({ ...p, receivedAt: e.target.value }))} className="field" />
@@ -1427,7 +1479,7 @@ export default function LabPage() {
               <input value={receiveForm.receivedNote} onChange={(e) => setReceiveForm((p) => ({ ...p, receivedNote: e.target.value }))} className="field" placeholder="Prova hazır, küçük düzeltme gerekli…" />
             </Field>
           </div>
-          <ModalActions onClose={closeModal} onSave={markTripReceived} saving={saving} saveText="Geldi Olarak İşaretle" />
+          <ModalActions onClose={closeModal} onSave={markTripReceived} saving={saving} saveText="Gelişi Kaydet" />
         </Modal>
       )}
 
@@ -1478,7 +1530,7 @@ export default function LabPage() {
                 }
               />
             </Field>
-            <Field label="İstenen (Labdan Beklenen)">
+            <Field label="Laboratuvardan Beklenen">
               <input value={editTripForm.requestedItem} onChange={(e) => setEditTripForm((p) => ({ ...p, requestedItem: e.target.value }))} className="field" placeholder="Metal alt yapı, dentin prova, glaze…" />
             </Field>
             {isMeasurementStep(editTripForm.sentItem) && (
@@ -1495,10 +1547,10 @@ export default function LabPage() {
               </Field>
             )}
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Gidiş Tarihi *">
+              <Field label="Gönderim Tarihi *">
                 <input type="date" value={editTripForm.sentAt} onChange={(e) => setEditTripForm((p) => ({ ...p, sentAt: e.target.value }))} className="field" />
               </Field>
-              <Field label="Gidiş Notu">
+              <Field label="Gönderim Notu">
                 <input value={editTripForm.sentNote} onChange={(e) => setEditTripForm((p) => ({ ...p, sentNote: e.target.value }))} className="field" placeholder="Teknik not…" />
               </Field>
             </div>
@@ -1656,7 +1708,7 @@ function OrderRow({
     : pendingTrip
       ? pendingDays >= 4
         ? { label: "Gecikiyor", border: "border-l-red-400", bg: "bg-red-50/40 hover:bg-red-50/60", pill: "bg-red-100 text-red-700", dot: "bg-red-400" }
-        : { label: "Labda", border: "border-l-amber-400", bg: "bg-amber-50/40 hover:bg-amber-50/60", pill: "bg-amber-100 text-amber-700", dot: "bg-amber-400" }
+        : { label: "Laboratuvarda", border: "border-l-amber-400", bg: "bg-amber-50/40 hover:bg-amber-50/60", pill: "bg-amber-100 text-amber-700", dot: "bg-amber-400" }
       : firstTrip
       ? { label: "Klinikte", border: "border-l-blue-400", bg: "bg-blue-50/40 hover:bg-blue-50/60", pill: "bg-blue-100 text-blue-700", dot: "bg-blue-400" }
       : { label: "Beklemede", border: "border-l-slate-300", bg: "bg-white hover:bg-slate-50/80", pill: "bg-slate-100 text-slate-600", dot: "bg-slate-300" };
@@ -1677,16 +1729,16 @@ function OrderRow({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[13px] font-semibold text-slate-900">{order.patient.fullName}</span>
-            <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${statusConfig.pill}`}>
+            <span className={`rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wide ${statusConfig.pill}`}>
               {statusConfig.label}
             </span>
             {pendingDays >= 4 && !isDone && (
-              <span className="rounded-md bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-600">
+              <span className="rounded-md bg-red-100 px-2 py-1 text-xs font-bold text-red-600">
                 {pendingDays}g bekledi
               </span>
             )}
           </div>
-          <p className="mt-0.5 truncate text-[11.5px] text-slate-500">
+          <p className="mt-0.5 truncate text-xs text-slate-500">
             <span className="font-medium text-slate-700">{teethLabel}</span>
             <span className="mx-1 text-slate-300">·</span>
             {order.labName}
@@ -1698,7 +1750,7 @@ function OrderRow({
         {/* Step progress dots */}
         <div className="hidden shrink-0 items-center gap-1 sm:flex">
           {totalCount === 0 ? (
-            <span className="text-[11px] text-slate-300">—</span>
+            <span className="text-xs text-slate-300">—</span>
           ) : (
             <>
               {sortedTrips.map((t) => (
@@ -1706,19 +1758,19 @@ function OrderRow({
                   className={`h-2.5 w-2.5 rounded-full ${t.receivedAt ? "bg-emerald-400" : "bg-amber-300"}`}
                 />
               ))}
-              <span className="ml-1 text-[11px] font-medium text-slate-400">{doneCount}/{totalCount}</span>
+              <span className="ml-1 text-xs font-medium text-slate-400">{doneCount}/{totalCount}</span>
             </>
           )}
         </div>
 
         {/* Date */}
         <div className="hidden w-24 shrink-0 text-right md:block">
-          <span className="text-[11px] text-slate-400">{firstTrip ? fmt(firstTrip.sentAt) : "—"}</span>
+          <span className="text-xs text-slate-400">{firstTrip ? fmt(firstTrip.sentAt) : "—"}</span>
         </div>
 
         {/* Invoice amount */}
         {totalAmount > 0 && (
-          <span className="hidden shrink-0 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 md:inline">
+          <span className="hidden shrink-0 rounded-lg bg-slate-100 px-2 py-1 text-xs font-medium text-slate-600 md:inline">
             {CUR.format(totalAmount)}
           </span>
         )}
@@ -1726,14 +1778,14 @@ function OrderRow({
         {/* Actions */}
         <div className="flex shrink-0 items-center gap-1">
           {!isDone && (
-            <ActionBtn onClick={(e) => { e.stopPropagation(); onAddTrip(order); }} title="Gidiş Ekle">
+            <ActionBtn onClick={(e) => { e.stopPropagation(); onAddTrip(order); }} title="Laboratuvara gönderim ekle">
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
               </svg>
             </ActionBtn>
           )}
           {!isDone && pendingTrip && (
-            <ActionBtn onClick={(e) => { e.stopPropagation(); onReceive(order, pendingTrip); }} title="Geldi" accent="emerald">
+            <ActionBtn onClick={(e) => { e.stopPropagation(); onReceive(order, pendingTrip); }} title="Laboratuvardan geldi" accent="emerald">
               <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
                 <polyline points="20 6 9 17 4 12"/>
               </svg>
@@ -1770,10 +1822,10 @@ function OrderRow({
 
             {/* Timeline */}
             <div>
-              <p className="mb-3 text-[11px] font-semibold uppercase tracking-widest text-slate-500">Süreç Zaman Çizelgesi</p>
+              <p className="mb-3 text-xs font-semibold uppercase tracking-widest text-slate-500">Süreç Zaman Çizelgesi</p>
               {sortedTrips.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-slate-200 bg-white py-6 text-center text-sm text-slate-400">
-                  Henüz adım eklenmedi. <button onClick={() => onAddTrip(order)} className="underline hover:text-slate-700">Gidiş ekle →</button>
+                  Henüz laboratuvar gönderimi yok. <button onClick={() => onAddTrip(order)} className="font-semibold underline hover:text-slate-700">Gönderim ekle</button>
                 </div>
               ) : (
                 <ol className="relative ml-3 border-l border-slate-200">
@@ -1796,7 +1848,7 @@ function OrderRow({
                                 return (
                                   <>
                                     <div className="flex flex-wrap items-baseline gap-x-1.5">
-                                      <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">#{idx + 1}</span>
+                                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">#{idx + 1}</span>
                                       <p className="text-[13px] font-semibold text-slate-800">{sentItem}</p>
                                     </div>
                                     {requestedItem && (
@@ -1804,35 +1856,35 @@ function OrderRow({
                                         <svg className="h-2.5 w-2.5 shrink-0 text-slate-300" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
                                           <line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>
                                         </svg>
-                                        <span className="text-[11.5px] font-medium text-slate-600">{requestedItem}</span>
+                                        <span className="text-xs font-medium text-slate-600">{requestedItem}</span>
                                         {!trip.receivedAt && (
-                                          <span className="rounded bg-amber-50 px-1 py-0.5 text-[10px] font-semibold text-amber-600">bekleniyor</span>
+                                          <span className="rounded bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-600">laboratuvarda</span>
                                         )}
                                       </div>
                                     )}
                                   </>
                                 );
                               })()}
-                              <p className="mt-1 text-[11px] text-slate-500">
-                                <span className="font-medium">Gidiş:</span> {fmt(trip.sentAt)}
+                              <p className="mt-1 text-xs text-slate-500">
+                                <span className="font-medium">Gönderim:</span> {fmt(trip.sentAt)}
                                 {trip.receivedAt ? (
                                   <> · <span className="font-medium">Geliş:</span> {fmt(trip.receivedAt)}</>
                                 ) : null}
                               </p>
-                              {trip.sentNote && <p className="mt-0.5 text-[11px] text-slate-500">↑ {trip.sentNote}</p>}
+                              {trip.sentNote && <p className="mt-0.5 text-xs text-slate-500">{trip.sentNote}</p>}
                               {trip.receivedNote && (
-                                <p className="mt-0.5 text-[11px] text-slate-500">
-                                  ↓ {trip.receivedNote.replace("RANDEVU_PROVA_GEREKLI | ", "").replace("RANDEVU_PROVA_GEREKLI", "Randevu/prova gerekli")}
+                                <p className="mt-0.5 text-xs text-slate-500">
+                                  {trip.receivedNote.replace("RANDEVU_PROVA_GEREKLI | ", "").replace("RANDEVU_PROVA_GEREKLI", "Randevu/prova gerekli")}
                                 </p>
                               )}
                             </div>
                             <div className="flex shrink-0 gap-1">
                               {!done && (
-                                <button onClick={() => onReceive(order, trip)} className="rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-[11px] font-medium text-emerald-700 transition hover:bg-emerald-100">
-                                  Geldi
+                                <button onClick={() => onReceive(order, trip)} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700 transition hover:bg-emerald-100">
+                                  Laboratuvardan Geldi
                                 </button>
                               )}
-                              <button onClick={() => onEditTrip(order, trip)} className="rounded border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-50">
+                              <button onClick={() => onEditTrip(order, trip)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50">
                                 Düzenle
                               </button>
                             </div>
@@ -1848,7 +1900,7 @@ function OrderRow({
             {/* Info panel */}
             <div className="space-y-3">
               <div className="rounded-xl border border-slate-200 bg-white p-3">
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-500">Özet</p>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-500">Özet</p>
                 <dl className="space-y-1.5">
                   {([
                     ["Laboratuvar", order.labName],
@@ -1872,7 +1924,7 @@ function OrderRow({
 
               {order.invoices.length > 0 && (
                 <div className="rounded-xl border border-slate-200 bg-white p-3">
-                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-widest text-slate-500">Faturalar</p>
+                  <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-500">Faturalar</p>
                   <div className="space-y-2">
                     {order.invoices.map((inv) => (
                       <div key={inv.id} className="flex items-center justify-between gap-2 text-[12px]">
@@ -1935,7 +1987,7 @@ function ActionBtn({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="mb-1.5 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</label>
+      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</label>
       {children}
     </div>
   );
@@ -1957,7 +2009,7 @@ function SpoonRequestQuickPicks({
             key={item}
             type="button"
             onClick={() => onPick(item)}
-            className={`rounded-full border px-2 py-1 text-[11px] font-medium transition ${
+            className={`rounded-full border px-2.5 py-1.5 text-xs font-medium transition ${
               active
                 ? "border-slate-700 bg-slate-800 text-white"
                 : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50"
@@ -2067,7 +2119,7 @@ function DentalChart({
       <button
         type="button"
         onClick={() => toggle(num)}
-        className={`flex h-8 w-8 flex-col items-center justify-center rounded-lg border text-[10px] font-semibold transition-all
+        className={`flex h-8 w-8 flex-col items-center justify-center rounded-lg border text-xs font-semibold transition-all
           ${active
             ? `border-transparent bg-slate-800 text-white shadow-sm`
             : `border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:bg-slate-50`
@@ -2095,7 +2147,7 @@ function DentalChart({
             key={label}
             type="button"
             onClick={() => selectGroup(group)}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-100 hover:border-slate-300"
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-600 transition hover:border-slate-300 hover:bg-slate-100"
           >
             {label}
           </button>
@@ -2104,7 +2156,7 @@ function DentalChart({
           <button
             type="button"
             onClick={() => onChange([])}
-            className="rounded-md border border-red-100 bg-red-50 px-2.5 py-1 text-[11px] font-medium text-red-500 transition hover:bg-red-100"
+            className="rounded-lg border border-red-100 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-500 transition hover:bg-red-100"
           >
             Temizle
           </button>
@@ -2113,7 +2165,7 @@ function DentalChart({
 
       {/* Üst çene */}
       <div className="mb-1.5">
-        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Üst Çene</p>
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Üst Çene</p>
         <div className="flex gap-1">
           {UPPER_RIGHT.map((n) => <ToothBtn key={n} num={n} />)}
           <div className="mx-1 border-l border-dashed border-slate-300" />
@@ -2123,7 +2175,7 @@ function DentalChart({
 
       {/* Alt çene */}
       <div className="mt-1.5">
-        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Alt Çene</p>
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Alt Çene</p>
         <div className="flex gap-1">
           {LOWER_RIGHT.map((n) => <ToothBtn key={n} num={n} />)}
           <div className="mx-1 border-l border-dashed border-slate-300" />
@@ -2133,7 +2185,7 @@ function DentalChart({
 
       {/* Seçili dişler özeti */}
       {selected.length > 0 && (
-        <p className="mt-2 text-[11px] text-slate-500">
+        <p className="mt-2 text-xs text-slate-500">
           <span className="font-semibold text-slate-700">{selected.length} diş</span> seçili: {selected.join(", ")}
         </p>
       )}
@@ -2142,7 +2194,7 @@ function DentalChart({
 }
 
 // ─────────────────────────────────────────────
-// TripFormContent — iş türüne göre akıllı öneri ile gidiş formu
+// TripFormContent — iş türüne göre akıllı öneri ile gönderim formu
 // ─────────────────────────────────────────────
 function TripFormContent({
   order,
@@ -2183,14 +2235,14 @@ function TripFormContent({
       {/* Workflow ilerleme şeridi */}
       {template.length > 0 && (
         <div className="rounded-lg border border-slate-100 bg-slate-50 p-2.5">
-          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+          <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400">
             {order.labType} · Adım {Math.min(stepIndex + 1, template.length)}/{template.length}
           </p>
           <div className="flex gap-1">
             {template.map((step, i) => (
               <div
                 key={i}
-                className={`flex-1 rounded px-1 py-1 text-center text-[10px] leading-tight ${
+                className={`flex-1 rounded px-1 py-1 text-center text-xs leading-tight ${
                   i < stepIndex
                     ? "bg-emerald-100 text-emerald-700"
                     : i === stepIndex
@@ -2204,7 +2256,7 @@ function TripFormContent({
             ))}
           </div>
           {suggestion && (
-            <p className="mt-1.5 text-[10px] text-slate-500">
+            <p className="mt-1.5 text-xs text-slate-500">
               Öneri: <span className="font-medium text-slate-700">{suggestedSendValue || suggestion.send}</span> gönder →{" "}
               <span className="font-medium text-slate-700">{suggestion.request}</span> iste
             </p>
@@ -2240,7 +2292,7 @@ function TripFormContent({
           }
         />
       </Field>
-      <Field label="İstenen (Labdan Beklenen)">
+      <Field label="Laboratuvardan Beklenen">
         <input
           value={tripForm.requestedItem}
           onChange={(e) => setTripForm((p) => ({ ...p, requestedItem: e.target.value }))}
@@ -2261,7 +2313,7 @@ function TripFormContent({
           </select>
         </Field>
       )}
-      <Field label="Gidiş Tarihi *">
+      <Field label="Gönderim Tarihi *">
         <input
           type="date"
           value={tripForm.sentAt}

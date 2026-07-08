@@ -9,17 +9,17 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        bg: "#f0f4ff",
+        bg: "#f6f8fb",
         surface: "#ffffff",
         primary: "#2563eb",
-        accent: "#7c3aed",
+        accent: "#0f766e",
         success: "#16a34a",
         warning: "#d97706",
         danger: "#dc2626",
         teal: "#0891b2",
       },
       fontFamily: {
-        sans: ["Inter", "ui-sans-serif", "system-ui", "sans-serif"],
+        sans: ["ui-sans-serif", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
       },
       boxShadow: {
         card: "0 1px 3px 0 rgb(0 0 0 / 0.07), 0 1px 2px -1px rgb(0 0 0 / 0.07)",

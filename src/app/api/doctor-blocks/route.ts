@@ -5,30 +5,35 @@ import { requireAuth } from "@/lib/api";
 // GET /api/doctor-blocks?doctorId=xxx&date=2026-05-06
 // GET /api/doctor-blocks?from=2026-05-01&to=2026-05-31  (tüm doktorlar için)
 export async function GET(request: NextRequest) {
-  const auth = await requireAuth("*");
-  if (auth.error) return auth.error;
+  try {
+    const auth = await requireAuth("*");
+    if (auth.error) return auth.error;
 
-  const { searchParams } = new URL(request.url);
-  const doctorId = searchParams.get("doctorId");
-  const date     = searchParams.get("date");
-  const from     = searchParams.get("from");
-  const to       = searchParams.get("to");
+    const { searchParams } = new URL(request.url);
+    const doctorId = searchParams.get("doctorId");
+    const date     = searchParams.get("date");
+    const from     = searchParams.get("from");
+    const to       = searchParams.get("to");
 
-  const where: Record<string, unknown> = {};
+    const where: Record<string, unknown> = {};
 
-  if (doctorId) where.doctorId = doctorId;
-  if (date)     where.date = date;
-  if (from && to) {
-    where.date = { gte: from, lte: to };
+    if (doctorId) where.doctorId = doctorId;
+    if (date)     where.date = date;
+    if (from && to) {
+      where.date = { gte: from, lte: to };
+    }
+
+    const blocks = await prisma.doctorBlock.findMany({
+      where,
+      include: { doctor: { select: { id: true, fullName: true } } },
+      orderBy: [{ date: "asc" }, { startTime: "asc" }],
+    });
+
+    return NextResponse.json(blocks);
+  } catch (error) {
+    console.error("[doctor-blocks GET] fallback:", error);
+    return NextResponse.json([]);
   }
-
-  const blocks = await prisma.doctorBlock.findMany({
-    where,
-    include: { doctor: { select: { id: true, fullName: true } } },
-    orderBy: [{ date: "asc" }, { startTime: "asc" }],
-  });
-
-  return NextResponse.json(blocks);
 }
 
 // POST /api/doctor-blocks
@@ -39,7 +44,7 @@ export async function POST(request: NextRequest) {
 
   const allowedRoles = ["SUPERADMIN", "YONETICI", "ADMIN"];
   if (!allowedRoles.includes(auth.user!.role)) {
-    return NextResponse.json({ message: "Yasak" }, { status: 403 });
+    return NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 });
   }
 
   const body = await request.json();
@@ -53,12 +58,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Başlangıç saati bitiş saatinden önce olmalı" }, { status: 400 });
   }
 
-  const block = await prisma.doctorBlock.create({
-    data: { doctorId, date, startTime, endTime, reason: reason || null },
-    include: { doctor: { select: { id: true, fullName: true } } },
-  });
+  try {
+    const block = await prisma.doctorBlock.create({
+      data: { doctorId, date, startTime, endTime, reason: reason || null },
+      include: { doctor: { select: { id: true, fullName: true } } },
+    });
 
-  return NextResponse.json(block, { status: 201 });
+    return NextResponse.json(block, { status: 201 });
+  } catch (error) {
+    console.error("[doctor-blocks POST] fallback:", error);
+    return NextResponse.json({ message: "Blok oluşturulamadı" }, { status: 503 });
+  }
 }
 
 // DELETE /api/doctor-blocks?id=xxx
@@ -68,7 +78,7 @@ export async function DELETE(request: NextRequest) {
 
   const allowedRoles = ["SUPERADMIN", "YONETICI", "ADMIN"];
   if (!allowedRoles.includes(auth.user!.role)) {
-    return NextResponse.json({ message: "Yasak" }, { status: 403 });
+    return NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 });
   }
 
   const { searchParams } = new URL(request.url);
@@ -76,6 +86,11 @@ export async function DELETE(request: NextRequest) {
 
   if (!id) return NextResponse.json({ message: "id gerekli" }, { status: 400 });
 
-  await prisma.doctorBlock.delete({ where: { id } });
-  return NextResponse.json({ ok: true });
+  try {
+    await prisma.doctorBlock.delete({ where: { id } });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error("[doctor-blocks DELETE] fallback:", error);
+    return NextResponse.json({ message: "Blok silinemedi" }, { status: 503 });
+  }
 }

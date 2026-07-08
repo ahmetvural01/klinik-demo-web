@@ -1,16 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 // GET hatırlatmalar, POST ekle
 export async function GET(req: NextRequest) {
   try {
-    const user = await getCurrentUser();
-    if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    const auth = await requireAuth("appointments:read");
+    if (auth.error) return auth.error;
+
     const { searchParams } = new URL(req.url);
     const status = searchParams.get("status") || "AKTIF";
     const where: Record<string, unknown> = {};
     if (status !== "HEPSI") where.status = status;
+    if (auth.user.role !== "SUPERADMIN") {
+      if (!auth.user.institutionId) return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+      where.OR = [
+        { patient: { institutionId: auth.user.institutionId } },
+        { plan: { patient: { institutionId: auth.user.institutionId } } },
+      ];
+    }
 
     const reminders = await (prisma as any).reminder.findMany({
       where,
@@ -25,10 +33,32 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await getCurrentUser();
-    if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    const auth = await requireAuth("appointments:write");
+    if (auth.error) return auth.error;
+
     const { patientId, planId, note, reminderDate } = await req.json();
     if (!note || !reminderDate) return NextResponse.json({ error: "Not ve tarih zorunlu" }, { status: 400 });
+    if (!patientId && !planId) return NextResponse.json({ error: "Hasta veya plan zorunlu" }, { status: 400 });
+
+    if (auth.user.role !== "SUPERADMIN") {
+      if (!auth.user.institutionId) return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+
+      if (patientId) {
+        const patient = await (prisma as any).patient.findFirst({
+          where: { id: patientId, institutionId: auth.user.institutionId },
+          select: { id: true },
+        });
+        if (!patient) return NextResponse.json({ error: "Hasta bulunamadı" }, { status: 404 });
+      }
+
+      if (planId) {
+        const plan = await (prisma as any).taksitPlan.findFirst({
+          where: { id: planId, patient: { institutionId: auth.user.institutionId } },
+          select: { id: true },
+        });
+        if (!plan) return NextResponse.json({ error: "Plan bulunamadı" }, { status: 404 });
+      }
+    }
 
     const r = await (prisma as any).reminder.create({
       data: {

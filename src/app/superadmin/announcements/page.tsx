@@ -1,89 +1,168 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+type Institution = { id: string; name: string; isActive?: boolean; isDemo?: boolean };
 type Announcement = {
   id: string;
-  title: string;
-  content: string;
-  priority: string;
+  text: string;
   isActive: boolean;
   createdAt: string;
+  endsAt?: string | null;
+  institution?: { id: string; name: string; isDemo?: boolean } | null;
 };
 
 export default function AnnouncementsPage() {
   const [items, setItems] = useState<Announcement[]>([]);
+  const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ title: "", content: "", priority: "NORMAL" });
+  const [text, setText] = useState("");
+  const [targetMode, setTargetMode] = useState<"all" | "selected">("all");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [endsAt, setEndsAt] = useState("");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
 
-  const load = () => {
+  const selectedCount = useMemo(
+    () => targetMode === "all" ? institutions.filter((i) => i.isActive !== false).length : selectedIds.length,
+    [institutions, selectedIds.length, targetMode],
+  );
+
+  const load = async () => {
     setLoading(true);
-    fetch("/api/superadmin/announcements")
-      .then((r) => r.json())
-      .then((d) => setItems(Array.isArray(d) ? d : d.announcements ?? []))
-      .catch(() => setItems([]))
-      .finally(() => setLoading(false));
+    const [annRes, instRes] = await Promise.all([
+      fetch("/api/superadmin/announcements").catch(() => null),
+      fetch("/api/superadmin/institutions").catch(() => null),
+    ]);
+    const annData = await annRes?.json().catch(() => ({}));
+    const instData = await instRes?.json().catch(() => []);
+    setItems(Array.isArray(annData) ? annData : annData.announcements ?? []);
+    setInstitutions(Array.isArray(instData) ? instData : []);
+    setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
+
+  const toggleInstitution = (id: string) => {
+    setSelectedIds((current) => current.includes(id) ? current.filter((x) => x !== id) : [...current, id]);
+  };
 
   const handleSave = async () => {
-    if (!form.title || !form.content) return;
+    setError("");
+    if (!text.trim()) {
+      setError("Duyuru metni zorunlu.");
+      return;
+    }
+    if (targetMode === "selected" && selectedIds.length === 0) {
+      setError("En az bir kurum seçin.");
+      return;
+    }
+
     setSaving(true);
-    await fetch("/api/superadmin/announcements", {
+    const res = await fetch("/api/superadmin/announcements", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
+      body: JSON.stringify({
+        text,
+        allInstitutions: targetMode === "all",
+        institutionIds: targetMode === "selected" ? selectedIds : [],
+        endsAt: endsAt || null,
+      }),
     });
     setSaving(false);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setError(body.message || "Duyuru yayınlanamadı.");
+      return;
+    }
+
     setShowForm(false);
-    setForm({ title: "", content: "", priority: "NORMAL" });
-    load();
+    setText("");
+    setSelectedIds([]);
+    setTargetMode("all");
+    setEndsAt("");
+    await load();
+  };
+
+  const deactivate = async (id: string) => {
+    await fetch(`/api/superadmin/announcements?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    await load();
   };
 
   return (
     <section className="space-y-5">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-3xl">📢</span>
-          <h2 className="text-2xl font-bold text-gray-900">Duyurular</h2>
+        <div>
+          <h2 className="text-2xl font-bold text-gray-900">Kurum Duyuruları</h2>
+          <p className="mt-1 text-sm text-gray-500">Duyurular artık global değil; her kayıt hedef kurumla ilişkilidir.</p>
         </div>
         <button
           onClick={() => setShowForm(!showForm)}
           className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
         >
-          + Yeni Duyuru
+          Yeni Duyuru
         </button>
       </div>
 
       {showForm && (
-        <div className="rounded-xl bg-white shadow-sm border border-gray-100 p-5 space-y-3">
-          <h3 className="font-semibold text-gray-800">Yeni Duyuru</h3>
-          <input
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-            placeholder="Başlık"
-            value={form.title}
-            onChange={(e) => setForm({ ...form, title: e.target.value })}
-          />
+        <div className="space-y-4 rounded-xl border border-gray-100 bg-white p-5 shadow-sm">
           <textarea
-            className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-            rows={3}
-            placeholder="İçerik..."
-            value={form.content}
-            onChange={(e) => setForm({ ...form, content: e.target.value })}
+            className="min-h-28 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+            placeholder="Kurumlara gösterilecek duyuru metni..."
+            value={text}
+            onChange={(e) => setText(e.target.value)}
           />
-          <select
-            className="rounded-lg border border-gray-200 px-3 py-2 text-sm"
-            value={form.priority}
-            onChange={(e) => setForm({ ...form, priority: e.target.value })}
-          >
-            <option value="LOW">Düşük</option>
-            <option value="NORMAL">Normal</option>
-            <option value="HIGH">Yüksek</option>
-            <option value="URGENT">Acil</option>
-          </select>
+
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setTargetMode("all")}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold ${targetMode === "all" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-700"}`}
+            >
+              Tüm aktif kurumlar
+            </button>
+            <button
+              type="button"
+              onClick={() => setTargetMode("selected")}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold ${targetMode === "selected" ? "bg-blue-600 text-white" : "bg-gray-100 text-gray-700"}`}
+            >
+              Seçili kurumlar
+            </button>
+          </div>
+
+          {targetMode === "selected" && (
+            <div className="grid max-h-56 grid-cols-1 gap-2 overflow-auto rounded-lg border border-gray-100 p-3 md:grid-cols-2">
+              {institutions.map((institution) => (
+                <label key={institution.id} className="flex cursor-pointer items-center gap-2 text-sm text-gray-700">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(institution.id)}
+                    onChange={() => toggleInstitution(institution.id)}
+                  />
+                  <span>{institution.name}</span>
+                </label>
+              ))}
+            </div>
+          )}
+
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="text-sm font-medium text-gray-700">
+              Bitiş tarihi
+              <input
+                type="date"
+                className="mt-1 w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                value={endsAt}
+                onChange={(e) => setEndsAt(e.target.value)}
+              />
+            </label>
+            <div className="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-800">
+              Hedef kurum sayısı: <strong>{selectedCount}</strong>
+            </div>
+          </div>
+
+          {error && <p className="text-sm font-semibold text-red-600">{error}</p>}
+
           <div className="flex gap-2">
             <button
               onClick={handleSave}
@@ -97,7 +176,7 @@ export default function AnnouncementsPage() {
         </div>
       )}
 
-      <div className="rounded-xl bg-white shadow-sm border border-gray-100 divide-y divide-gray-100">
+      <div className="divide-y divide-gray-100 rounded-xl border border-gray-100 bg-white shadow-sm">
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
@@ -106,26 +185,24 @@ export default function AnnouncementsPage() {
           <div className="px-6 py-10 text-center text-gray-400">Duyuru bulunamadı</div>
         ) : (
           items.map((item) => (
-            <div key={item.id} className="p-4">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="font-semibold text-gray-900">{item.title}</span>
-                <span
-                  className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
-                    item.priority === "URGENT"
-                      ? "bg-red-100 text-red-700"
-                      : item.priority === "HIGH"
-                      ? "bg-orange-100 text-orange-700"
-                      : "bg-gray-100 text-gray-600"
-                  }`}
-                >
-                  {item.priority}
-                </span>
-                {!item.isActive && (
-                  <span className="inline-flex rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-400">Pasif</span>
-                )}
+            <div key={item.id} className="flex items-start justify-between gap-4 p-4">
+              <div>
+                <div className="mb-1 flex flex-wrap items-center gap-2">
+                  <span className="font-semibold text-gray-900">{item.institution?.name || "Kurum yok"}</span>
+                  {item.institution?.isDemo && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs text-amber-700">Demo</span>}
+                  {!item.isActive && <span className="rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-400">Pasif</span>}
+                </div>
+                <p className="text-sm text-gray-600">{item.text}</p>
+                <p className="mt-1 text-xs text-gray-400">
+                  {new Date(item.createdAt).toLocaleDateString("tr-TR")}
+                  {item.endsAt ? ` - ${new Date(item.endsAt).toLocaleDateString("tr-TR")} tarihine kadar` : ""}
+                </p>
               </div>
-              <p className="text-sm text-gray-600">{item.content}</p>
-              <p className="text-xs text-gray-400 mt-1">{new Date(item.createdAt).toLocaleDateString("tr-TR")}</p>
+              {item.isActive && (
+                <button onClick={() => deactivate(item.id)} className="rounded-lg border px-3 py-1.5 text-xs font-semibold text-gray-600 hover:bg-gray-50">
+                  Pasifleştir
+                </button>
+              )}
             </div>
           ))
         )}

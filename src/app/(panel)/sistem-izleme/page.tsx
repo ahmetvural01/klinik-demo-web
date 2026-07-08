@@ -29,7 +29,7 @@ export default function SistemIzlemePage() {
         ]);
 
         if (!mRes.ok || !aRes.ok) {
-          throw new Error("Sistem izleme verisi alinamadi.");
+          throw new Error("Sistem izleme verisi alınamadı.");
         }
 
         const [mData, aData] = await Promise.all([mRes.json(), aRes.json()]);
@@ -39,7 +39,7 @@ export default function SistemIzlemePage() {
         setError("");
       } catch (e) {
         if (!active) return;
-        setError(e instanceof Error ? e.message : "Sistem izleme verisi alinamadi.");
+        setError(e instanceof Error ? e.message : "Sistem izleme verisi alınamadı.");
       }
     };
 
@@ -57,8 +57,8 @@ export default function SistemIzlemePage() {
   return (
     <section className="space-y-4">
       <div>
-        <h1 className="text-xl font-extrabold tracking-tight text-slate-900">Sistem Izleme</h1>
-        <p className="text-sm text-slate-500">Canli metrikler, alarm durumlari ve operasyonel saglik gorunumu.</p>
+        <h1 className="text-xl font-extrabold tracking-tight text-slate-900">Sistem İzleme</h1>
+        <p className="text-sm text-slate-500">Canlı metrikler, alarm durumları ve operasyonel sağlık görünümü.</p>
       </div>
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
@@ -78,7 +78,7 @@ export default function SistemIzlemePage() {
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-        <h2 className="text-sm font-bold text-slate-900">Alarm Durumlari</h2>
+        <h2 className="text-sm font-bold text-slate-900">Alarm Durumları</h2>
         <div className="mt-2 space-y-2">
           {(alerts?.alerts || []).map((alert) => (
             <div key={alert.id} className={"rounded-lg border px-3 py-2 text-sm " + (alert.level === "critical" ? "border-rose-300 bg-rose-50 text-rose-700" : alert.level === "warning" ? "border-amber-300 bg-amber-50 text-amber-700" : "border-emerald-300 bg-emerald-50 text-emerald-700")}>

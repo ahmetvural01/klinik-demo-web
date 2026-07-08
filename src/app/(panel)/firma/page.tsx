@@ -25,11 +25,21 @@ type Islem = {
 
 type Ekstre = { islemler: Islem[]; topBorc: number; topOdeme: number; netBakiye: number };
 
+type StockItem = {
+  id: string;
+  name: string;
+  quantity: number;
+  unit: string;
+};
+
+const FIRMA_CACHE_KEY = "firma:list:v1";
+const STOCK_CACHE_KEY = "stock:list:v1";
+
 const FIRMA_KATEGORILERI: Record<string, string> = {
-  TEDARICI: "Tedarici",
+  TEDARICI: "Tedarikçi",
   HIZMET_SAGLAYICI: "Hizmet Sağlayıcı",
   LAB: "Laboratuvar",
-  KONTRAKTOR: "Kontraktor",
+  KONTRAKTOR: "Yüklenici",
   BANK: "Banka",
   DIGER: "Diğer"
 };
@@ -68,14 +78,38 @@ const renderScore = (s: number) => {
 const fmt = (n: number) =>
   "₺" + new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 2 }).format(n);
 const fmtDate = (d: string) => new Date(d).toLocaleDateString("tr-TR");
+const formLabel = "mb-1.5 block text-sm font-semibold text-slate-700";
+const formInput = "w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-slate-100";
+const modalAction = "flex-1 rounded-xl px-4 py-3 text-sm font-bold transition";
 
 export default function FirmaPage() {
-  const [firmas, setFirmas] = useState<Firma[]>([]);
+  const [firmas, setFirmas] = useState<Firma[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = sessionStorage.getItem(FIRMA_CACHE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
   const [selected, setSelected] = useState<Firma | null>(null);
   const [ekstre, setEkstre] = useState<Ekstre | null>(null);
   const [kontaktler, setKontaktler] = useState<FirmaKontakt[]>([]);
+  const [stockItems, setStockItems] = useState<StockItem[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const raw = sessionStorage.getItem(STOCK_CACHE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
   const [loading, setLoading] = useState(false);
   const [loadingEkstre, setLoadingEkstre] = useState(false);
+  const [isSubmittingFirma, setIsSubmittingFirma] = useState(false);
+  const [isSubmittingIslem, setIsSubmittingIslem] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [selectedTab, setSelectedTab] = useState<"ekstre" | "kontakt">("ekstre");
 
@@ -114,20 +148,24 @@ export default function FirmaPage() {
   });
 
   const loadFirmas = useCallback(async () => {
-    setLoading(true);
     try {
       const r = await fetch("/api/firma");
       const d = await r.json();
-      setFirmas(Array.isArray(d) ? d : []);
-    } finally { setLoading(false); }
+      const rows = Array.isArray(d) ? d : [];
+      setFirmas(rows);
+      sessionStorage.setItem(FIRMA_CACHE_KEY, JSON.stringify(rows));
+    } catch {
+      setFirmas([]);
+    }
   }, []);
 
   const loadEkstre = useCallback(async (id: string) => {
-    setLoadingEkstre(true);
     try {
       const r = await fetch(`/api/firma/${id}/islemler`);
       const d = await r.json();
       setEkstre(d);
+    } catch {
+      setEkstre({ islemler: [], topBorc: 0, topOdeme: 0, netBakiye: 0 });
     } finally { setLoadingEkstre(false); }
   }, []);
 
@@ -141,7 +179,22 @@ export default function FirmaPage() {
     }
   }, []);
 
-  useEffect(() => { loadFirmas(); }, [loadFirmas]);
+  const loadStockItems = useCallback(async () => {
+    try {
+      const r = await fetch("/api/stock");
+      const d = await r.json();
+      const rows = Array.isArray(d) ? d : [];
+      setStockItems(rows);
+      sessionStorage.setItem(STOCK_CACHE_KEY, JSON.stringify(rows));
+    } catch {
+      setStockItems([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadFirmas();
+    loadStockItems();
+  }, [loadFirmas, loadStockItems]);
 
   const selectFirma = (f: Firma) => {
     setSelected(f);
@@ -163,6 +216,8 @@ export default function FirmaPage() {
 
   const handleAddFirma = async () => {
     if (!firmaForm.name) { showToast("error", "Firma adı zorunludur"); return; }
+    if (isSubmittingFirma) return;
+    setIsSubmittingFirma(true);
     const r = await fetch("/api/firma", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -180,15 +235,18 @@ export default function FirmaPage() {
       const e = await r.json();
       showToast("error", e.error || "Hata oluştu");
     }
+    setIsSubmittingFirma(false);
   };
 
   const handleAddIslem = async () => {
     if (!selected || !islemForm.tarih || !islemForm.islemTipi || !islemForm.tutar) {
       showToast("error", "Zorunlu alanlar eksik"); return;
     }
+    if (isSubmittingIslem) return;
     if (islemForm.islemTipi === "ALIM" && islemForm.stockItemId && !islemForm.stockQuantity) {
       showToast("error", "Stok kalemine işlenecek miktarı girin"); return;
     }
+    setIsSubmittingIslem(true);
     const r = await fetch(`/api/firma/${selected.id}/islemler`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -212,6 +270,7 @@ export default function FirmaPage() {
     } else {
       showToast("error", data.error || "Hata oluştu");
     }
+    setIsSubmittingIslem(false);
   };
 
   const handleEditFirma = async () => {
@@ -251,14 +310,15 @@ export default function FirmaPage() {
         <div className={`fixed right-5 top-5 z-[100] flex items-center gap-2.5 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg transition ${
           toast.type === "success" ? "bg-emerald-500" : toast.type === "error" ? "bg-red-500" : "bg-blue-500"
         }`}>
-          {toast.type === "success" ? "✓" : toast.type === "error" ? "✕" : "ℹ"} {toast.text}
+          {toast.text}
         </div>
       )}
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">Firma / Tedarikçi</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Tedarikçi cari hesap ve ekstre yönetimi</p>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-black text-slate-900">Tedarikçiler</h1>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{firmas.length} firma</span>
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-700">{fmt(topBakiye)} kalan</span>
         </div>
         <button onClick={() => setShowAddFirma(true)}
           className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700">
@@ -268,7 +328,7 @@ export default function FirmaPage() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {[
           { label: "Toplam Borç", value: fmt(topBorc), color: "text-red-700", bg: "bg-red-50" },
           { label: "Ödenen", value: fmt(topOdeme), color: "text-emerald-700", bg: "bg-emerald-50" },
@@ -276,7 +336,7 @@ export default function FirmaPage() {
           { label: "Ort. Skor", value: avgScore.toString(), color: "text-blue-700", bg: "bg-blue-50" }
         ].map(k => (
           <div key={k.label} className={`${k.bg} rounded-xl p-3 border border-slate-100`}>
-            <p className="text-[10px] text-slate-500 font-medium uppercase">{k.label}</p>
+            <p className="text-xs font-semibold uppercase text-slate-500">{k.label}</p>
             <p className={`text-lg font-bold ${k.color} mt-0.5`}>{k.value}</p>
           </div>
         ))}
@@ -285,30 +345,28 @@ export default function FirmaPage() {
       <div className="rounded-2xl border border-blue-100 bg-gradient-to-r from-blue-50 via-white to-emerald-50 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-xs font-black uppercase tracking-[0.24em] text-blue-700">Entegre Tedarik Akışı</p>
-            <h2 className="mt-1 text-sm font-bold text-slate-900">Tek işlemle cari, stok ve muhasebe birlikte güncellenir</h2>
-            <p className="mt-1 text-xs text-slate-600">
+            <p className="text-sm font-black uppercase text-blue-700">Entegre Tedarik Akışı</p>
+            <h2 className="mt-1 text-base font-bold text-slate-900">Tek işlemle cari, stok ve muhasebe birlikte güncellenir</h2>
+            <p className="mt-1 text-sm text-slate-600">
               Alım işlemleri seçili stok kalemine otomatik giriş yapabilir. Hizmet ve ödeme işlemleri muhasebe giderlerine otomatik yansıtılır.
             </p>
           </div>
-          <div className="grid grid-cols-1 gap-2 text-[11px] text-slate-600 sm:grid-cols-3">
-            <div className="rounded-xl border border-white/70 bg-white/80 px-3 py-2">Alım → Firma borcu + stok girişi</div>
-            <div className="rounded-xl border border-white/70 bg-white/80 px-3 py-2">Hizmet → Firma borcu + gider</div>
-            <div className="rounded-xl border border-white/70 bg-white/80 px-3 py-2">Ödeme → Firma bakiyesi + gider kaydı</div>
+          <div className="grid grid-cols-1 gap-2 text-sm text-slate-700 sm:grid-cols-3">
+            <div className="rounded-xl border border-white/70 bg-white/80 px-3 py-2 font-semibold">Alım: borç ve stok girişi</div>
+            <div className="rounded-xl border border-white/70 bg-white/80 px-3 py-2 font-semibold">Hizmet: borç ve gider</div>
+            <div className="rounded-xl border border-white/70 bg-white/80 px-3 py-2 font-semibold">Ödeme: bakiye ve kasa takibi</div>
           </div>
         </div>
       </div>
 
-      <div className="flex gap-4">
+      <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
         {/* Sol: Firma listesi */}
-        <div className="w-64 shrink-0 space-y-2">
+        <div className="space-y-2">
           <input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Firma ara..." className="w-full border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            placeholder="Firma veya tedarikçi ara" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
 
-          {loading ? (
-            <div className="text-center py-4 text-slate-400 text-xs">Yükleniyor...</div>
-          ) : filteredFirmas.length === 0 ? (
-            <div className="text-center py-4 text-slate-400 text-xs">Firma bulunamadı</div>
+          {filteredFirmas.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-slate-200 bg-white py-8 text-center text-sm text-slate-500">Firma bulunamadı</div>
           ) : (
             filteredFirmas.map(f => (
               <div key={f.id}
@@ -316,15 +374,15 @@ export default function FirmaPage() {
                 className={`cursor-pointer rounded-xl border-2 p-3 transition-all ${selected?.id === f.id ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-slate-800 truncate">{f.name}</p>
-                    <p className="text-[10px] text-slate-500 mt-1">{FIRMA_KATEGORILERI[f.kategori]}</p>
-                    <p className={`text-[10px] font-semibold mt-1 ${f.vendorScore >= 80 ? "text-emerald-700" : f.vendorScore >= 60 ? "text-amber-700" : "text-red-700"}`}>
+                    <p className="truncate text-sm font-bold text-slate-800">{f.name}</p>
+                    <p className="mt-1 text-sm text-slate-500">{FIRMA_KATEGORILERI[f.kategori]}</p>
+                    <p className={`mt-1 text-sm font-semibold ${f.vendorScore >= 80 ? "text-emerald-700" : f.vendorScore >= 60 ? "text-amber-700" : "text-red-700"}`}>
                       {renderScore(f.vendorScore)} {f.vendorScore}
                     </p>
                   </div>
                   <div className="text-right shrink-0">
-                    <p className="text-[10px] font-semibold text-slate-600">{fmt(f.bakiye)}</p>
-                    <p className="text-[10px] text-slate-400">bakiye</p>
+                    <p className="text-sm font-bold text-slate-700">{fmt(f.bakiye)}</p>
+                    <p className="text-xs text-slate-500">kalan</p>
                   </div>
                 </div>
               </div>
@@ -344,18 +402,18 @@ export default function FirmaPage() {
               <div className="bg-white border border-slate-200 rounded-xl p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h2 className="text-sm font-bold text-slate-800">{selected.name}</h2>
-                    <div className="flex flex-wrap gap-3 text-[10px] text-slate-500 mt-1">
+                    <h2 className="text-lg font-bold text-slate-900">{selected.name}</h2>
+                    <div className="mt-2 flex flex-wrap gap-3 text-sm text-slate-600">
                       {selected.phone && <span>Tel: {selected.phone}</span>}
                       {selected.iban && <span>IBAN: {selected.iban} {selected.ibanName && `(${selected.ibanName})`}</span>}
                     </div>
-                    {selected.notes && <p className="text-[10px] text-slate-400 mt-1 italic">{selected.notes}</p>}
+                    {selected.notes && <p className="mt-2 text-sm italic text-slate-500">{selected.notes}</p>}
                   </div>
                   <div className="flex gap-2 shrink-0">
-                    <button onClick={() => { setEditForm({ name: selected.name, phone: selected.phone || "", iban: selected.iban || "", ibanName: selected.ibanName || "", notes: selected.notes || "" }); setShowEditFirma(true); }}
-                      className="border border-slate-200 text-slate-600 text-xs px-2.5 py-1 rounded-lg hover:bg-slate-50">Düzenle</button>
+                    <button onClick={() => { setEditForm({ name: selected.name, phone: selected.phone || "", iban: selected.iban || "", ibanName: selected.ibanName || "", notes: selected.notes || "", kategori: selected.kategori, paymentTerms: selected.paymentTerms }); setShowEditFirma(true); }}
+                      className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">Düzenle</button>
                     <button onClick={() => setShowAddIslem(true)}
-                      className="bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-2.5 py-1 rounded-lg">+ İşlem Ekle</button>
+                      className="rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-700">Alım veya Ödeme Ekle</button>
                   </div>
                 </div>
 
@@ -368,8 +426,8 @@ export default function FirmaPage() {
                       { label: "Net Kalan", val: fmt(ekstre.netBakiye), color: "text-amber-700" },
                     ].map(k => (
                       <div key={k.label} className="bg-slate-50 rounded-lg p-2 text-center">
-                        <p className="text-[9px] text-slate-400 uppercase">{k.label}</p>
-                        <p className={`text-xs font-bold ${k.color}`}>{k.val}</p>
+                        <p className="text-xs font-semibold uppercase text-slate-500">{k.label}</p>
+                        <p className={`text-sm font-bold ${k.color}`}>{k.val}</p>
                       </div>
                     ))}
                   </div>
@@ -379,16 +437,15 @@ export default function FirmaPage() {
               {/* Ekstre tablosu */}
               <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                 <div className="px-4 py-2 bg-slate-50 border-b border-slate-200">
-                  <span className="text-xs font-semibold text-slate-600">Hesap Ekstresi</span>
+                  <span className="text-sm font-bold text-slate-700">Hesap Ekstresi</span>
                 </div>
-                {loadingEkstre ? (
-                  <div className="text-center py-6 text-slate-400 text-xs">Yükleniyor...</div>
-                ) : !ekstre || ekstre.islemler.length === 0 ? (
-                  <div className="text-center py-6 text-slate-400 text-xs">Henüz işlem yok</div>
+                {!ekstre || ekstre.islemler.length === 0 ? (
+                  <div className="py-8 text-center text-sm text-slate-500">Henüz alım, hizmet veya ödeme işlemi yok</div>
                 ) : (
-                  <table className="w-full text-xs">
+                  <div className="overflow-x-auto">
+                  <table className="w-full min-w-[720px] text-sm">
                     <thead>
-                      <tr className="text-[10px] uppercase text-slate-500 border-b border-slate-100">
+                      <tr className="border-b border-slate-100 text-xs uppercase text-slate-500">
                         <th className="text-left px-3 py-2">Tarih</th>
                         <th className="text-left px-3 py-2">Tip</th>
                         <th className="text-left px-3 py-2">Ürün/Hizmet</th>
@@ -403,7 +460,7 @@ export default function FirmaPage() {
                         <tr key={i.id} className="border-b border-slate-50 hover:bg-slate-50">
                           <td className="px-3 py-2 whitespace-nowrap">{fmtDate(i.tarih)}</td>
                           <td className="px-3 py-2">
-                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${TIPI_COLOR[i.islemTipi]}`}>
+                            <span className={`rounded px-2 py-1 text-xs font-semibold ${TIPI_COLOR[i.islemTipi]}`}>
                               {ISLEM_TIPI[i.islemTipi]}
                             </span>
                           </td>
@@ -419,12 +476,13 @@ export default function FirmaPage() {
                           </td>
                           <td className="px-2 py-2">
                             <button onClick={() => cancelIslem(i.id)}
-                              className="text-[10px] text-red-400 hover:text-red-600">İptal</button>
+                              className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 hover:text-red-700">İptal</button>
                           </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 )}
               </div>
             </div>
@@ -435,8 +493,8 @@ export default function FirmaPage() {
       {/* Modal: Firma Ekle */}
       {showAddFirma && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-3">
-            <h3 className="text-sm font-bold text-slate-700">Yeni Firma Ekle</h3>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4">
+            <h3 className="text-xl font-black text-slate-900">Yeni Firma Ekle</h3>
             {[
               { key: "name", label: "Firma Adı *", placeholder: "" },
               { key: "phone", label: "Telefon", placeholder: "" },
@@ -444,23 +502,24 @@ export default function FirmaPage() {
               { key: "ibanName", label: "IBAN Hesap Sahibi", placeholder: "" },
             ].map(f => (
               <div key={f.key}>
-                <label className="text-[10px] font-semibold text-slate-500 uppercase">{f.label}</label>
+                <label className={formLabel}>{f.label}</label>
                 <input value={(firmaForm as Record<string, string>)[f.key]}
                   onChange={e => setFirmaForm({ ...firmaForm, [f.key]: e.target.value })}
                   placeholder={f.placeholder}
-                  className="w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  className={formInput} />
               </div>
             ))}
             <div>
-              <label className="text-[10px] font-semibold text-slate-500 uppercase">Notlar</label>
+              <label className={formLabel}>Notlar</label>
               <textarea value={firmaForm.notes} onChange={e => setFirmaForm({ ...firmaForm, notes: e.target.value })}
-                rows={2} className="w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                rows={3} className={formInput} />
             </div>
             <div className="flex gap-2 pt-1">
               <button onClick={() => setShowAddFirma(false)}
-                className="flex-1 border border-slate-200 text-slate-600 text-xs py-2 rounded-lg">Vazgeç</button>
+                className={`${modalAction} border border-slate-200 text-slate-700 hover:bg-slate-50`}>Vazgeç</button>
               <button onClick={handleAddFirma}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold py-2 rounded-lg">Kaydet</button>
+                disabled={isSubmittingFirma}
+                className={`${modalAction} bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60`}>{isSubmittingFirma ? "Kaydediliyor..." : "Kaydet"}</button>
             </div>
           </div>
         </div>
@@ -469,8 +528,8 @@ export default function FirmaPage() {
       {/* Modal: Firma Duzenle */}
       {showEditFirma && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6 space-y-3">
-            <h3 className="text-sm font-bold text-slate-700">Firma Düzenle</h3>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4">
+            <h3 className="text-xl font-black text-slate-900">Firma Bilgilerini Düzenle</h3>
             {[
               { key: "name", label: "Firma Adı *" },
               { key: "phone", label: "Telefon" },
@@ -478,22 +537,22 @@ export default function FirmaPage() {
               { key: "ibanName", label: "IBAN Hesap Sahibi" },
             ].map(f => (
               <div key={f.key}>
-                <label className="text-[10px] font-semibold text-slate-500 uppercase">{f.label}</label>
+                <label className={formLabel}>{f.label}</label>
                 <input value={(editForm as Record<string, string>)[f.key]}
                   onChange={e => setEditForm({ ...editForm, [f.key]: e.target.value })}
-                  className="w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  className={formInput} />
               </div>
             ))}
             <div>
-              <label className="text-[10px] font-semibold text-slate-500 uppercase">Notlar</label>
+              <label className={formLabel}>Notlar</label>
               <textarea value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })}
-                rows={2} className="w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                rows={3} className={formInput} />
             </div>
             <div className="flex gap-2 pt-1">
               <button onClick={() => setShowEditFirma(false)}
-                className="flex-1 border border-slate-200 text-slate-600 text-xs py-2 rounded-lg">Vazgeç</button>
+                className={`${modalAction} border border-slate-200 text-slate-700 hover:bg-slate-50`}>Vazgeç</button>
               <button onClick={handleEditFirma}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold py-2 rounded-lg">Güncelle</button>
+                className={`${modalAction} bg-blue-600 text-white hover:bg-blue-700`}>Güncelle</button>
             </div>
           </div>
         </div>
@@ -502,93 +561,96 @@ export default function FirmaPage() {
       {/* Modal: Islem Ekle */}
       {showAddIslem && selected && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-3">
-            <h3 className="text-sm font-bold text-slate-700">İşlem Ekle — {selected.name}</h3>
+          <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl space-y-4">
+            <div>
+              <h3 className="text-xl font-black text-slate-900">Alım veya Ödeme Ekle</h3>
+              <p className="mt-1 text-sm text-slate-500">{selected.name} için cari, stok ve gider kaydı birlikte güncellenir.</p>
+            </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <label className="text-[10px] font-semibold text-slate-500 uppercase">Tarih *</label>
+                <label className={formLabel}>Tarih *</label>
                 <input type="date" value={islemForm.tarih} onChange={e => setIslemForm({ ...islemForm, tarih: e.target.value })}
-                  className="w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  className={formInput} />
               </div>
               <div>
-                <label className="text-[10px] font-semibold text-slate-500 uppercase">İşlem Tipi *</label>
+                <label className={formLabel}>İşlem Tipi *</label>
                 <select value={islemForm.islemTipi} onChange={e => setIslemForm({ ...islemForm, islemTipi: e.target.value })}
-                  className="w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400">
-                  <option value="ALIM">Alım</option>
-                  <option value="HIZMET">Hizmet</option>
-                  <option value="ODEME">Ödeme (Firmaya Yapılan)</option>
+                  className={formInput}>
+                  <option value="ALIM">Malzeme Alımı</option>
+                  <option value="HIZMET">Hizmet Alımı</option>
+                  <option value="ODEME">Firmaya Ödeme</option>
                 </select>
               </div>
-              <div className="col-span-2">
-                <label className="text-[10px] font-semibold text-slate-500 uppercase">Ürün / Hizmet Adı</label>
+              <div className="sm:col-span-2">
+                <label className={formLabel}>Ürün veya Hizmet Adı</label>
                 <input value={islemForm.urunHizmet} onChange={e => setIslemForm({ ...islemForm, urunHizmet: e.target.value })}
-                  className="w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  className={formInput} />
               </div>
               {islemForm.islemTipi === "ALIM" && (
                 <>
-                  <div className="col-span-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2 text-[11px] text-blue-700">
+                  <div className="sm:col-span-2 rounded-xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700">
                     Stoklu bir malzeme alıyorsanız seçili stok kalemine giriş otomatik işlenir. Böylece ayrı stok hareketi açmanıza gerek kalmaz.
                   </div>
                   <div>
-                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Stok Kalemine İşle</label>
+                    <label className={formLabel}>Stok Kalemine İşle</label>
                     <select
                       value={islemForm.stockItemId}
                       onChange={e => setIslemForm({ ...islemForm, stockItemId: e.target.value, stockQuantity: e.target.value ? islemForm.stockQuantity : "" })}
-                      className="w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
+                      className={formInput}
                     >
-                      <option value="">Bağlama</option>
+                      <option value="">Stokla bağlantı kurma</option>
                       {stockItems.map(item => (
                         <option key={item.id} value={item.id}>{item.name} ({item.quantity} {item.unit})</option>
                       ))}
                     </select>
                   </div>
                   <div>
-                    <label className="text-[10px] font-semibold text-slate-500 uppercase">Stok Giriş Miktarı</label>
+                    <label className={formLabel}>Stok Giriş Miktarı</label>
                     <input
                       type="number"
                       min="1"
                       value={islemForm.stockQuantity}
                       onChange={e => setIslemForm({ ...islemForm, stockQuantity: e.target.value })}
                       disabled={!islemForm.stockItemId}
-                      className="w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-slate-100"
+                      className={formInput}
                     />
                   </div>
                 </>
               )}
               {(islemForm.islemTipi === "HIZMET" || islemForm.islemTipi === "ODEME") && (
-                <div className="col-span-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-[11px] text-emerald-700">
+                <div className="sm:col-span-2 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
                   Bu işlem kaydedildiğinde muhasebe gider kaydı otomatik oluşur. Böylece firma ekranı ile gider ekranı arasında ikinci bir manuel giriş gerekmez.
                 </div>
               )}
-              <div className="col-span-2">
-                <label className="text-[10px] font-semibold text-slate-500 uppercase">Açıklama</label>
+              <div className="sm:col-span-2">
+                <label className={formLabel}>Açıklama</label>
                 <input value={islemForm.aciklama} onChange={e => setIslemForm({ ...islemForm, aciklama: e.target.value })}
-                  className="w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  className={formInput} />
               </div>
               <div>
-                <label className="text-[10px] font-semibold text-slate-500 uppercase">Tutar (₺) *</label>
+                <label className={formLabel}>Tutar (₺) *</label>
                 <input type="number" value={islemForm.tutar} onChange={e => setIslemForm({ ...islemForm, tutar: e.target.value })}
-                  placeholder="0.00" className="w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  placeholder="0.00" className={formInput} />
               </div>
               <div>
-                <label className="text-[10px] font-semibold text-slate-500 uppercase">Fatura No</label>
+                <label className={formLabel}>Fatura No</label>
                 <input value={islemForm.faturaNo} onChange={e => setIslemForm({ ...islemForm, faturaNo: e.target.value })}
-                  className="w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                  className={formInput} />
               </div>
               {islemForm.islemTipi === "ODEME" && (
                 <div>
-                  <label className="text-[10px] font-semibold text-slate-500 uppercase">Ödeme Yöntemi</label>
+                  <label className={formLabel}>Ödeme Yöntemi</label>
                   <select value={islemForm.yontem} onChange={e => setIslemForm({ ...islemForm, yontem: e.target.value })}
-                    className="w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400">
+                    className={formInput}>
                     {Object.entries(YONTEMLER).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </div>
               )}
               <div>
-                <label className="text-[10px] font-semibold text-slate-500 uppercase">KDV Orani (%)</label>
+                <label className={formLabel}>KDV Oranı (%)</label>
                 <select value={islemForm.kdvOrani} onChange={e => setIslemForm({ ...islemForm, kdvOrani: e.target.value })}
-                  className="w-full mt-0.5 border border-slate-200 rounded-lg px-2.5 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400">
+                  className={formInput}>
                   <option value="0">%0</option>
                   <option value="10">%10</option>
                   <option value="20">%20</option>
@@ -598,9 +660,10 @@ export default function FirmaPage() {
 
             <div className="flex gap-2 pt-1">
               <button onClick={() => setShowAddIslem(false)}
-                className="flex-1 border border-slate-200 text-slate-600 text-xs py-2 rounded-lg">Vazgeç</button>
+                className={`${modalAction} border border-slate-200 text-slate-700 hover:bg-slate-50`}>Vazgeç</button>
               <button onClick={handleAddIslem}
-                className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold py-2 rounded-lg">Kaydet</button>
+                disabled={isSubmittingIslem}
+                className={`${modalAction} bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60`}>{isSubmittingIslem ? "Kaydediliyor..." : "Kaydet"}</button>
             </div>
           </div>
         </div>

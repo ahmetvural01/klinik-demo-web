@@ -11,37 +11,52 @@ function fmt(v: unknown): string {
 }
 
 export async function GET(_: NextRequest, { params }: Params) {
-  const auth = await requireAuth("prices:read");
-  if (auth.error) return auth.error;
+  try {
+    const auth = await requireAuth("prices:read");
+    if (auth.error) return auth.error;
 
-  const item = await prisma.priceItem.findUnique({ where: { id: params.id } });
+    const item = await prisma.priceItem.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
+    });
 
-  if (!item) {
+    if (!item) {
+      return NextResponse.json({ message: "Fiyat kaydı bulunamadı" }, { status: 404 });
+    }
+
+    return NextResponse.json(item);
+  } catch {
     return NextResponse.json({ message: "Fiyat kaydı bulunamadı" }, { status: 404 });
   }
-
-  return NextResponse.json(item);
 }
 
 export async function PUT(request: NextRequest, { params }: Params) {
-  const auth = await requireAuth("prices:write");
-  if (auth.error) return auth.error;
+  try {
+    const auth = await requireAuth("prices:write");
+    if (auth.error) return auth.error;
 
-  const body = await request.json();
-  const existing = await prisma.priceItem.findUnique({ where: { id: params.id } });
-  if (!existing) {
-    return NextResponse.json({ message: "Fiyat kaydı bulunamadı" }, { status: 404 });
-  }
-
-  const item = await prisma.priceItem.update({
-    where: { id: params.id },
-    data: {
-      code: body.code,
-      treatment: body.treatment,
-      amount: body.amount,
-      isFavorite: Boolean(body.isFavorite)
+    const body = await request.json();
+    const existing = await prisma.priceItem.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
+    });
+    if (!existing) {
+      return NextResponse.json({ message: "Fiyat kaydı bulunamadı" }, { status: 404 });
     }
-  });
+
+    const item = await prisma.priceItem.update({
+      where: { id: params.id },
+      data: {
+        code: body.code,
+        treatment: body.treatment,
+        amount: body.amount,
+        isFavorite: Boolean(body.isFavorite)
+      }
+    });
 
   const beforeParts: string[] = [];
   const afterParts: string[] = [];
@@ -65,24 +80,33 @@ export async function PUT(request: NextRequest, { params }: Params) {
     `Değişiklik sonrası: ${afterParts.length > 0 ? afterParts.join(" | ") : "Alan değişikliği yok"}`,
   ].join("\n");
 
-  await writeAudit(auth.user.id, "PRICE_UPDATE", detail);
-  return NextResponse.json(item);
+    await writeAudit(auth.user.id, "PRICE_UPDATE", detail);
+    return NextResponse.json(item);
+  } catch {
+    return NextResponse.json({ message: "Fiyat güncellenemedi" }, { status: 503 });
+  }
 }
 
 export async function PATCH(request: NextRequest, { params }: Params) {
-  const auth = await requireAuth("prices:write");
-  if (auth.error) return auth.error;
+  try {
+    const auth = await requireAuth("prices:write");
+    if (auth.error) return auth.error;
 
-  const body = await request.json();
-  const existing = await prisma.priceItem.findUnique({ where: { id: params.id } });
-  if (!existing) {
-    return NextResponse.json({ message: "Fiyat kaydı bulunamadı" }, { status: 404 });
-  }
+    const body = await request.json();
+    const existing = await prisma.priceItem.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
+    });
+    if (!existing) {
+      return NextResponse.json({ message: "Fiyat kaydı bulunamadı" }, { status: 404 });
+    }
 
-  const item = await prisma.priceItem.update({
-    where: { id: params.id },
-    data: { ...(body.amount !== undefined && { amount: Number(body.amount) }) }
-  });
+    const item = await prisma.priceItem.update({
+      where: { id: params.id },
+      data: { ...(body.amount !== undefined && { amount: Number(body.amount) }) }
+    });
 
   const detail = [
     `${auth.user.fullName || "Personel"} tarafından fiyat tutarı güncellendi.`,
@@ -90,16 +114,33 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     `Değişiklik sonrası: Tutar: ${fmt(Number(item.amount))}`,
   ].join("\n");
 
-  await writeAudit(auth.user.id, "PRICE_UPDATE", detail);
-  return NextResponse.json(item);
+    await writeAudit(auth.user.id, "PRICE_UPDATE", detail);
+    return NextResponse.json(item);
+  } catch {
+    return NextResponse.json({ message: "Fiyat güncellenemedi" }, { status: 503 });
+  }
 }
 
 export async function DELETE(_: NextRequest, { params }: Params) {
-  const auth = await requireAuth("prices:write");
-  if (auth.error) return auth.error;
+  try {
+    const auth = await requireAuth("prices:write");
+    if (auth.error) return auth.error;
 
-  const item = await prisma.priceItem.delete({ where: { id: params.id } });
-  await writeAudit(auth.user.id, "PRICE_DELETE", `${item.treatment} silindi`);
+    const existing = await prisma.priceItem.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
+    });
+    if (!existing) {
+      return NextResponse.json({ message: "Fiyat kaydı bulunamadı" }, { status: 404 });
+    }
 
-  return NextResponse.json({ ok: true });
+    const item = await prisma.priceItem.delete({ where: { id: existing.id } });
+    await writeAudit(auth.user.id, "PRICE_DELETE", `${item.treatment} silindi`);
+
+    return NextResponse.json({ ok: true });
+  } catch {
+    return NextResponse.json({ message: "Fiyat kaydı silinemedi" }, { status: 503 });
+  }
 }

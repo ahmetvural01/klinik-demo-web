@@ -8,69 +8,92 @@ import { requireAuth } from "@/lib/api";
  * Sadece pozitif bakiyeli (borçlu) hastaları döner.
  */
 export async function GET() {
-  const auth = await requireAuth("finance:read");
-  if (auth.error) return auth.error;
+  try {
+    const auth = await requireAuth("finance:read");
+    if (auth.error) return auth.error;
 
-  const treatmentOnlyWhere = {
-    NOT: [
-      { status: { contains: "diagnoz", mode: "insensitive" as const } },
-      { status: { contains: "ön teşhis", mode: "insensitive" as const } },
-      { status: { contains: "on teshis", mode: "insensitive" as const } },
-    ],
-  };
+    const institutionId = auth.user.institutionId;
+    const institutionDoctors = institutionId
+      ? await prisma.user.findMany({
+          where: { institutionId, role: "DOKTOR", isActive: true },
+          select: { id: true },
+        })
+      : [];
+    const doctorIds = institutionDoctors.map((doctor) => doctor.id);
 
-  // Sadece ücretlendirmeye dahil tedaviler (diagnoz/muayene hariç)
-  const examGroups = await prisma.examination.groupBy({
-    by: ["patientId"],
-    where: treatmentOnlyWhere,
-    _sum: { amount: true },
-  });
+    const treatmentOnlyWhere = {
+      NOT: [
+        { status: { contains: "diagnoz", mode: "insensitive" as const } },
+        { status: { contains: "ön teşhis", mode: "insensitive" as const } },
+        { status: { contains: "on teshis", mode: "insensitive" as const } },
+      ],
+    };
 
-  // Tüm hasta ödemeleri
-  const payGroups = await prisma.payment.groupBy({
-    by: ["patientId"],
-    _sum: { amount: true },
-    where: { patientId: { not: null } },
-  });
+    // Sadece ücretlendirmeye dahil tedaviler (diagnoz/muayene hariç)
+    const examGroups = await prisma.examination.groupBy({
+      by: ["patientId"],
+      where: doctorIds.length > 0
+        ? { ...treatmentOnlyWhere, doctorId: { in: doctorIds } }
+        : treatmentOnlyWhere,
+      _sum: { amount: true },
+    });
 
-  // Patient bilgileri
-  const patientIds = [...new Set(examGroups.map((e) => e.patientId))];
-  const patients = await prisma.patient.findMany({
-    where: { id: { in: patientIds } },
-    select: { id: true, fullName: true, phone: true, discountRate: true },
-  });
+    // Tüm hasta ödemeleri
+    const payGroups = await prisma.payment.groupBy({
+      by: ["patientId"],
+      _sum: { amount: true },
+      where: institutionId
+        ? {
+            patientId: { not: null },
+            patient: { institutionId },
+          }
+        : { patientId: { not: null } },
+    });
 
-  const patientMap = new Map(patients.map((p) => [p.id, p]));
-  const payMap = new Map(
-    payGroups.map((p) => [p.patientId as string, Number(p._sum.amount ?? 0)])
-  );
+    // Patient bilgileri
+    const patientIds = [...new Set(examGroups.map((e) => e.patientId))];
+    const patients = await prisma.patient.findMany({
+      where: {
+        id: { in: patientIds },
+        ...(institutionId ? { institutionId } : {}),
+      },
+      select: { id: true, fullName: true, phone: true, discountRate: true },
+    });
 
-  const rows = examGroups
-    .map((e) => {
-      const p = patientMap.get(e.patientId);
-      if (!p) return null;
+    const patientMap = new Map(patients.map((p) => [p.id, p]));
+    const payMap = new Map(
+      payGroups.map((p) => [p.patientId as string, Number(p._sum.amount ?? 0)])
+    );
 
-      const brutTedavi = Number(e._sum.amount ?? 0);
-      const indirim    = brutTedavi * (Number(p.discountRate || 0) / 100);
-      const netTedavi  = brutTedavi - indirim;
-      const odenen     = payMap.get(e.patientId) ?? 0;
-      const bakiye     = netTedavi - odenen;
+    const rows = examGroups
+      .map((e) => {
+        const p = patientMap.get(e.patientId);
+        if (!p) return null;
 
-      return {
-        id: p.id,
-        fullName: p.fullName,
-        phone: p.phone,
-        brutTedavi,
-        indirim,
-        netTedavi,
-        odenen,
-        bakiye,
-        discountRate: p.discountRate,
-      };
-    })
-    .filter((r): r is NonNullable<typeof r> => r !== null && r.bakiye > 0.5)
-    .sort((a, b) => b.bakiye - a.bakiye);
+        const brutTedavi = Number(e._sum.amount ?? 0);
+        const indirim    = brutTedavi * (Number(p.discountRate || 0) / 100);
+        const netTedavi  = brutTedavi - indirim;
+        const odenen     = payMap.get(e.patientId) ?? 0;
+        const bakiye     = netTedavi - odenen;
 
-  const toplamAlacak = rows.reduce((s, r) => s + r.bakiye, 0);
-  return NextResponse.json({ rows, toplamAlacak });
+        return {
+          id: p.id,
+          fullName: p.fullName,
+          phone: p.phone,
+          brutTedavi,
+          indirim,
+          netTedavi,
+          odenen,
+          bakiye,
+          discountRate: p.discountRate,
+        };
+      })
+      .filter((r): r is NonNullable<typeof r> => r !== null && r.bakiye > 0.5)
+      .sort((a, b) => b.bakiye - a.bakiye);
+
+    const toplamAlacak = rows.reduce((s, r) => s + r.bakiye, 0);
+    return NextResponse.json({ rows, toplamAlacak });
+  } catch {
+    return NextResponse.json({ rows: [], toplamAlacak: 0 });
+  }
 }

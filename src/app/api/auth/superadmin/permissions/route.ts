@@ -6,8 +6,8 @@ import { DEFAULT_SUPERADMIN_MODULES, normalizeModules } from "@/lib/superadmin-m
 export async function GET() {
   const user = decodeTokenUser();
 
-  if (!user) return NextResponse.json({ message: "Yetkisiz" }, { status: 401 });
-  if (user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yasak" }, { status: 403 });
+  if (!user) return NextResponse.json({ message: "Oturum gerekli" }, { status: 401 });
+  if (user.role !== "SUPERADMIN") return NextResponse.json({ message: "Bu işlem için süper yönetici yetkisi gerekli." }, { status: 403 });
 
   const permission = await prisma.superadminPermission.findUnique({
     where: { userId: user.id },

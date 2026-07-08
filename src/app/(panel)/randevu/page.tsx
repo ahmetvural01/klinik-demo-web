@@ -1,5 +1,7 @@
 ﻿"use client";
 
+/* eslint-disable react-hooks/exhaustive-deps */
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
@@ -102,6 +104,42 @@ type CalendarSettings = {
 
   type DoctorBlock = { id: string; doctorId: string; date: string; startTime: string; endTime: string; reason?: string | null; doctor?: { id: string; fullName: string } };
 
+const APPOINTMENT_CREATOR_ROLES = new Set(["DOKTOR", "YONETICI", "ADMIN", "SUPERADMIN"]);
+
+type RandevuCache = {
+  appointments?: Appointment[];
+  doctorBlocks?: DoctorBlock[];
+  staff?: Staff[];
+  role?: string;
+  canCreate?: boolean;
+  settings?: CalendarSettings;
+};
+
+function getRandevuCacheKey(rangeFrom: Date, rangeTo: Date, doctorId: string, roleKey: string) {
+  return `randevu:data:${roleKey || "anon"}:${rangeFrom.toISOString()}:${rangeTo.toISOString()}:${doctorId || "all"}`;
+}
+
+function readRandevuCache(cacheKey: string) {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  const raw = sessionStorage.getItem(cacheKey);
+  if (!raw) return null;
+  try {
+    const cached = JSON.parse(raw) as RandevuCache;
+    return {
+      appointments: Array.isArray(cached.appointments) ? cached.appointments : [],
+      doctorBlocks: Array.isArray(cached.doctorBlocks) ? cached.doctorBlocks : [],
+      staff: Array.isArray(cached.staff) ? cached.staff : [],
+      role: cached.role || "",
+      canCreate: typeof cached.canCreate === "boolean" ? cached.canCreate : false,
+      settings: cached.settings || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function RandevuPage() {
   const searchParams = useSearchParams();
   const [view, setView] = useState<"GUN" | "HAFTA" | "AY" | "AJANDA">("HAFTA");
@@ -179,6 +217,28 @@ export default function RandevuPage() {
     holidayDays: ["Pazar"],
     dailySchedules: [],
   });
+
+  const currentRange = useMemo(() => {
+    const from = new Date(date);
+    const to = new Date(date);
+    if (view === "HAFTA") {
+      const day = from.getDay();
+      const diff = day === 0 ? -6 : 1 - day;
+      from.setDate(from.getDate() + diff);
+      to.setDate(from.getDate() + 6);
+      to.setHours(23, 59, 59, 999);
+    } else if (view === "AY") {
+      from.setDate(1);
+      to.setMonth(from.getMonth() + 1, 0);
+      to.setHours(23, 59, 59, 999);
+    } else {
+      to.setHours(23, 59, 59, 999);
+    }
+    from.setHours(0, 0, 0, 0);
+    return { from, to };
+  }, [date, view]);
+
+  const initialRandevuCache = useMemo(() => readRandevuCache(getRandevuCacheKey(currentRange.from, currentRange.to, doctorId, currentUserRole)), [currentRange.from, currentRange.to, doctorId, currentUserRole]);
 
   const isBookableDoctor = useCallback((person: Staff & { profile?: { hideAsDoctor?: boolean } | null; isActive?: boolean }) => {
     if (person.isActive === false) return false;
@@ -295,29 +355,14 @@ export default function RandevuPage() {
     return included?.value || "DIGER";
   }, []);
 
-  const range = useMemo(() => {
-    const from = new Date(date);
-    const to = new Date(date);
-    if (view === "HAFTA") {
-      const day = from.getDay();
-      const diff = day === 0 ? -6 : 1 - day;
-      from.setDate(from.getDate() + diff);
-      to.setDate(from.getDate() + 6);
-      to.setHours(23, 59, 59, 999);
-    } else if (view === "AY") {
-      from.setDate(1);
-      to.setMonth(from.getMonth() + 1, 0);
-      to.setHours(23, 59, 59, 999);
-    } else {
-      to.setHours(23, 59, 59, 999);
-    }
-    from.setHours(0, 0, 0, 0);
-    return { from, to };
-  }, [date, view]);
+  const getEffectiveRole = useCallback(() => {
+    if (typeof window === "undefined") return "";
+    return sessionStorage.getItem("dev-preview-role") || "";
+  }, []);
 
   useEffect(() => {
     const qpView = searchParams.get("view");
-    if (qpView === "GUN" || qpView === "HAFTA" || qpView === "AY" || qpView === "AJANDA") {
+    if ((qpView === "GUN" || qpView === "HAFTA" || qpView === "AY" || qpView === "AJANDA") && qpView !== view) {
       setView(qpView);
     }
 
@@ -325,15 +370,27 @@ export default function RandevuPage() {
     if (qpDate && /^\d{4}-\d{2}-\d{2}$/.test(qpDate)) {
       const [y, m, d] = qpDate.split("-").map(Number);
       const local = new Date(y, m - 1, d, 12, 0, 0, 0);
-      if (!Number.isNaN(local.getTime())) setDate(local);
+      if (!Number.isNaN(local.getTime()) && local.getTime() !== date.getTime()) setDate(local);
     }
 
     const qpDoctorId = searchParams.get("doctorId");
-    if (qpDoctorId) setDoctorId(qpDoctorId);
+    if (qpDoctorId && qpDoctorId !== doctorId) setDoctorId(qpDoctorId);
 
     const qpFocusAppointmentId = searchParams.get("focusAppointmentId");
-    if (qpFocusAppointmentId) setFocusAppointmentId(qpFocusAppointmentId);
-  }, [searchParams]);
+    if (qpFocusAppointmentId && qpFocusAppointmentId !== focusAppointmentId) setFocusAppointmentId(qpFocusAppointmentId);
+  }, [searchParams, view, date, doctorId, focusAppointmentId]);
+
+  useEffect(() => {
+    if (initialRandevuCache) {
+      setAppointments(initialRandevuCache.appointments);
+      setDoctorBlocks(initialRandevuCache.doctorBlocks);
+      setStaff(initialRandevuCache.staff);
+      if (initialRandevuCache.settings) {
+        setCalendarSettings(initialRandevuCache.settings);
+      }
+      setLoading(false);
+    }
+  }, [initialRandevuCache]);
 
   // Hasta arama debounce
   useEffect(() => {
@@ -358,7 +415,7 @@ export default function RandevuPage() {
     const timer = setTimeout(async () => {
       setUpcomingLoading(true);
       try {
-        const res = await fetch("/api/appointments/upcoming?q=" + encodeURIComponent(upcomingSearch.trim()) + "&take=20");
+        const res = await fetch("/api/appointments/upcoming?q=" + encodeURIComponent(upcomingSearch.trim()) + "&take=20", { cache: "no-store" });
         const json = await res.json();
         setUpcomingResults(Array.isArray(json?.appointments) ? json.appointments : []);
       } catch {
@@ -385,7 +442,7 @@ export default function RandevuPage() {
   }, [editPatientSearch]);
 
   const load = useCallback(async () => {
-    const cacheKey = `randevu:data:${range.from.toISOString()}:${range.to.toISOString()}:${doctorId || "all"}`;
+    const cacheKey = getRandevuCacheKey(currentRange.from, currentRange.to, doctorId, currentUserRole);
     let hadCached = false;
     if (typeof window !== "undefined") {
       const raw = sessionStorage.getItem(cacheKey);
@@ -412,83 +469,98 @@ export default function RandevuPage() {
       }
     }
 
-    setLoading(!hadCached); setError(null);
+    setLoading(false); setError(null);
     try {
-      const params = new URLSearchParams({ from: range.from.toISOString(), to: range.to.toISOString() });
+      const params = new URLSearchParams({ from: currentRange.from.toISOString(), to: currentRange.to.toISOString() });
       if (doctorId) params.set("doctorId", doctorId);
       // Format range dates as YYYY-MM-DD for doctor-blocks
-      const fromDate = range.from.toISOString().slice(0, 10);
-      const toDate = range.to.toISOString().slice(0, 10);
-      const [aRes, sRes, meRes, profileRes, settingsRes, blocksRes] = await Promise.all([
-        fetch("/api/appointments?" + params.toString()),
-        fetch("/api/staff?booking=1"),
-        fetch("/api/auth/me"),
-        fetch("/api/profile"),
-        fetch("/api/settings"),
-        fetch(`/api/doctor-blocks?from=${fromDate}&to=${toDate}`),
+      const fromDate = currentRange.from.toISOString().slice(0, 10);
+      const toDate = currentRange.to.toISOString().slice(0, 10);
+
+      const [appointmentsRes, meRes] = await Promise.all([
+        fetch("/api/appointments?" + params.toString(), { cache: "no-store" }),
+        fetch("/api/auth/me", { cache: "no-store" }),
       ]);
-      const [aJson, sJson, meJson, profileJson, settingsJson, blocksJson] = await Promise.all([aRes.json(), sRes.json(), meRes.json(), profileRes.json(), settingsRes.json(), blocksRes.json()]);
+
+      const [aJson, meJson] = await Promise.all([appointmentsRes.json(), meRes.json()]);
       const resolvedAppointments = Array.isArray(aJson) ? aJson : [];
-      const resolvedBlocks = Array.isArray(blocksJson) ? blocksJson : [];
       setAppointments(resolvedAppointments);
-      setDoctorBlocks(resolvedBlocks);
-      const staffList = Array.isArray(sJson) ? sJson : (sJson?.staff || []);
-      const filteredStaff = staffList.filter((x: Staff & { profile?: { hideAsDoctor?: boolean } | null; isActive?: boolean }) => isBookableDoctor(x));
-      setStaff(filteredStaff);
 
-      const parsedHolidayDays = (() => {
-        const raw = settingsJson?.holidayDays;
-        if (Array.isArray(raw)) return raw;
-        if (typeof raw === "string") {
-          try {
-            const parsed = JSON.parse(raw);
-            return Array.isArray(parsed) ? parsed : [];
-          } catch {
-            return [];
-          }
-        }
-        return [];
-      })();
-
-      const parsedDailySchedules = (() => {
-        const raw = settingsJson?.dailySchedules;
-        if (Array.isArray(raw)) return raw as DaySchedule[];
-        if (typeof raw === "string") {
-          try { const p = JSON.parse(raw); return Array.isArray(p) ? p as DaySchedule[] : []; } catch { return []; }
-        }
-        return [];
-      })();
-
-      const resolvedSettings: CalendarSettings = {
-        openingTime: settingsJson?.openingTime || "08:30",
-        closingTime: settingsJson?.closingTime || "23:59",
-        appointmentDuration: Number(settingsJson?.appointmentDuration || settingsJson?.appointmentDurationMin || 15),
-        holidayDays: parsedHolidayDays,
-        dailySchedules: parsedDailySchedules,
-      };
-      setCalendarSettings(resolvedSettings);
-
-      const role = meJson?.role || "";
+      const role = getEffectiveRole() || meJson?.role || "";
       setCurrentUserRole(role);
-      const canCreate = ["DOKTOR", "SUPERADMIN", "ADMIN"].includes(role) || (role === "YONETICI" && !Boolean(profileJson?.profile?.hideAsDoctor));
-      setCanCreateAppointments(canCreate);
+      setCanCreateAppointments(APPOINTMENT_CREATOR_ROLES.has(role));
 
-      if (typeof window !== "undefined") {
-        sessionStorage.setItem(cacheKey, JSON.stringify({
-          appointments: resolvedAppointments,
-          doctorBlocks: resolvedBlocks,
-          staff: filteredStaff,
-          role,
-          canCreate,
-          settings: resolvedSettings,
-        }));
-      }
+      void Promise.allSettled([
+        fetch("/api/staff?booking=1", { cache: "no-store" })
+          .then((r) => r.json())
+          .then((sJson) => {
+            const staffList = Array.isArray(sJson) ? sJson : (sJson?.staff || []);
+            const filteredStaff = staffList.filter((x: Staff & { profile?: { hideAsDoctor?: boolean } | null; isActive?: boolean }) => isBookableDoctor(x));
+            setStaff(filteredStaff);
+          })
+          .catch(() => {}),
+        fetch("/api/settings", { cache: "no-store" })
+          .then((r) => r.json())
+          .then((settingsJson) => {
+            const parsedHolidayDays = (() => {
+              const raw = settingsJson?.holidayDays;
+              if (Array.isArray(raw)) return raw;
+              if (typeof raw === "string") {
+                try {
+                  const parsed = JSON.parse(raw);
+                  return Array.isArray(parsed) ? parsed : [];
+                } catch {
+                  return [];
+                }
+              }
+              return [];
+            })();
+
+            const parsedDailySchedules = (() => {
+              const raw = settingsJson?.dailySchedules;
+              if (Array.isArray(raw)) return raw as DaySchedule[];
+              if (typeof raw === "string") {
+                try { const p = JSON.parse(raw); return Array.isArray(p) ? p as DaySchedule[] : []; } catch { return []; }
+              }
+              return [];
+            })();
+
+            const resolvedSettings: CalendarSettings = {
+              openingTime: settingsJson?.openingTime || "08:30",
+              closingTime: settingsJson?.closingTime || "23:59",
+              appointmentDuration: Number(settingsJson?.appointmentDuration || settingsJson?.appointmentDurationMin || 15),
+              holidayDays: parsedHolidayDays,
+              dailySchedules: parsedDailySchedules,
+            };
+            setCalendarSettings(resolvedSettings);
+          })
+          .catch(() => {}),
+        fetch(`/api/doctor-blocks?from=${fromDate}&to=${toDate}`, { cache: "no-store" })
+          .then((r) => r.json())
+          .then((blocksJson) => {
+            const resolvedBlocks = Array.isArray(blocksJson) ? blocksJson : [];
+            setDoctorBlocks(resolvedBlocks);
+          })
+          .catch(() => {}),
+      ]);
+
     } catch (e) {
       setError(e instanceof Error ? e.message : "Bilinmeyen hata");
     } finally { setLoading(false); }
-  }, [doctorId, isBookableDoctor, range.from, range.to]);
+  }, [currentUserRole, doctorId, isBookableDoctor, currentRange.from, currentRange.to]);
 
   useEffect(() => { void load(); }, [load]);
+
+  useEffect(() => {
+    const syncPreviewRole = () => {
+      const activeRole = getEffectiveRole();
+      if (activeRole) setCurrentUserRole(activeRole);
+      void load();
+    };
+
+    window.addEventListener("preview-role-change", syncPreviewRole);
+    return () => window.removeEventListener("preview-role-change", syncPreviewRole);
+  }, [getEffectiveRole, load]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -538,9 +610,20 @@ export default function RandevuPage() {
     setDurationMinutes(slotInterval);
   };
 
+  const closeAppointmentModal = useCallback(() => {
+    setEditMode(false);
+    setError(null);
+    setFollowUpStatus("YOK");
+    setFollowUpNote("");
+    setEditPatientResults([]);
+    setEditPatientDropdownOpen(false);
+    setEditDoctorDropdownOpen(false);
+    setSelectedAppt(null);
+  }, []);
+
   const createAppointment = async () => {
     if (!canCreateAppointments) {
-      setError("Randevu sadece doktorlar tarafindan olusturulabilir.");
+      setError("Bu görünümde randevu oluşturma yetkiniz yok.");
       return;
     }
     if (!patientId || !newDoctorId) return setError("Hasta ve doktor seçin");
@@ -579,7 +662,12 @@ export default function RandevuPage() {
   };
 
   const updateStatus = async (id: string, status: string) => {
-    await fetch("/api/appointments/" + id, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+    const res = await fetch("/api/appointments/" + id, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ message: "Durum güncellenemedi" }));
+      setError(body.message || "Durum güncellenemedi");
+      return;
+    }
     setSelectedAppt(prev => prev && prev.id === id ? { ...prev, status } : prev);
     await load();
   };
@@ -715,21 +803,21 @@ export default function RandevuPage() {
   const weekDays = useMemo(() => {
     if (view !== "HAFTA") return [];
     const allDays = Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(range.from);
-      d.setDate(range.from.getDate() + i);
+      const d = new Date(currentRange.from);
+      d.setDate(currentRange.from.getDate() + i);
       return d;
     });
     const visible = allDays.filter((d) => workingDayIndexes.has(d.getDay()));
     return visible.length > 0 ? visible : allDays;
-  }, [view, range.from, workingDayIndexes]);
+  }, [view, currentRange.from, workingDayIndexes]);
 
   const monthDays = useMemo(() => {
     if (view !== "AY") return [];
     const days: Date[] = [];
-    const cur = new Date(range.from);
-    while (cur <= range.to) { days.push(new Date(cur)); cur.setDate(cur.getDate() + 1); }
+    const cur = new Date(currentRange.from);
+    while (cur <= currentRange.to) { days.push(new Date(cur)); cur.setDate(cur.getDate() + 1); }
     return days;
-  }, [view, range.from, range.to]);
+  }, [view, currentRange.from, currentRange.to]);
 
   const getApptForSlot = (docId: string | null, slotTime: string, forDate?: Date) => {
     return appointments.filter(a => {
@@ -749,7 +837,7 @@ export default function RandevuPage() {
 
   const navLabel = () => {
     if (view === "GUN") return date.getDate() + " " + TR_MONTHS[date.getMonth()] + " " + date.getFullYear();
-    if (view === "HAFTA") { const e = new Date(range.from); e.setDate(e.getDate() + 6); return range.from.getDate() + " " + TR_MONTHS[range.from.getMonth()] + " - " + e.getDate() + " " + TR_MONTHS[e.getMonth()] + " " + date.getFullYear(); }
+    if (view === "HAFTA") { const e = new Date(currentRange.from); e.setDate(e.getDate() + 6); return currentRange.from.getDate() + " " + TR_MONTHS[currentRange.from.getMonth()] + " - " + e.getDate() + " " + TR_MONTHS[e.getMonth()] + " " + date.getFullYear(); }
     return TR_MONTHS[date.getMonth()] + " " + date.getFullYear();
   };
 
@@ -831,6 +919,7 @@ export default function RandevuPage() {
     setShowForm(true);
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!showForm || !newDoctorId || !startAt) return;
     const conflict = buildConflictInfo(new Date(startAt).toISOString(), newDoctorId, durationMinutes);
@@ -844,9 +933,9 @@ export default function RandevuPage() {
   const reportTitle = view === "GUN"
     ? `Gunluk Randevu Cizelgesi - ${date.getDate()} ${TR_MONTHS[date.getMonth()]} ${date.getFullYear()}`
     : (() => {
-        const end = new Date(range.from);
+        const end = new Date(currentRange.from);
         end.setDate(end.getDate() + 6);
-        return `Haftalik Randevu Cizelgesi - ${range.from.getDate()} ${TR_MONTHS[range.from.getMonth()]} - ${end.getDate()} ${TR_MONTHS[end.getMonth()]} ${end.getFullYear()}`;
+        return `Haftalik Randevu Cizelgesi - ${currentRange.from.getDate()} ${TR_MONTHS[currentRange.from.getMonth()]} - ${end.getDate()} ${TR_MONTHS[end.getMonth()]} ${end.getFullYear()}`;
       })();
 
   const reportRows = useMemo(() => {
@@ -1224,22 +1313,31 @@ export default function RandevuPage() {
   );
 
   return (
-    <section className="space-y-3">
-      <div className="rounded-xl border border-slate-200 bg-white p-3">
+    <section className="space-y-4">
+      <div className="sticky top-[72px] z-20 rounded-xl border border-slate-200 bg-white/95 p-3 shadow-sm backdrop-blur sm:p-4">
         <div className="flex flex-wrap items-center gap-2">
           <div className="min-w-[170px]">
-            <h1 className="text-lg font-bold text-slate-900 leading-tight">Randevular</h1>
-            <p className="text-xs text-slate-500">Hızlı takvim görünümü</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-lg font-black leading-tight text-slate-900">Randevular</h1>
+              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">
+                {appointments.length} kayıt
+              </span>
+              {doctorBlocks.length > 0 && (
+                <span className="rounded-full border border-orange-200 bg-orange-50 px-2 py-1 text-xs font-bold text-orange-700">
+                  {doctorBlocks.length} blokaj
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="relative min-w-[260px] flex-1">
             <input
               value={upcomingSearch}
               onChange={(e) => setUpcomingSearch(e.target.value)}
-              placeholder="Yaklaşan randevuda hasta ara"
+              placeholder="Hasta adıyla yaklaşan randevu ara"
               className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary"
             />
-            {upcomingLoading && <span className="absolute right-2 top-2 text-xs text-slate-500">Aranıyor...</span>}
+            {upcomingLoading && <span className="absolute right-2 top-2 h-3.5 w-3.5 animate-spin rounded-full border border-slate-300 border-t-primary" aria-hidden="true" />}
             {upcomingSearch.trim().length >= 2 && (
               <div className="absolute left-0 right-0 z-20 mt-1 max-h-52 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
                 {upcomingResults.length === 0 ? (
@@ -1287,39 +1385,47 @@ export default function RandevuPage() {
           </select>
         </div>
 
-        <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2">
-          <div className="flex flex-wrap items-center gap-1">
-            <button onClick={() => nav(-1)} className="rounded border px-2 py-1 text-lg leading-none hover:bg-gray-100">‹</button>
-            <span className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-sm font-bold text-gray-800">{navLabel()}</span>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <button onClick={() => nav(-1)} aria-label="Önceki tarih aralığı" className="flex h-9 w-9 items-center justify-center rounded-lg border text-lg leading-none hover:bg-gray-100">‹</button>
+            <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-gray-800">{navLabel()}</span>
+            <button onClick={() => nav(1)} aria-label="Sonraki tarih aralığı" className="flex h-9 w-9 items-center justify-center rounded-lg border text-lg leading-none hover:bg-gray-100">›</button>
             {(["GUN","HAFTA","AY","AJANDA"] as const).map(mode => (
               <button
                 key={mode}
                 onClick={() => setView(mode)}
-                className={"rounded-md px-3 py-1.5 text-xs font-semibold transition-colors " + (view === mode ? "bg-primary text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200")}
+                className={"rounded-lg px-3 py-2 text-sm font-semibold transition-colors " + (view === mode ? "bg-primary text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200")}
               >
                 {mode === "GUN" ? "Gün" : mode === "HAFTA" ? "Hafta" : mode === "AY" ? "Ay" : "Ajanda"}
               </button>
             ))}
-            <button
-              onClick={printReport}
-              disabled={!canExportOrPrint}
-              className="rounded-md border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-              title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Randevu çizelgesini yazdır"}
-            >
-              Yazdır
-            </button>
-            <button
-              onClick={downloadExcelReport}
-              disabled={!canExportOrPrint}
-              className="rounded-md border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50"
-              title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Excel olarak dışa aktar"}
-            >
-              Excel
-            </button>
-            <button onClick={() => setShowForm(!showForm)} disabled={!canCreateAppointments} className="rounded-md bg-accent px-3 py-1.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">+ Yeni</button>
+            <button onClick={() => setShowForm(!showForm)} disabled={!canCreateAppointments} className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Yeni Randevu</button>
             {canCreateAppointments && (
-              <button onClick={() => setShowBlockModal(true)} className="rounded-md border border-orange-300 bg-orange-50 px-3 py-1.5 text-xs font-semibold text-orange-700 hover:bg-orange-100">⊘ Blok</button>
+              <button onClick={() => setShowBlockModal(true)} className="rounded-lg border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 hover:bg-orange-100">Doktor Blokajı</button>
             )}
+            <details className="relative">
+              <summary className="cursor-pointer list-none rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                Diğer
+              </summary>
+              <div className="absolute right-0 top-full z-20 mt-1 w-40 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+                <button
+                  onClick={printReport}
+                  disabled={!canExportOrPrint}
+                  className="block w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Randevu çizelgesini yazdır"}
+                >
+                  Yazdır
+                </button>
+                <button
+                  onClick={downloadExcelReport}
+                  disabled={!canExportOrPrint}
+                  className="block w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Excel olarak dışa aktar"}
+                >
+                  Excel
+                </button>
+              </div>
+            </details>
           </div>
         </div>
       </div>
@@ -1330,7 +1436,7 @@ export default function RandevuPage() {
           <h3 className="mb-3 font-bold text-gray-700">Yeni Randevu</h3>
           {conflictWarning && (
             <div className="mb-3 flex items-start gap-2 rounded-lg border border-yellow-300 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
-              <span className="mt-0.5 text-base">⚠️</span>
+              <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-yellow-500" aria-hidden="true" />
               <span>{conflictWarning}</span>
             </div>
           )}
@@ -1528,9 +1634,8 @@ export default function RandevuPage() {
         </div>
       )}
 
-      {loading && <div className="py-8 text-center text-gray-400">Yükleniyor...</div>}
-
-      {!loading && view === "GUN" && workingDayIndexes.has(date.getDay()) && (
+      <div aria-busy={loading}>
+      {view === "GUN" && workingDayIndexes.has(date.getDay()) && (
         <div className="overflow-auto rounded-xl border bg-white">
           <table className="min-w-full border-collapse text-xs">
             <thead className="sticky top-0 z-10 bg-gray-100">
@@ -1598,13 +1703,13 @@ export default function RandevuPage() {
         </div>
       )}
 
-      {!loading && view === "GUN" && !workingDayIndexes.has(date.getDay()) && (
+      {view === "GUN" && !workingDayIndexes.has(date.getDay()) && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           Seçili gün klinik için tatil günü olarak tanımlı. Randevu çizelgesi gösterilmiyor.
         </div>
       )}
 
-      {!loading && view === "HAFTA" && (
+      {view === "HAFTA" && (
         <div className="overflow-auto rounded-xl border bg-white">
           <table className="min-w-full border-collapse text-xs">
               <thead className="sticky top-0 z-10 bg-gray-100">
@@ -1688,12 +1793,12 @@ export default function RandevuPage() {
         </div>
       )}
 
-      {!loading && view === "AY" && (
+      {view === "AY" && (
         <div className="rounded-xl border bg-white p-2">
           <div className="grid grid-cols-7 gap-px bg-gray-200 rounded overflow-hidden">
             {TR_DAYS.map(d => <div key={d} className="bg-gray-100 text-center text-xs font-semibold py-2 text-gray-600">{d}</div>)}
             {(() => {
-              const firstDay = range.from.getDay();
+              const firstDay = currentRange.from.getDay();
               const offset = firstDay === 0 ? 6 : firstDay - 1;
               return Array.from({length: offset}, (_, i) => <div key={"e"+i} className="bg-white min-h-20" />);
             })()}
@@ -1733,7 +1838,7 @@ export default function RandevuPage() {
         </div>
       )}
 
-      {!loading && view === "AJANDA" && (
+      {view === "AJANDA" && (
         <div className="space-y-1">
           <div className="mb-2 flex flex-wrap gap-1">
             {[
@@ -1781,6 +1886,7 @@ export default function RandevuPage() {
           ))}
         </div>
       )}
+      </div>
 
       {/* DOKTOR BLOK EKLEME MODALI */}
       {showBlockModal && (
@@ -1865,11 +1971,11 @@ export default function RandevuPage() {
           const meta = getFollowUpMeta(parsed.followUp);
           const treatmentMeta = getTreatmentMeta(parsed.treatment);
           return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={closeAppointmentModal}>
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-lg font-bold text-primary">{editMode ? "Randevuyu Düzenle" : "Randevu Detayı"}</h3>
-              <button onClick={() => setSelectedAppt(null)} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
+              <button onClick={closeAppointmentModal} className="text-gray-400 hover:text-gray-600 text-xl">×</button>
             </div>
             {editMode ? (
               <div className="space-y-3">
@@ -1993,7 +2099,7 @@ export default function RandevuPage() {
                   <a href={"/hasta-detay?id=" + selectedAppt.patient?.id} className="rounded-lg bg-primary px-3 py-2 text-sm text-white">Hasta Detayı</a>
                   <button onClick={openEditMode} className="rounded-lg bg-slate-600 px-3 py-2 text-sm text-white">Düzenle</button>
                   <button onClick={() => remove(selectedAppt.id)} className="rounded-lg bg-red-600 px-3 py-2 text-sm text-white">Sil</button>
-                  <button onClick={() => setSelectedAppt(null)} className="ml-auto rounded-lg border px-3 py-2 text-sm text-gray-600">Kapat</button>
+                  <button onClick={closeAppointmentModal} className="ml-auto rounded-lg border px-3 py-2 text-sm text-gray-600">Kapat</button>
                 </div>
               </>
             )}

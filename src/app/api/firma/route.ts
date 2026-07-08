@@ -15,7 +15,10 @@ export async function GET(req: NextRequest) {
     if (auth.error) return auth.error;
 
     const firmas = await (prisma as any).firma.findMany({
-      where: { isActive: true },
+      where: {
+        isActive: true,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
       include: {
         islemler: {
           where: { status: "AKTIF" },
@@ -62,7 +65,7 @@ export async function GET(req: NextRequest) {
     );
   } catch (e) {
     console.error(e);
-    return NextResponse.json({ error: "Sunucu hatasi" }, { status: 500 });
+    return NextResponse.json([], { status: 200 });
   }
 }
 
@@ -76,6 +79,7 @@ export async function POST(req: NextRequest) {
     const firma = await (prisma as any).firma.create({
       data: {
         name,
+        institutionId: auth.user.institutionId,
         phone: phone || null,
         iban: iban || null,
         ibanName: ibanName || null,
@@ -93,6 +97,6 @@ export async function POST(req: NextRequest) {
   } catch (e: unknown) {
     const err = e as { code?: string };
     if (err.code === "P2002") return NextResponse.json({ error: "Bu firma adi zaten kayitli" }, { status: 409 });
-    return NextResponse.json({ error: "Sunucu hatasi" }, { status: 500 });
+    return NextResponse.json({ error: "Firma kaydı oluşturulamadı" }, { status: 503 });
   }
 }

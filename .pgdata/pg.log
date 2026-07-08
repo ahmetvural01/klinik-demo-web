@@ -489,3 +489,177 @@
 2026-05-17 12:04:46.523 +03 [8160] WARNING:  could not create listen socket for "localhost"
 2026-05-17 12:04:46.523 +03 [8160] FATAL:  could not create any TCP/IP sockets
 2026-05-17 12:04:46.525 +03 [8160] LOG:  database system is shut down
+2026-05-17 13:38:59.291 +03 [3604] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-05-17 13:38:59.304 +03 [3604] LOG:  could not bind IPv6 address "::1": Only one usage of each socket address (protocol/network address/port) is normally permitted.
+	
+2026-05-17 13:38:59.304 +03 [3604] HINT:  Is another postmaster already running on port 5432? If not, wait a few seconds and retry.
+2026-05-17 13:38:59.305 +03 [3604] LOG:  could not bind IPv4 address "127.0.0.1": Only one usage of each socket address (protocol/network address/port) is normally permitted.
+	
+2026-05-17 13:38:59.305 +03 [3604] HINT:  Is another postmaster already running on port 5432? If not, wait a few seconds and retry.
+2026-05-17 13:38:59.305 +03 [3604] WARNING:  could not create listen socket for "localhost"
+2026-05-17 13:38:59.305 +03 [3604] FATAL:  could not create any TCP/IP sockets
+2026-05-17 13:38:59.306 +03 [3604] LOG:  database system is shut down
+2026-06-13 15:08:22.388 +03 [14812] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-06-13 15:08:22.392 +03 [14812] LOG:  listening on IPv6 address "::1", port 5432
+2026-06-13 15:08:22.392 +03 [14812] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-06-13 15:08:22.431 +03 [13884] LOG:  database system was interrupted; last known up at 2026-05-17 13:38:27 +03
+2026-06-13 15:08:28.139 +03 [13884] LOG:  could not open file "./pg.log": sharing violation
+2026-06-13 15:08:28.139 +03 [13884] DETAIL:  Continuing to retry for 30 seconds.
+2026-06-13 15:08:28.139 +03 [13884] HINT:  You might have antivirus, backup, or similar software interfering with the database system.
+2026-06-13 15:08:55.234 +03 [13884] LOG:  syncing data directory (fsync), elapsed time: 32.80 s, current path: ./pg_commit_ts
+2026-06-13 15:08:55.254 +03 [13884] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-06-13 15:08:55.257 +03 [13884] LOG:  redo starts at 0/6123E90
+2026-06-13 15:08:55.258 +03 [13884] LOG:  invalid record length at 0/6123EC8: expected at least 24, got 0
+2026-06-13 15:08:55.258 +03 [13884] LOG:  redo done at 0/6123E90 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-06-13 15:08:55.282 +03 [9572] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-06-13 15:08:55.401 +03 [9572] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.006 s, total=0.140 s; sync files=2, longest=0.003 s, average=0.003 s; distance=0 kB, estimate=0 kB; lsn=0/6123EC8, redo lsn=0/6123EC8
+2026-06-13 15:08:55.441 +03 [14812] LOG:  database system is ready to accept connections
+2026-06-13 15:09:28.563 +03 [14812] LOG:  background worker "logical replication launcher" (PID 19876) was terminated by exception 0xC000013A
+2026-06-13 15:09:28.563 +03 [14812] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-06-13 15:09:28.564 +03 [14812] LOG:  terminating any other active server processes
+^C2026-06-13 18:29:26.439 +03 [5420] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-06-13 18:29:26.442 +03 [5420] LOG:  listening on IPv6 address "::1", port 5432
+2026-06-13 18:29:26.442 +03 [5420] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-06-13 18:29:26.487 +03 [18140] LOG:  database system was interrupted; last known up at 2026-06-13 15:08:55 +03
+2026-06-13 18:29:34.145 +03 [18140] LOG:  could not open file "./pg.log": sharing violation
+2026-06-13 18:29:34.145 +03 [18140] DETAIL:  Continuing to retry for 30 seconds.
+2026-06-13 18:29:34.145 +03 [18140] HINT:  You might have antivirus, backup, or similar software interfering with the database system.
+2026-06-13 18:30:01.576 +03 [18140] LOG:  syncing data directory (fsync), elapsed time: 35.08 s, current path: ./pg_commit_ts
+2026-06-13 18:30:01.613 +03 [18140] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-06-13 18:30:01.618 +03 [18140] LOG:  redo starts at 0/6123F40
+2026-06-13 18:30:01.618 +03 [18140] LOG:  invalid record length at 0/6123F78: expected at least 24, got 0
+2026-06-13 18:30:01.619 +03 [18140] LOG:  redo done at 0/6123F40 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-06-13 18:30:01.623 +03 [18320] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-06-13 18:30:01.636 +03 [18320] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.002 s, total=0.014 s; sync files=2, longest=0.002 s, average=0.001 s; distance=0 kB, estimate=0 kB; lsn=0/6123F78, redo lsn=0/6123F78
+2026-06-13 18:30:01.645 +03 [5420] LOG:  database system is ready to accept connections
+2026-06-14 00:35:43.350 +03 [5420] LOG:  WAL writer process (PID 2680) was terminated by exception 0xC000013A
+2026-06-14 00:35:43.350 +03 [5420] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-06-14 00:35:43.351 +03 [5420] LOG:  terminating any other active server processes
+^C2026-06-14 00:39:23.497 +03 [18592] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-06-14 00:39:23.501 +03 [18592] LOG:  listening on IPv6 address "::1", port 5432
+2026-06-14 00:39:23.501 +03 [18592] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-06-14 00:39:23.545 +03 [18736] LOG:  database system was interrupted; last known up at 2026-06-13 18:30:01 +03
+2026-06-14 00:39:31.256 +03 [18736] LOG:  could not open file "./pg.log": sharing violation
+2026-06-14 00:39:31.256 +03 [18736] DETAIL:  Continuing to retry for 30 seconds.
+2026-06-14 00:39:31.256 +03 [18736] HINT:  You might have antivirus, backup, or similar software interfering with the database system.
+2026-06-14 00:39:58.284 +03 [18736] LOG:  syncing data directory (fsync), elapsed time: 34.73 s, current path: ./pg_commit_ts
+2026-06-14 00:39:58.407 +03 [18736] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-06-14 00:39:58.418 +03 [18736] LOG:  redo starts at 0/6123FF0
+2026-06-14 00:39:58.419 +03 [18736] LOG:  invalid record length at 0/6124040: expected at least 24, got 0
+2026-06-14 00:39:58.419 +03 [18736] LOG:  redo done at 0/6123FF0 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-06-14 00:39:58.431 +03 [18700] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-06-14 00:39:58.456 +03 [18700] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.006 s, sync=0.003 s, total=0.027 s; sync files=2, longest=0.002 s, average=0.002 s; distance=0 kB, estimate=0 kB; lsn=0/6124040, redo lsn=0/6124040
+2026-06-14 00:39:58.468 +03 [18592] LOG:  database system is ready to accept connections
+2026-06-14 18:02:08.783 +03 [18984] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-06-14 18:02:08.786 +03 [18984] LOG:  listening on IPv6 address "::1", port 5432
+2026-06-14 18:02:08.786 +03 [18984] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-06-14 18:02:08.825 +03 [9068] LOG:  database system was interrupted; last known up at 2026-06-14 00:39:58 +03
+2026-06-14 18:02:16.499 +03 [9068] LOG:  could not open file "./pg.log": sharing violation
+2026-06-14 18:02:16.499 +03 [9068] DETAIL:  Continuing to retry for 30 seconds.
+2026-06-14 18:02:16.499 +03 [9068] HINT:  You might have antivirus, backup, or similar software interfering with the database system.
+2026-06-14 18:02:44.425 +03 [9068] LOG:  syncing data directory (fsync), elapsed time: 35.59 s, current path: ./pg_commit_ts
+2026-06-14 18:02:44.458 +03 [9068] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-06-14 18:02:44.465 +03 [9068] LOG:  redo starts at 0/61240B8
+2026-06-14 18:02:44.465 +03 [9068] LOG:  invalid record length at 0/61240F0: expected at least 24, got 0
+2026-06-14 18:02:44.465 +03 [9068] LOG:  redo done at 0/61240B8 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-06-14 18:02:44.471 +03 [16884] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-06-14 18:02:44.486 +03 [16884] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.003 s, total=0.018 s; sync files=2, longest=0.002 s, average=0.002 s; distance=0 kB, estimate=0 kB; lsn=0/61240F0, redo lsn=0/61240F0
+2026-06-14 18:02:44.498 +03 [18984] LOG:  database system is ready to accept connections
+2026-06-18 11:50:05.962 +03 [14388] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-06-18 11:50:05.969 +03 [14388] LOG:  listening on IPv6 address "::1", port 5432
+2026-06-18 11:50:05.970 +03 [14388] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-06-18 11:50:06.041 +03 [11736] LOG:  database system was interrupted; last known up at 2026-06-14 18:02:44 +03
+2026-06-18 11:50:12.119 +03 [11736] LOG:  could not open file "./pg.log": sharing violation
+2026-06-18 11:50:12.119 +03 [11736] DETAIL:  Continuing to retry for 30 seconds.
+2026-06-18 11:50:12.119 +03 [11736] HINT:  You might have antivirus, backup, or similar software interfering with the database system.
+2026-06-18 11:50:39.473 +03 [11736] LOG:  syncing data directory (fsync), elapsed time: 33.43 s, current path: ./pg_commit_ts
+2026-06-18 11:50:39.503 +03 [11736] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-06-18 11:50:39.521 +03 [11736] LOG:  redo starts at 0/6124168
+2026-06-18 11:50:39.522 +03 [11736] LOG:  invalid record length at 0/61241A0: expected at least 24, got 0
+2026-06-18 11:50:39.523 +03 [11736] LOG:  redo done at 0/6124168 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-06-18 11:50:39.542 +03 [12028] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-06-18 11:50:39.568 +03 [12028] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.005 s, sync=0.006 s, total=0.028 s; sync files=2, longest=0.004 s, average=0.003 s; distance=0 kB, estimate=0 kB; lsn=0/61241A0, redo lsn=0/61241A0
+2026-06-18 11:50:39.587 +03 [14388] LOG:  database system is ready to accept connections
+2026-06-19 15:27:56.968 +03 [21300] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-06-19 15:27:56.977 +03 [21300] LOG:  listening on IPv6 address "::1", port 5432
+2026-06-19 15:27:56.978 +03 [21300] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-06-19 15:27:57.066 +03 [20384] LOG:  database system was interrupted; last known up at 2026-06-18 11:50:39 +03
+2026-06-19 15:28:03.401 +03 [20384] LOG:  could not open file "./pg.log": sharing violation
+2026-06-19 15:28:03.401 +03 [20384] DETAIL:  Continuing to retry for 30 seconds.
+2026-06-19 15:28:03.401 +03 [20384] HINT:  You might have antivirus, backup, or similar software interfering with the database system.
+2026-06-19 15:28:30.931 +03 [20384] LOG:  syncing data directory (fsync), elapsed time: 33.86 s, current path: ./pg_commit_ts
+2026-06-19 15:28:30.953 +03 [20384] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-06-19 15:28:30.980 +03 [20384] LOG:  redo starts at 0/6124218
+2026-06-19 15:28:30.982 +03 [20384] LOG:  invalid record length at 0/6124250: expected at least 24, got 0
+2026-06-19 15:28:30.982 +03 [20384] LOG:  redo done at 0/6124218 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-06-19 15:28:30.999 +03 [7360] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-06-19 15:28:31.029 +03 [7360] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.009 s, sync=0.004 s, total=0.032 s; sync files=2, longest=0.003 s, average=0.002 s; distance=0 kB, estimate=0 kB; lsn=0/6124250, redo lsn=0/6124250
+2026-06-19 15:28:31.044 +03 [21300] LOG:  database system is ready to accept connections
+2026-06-21 18:28:50.529 +03 [8204] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-06-21 18:28:50.536 +03 [8204] LOG:  listening on IPv6 address "::1", port 5432
+2026-06-21 18:28:50.536 +03 [8204] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-06-21 18:28:50.612 +03 [10432] LOG:  database system was interrupted; last known up at 2026-06-19 15:28:31 +03
+2026-06-21 18:28:54.800 +03 [8204] LOG:  startup process (PID 10432) was terminated by exception 0xC000013A
+2026-06-21 18:28:54.800 +03 [8204] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-06-21 18:28:54.801 +03 [8204] LOG:  aborting startup due to startup process failure
+2026-06-21 18:28:54.803 +03 [8204] LOG:  database system is shut down
+2026-06-21 18:28:54.805 +03 [12464] LOG:  shutting down
+2026-06-22 13:16:13.778 +03 [17256] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-06-22 13:16:13.787 +03 [17256] LOG:  listening on IPv6 address "::1", port 5432
+2026-06-22 13:16:13.787 +03 [17256] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-06-22 13:16:13.909 +03 [17252] LOG:  database system was interrupted; last known up at 2026-06-21 21:00:43 +03
+2026-06-22 13:16:24.353 +03 [17252] LOG:  could not open file "./pg.log": sharing violation
+2026-06-22 13:16:24.353 +03 [17252] DETAIL:  Continuing to retry for 30 seconds.
+2026-06-22 13:16:24.353 +03 [17252] HINT:  You might have antivirus, backup, or similar software interfering with the database system.
+2026-06-22 13:16:40.113 +03 [17256] LOG:  startup process (PID 17252) was terminated by exception 0xC000013A
+2026-06-22 13:16:40.113 +03 [17256] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-06-22 13:16:40.113 +03 [17256] LOG:  aborting startup due to startup process failure
+2026-06-22 13:16:40.120 +03 [17256] LOG:  database system is shut down
+2026-06-22 13:16:40.123 +03 [17328] LOG:  shutting down
+2026-06-23 15:41:39.607 +03 [17936] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-06-23 15:41:39.611 +03 [17936] LOG:  listening on IPv6 address "::1", port 5432
+2026-06-23 15:41:39.611 +03 [17936] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-06-23 15:41:39.660 +03 [18540] LOG:  database system was interrupted; last known up at 2026-06-21 21:00:43 +03
+2026-06-23 15:41:47.474 +03 [18540] LOG:  could not open file "./pg.log": sharing violation
+2026-06-23 15:41:47.474 +03 [18540] DETAIL:  Continuing to retry for 30 seconds.
+2026-06-23 15:41:47.474 +03 [18540] HINT:  You might have antivirus, backup, or similar software interfering with the database system.
+2026-06-23 15:42:14.320 +03 [18540] LOG:  syncing data directory (fsync), elapsed time: 34.65 s, current path: ./pg_commit_ts
+2026-06-23 15:42:14.370 +03 [18540] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-06-23 15:42:14.377 +03 [18540] LOG:  redo starts at 0/612D550
+2026-06-23 15:42:14.377 +03 [18540] LOG:  invalid record length at 0/612D658: expected at least 24, got 0
+2026-06-23 15:42:14.377 +03 [18540] LOG:  redo done at 0/612D620 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-06-23 15:42:14.382 +03 [7056] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-06-23 15:42:14.402 +03 [7056] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.004 s, total=0.021 s; sync files=2, longest=0.003 s, average=0.002 s; distance=0 kB, estimate=0 kB; lsn=0/612D658, redo lsn=0/612D658
+2026-06-23 15:42:14.415 +03 [17936] LOG:  database system is ready to accept connections
+2026-06-23 15:42:39.361 +03 [17936] LOG:  background worker "logical replication launcher" (PID 15864) was terminated by exception 0xC000013A
+2026-06-23 15:42:39.361 +03 [17936] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-06-23 15:42:39.362 +03 [17936] LOG:  terminating any other active server processes
+2026-06-23 15:42:39.383 +03 [17936] LOG:  received fast shutdown request
+^C2026-06-24 22:43:38.134 +03 [13696] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-06-24 22:43:38.142 +03 [13696] LOG:  listening on IPv6 address "::1", port 5432
+2026-06-24 22:43:38.143 +03 [13696] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-06-24 22:43:38.246 +03 [16560] LOG:  database system was interrupted; last known up at 2026-06-23 15:42:14 +03
+2026-06-24 22:43:39.978 +03 [13696] LOG:  startup process (PID 16560) was terminated by exception 0xC000013A
+2026-06-24 22:43:39.978 +03 [13696] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-06-24 22:43:39.979 +03 [13696] LOG:  aborting startup due to startup process failure
+2026-06-24 22:43:39.985 +03 [13696] LOG:  database system is shut down
+2026-06-24 22:43:39.986 +03 [8360] LOG:  shutting down
+^C2026-06-27 21:25:43.114 +03 [6668] LOG:  starting PostgreSQL 18.3 on x86_64-windows, compiled by msvc-19.44.35225, 64-bit
+2026-06-27 21:25:43.122 +03 [6668] LOG:  listening on IPv6 address "::1", port 5432
+2026-06-27 21:25:43.123 +03 [6668] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2026-06-27 21:25:43.224 +03 [4108] LOG:  database system was interrupted; last known up at 2026-06-23 15:42:14 +03
+2026-06-27 21:25:53.351 +03 [4108] LOG:  could not open file "./pg.log": sharing violation
+2026-06-27 21:25:53.351 +03 [4108] DETAIL:  Continuing to retry for 30 seconds.
+2026-06-27 21:25:53.351 +03 [4108] HINT:  You might have antivirus, backup, or similar software interfering with the database system.
+2026-06-27 21:26:20.402 +03 [4108] LOG:  syncing data directory (fsync), elapsed time: 37.17 s, current path: ./pg_commit_ts
+2026-06-27 21:26:20.512 +03 [4108] LOG:  database system was not properly shut down; automatic recovery in progress
+2026-06-27 21:26:20.528 +03 [4108] LOG:  redo starts at 0/612D6D0
+2026-06-27 21:26:20.529 +03 [4108] LOG:  invalid record length at 0/612D708: expected at least 24, got 0
+2026-06-27 21:26:20.530 +03 [4108] LOG:  redo done at 0/612D6D0 system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.00 s
+2026-06-27 21:26:20.547 +03 [10412] LOG:  checkpoint starting: end-of-recovery immediate wait
+2026-06-27 21:26:20.587 +03 [10412] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.010 s, sync=0.006 s, total=0.042 s; sync files=2, longest=0.005 s, average=0.003 s; distance=0 kB, estimate=0 kB; lsn=0/612D708, redo lsn=0/612D708
+2026-06-27 21:26:20.627 +03 [6668] LOG:  database system is ready to accept connections
+2026-06-27 21:44:35.461 +03 [6668] LOG:  background worker "logical replication launcher" (PID 7380) was terminated by exception 0xC000013A
+2026-06-27 21:44:35.461 +03 [6668] HINT:  See C include file "ntstatus.h" for a description of the hexadecimal value.
+2026-06-27 21:44:35.462 +03 [6668] LOG:  terminating any other active server processes
+^C

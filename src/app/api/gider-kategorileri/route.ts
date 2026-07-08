@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 export async function GET(req: NextRequest) {
   try {
-    const user = await getCurrentUser();
-    if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    const auth = await requireAuth("finance:read");
+    if (auth.error) return auth.error;
     const cats = await (prisma as any).expenseCategory.findMany({
+      where: {
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
       orderBy: { name: "asc" }
     });
     return NextResponse.json(cats);
@@ -17,11 +20,13 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const user = await getCurrentUser();
-    if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    const auth = await requireAuth("finance:write");
+    if (auth.error) return auth.error;
     const { name } = await req.json();
     if (!name) return NextResponse.json({ error: "İsim zorunlu" }, { status: 400 });
-    const cat = await (prisma as any).expenseCategory.create({ data: { name } });
+    const cat = await (prisma as any).expenseCategory.create({
+      data: { name, institutionId: auth.user.institutionId },
+    });
     return NextResponse.json(cat, { status: 201 });
   } catch (e: unknown) {
     const err = e as { code?: string };

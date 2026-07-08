@@ -21,51 +21,57 @@ const SETTING_LABELS: Record<string, string> = {
 };
 
 export async function GET() {
-  const auth = await requireAuth("*");
-  if (auth.error) return auth.error;
+  try {
+    const auth = await requireAuth("*");
+    if (auth.error) return auth.error;
 
-  if (!auth.user.institutionId) {
-    return NextResponse.json({ message: "Sadece klinik kullanicilari ayarlara erisebilir" }, { status: 403 });
+    if (!auth.user.institutionId) {
+      return NextResponse.json({ message: "Sadece klinik kullanicilari ayarlara erisebilir" }, { status: 403 });
+    }
+
+    const settings = await prisma.setting.findUnique({
+      where: { institutionId: auth.user.institutionId },
+    });
+    return NextResponse.json(settings);
+  } catch (error) {
+    console.error("[settings GET] fallback:", error);
+    return NextResponse.json(null);
   }
-
-  const settings = await prisma.setting.findUnique({
-    where: { institutionId: auth.user.institutionId },
-  });
-  return NextResponse.json(settings);
 }
 
 export async function PUT(request: NextRequest) {
-  const auth = await requireAuth("*");
-  if (auth.error) return auth.error;
+  try {
+    const auth = await requireAuth("*");
+    if (auth.error) return auth.error;
 
-  if (!auth.user.institutionId) {
-    return NextResponse.json({ message: "Sadece klinik kullanicilari ayar guncelleyebilir" }, { status: 403 });
-  }
+    if (!auth.user.institutionId) {
+      return NextResponse.json({ message: "Sadece klinik kullanicilari ayar guncelleyebilir" }, { status: 403 });
+    }
 
-  const body = await request.json();
+    const body = await request.json();
 
-  const institution = await prisma.institution.findUnique({
-    where: { id: auth.user.institutionId },
-  });
+    const institution = await prisma.institution.findUnique({
+      where: { id: auth.user.institutionId },
+    });
 
-  if (!institution) {
-    return NextResponse.json({ message: "Klinik bulunamadi" }, { status: 404 });
-  }
+    if (!institution) {
+      return NextResponse.json({ message: "Klinik bulunamadi" }, { status: 404 });
+    }
 
-  const current = await prisma.setting.findUnique({
-    where: { institutionId: auth.user.institutionId },
-  });
+    const current = await prisma.setting.findUnique({
+      where: { institutionId: auth.user.institutionId },
+    });
 
-  const updated = current
-    ? await prisma.setting.update({ where: { institutionId: auth.user.institutionId }, data: body })
-    : await prisma.setting.create({
-        data: {
-          institutionId: auth.user.institutionId,
-          institutionName: body.institutionName || institution.name,
-          institutionPhone: body.institutionPhone || institution.phone,
-          ...body,
-        },
-      });
+    const updated = current
+      ? await prisma.setting.update({ where: { institutionId: auth.user.institutionId }, data: body })
+      : await prisma.setting.create({
+          data: {
+            institutionId: auth.user.institutionId,
+            institutionName: body.institutionName || institution.name,
+            institutionPhone: body.institutionPhone || institution.phone,
+            ...body,
+          },
+        });
 
   const beforeParts: string[] = [];
   const afterParts: string[] = [];
@@ -84,7 +90,11 @@ export async function PUT(request: NextRequest) {
     `Değişiklik sonrası: ${afterParts.length > 0 ? afterParts.join(" | ") : "Alan değişikliği yok"}`,
   ].join("\n");
 
-  await writeAudit(auth.user.id, "SETTINGS_UPDATE", detail);
+    await writeAudit(auth.user.id, "SETTINGS_UPDATE", detail);
 
-  return NextResponse.json(updated);
+    return NextResponse.json(updated);
+  } catch (error) {
+    console.error("[settings PUT] fallback:", error);
+    return NextResponse.json({ message: "Ayarlar güncellenemedi" }, { status: 503 });
+  }
 }

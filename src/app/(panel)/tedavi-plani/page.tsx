@@ -98,10 +98,11 @@ export default function TedaviPlaniPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">Tedavi Planları</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Hasta bazlı çok adımlı tedavi takibi</p>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-black text-slate-900">Tedavi Planları</h1>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{plans.length} plan</span>
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-700">{plans.filter(p => p.status === "DEVAM_EDIYOR").length} devam ediyor</span>
         </div>
         <button onClick={() => setShowNew(true)} className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700">
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -113,10 +114,10 @@ export default function TedaviPlaniPage() {
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
         <div className="relative flex-1 min-w-48">
           <svg className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Hasta veya plan adı ara…" className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Hasta veya tedavi planı ara" className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none" />
         </div>
         {(["", "PLANLANDI", "DEVAM_EDIYOR", "TAMAMLANDI", "IPTAL"] as const).map(s => (
-          <button key={s} onClick={() => setFilter(s)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${filter === s ? "bg-primary text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+          <button key={s} onClick={() => setFilter(s)} className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${filter === s ? "bg-primary text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
             {s === "" ? "Tümü" : STATUS_CFG[s].label}
           </button>
         ))}
@@ -136,11 +137,8 @@ export default function TedaviPlaniPage() {
         })}
       </div>
 
-      {loading && <div className="flex items-center justify-center py-16 text-sm text-slate-400">Yükleniyor…</div>}
-
       {/* Plans Grid */}
-      {!loading && (
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" aria-busy={loading}>
           {filtered.length === 0 && (
             <div className="col-span-full flex flex-col items-center py-16 text-slate-300">
               <svg className="mb-3 h-12 w-12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>
@@ -152,7 +150,7 @@ export default function TedaviPlaniPage() {
             const done = plan.steps.filter(s => s.status === "YAPILDI").length;
             const pct  = plan.steps.length > 0 ? Math.round((done / plan.steps.length) * 100) : 0;
             return (
-              <div key={plan.id} onClick={() => setSelected(plan)} className="cursor-pointer rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition hover:shadow-md hover:border-blue-100">
+              <button key={plan.id} onClick={() => setSelected(plan)} className="cursor-pointer rounded-2xl border border-slate-100 bg-white p-5 text-left shadow-sm transition hover:border-blue-100 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary/30">
                 <div className="flex items-start justify-between gap-2 mb-3">
                   <div>
                     <h3 className="font-bold text-slate-900 leading-tight">{plan.title}</h3>
@@ -173,11 +171,10 @@ export default function TedaviPlaniPage() {
                   <p className="text-xs text-slate-400">{plan.doctor.fullName}</p>
                   {plan.totalCost && <p className="text-xs font-bold text-slate-700">{CURRENCY.format(plan.totalCost)}</p>}
                 </div>
-              </div>
+              </button>
             );
           })}
-        </div>
-      )}
+      </div>
 
       {/* Detail Modal */}
       {selected && (
@@ -194,9 +191,9 @@ export default function TedaviPlaniPage() {
             </div>
             <div className="p-6 space-y-5">
               {/* Status control */}
-              <div className="flex flex-wrap gap-2">
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                 {(["PLANLANDI","DEVAM_EDIYOR","TAMAMLANDI","IPTAL"] as PlanStatus[]).map(s => (
-                  <button key={s} onClick={() => updateStatus(selected.id, s)} className={`rounded-lg px-3 py-1.5 text-xs font-bold transition ${selected.status === s ? "bg-primary text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+                  <button key={s} onClick={() => updateStatus(selected.id, s)} className={`rounded-lg px-3 py-2 text-sm font-bold transition ${selected.status === s ? "bg-primary text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
                     {STATUS_CFG[s].label}
                   </button>
                 ))}
@@ -208,7 +205,7 @@ export default function TedaviPlaniPage() {
                   {selected.steps.map(step => {
                     const sCfg = STEP_STATUS[step.status] || STEP_STATUS.BEKLIYOR;
                     return (
-                      <div key={step.id} className="flex items-center gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3">
+                      <div key={step.id} className="grid gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] sm:items-center">
                         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white border border-slate-200 text-xs font-bold text-slate-600">{step.order}</span>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-semibold text-slate-800">{step.treatmentName}</p>
@@ -216,7 +213,7 @@ export default function TedaviPlaniPage() {
                         </div>
                         <span className="shrink-0 text-xs font-bold text-slate-600">{CURRENCY.format(step.amount)}</span>
                         <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${sCfg.cls}`}>{sCfg.label}</span>
-                        <select value={step.status} onChange={e => updateStep(selected.id, step.id, e.target.value as StepStatus)} className="shrink-0 rounded-lg border border-slate-200 px-2 py-1 text-xs focus:outline-none">
+                        <select value={step.status} onChange={e => updateStep(selected.id, step.id, e.target.value as StepStatus)} className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none">
                           <option value="BEKLIYOR">Bekliyor</option>
                           <option value="YAPILDI">Yapıldı</option>
                           <option value="IPTAL">İptal</option>
@@ -249,7 +246,7 @@ export default function TedaviPlaniPage() {
               </button>
             </div>
             <div className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta</label>
                   <select value={newPlan.patientId} onChange={e => setNewPlan(p => ({ ...p, patientId: e.target.value }))} className={inp + " w-full"}>
@@ -272,16 +269,16 @@ export default function TedaviPlaniPage() {
               <div>
                 <div className="mb-2 flex items-center justify-between">
                   <label className="text-xs font-semibold text-slate-600">Tedavi Adımları</label>
-                  <button onClick={() => setNewSteps(s => [...s, { treatmentName: "", toothNo: "", amount: "" }])} className="text-xs font-semibold text-primary hover:underline">+ Adım Ekle</button>
+                  <button onClick={() => setNewSteps(s => [...s, { treatmentName: "", toothNo: "", amount: "" }])} className="rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-blue-50">Adım Ekle</button>
                 </div>
                 <div className="space-y-2">
                   {newSteps.map((step, i) => (
-                    <div key={i} className="flex gap-2 items-center">
+                    <div key={i} className="grid gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[auto_minmax(0,1fr)_90px_110px_auto] sm:items-center">
                       <span className="shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-500">{i + 1}</span>
                       <input value={step.treatmentName} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, treatmentName: e.target.value } : x))} placeholder="Tedavi adı" className={inp + " flex-1"} />
-                      <input value={step.toothNo} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, toothNo: e.target.value } : x))} placeholder="Diş no" className={inp + " w-20"} />
-                      <input type="number" value={step.amount} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} placeholder="₺" className={inp + " w-24"} />
-                      {newSteps.length > 1 && <button onClick={() => setNewSteps(s => s.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600">×</button>}
+                      <input value={step.toothNo} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, toothNo: e.target.value } : x))} placeholder="Diş no" className={inp + " w-full"} />
+                      <input type="number" value={step.amount} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} placeholder="Tutar" className={inp + " w-full"} />
+                      {newSteps.length > 1 && <button onClick={() => setNewSteps(s => s.filter((_, j) => j !== i))} className="rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">Sil</button>}
                     </div>
                   ))}
                 </div>

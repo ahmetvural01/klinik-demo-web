@@ -7,8 +7,11 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
 
-    const firma = await (prisma as any).firma.findUnique({
-      where: { id: params.id },
+    const firma = await (prisma as any).firma.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
       include: {
         islemler: {
           where: { status: "AKTIF" },
@@ -23,7 +26,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     if (!firma) return NextResponse.json({ error: "Bulunamadi" }, { status: 404 });
     return NextResponse.json(firma);
   } catch (e) {
-    return NextResponse.json({ error: "Sunucu hatasi" }, { status: 500 });
+    return NextResponse.json({ error: "Bulunamadi" }, { status: 404 });
   }
 }
 
@@ -34,9 +37,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     
     const body = await req.json();
     const { kategori, paymentTerms, customPaymentDays, ...rest } = body;
+    const existing = await (prisma as any).firma.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
+      select: { id: true },
+    });
+    if (!existing) return NextResponse.json({ error: "Bulunamadi" }, { status: 404 });
     
     const firma = await (prisma as any).firma.update({
-      where: { id: params.id },
+      where: { id: existing.id },
       data: {
         ...rest,
         kategori: kategori || undefined,
@@ -51,6 +62,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     });
     return NextResponse.json(firma);
   } catch (e) {
-    return NextResponse.json({ error: "Sunucu hatasi" }, { status: 500 });
+    return NextResponse.json({ error: "Firma guncellenemedi" }, { status: 503 });
   }
 }

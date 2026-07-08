@@ -134,11 +134,11 @@ export async function POST(request: NextRequest) {
   const note = (body.note || "").trim();
 
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 5000000) {
-    return NextResponse.json({ message: "Gecersiz SMS adedi" }, { status: 400 });
+    return NextResponse.json({ message: "Geçersiz SMS adedi" }, { status: 400 });
   }
 
   if (unitCost != null && (Number.isNaN(unitCost) || unitCost < 0 || unitCost > 100)) {
-    return NextResponse.json({ message: "Gecersiz birim maliyet" }, { status: 400 });
+    return NextResponse.json({ message: "Geçersiz birim maliyet" }, { status: 400 });
   }
 
   if (!provider) {
@@ -180,7 +180,7 @@ export async function POST(request: NextRequest) {
   await writeAudit(
     auth.user.id,
     "PLATFORM_SMS_PURCHASE",
-    `Platforma ${quantity} SMS stok kaydi eklendi. Saglayici: ${provider}`
+    `Platforma ${quantity} SMS stok kaydı eklendi. Sağlayıcı: ${provider}`
   );
 
   return NextResponse.json({

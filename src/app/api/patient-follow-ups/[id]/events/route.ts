@@ -10,13 +10,29 @@ export async function GET(_: NextRequest, { params }: Params) {
     const auth = await requireAuth("appointments:read");
     if (auth.error) return auth.error;
 
+    const institutionDoctors = auth.user.institutionId
+      ? await prisma.user.findMany({
+          where: { institutionId: auth.user.institutionId, role: "DOKTOR", isActive: true },
+          select: { id: true },
+        })
+      : [];
+    const doctorIds = institutionDoctors.map((doctor) => doctor.id);
+
     const followUp = await prisma.patientFollowUp.findUnique({
       where: { id: params.id },
-      select: { id: true },
+      select: { id: true, doctorId: true, appointment: { select: { doctorId: true } }, createdBy: { select: { institutionId: true } } },
     });
 
     if (!followUp) {
-      return NextResponse.json({ message: "Takip kaydi bulunamadi" }, { status: 404 });
+      return NextResponse.json({ message: "Takip kaydı bulunamadı" }, { status: 404 });
+    }
+
+    if (auth.user.institutionId && doctorIds.length > 0) {
+      const followUpDoctorId = followUp.doctorId || followUp.appointment?.doctorId || null;
+      const sameInstitution = followUp.createdBy.institutionId === auth.user.institutionId || (followUpDoctorId ? doctorIds.includes(followUpDoctorId) : false);
+      if (!sameInstitution) {
+        return NextResponse.json({ message: "Takip kaydı kurum kapsamı dışında" }, { status: 403 });
+      }
     }
 
     const events = await prisma.patientFollowUpEvent.findMany({
@@ -31,7 +47,7 @@ export async function GET(_: NextRequest, { params }: Params) {
 
     return NextResponse.json(events);
   } catch {
-    return NextResponse.json({ message: "Veritabani baglantisi kurulamadi. Lutfen sistem yoneticinize bildiriniz." }, { status: 503 });
+    return NextResponse.json({ message: "Veritabanı bağlantısı kurulamadı. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });
   }
 }
 
@@ -40,20 +56,40 @@ export async function POST(request: NextRequest, { params }: Params) {
     const auth = await requireAuth("appointments:write");
     if (auth.error) return auth.error;
 
+    const institutionDoctors = auth.user.institutionId
+      ? await prisma.user.findMany({
+          where: { institutionId: auth.user.institutionId, role: "DOKTOR", isActive: true },
+          select: { id: true },
+        })
+      : [];
+    const doctorIds = institutionDoctors.map((doctor) => doctor.id);
+
     const followUp = await prisma.patientFollowUp.findUnique({
       where: { id: params.id },
-      include: { patient: { select: { id: true, fullName: true } }, createdBy: { select: { id: true } } },
+      include: {
+        patient: { select: { id: true, fullName: true } },
+        createdBy: { select: { id: true, institutionId: true } },
+        appointment: { select: { doctorId: true } },
+      },
     });
 
     if (!followUp) {
-      return NextResponse.json({ message: "Takip kaydi bulunamadi" }, { status: 404 });
+      return NextResponse.json({ message: "Takip kaydı bulunamadı" }, { status: 404 });
+    }
+
+    if (auth.user.institutionId && doctorIds.length > 0) {
+      const followUpDoctorId = followUp.doctorId || followUp.appointment?.doctorId || null;
+      const sameInstitution = followUp.createdBy.institutionId === auth.user.institutionId || (followUpDoctorId ? doctorIds.includes(followUpDoctorId) : false);
+      if (!sameInstitution) {
+        return NextResponse.json({ message: "Takip kaydı kurum kapsamı dışında" }, { status: 403 });
+      }
     }
 
     const body = await request.json();
     const parsed = patientFollowUpEventCreateSchema.safeParse(body);
 
     if (!parsed.success) {
-      return NextResponse.json({ message: "Gecersiz surec notu" }, { status: 400 });
+      return NextResponse.json({ message: "Geçersiz süreç notu" }, { status: 400 });
     }
 
     const actorUser = await prisma.user.findUnique({
@@ -81,9 +117,9 @@ export async function POST(request: NextRequest, { params }: Params) {
       },
     });
 
-    await writeAudit(actorUserId, "PATIENT_FOLLOW_UP_EVENT_CREATE", `${followUp.patient.fullName} icin surec notu eklendi`);
+    await writeAudit(actorUserId, "PATIENT_FOLLOW_UP_EVENT_CREATE", `${followUp.patient.fullName} için süreç notu eklendi`);
     return NextResponse.json(event, { status: 201 });
   } catch {
-    return NextResponse.json({ message: "Surec notu su an kaydedilemiyor. Veritabani baglantisini kontrol edin." }, { status: 503 });
+    return NextResponse.json({ message: "Süreç notu şu an kaydedilemiyor. Veritabanı bağlantısını kontrol edin." }, { status: 503 });
   }
 }

@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
   const dueDays = Number(body.dueDays ?? 7);
 
   if (!Number.isInteger(quantity) || quantity < 1) {
-    return NextResponse.json({ message: "Gecersiz adet" }, { status: 400 });
+    return NextResponse.json({ message: "Geçersiz adet" }, { status: 400 });
   }
 
   const [institution, smsPackage] = await Promise.all([

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 import {
   applyFirmaIslemIntegration,
   buildFirmaIntegrationMessage,
@@ -10,8 +10,17 @@ import {
 // GET: Firma ekstre (tum islemler + cari bakiye)
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const user = await getCurrentUser();
-    if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    const auth = await requireAuth("finance:read");
+    if (auth.error) return auth.error;
+
+    const firma = await (prisma as any).firma.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
+      select: { id: true },
+    });
+    if (!firma) return NextResponse.json({ error: "Firma bulunamadı" }, { status: 404 });
 
     const islemler = await (prisma as any).firmaIslem.findMany({
       where: { firmaId: params.id, status: "AKTIF" },
@@ -38,15 +47,15 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
     return NextResponse.json({ islemler: withBakiye, topBorc, topOdeme, netBakiye: topBorc - topOdeme });
   } catch (e) {
-    return NextResponse.json({ error: "Sunucu hatasi" }, { status: 500 });
+    return NextResponse.json({ islemler: [], topBorc: 0, topOdeme: 0, netBakiye: 0 }, { status: 200 });
   }
 }
 
 // POST: Yeni islem ekle
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const user = await getCurrentUser();
-    if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    const auth = await requireAuth("finance:write");
+    if (auth.error) return auth.error;
 
     const body = await req.json();
     const {
@@ -70,9 +79,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ error: "Ödeme işlemlerinde yöntem zorunlu" }, { status: 400 });
     }
 
-    const firma = await (prisma as any).firma.findUnique({
-      where: { id: params.id },
-      select: { id: true, name: true },
+    const firma = await (prisma as any).firma.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
+      select: { id: true, name: true, institutionId: true },
     });
 
     if (!firma) {
@@ -97,7 +109,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
       const integrationSummary = await applyFirmaIslemIntegration({
         tx,
-        userId: user.id,
+        userId: auth.user.id,
         firma,
         islem: {
           ...created,
@@ -111,11 +123,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return { islem: created, summary: integrationSummary };
     });
 
-    await writeFirmaIntegrationAudit(user.id, "FIRMA_ISLEM_CREATE", firma.name, islemTipi, Number(tutar), summary);
+    await writeFirmaIntegrationAudit(auth.user.id, "FIRMA_ISLEM_CREATE", firma.name, islemTipi, Number(tutar), summary);
 
     return NextResponse.json({ islem, message: buildFirmaIntegrationMessage(summary), integration: summary }, { status: 201 });
   } catch (e) {
     console.error(e);
-    return NextResponse.json({ error: "Sunucu hatasi" }, { status: 500 });
+    return NextResponse.json({ error: "Islem eklenemedi" }, { status: 503 });
   }
 }

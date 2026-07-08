@@ -42,7 +42,7 @@ export default function AyarPage() {
     smsDefaultReminder: false,
     smsDefaultSurvey: false
   });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const showToast = (type: "success" | "error", text: string) => {
@@ -134,12 +134,10 @@ export default function AyarPage() {
   };
 
   const deletePos = async (id: string, name: string) => {
-    if (!confirm(`"${name}" cihazını silmek istediğinize emin misiniz?`)) return;
+    if (!confirm(`"${name}" POS cihazı silinecek. Bu işlem mevcut ödeme kayıtlarını silmez, sadece yeni kayıtlarda bu cihazın seçilmesini engeller. Devam etmek istiyor musunuz?`)) return;
     await fetch(`/api/pos-devices/${id}`, { method: "DELETE" });
     void fetchPos();
   };
-
-  if (loading) return <p className="p-6 text-slate-500">Yükleniyor…</p>;
 
   const TABS = [
     { id: "genel"   as const, label: "Genel Ayarlar" },
@@ -149,25 +147,27 @@ export default function AyarPage() {
   ];
 
   return (
-    <section className="space-y-5">
+    <section className="space-y-5" aria-busy={loading}>
       {/* Toast */}
       {toast && (
         <div className={`fixed right-5 top-5 z-[100] flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${
           toast.type === "success" ? "bg-emerald-500" : "bg-red-500"
         }`}>
-          {toast.type === "success" ? "✓" : "✕"} {toast.text}
+          {toast.text}
         </div>
       )}
-      <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-        <h1 className="text-xl font-black text-slate-900">Sistem Ayarları</h1>
-        <p className="mt-0.5 text-xs text-slate-500">Klinik ayarları · SMS · POS cihaz yönetimi</p>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-black text-slate-900">Ayarlar</h1>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{TABS.find(t => t.id === activeTab)?.label}</span>
+        </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 rounded-xl border border-slate-100 bg-white p-1 shadow-sm">
+      <div className="flex gap-1 overflow-x-auto rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
         {TABS.map(t => (
           <button key={t.id} onClick={() => setActiveTab(t.id)}
-            className={`flex-1 rounded-lg px-4 py-2 text-sm font-semibold transition ${activeTab === t.id ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>
+            className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition ${activeTab === t.id ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>
             {t.label}
           </button>
         ))}
@@ -177,10 +177,11 @@ export default function AyarPage() {
       {activeTab === "genel" && (
         <div className="rounded-xl border border-slate-100 bg-white p-6 shadow-sm space-y-6">
           <div>
-            <h3 className="mb-3 text-sm font-bold text-slate-800">Firma Bilgileri</h3>
+            <h3 className="mb-1 text-base font-black text-slate-900">Klinik Bilgileri</h3>
+            <p className="mb-3 text-sm text-slate-500">Bu bilgiler rapor, çıktı ve kurumsal görünümde kullanılır.</p>
             <div className="grid gap-3 sm:grid-cols-2">
               {[
-                { label: "Firma Adı",      key: "institutionName"    as const },
+                { label: "Klinik / Kurum Adı",      key: "institutionName"    as const },
                 { label: "Adres",          key: "institutionAddress" as const },
                 { label: "Telefon",        key: "institutionPhone"   as const },
                 { label: "Web Sitesi",     key: "institutionWebsite" as const, placeholder: "https://..." },
@@ -196,7 +197,8 @@ export default function AyarPage() {
           </div>
 
           <div>
-            <h3 className="mb-3 text-sm font-bold text-slate-800">Randevu Ayarı</h3>
+            <h3 className="mb-1 text-base font-black text-slate-900">Randevu Ayarı</h3>
+            <p className="mb-3 text-sm text-slate-500">Takvimde varsayılan randevu aralığını belirler.</p>
             <div className="grid gap-3 sm:grid-cols-1 max-w-xs">
               <div>
                 <label className="block text-xs font-semibold text-slate-600 mb-1">Randevu Süresi (dakika)</label>
@@ -210,11 +212,11 @@ export default function AyarPage() {
           <div className="flex gap-2 pt-2 border-t border-slate-100">
             <button onClick={saveSettings} disabled={saving}
               className="rounded-lg bg-primary px-6 py-2 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50">
-              {saving ? "Kaydediliyor…" : "Kaydet"}
+              {saving ? "Kaydediliyor…" : "Ayarları Kaydet"}
             </button>
             <button onClick={fetchSettings}
               className="rounded-lg border border-slate-200 px-6 py-2 text-sm text-slate-600 hover:bg-slate-50">
-              Sıfırla
+              Eski Değerleri Getir
             </button>
           </div>
         </div>
@@ -247,12 +249,50 @@ export default function AyarPage() {
           <div>
             <h3 className="mb-1 text-sm font-bold text-slate-800">Gün Bazlı Çalışma Saatleri</h3>
             <p className="mb-3 text-xs text-slate-500">Her gün için açılış/kapanış ve öğle arası ayrı tanımlanabilir. Tatil olarak işaretlenen günler kapalı görünür.</p>
-            <div className="overflow-x-auto">
+            <div className="space-y-3 md:hidden">
+              {settings.dailySchedules.map((ds, idx) => (
+                <div key={ds.day} className={`rounded-2xl border p-4 ${ds.isHoliday ? "border-red-100 bg-red-50" : "border-slate-100 bg-slate-50"}`}>
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-bold text-slate-900">{ds.day}</p>
+                    <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                      <input type="checkbox" className="h-4 w-4 accent-red-500"
+                        checked={ds.isHoliday}
+                        onChange={e => {
+                          const updated = [...settings.dailySchedules];
+                          updated[idx] = { ...ds, isHoliday: e.target.checked };
+                          setSettings({ ...settings, dailySchedules: updated });
+                        }} />
+                      Kapalı
+                    </label>
+                  </div>
+                  <div className="mt-3 grid grid-cols-2 gap-3">
+                    {[
+                      { label: "Açılış", key: "open" as const },
+                      { label: "Kapanış", key: "close" as const },
+                      { label: "Öğle Başlangıç", key: "lunchStart" as const },
+                      { label: "Öğle Bitiş", key: "lunchEnd" as const },
+                    ].map((field) => (
+                      <label key={field.key} className="text-xs font-semibold text-slate-600">
+                        {field.label}
+                        <input type="time" value={ds[field.key]} disabled={ds.isHoliday}
+                          onChange={e => {
+                            const updated = [...settings.dailySchedules];
+                            updated[idx] = { ...ds, [field.key]: e.target.value };
+                            setSettings({ ...settings, dailySchedules: updated });
+                          }}
+                          className="mt-1 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none disabled:bg-slate-100 disabled:opacity-40" />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="hidden overflow-x-auto md:block">
               <table className="w-full text-sm border-collapse">
                 <thead>
                   <tr className="bg-slate-50 text-xs text-slate-500 font-semibold">
                     <th className="text-left p-2 pl-3 rounded-tl-lg">Gün</th>
-                    <th className="text-left p-2">Tatil</th>
+                    <th className="text-left p-2">Kapalı</th>
                     <th className="text-left p-2">Açılış</th>
                     <th className="text-left p-2">Kapanış</th>
                     <th className="text-left p-2">Öğle Başlangıç</th>
@@ -318,11 +358,11 @@ export default function AyarPage() {
           <div className="flex gap-2 pt-2 border-t border-slate-100">
             <button onClick={saveSettings} disabled={saving}
               className="rounded-lg bg-primary px-6 py-2 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50">
-              {saving ? "Kaydediliyor…" : "Kaydet"}
+              {saving ? "Kaydediliyor…" : "Çalışma Saatlerini Kaydet"}
             </button>
             <button onClick={fetchSettings}
               className="rounded-lg border border-slate-200 px-6 py-2 text-sm text-slate-600 hover:bg-slate-50">
-              Sıfırla
+              Eski Değerleri Getir
             </button>
           </div>
         </div>
@@ -331,13 +371,14 @@ export default function AyarPage() {
       {/* ── SMS AYARLARI ───────────────────────────────────────────────── */}
       {activeTab === "sms" && (
         <div className="rounded-xl border border-slate-100 bg-white p-6 shadow-sm space-y-4">
-          <h3 className="text-sm font-bold text-slate-800">SMS Gönderim Tercihleri</h3>
+          <h3 className="text-base font-black text-slate-900">SMS Gönderim Tercihleri</h3>
+          <p className="text-sm text-slate-500">Bu seçimler yeni randevu oluştururken varsayılan olarak uygulanır.</p>
           <div className="space-y-3 rounded-lg bg-slate-50 p-4 border border-slate-100">
             {[
-              { key: "smsEnabled"         as const, label: "SMS gönderimi aktif mi?" },
-              { key: "smsDefaultInfo"     as const, label: "Randevu bilgilendirme SMS'i varsayılan aktif?" },
-              { key: "smsDefaultReminder" as const, label: "Hatırlatma SMS'i varsayılan aktif?" },
-              { key: "smsDefaultSurvey"   as const, label: "Değerlendirme SMS'i varsayılan aktif?" },
+              { key: "smsEnabled"         as const, label: "SMS gönderimi açık olsun" },
+              { key: "smsDefaultInfo"     as const, label: "Randevu bilgilendirme SMS'i varsayılan açık olsun" },
+              { key: "smsDefaultReminder" as const, label: "Hatırlatma SMS'i varsayılan açık olsun" },
+              { key: "smsDefaultSurvey"   as const, label: "Değerlendirme SMS'i varsayılan açık olsun" },
             ].map(item => (
               <label key={item.key} className="flex items-center gap-3 cursor-pointer text-sm">
                 <input type="checkbox" className="h-4 w-4 accent-primary"
@@ -350,7 +391,7 @@ export default function AyarPage() {
           <div className="flex gap-2 pt-2 border-t border-slate-100">
             <button onClick={saveSettings} disabled={saving}
               className="rounded-lg bg-primary px-6 py-2 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50">
-              {saving ? "Kaydediliyor…" : "Kaydet"}
+              {saving ? "Kaydediliyor…" : "SMS Ayarlarını Kaydet"}
             </button>
           </div>
         </div>
@@ -360,7 +401,7 @@ export default function AyarPage() {
       {activeTab === "pos" && (
         <div className="space-y-4">
           <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-            <h3 className="mb-1 text-sm font-bold text-slate-800">Yeni POS Cihazı Ekle</h3>
+            <h3 className="mb-1 text-base font-black text-slate-900">Yeni POS Cihazı Ekle</h3>
             <p className="mb-4 text-xs text-slate-500">Kliniğinizde kullandığınız POS cihazlarını tanımlayın. Bu cihazlar ödeme ve taksit kayıtlarında seçilebilir.</p>
             <div className="flex gap-2">
               <input value={newPosName} onChange={e => setNewPosName(e.target.value)}
@@ -369,7 +410,7 @@ export default function AyarPage() {
                 className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
               <button onClick={addPos} disabled={addingPos || !newPosName.trim()}
                 className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50">
-                {addingPos ? "Ekleniyor…" : "+ Ekle"}
+                {addingPos ? "Ekleniyor…" : "POS Ekle"}
               </button>
             </div>
           </div>
@@ -379,9 +420,7 @@ export default function AyarPage() {
               <h3 className="text-sm font-bold text-slate-800">Kayıtlı POS Cihazları</h3>
               <span className="text-xs text-slate-500">{posDevices.length} cihaz</span>
             </div>
-            {posLoading ? (
-              <p className="py-10 text-center text-sm text-slate-400">Yükleniyor…</p>
-            ) : posDevices.length === 0 ? (
+            {posDevices.length === 0 ? (
               <p className="py-10 text-center text-sm text-slate-400">Henüz POS cihazı eklenmedi</p>
             ) : (
               <div className="divide-y divide-slate-50">

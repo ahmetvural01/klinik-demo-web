@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}));
   if (body?.action !== "reset") {
-    return NextResponse.json({ message: "Gecersiz islem" }, { status: 400 });
+    return NextResponse.json({ message: "Geçersiz işlem" }, { status: 400 });
   }
 
   const next = resetRolePermissionMap(auth.user.fullName || auth.user.id);

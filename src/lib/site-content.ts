@@ -29,26 +29,31 @@ export function normalizeSiteContent(input: Partial<SiteContentPayload> | null |
 }
 
 export async function getSiteContent() {
-  const row = await prisma.siteContent.findUnique({ where: { id: 1 } });
-  if (!row) return DEFAULT_SITE_CONTENT;
+  try {
+    const row = await prisma.siteContent.findUnique({ where: { id: 1 } });
+    if (!row) return DEFAULT_SITE_CONTENT;
 
-  return normalizeSiteContent({
-    heroBadge: row.heroBadge,
-    heroTitle: row.heroTitle,
-    heroDescription: row.heroDescription,
-    primaryCtaLabel: row.primaryCtaLabel,
-    primaryCtaUrl: row.primaryCtaUrl,
-    secondaryCtaLabel: row.secondaryCtaLabel,
-    secondaryCtaUrl: row.secondaryCtaUrl,
-    promoTitle: row.promoTitle,
-    promoDescription: row.promoDescription,
-    promoVideoUrl: row.promoVideoUrl || "",
-    heroImageUrl: row.heroImageUrl || "",
-    showAnimations: row.showAnimations,
-    featureCards: row.featureCards as SiteCard[],
-    pricingCards: row.pricingCards as SiteCard[],
-    statsCards: row.statsCards as SiteCard[],
-    moduleCards: row.moduleCards as SiteCard[],
-    galleryImages: row.galleryImages as string[],
-  });
+    return normalizeSiteContent({
+      heroBadge: row.heroBadge,
+      heroTitle: row.heroTitle,
+      heroDescription: row.heroDescription,
+      primaryCtaLabel: row.primaryCtaLabel,
+      primaryCtaUrl: row.primaryCtaUrl,
+      secondaryCtaLabel: row.secondaryCtaLabel,
+      secondaryCtaUrl: row.secondaryCtaUrl,
+      promoTitle: row.promoTitle,
+      promoDescription: row.promoDescription,
+      promoVideoUrl: row.promoVideoUrl || "",
+      heroImageUrl: row.heroImageUrl || "",
+      showAnimations: row.showAnimations,
+      featureCards: row.featureCards as SiteCard[],
+      pricingCards: row.pricingCards as SiteCard[],
+      statsCards: row.statsCards as SiteCard[],
+      moduleCards: row.moduleCards as SiteCard[],
+      galleryImages: row.galleryImages as string[],
+    });
+  } catch (error) {
+    console.warn("[site-content] DB unavailable, using defaults", error instanceof Error ? error.message : String(error));
+    return DEFAULT_SITE_CONTENT;
+  }
 }

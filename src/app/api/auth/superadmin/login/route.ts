@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
 
   const attemptKey = getAttemptKey(request, identityNo);
   if (isBlocked(attemptKey)) {
-    return NextResponse.json({ message: "Cok fazla hatali deneme. Lutfen daha sonra tekrar deneyin." }, { status: 429 });
+    return NextResponse.json({ message: "Çok fazla hatalı deneme yapıldı. Lütfen daha sonra tekrar deneyin." }, { status: 429 });
   }
 
   const user = await prisma.user.findFirst({

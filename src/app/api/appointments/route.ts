@@ -34,7 +34,7 @@ async function sendAppointmentInfoSms(params: {
 
   const dateText = new Date(appointment.startAt).toLocaleString("tr-TR");
   const institutionName = settings.institutionName || institution.name;
-  const fallbackMessage = `${institutionName}: Sayin ${appointment.patient.fullName}, randevunuz olusturuldu. Tarih: ${dateText}, Doktor: ${appointment.doctor.fullName}.`;
+  const fallbackMessage = `${institutionName}: Sayın ${appointment.patient.fullName}, randevunuz oluşturuldu. Tarih: ${dateText}, Doktor: ${appointment.doctor.fullName}.`;
   const message = smsTemplate
     ? renderTemplate(smsTemplate.content, {
         institutionName,
@@ -94,16 +94,21 @@ async function isDoctorVisibleManager(userId: string) {
   return false;
 }
 
-async function isEligibleAppointmentDoctor(doctorId: string) {
+async function isEligibleAppointmentDoctor(doctorId: string, institutionId?: string | null) {
   const doctor = await prisma.user.findUnique({
     where: { id: doctorId },
-    select: { isActive: true, role: true, profile: { select: { hideAsDoctor: true } } },
+    select: { isActive: true, role: true, institutionId: true, profile: { select: { hideAsDoctor: true } } },
   });
 
   if (!doctor || !doctor.isActive) return false;
+  if (institutionId && doctor.institutionId !== institutionId) return false;
   if (["DOKTOR", "SUPERADMIN", "ADMIN"].includes(doctor.role)) return true;
   if (doctor.role === "YONETICI") return !Boolean(doctor.profile?.hideAsDoctor);
   return false;
+}
+
+function canCreateAppointment(role: string) {
+  return ["DOKTOR", "YONETICI", "ADMIN", "SUPERADMIN"].includes(role);
 }
 
 export async function GET(request: NextRequest) {
@@ -120,32 +125,42 @@ export async function GET(request: NextRequest) {
   const dateFrom = date ? new Date(date + "T00:00:00.000Z") : (from ? new Date(from) : undefined);
   const dateTo = date ? new Date(date + "T23:59:59.999Z") : (to ? new Date(to) : undefined);
 
-  const appointments = await prisma.appointment.findMany({
-    where: {
-      startAt: (dateFrom || dateTo) ? { gte: dateFrom, lte: dateTo } : undefined,
-      doctorId: doctorId || undefined,
-      patientId: patientId || undefined,
-      type: type ? { equals: type as "STANDART" | "KONTROL" | "ACIL" } : undefined,
-    },
-    select: {
-      id: true,
-      startAt: true,
-      endAt: true,
-      status: true,
-      type: true,
-      colorCode: true,
-      note: true,
-      smsInfo: true,
-      smsReminder: true,
-      smsSurvey: true,
-      doctorId: true,
-      patientId: true,
-      patient: { select: { id: true, fullName: true, phone: true, tcNo: true } },
-      doctor: { select: { id: true, fullName: true, role: true } },
-    },
-    orderBy: { startAt: "asc" },
-    take: 500, // Güvenlik limiti
-  });
+  let appointments: Array<{
+    patient: { id: string; fullName: string; phone: string | null; tcNo: string } | null;
+    [key: string]: unknown;
+  }> = [];
+  try {
+    appointments = await prisma.appointment.findMany({
+      where: {
+        ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
+        startAt: (dateFrom || dateTo) ? { gte: dateFrom, lte: dateTo } : undefined,
+        doctorId: doctorId || undefined,
+        patientId: patientId || undefined,
+        type: type ? { equals: type as "STANDART" | "KONTROL" | "ACIL" } : undefined,
+      },
+      select: {
+        id: true,
+        startAt: true,
+        endAt: true,
+        status: true,
+        type: true,
+        colorCode: true,
+        note: true,
+        smsInfo: true,
+        smsReminder: true,
+        smsSurvey: true,
+        doctorId: true,
+        patientId: true,
+        patient: { select: { id: true, fullName: true, phone: true, tcNo: true } },
+        doctor: { select: { id: true, fullName: true, role: true } },
+      },
+      orderBy: { startAt: "asc" },
+      take: 500, // Güvenlik limiti
+    });
+  } catch (error) {
+    console.error("[appointments GET] fallback:", error);
+    appointments = [];
+  }
 
   const hidePhone = auth.user.role === "DOKTOR" || auth.user.role === "ASISTAN";
   const result = hidePhone
@@ -162,9 +177,8 @@ export async function POST(request: NextRequest) {
   const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
 
-  const canCreate = await isDoctorVisibleManager(auth.user.id);
-  if (!canCreate) {
-    return NextResponse.json({ message: "Randevu sadece doktorlar tarafindan olusturulabilir." }, { status: 403 });
+  if (!canCreateAppointment(auth.user.role)) {
+    return NextResponse.json({ message: "Bu rolde randevu oluşturma yetkiniz yok." }, { status: 403 });
   }
 
   const body = await request.json();
@@ -174,9 +188,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Geçersiz randevu verisi" }, { status: 400 });
   }
 
-  const eligibleDoctor = await isEligibleAppointmentDoctor(parsed.data.doctorId);
+  const eligibleDoctor = await isEligibleAppointmentDoctor(parsed.data.doctorId, auth.user.institutionId);
   if (!eligibleDoctor) {
     return NextResponse.json({ message: "Secilen personel randevu doktoru olarak kullanilamaz." }, { status: 400 });
+  }
+
+  if (auth.user.institutionId) {
+    const patient = await prisma.patient.findFirst({
+      where: { id: parsed.data.patientId, institutionId: auth.user.institutionId },
+      select: { id: true },
+    });
+    if (!patient) {
+      return NextResponse.json({ message: "Hasta kurum kapsamı disinda" }, { status: 403 });
+    }
   }
 
   const startAt = new Date(parsed.data.startAt);
@@ -191,6 +215,7 @@ export async function POST(request: NextRequest) {
   const conflict = await prisma.appointment.findFirst({
     where: {
       doctorId: parsed.data.doctorId,
+      ...(auth.user.institutionId ? { doctor: { institutionId: auth.user.institutionId } } : {}),
       status: { notIn: ["IPTAL", "GELMEDI"] },
       AND: [
         { startAt: { lt: endAt } },
@@ -216,6 +241,7 @@ export async function POST(request: NextRequest) {
   const patientConflict = await prisma.appointment.findFirst({
     where: {
       patientId: parsed.data.patientId,
+      ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
       status: { notIn: ["IPTAL", "GELMEDI"] },
       AND: [
         { startAt: { lt: endAt } },
@@ -234,11 +260,12 @@ export async function POST(request: NextRequest) {
     }, { status: 409 });
   }
 
-  const appointment = await prisma.$transaction(async (tx) => {
-    const appt = await tx.appointment.create({
-      data: { ...parsed.data, startAt, endAt },
-      include: { patient: true, doctor: true },
-    });
+  try {
+    const appointment = await prisma.$transaction(async (tx) => {
+      const appt = await tx.appointment.create({
+        data: { ...parsed.data, startAt, endAt },
+        include: { patient: true, doctor: true },
+      });
 
     // Reminder'ı transaction içinde oluştur - bir başarısızsa ikisi de rollback
     if (parsed.data.smsReminder) {
@@ -258,18 +285,22 @@ export async function POST(request: NextRequest) {
     return appt;
   });
 
-  if (auth.user.institutionId) {
-    try {
-      await sendAppointmentInfoSms({
-        appointmentId: appointment.id,
-        institutionId: auth.user.institutionId,
-        createdByUserId: auth.user.id,
-      });
-    } catch {
-      // SMS hatası randevu oluşturmayı kırmamalı.
+    if (auth.user.institutionId) {
+      try {
+        await sendAppointmentInfoSms({
+          appointmentId: appointment.id,
+          institutionId: auth.user.institutionId,
+          createdByUserId: auth.user.id,
+        });
+      } catch {
+        // SMS hatası randevu oluşturmayı kırmamalı.
+      }
     }
-  }
 
-  await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${appointment.patient.fullName} icin randevu`);
-  return NextResponse.json(appointment, { status: 201 });
+    await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${appointment.patient.fullName} icin randevu`);
+    return NextResponse.json(appointment, { status: 201 });
+  } catch (error) {
+    console.error("[appointments POST] fallback:", error);
+    return NextResponse.json({ message: "Randevu oluşturulamadı" }, { status: 503 });
+  }
 }

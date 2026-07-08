@@ -1,5 +1,5 @@
 const nextConfig = {
-  distDir: ".next-dev",
+  distDir: process.env.NODE_ENV === "development" ? ".next-dev" : ".next",
   experimental: {
     serverActions: {
       bodySizeLimit: "2mb",
@@ -11,6 +11,12 @@ const nextConfig = {
   images: {
     formats: ["image/avif", "image/webp"],
     minimumCacheTTL: 60,
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "images.unsplash.com",
+      },
+    ],
   },
   headers: async () => [
     {

@@ -30,7 +30,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const parsed = patientFollowUpEventUpdateSchema.safeParse(body);
 
     if (!parsed.success) {
-      return NextResponse.json({ message: "Gecersiz surec notu guncellemesi" }, { status: 400 });
+      return NextResponse.json({ message: "Geçersiz süreç notu güncellemesi" }, { status: 400 });
     }
 
     const updated = await prisma.patientFollowUpEvent.update({
@@ -50,10 +50,10 @@ export async function PUT(request: NextRequest, { params }: Params) {
       },
     });
 
-    await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_EVENT_UPDATE", `${event.followUp.patient.fullName} surec notu guncellendi`);
+    await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_EVENT_UPDATE", `${event.followUp.patient.fullName} süreç notu güncellendi`);
     return NextResponse.json(updated);
   } catch {
-    return NextResponse.json({ message: "Surec notu su an guncellenemiyor. Veritabani baglantisini kontrol edin." }, { status: 503 });
+    return NextResponse.json({ message: "Süreç notu şu an güncellenemiyor. Veritabanı bağlantısını kontrol edin." }, { status: 503 });
   }
 }
 
@@ -78,10 +78,10 @@ export async function DELETE(_: NextRequest, { params }: Params) {
     }
 
     await prisma.patientFollowUpEvent.delete({ where: { id: params.eventId } });
-    await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_EVENT_DELETE", `${event.followUp.patient.fullName} surec notu silindi`);
+    await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_EVENT_DELETE", `${event.followUp.patient.fullName} süreç notu silindi`);
 
     return NextResponse.json({ ok: true });
   } catch {
-    return NextResponse.json({ message: "Surec notu su an silinemiyor. Veritabani baglantisini kontrol edin." }, { status: 503 });
+    return NextResponse.json({ message: "Süreç notu şu an silinemiyor. Veritabanı bağlantısını kontrol edin." }, { status: 503 });
   }
 }

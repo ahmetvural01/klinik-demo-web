@@ -7,6 +7,7 @@ export async function GET() {
   if (auth.error) return auth.error;
 
   const instId = auth.user.institutionId;
+  const institutionScope = instId ? { doctor: { institutionId: instId } } : {};
 
   // Haftalık tarih aralığı (son 7 gün)
   const today = new Date();
@@ -14,14 +15,23 @@ export async function GET() {
   weekAgo.setDate(weekAgo.getDate() - 6);
   weekAgo.setHours(0, 0, 0, 0);
 
-  const [totalAppointments, totalExaminations, totalPatients, totalStaff, weeklyAppts] = await Promise.all([
+  const [totalAppointments, totalExaminations, appointmentPatients, examinationPatients, totalStaff, weeklyAppts] = await Promise.all([
     prisma.appointment.count({
-      where: instId ? { doctor: { institutionId: instId } } : {},
+      where: institutionScope,
     }),
     prisma.examination.count({
-      where: instId ? { doctor: { institutionId: instId } } : {},
+      where: institutionScope,
     }),
-    prisma.patient.count(),
+    prisma.appointment.findMany({
+      where: institutionScope,
+      select: { patientId: true },
+      distinct: ["patientId"],
+    }),
+    prisma.examination.findMany({
+      where: institutionScope,
+      select: { patientId: true },
+      distinct: ["patientId"],
+    }),
     prisma.user.count({
       where: { isActive: true, ...(instId ? { institutionId: instId } : {}) },
     }),
@@ -29,11 +39,16 @@ export async function GET() {
     prisma.appointment.findMany({
       where: {
         startAt: { gte: weekAgo },
-        ...(instId ? { doctor: { institutionId: instId } } : {}),
+        ...institutionScope,
       },
       select: { startAt: true },
     }),
   ]);
+
+  const totalPatients = new Set([
+    ...appointmentPatients.map((row) => row.patientId),
+    ...examinationPatients.map((row) => row.patientId),
+  ]).size;
 
   // Günlük gruplama JS tarafında yap (DB round-trip yerine)
   const DAY_NAMES = ["Paz", "Pzt", "Sal", "Çar", "Per", "Cum", "Cmt"];

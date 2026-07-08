@@ -7,8 +7,11 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
   if (auth.error) return auth.error;
   const user = auth.user;
 
-  const order = await (prisma as any).labOrder.findUnique({
-    where: { id: params.id },
+  const order = await (prisma as any).labOrder.findFirst({
+    where: {
+      id: params.id,
+      ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
+    },
     include: {
       invoices: { orderBy: { issuedAt: "asc" } },
       patient: { select: { id: true, fullName: true, phone: true } },
@@ -38,8 +41,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const { status, price, invoiceNo, appendInvoice, action, reason, restartDescription } = body;
 
   // Mevcut siparişi al — firma entegrasyonu için önceki fatura durumuna bakıyoruz
-  const existing = await (prisma as any).labOrder.findUnique({
-    where: { id: params.id },
+  const existing = await (prisma as any).labOrder.findFirst({
+    where: {
+      id: params.id,
+      ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
+    },
     select: { id: true, notes: true, labName: true, labType: true, invoiceNo: true, price: true, patient: { select: { fullName: true } } },
   });
   if (!existing) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
@@ -134,7 +140,11 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
     if (!wasInvoiced && nowInvoiced && existing.labName) {
       const matchedFirma = await tx.firma.findFirst({
-        where: { name: { contains: existing.labName, mode: "insensitive" }, isActive: true },
+        where: {
+          name: { contains: existing.labName, mode: "insensitive" },
+          isActive: true,
+          ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        },
         select: { id: true, name: true },
       });
       if (matchedFirma) {

@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { showToastSafe } from "@/lib/toast-client";
 
 export function ClinicLoginForm() {
   const [institution, setInstitution] = useState("");
@@ -25,7 +26,9 @@ export function ClinicLoginForm() {
 
     if (!res.ok) {
       const message = await res.json().catch(() => ({ message: "Giriş başarısız" }));
-      setError(message.message || "Giriş başarısız");
+      const msg = message.message || "Giriş başarısız";
+      setError(msg);
+      try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {}
       return;
     }
 
@@ -45,7 +48,7 @@ export function ClinicLoginForm() {
               <p className="inline-flex items-center rounded-full border border-white/25 px-3 py-1 text-xs font-semibold tracking-[0.2em]">KLINIKMODERN</p>
               <h1 className="mt-6 text-3xl font-black leading-tight md:text-4xl">Klinik operasyonunu hizlandiran guvenli giris ekrani.</h1>
               <p className="mt-4 max-w-md text-sm text-slate-200">
-                Personeliniz, yetkilerine gore tek bir panelden hasta, randevu, tedavi ve odeme sureclerine guvenli sekilde erissin.
+                Personeliniz, yetkilerine göre tek bir panelden hasta, randevu, tedavi ve ödeme süreçlerine güvenli şekilde erişsin.
               </p>
             </div>
 

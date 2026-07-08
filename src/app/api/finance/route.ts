@@ -2,14 +2,16 @@
 import { prisma } from "@/lib/prisma";
 import { paymentSchema } from "@/lib/validators";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { createIntegratedPayment } from "@/lib/payment-ledger";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth("finance:read");
   if (auth.error) return auth.error;
 
+  const institutionId = auth.user.institutionId;
+
   // DOKTOR rolü: sadece kendi verilerini görebilir, doctorId parametresi kendi ID'si ile değiştirilir
   const rawDoctorId = request.nextUrl.searchParams.get("doctorId") || undefined;
-  const doctorId = auth.user.role === "DOKTOR" ? auth.user.id : rawDoctorId;
   const fromRaw = request.nextUrl.searchParams.get("from");
   const toRaw = request.nextUrl.searchParams.get("to");
   const fromDate = fromRaw ? new Date(fromRaw + "T00:00:00.000Z") : undefined;
@@ -30,28 +32,70 @@ export async function GET(request: NextRequest) {
     ],
   };
 
+  const institutionDoctors = institutionId
+    ? await prisma.user.findMany({
+        where: { institutionId, role: "DOKTOR", isActive: true },
+        select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
+      })
+    : [];
+  const institutionDoctorIds = institutionDoctors.map((doctor) => doctor.id);
+  if (institutionId && institutionDoctorIds.length === 0) {
+    return NextResponse.json({
+      receivable: 0,
+      received: 0,
+      toReceive: 0,
+      totalTreatments: 0,
+      labCost: 0,
+      earned: 0,
+      topExaminations: [],
+      topTeeth: [],
+      payments: [],
+      patientPayments: [],
+    });
+  }
+  const doctorId = auth.user.role === "DOKTOR"
+    ? auth.user.id
+    : (rawDoctorId && institutionDoctorIds.includes(rawDoctorId) ? rawDoctorId : undefined);
+  const scopedDoctorIds = institutionId ? (doctorId ? [doctorId] : institutionDoctorIds) : (doctorId ? [doctorId] : []);
+  const hasScopedDoctors = scopedDoctorIds.length > 0;
+  const doctorIdFilter = hasScopedDoctors ? { in: scopedDoctorIds } : undefined;
+
   const [examinations, doctorPayments, allPatientPayments, labInvoices] = await Promise.all([
     // Bu doktorun yaptığı ücretlendirilebilir tedaviler
     prisma.examination.findMany({
-      where: { doctorId, ...dateFilter, ...treatmentOnlyWhere },
+      where: hasScopedDoctors ? { doctorId: doctorIdFilter, ...dateFilter, ...treatmentOnlyWhere } : { ...dateFilter, ...treatmentOnlyWhere },
       include: { patient: true },
       orderBy: { diagnosedAt: "desc" }
     }),
     // Kurumun bu doktora yaptığı ödemeler (doctorId set olanlar)
     prisma.payment.findMany({
-      where: { doctorId, ...payDateFilter },
+      where: hasScopedDoctors ? { doctorId: doctorIdFilter, ...payDateFilter } : { ...payDateFilter },
       orderBy: { createdAt: "desc" }
     }),
     // Tüm hasta ödemeleri (patientId üzerinden)
     prisma.payment.findMany({
-      where: { doctorId: null, ...payDateFilter },
+      where: {
+        doctorId: null,
+        ...payDateFilter,
+        ...(hasScopedDoctors
+          ? {
+              patient: {
+                examinations: {
+                  some: {
+                    doctorId: { in: scopedDoctorIds },
+                  },
+                },
+              },
+            }
+          : {}),
+      },
       include: { patient: true },
       orderBy: { createdAt: "desc" }
     }),
     prisma.labOrderInvoice.findMany({
       where: {
         labOrder: {
-          doctorId,
+          ...(hasScopedDoctors ? { doctorId: doctorIdFilter } : {}),
         },
         ...(fromDate || toDate
           ? {
@@ -133,9 +177,43 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Geçersiz ödeme verisi" }, { status: 400 });
   }
 
-  const payment = await prisma.payment.create({
-    data: parsed.data
-  });
+  if (auth.user.institutionId) {
+    const institutionDoctors = await prisma.user.findMany({
+      where: { institutionId: auth.user.institutionId, role: "DOKTOR", isActive: true },
+      select: { id: true },
+    });
+    const doctorIds = institutionDoctors.map((doctor) => doctor.id);
+
+    if (parsed.data.doctorId && !doctorIds.includes(parsed.data.doctorId)) {
+      return NextResponse.json({ message: "Bu doktor kurum kapsamı disinda" }, { status: 403 });
+    }
+
+    if (parsed.data.patientId) {
+      const relatedPatient = await prisma.patient.findFirst({
+        where: {
+          id: parsed.data.patientId,
+          institutionId: auth.user.institutionId,
+        },
+        select: { id: true },
+      });
+
+      if (!relatedPatient) {
+        return NextResponse.json({ message: "Hasta kurum kapsamı disinda" }, { status: 403 });
+      }
+    }
+  }
+
+  const { payment } = await prisma.$transaction((tx) =>
+    createIntegratedPayment({
+      tx,
+      patientId: parsed.data.patientId,
+      doctorId: parsed.data.doctorId,
+      method: parsed.data.method,
+      amount: Number(parsed.data.amount),
+      description: parsed.data.description,
+      posId: parsed.data.posId,
+    })
+  );
 
   await writeAudit(auth.user.id, "PAYMENT_CREATE", `${payment.amount.toString()} ödeme alindi`);
   return NextResponse.json(payment, { status: 201 });

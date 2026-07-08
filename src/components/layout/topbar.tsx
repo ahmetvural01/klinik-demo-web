@@ -1,7 +1,11 @@
 "use client";
 
+/* eslint-disable react-hooks/exhaustive-deps */
+
 import { useRouter, usePathname } from "next/navigation";
-import { useState, useEffect, useRef } from "react";
+import Link from "next/link";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { getAlertPermissions, usePanelAlerts } from "@/components/layout/use-panel-alerts";
 
 type Props = { user: { fullName: string; role: string } };
 
@@ -31,7 +35,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/hasta-ekle":    "Yeni Hasta Kaydı",
   "/hasta-takip":   "Hasta Takip",
   "/hasta-detay":   "Hasta Detayı",
-  "/gorevler":      "Gorev Merkezi",
+  "/gorevler":      "Görev Merkezi",
   "/tedavi-plani":  "Tedavi Planları",
   "/lab":           "Laboratuvar Takibi",
   "/recete":        "Reçete Görüntüleme",
@@ -47,7 +51,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/personel-ekle": "Yeni Personel",
   "/fiyat":         "Fiyat Listesi",
   "/sms":           "SMS Modülü",
-  "/sistem-izleme": "Sistem Izleme",
+  "/sistem-izleme": "Sistem İzleme",
   "/ayar":          "Sistem Ayarları",
   "/log":           "İşlem Kayıtları",
   "/profil":        "Profilim",
@@ -55,7 +59,6 @@ const PAGE_TITLES: Record<string, string> = {
   "/dashboard":     "Dashboard",
 };
 
-type AlertCounts = { taksit: number; stok: number; lab: number };
 type MessageLite = { id: string; userId: string; createdAt: string };
 
 type TopbarQuickAction = { href: string; label: string; className: string };
@@ -70,16 +73,17 @@ type TopbarPageConfig = {
 };
 
 function getTopbarConfig(pathname: string): TopbarPageConfig {
+  const actionBase = "rounded-xl border px-4 py-2 text-sm font-semibold transition";
   const base: TopbarPageConfig = {
     showDateTime: true,
     showAlerts: true,
     showPageTitle: true,
     showSearch: true,
     compact: false,
-    searchPlaceholder: "Isim, TC veya telefon ile hasta ara...",
+    searchPlaceholder: "İsim, TC veya telefon ile hasta ara...",
     quickActions: [
-      { href: "/randevu", label: "+ Randevu", className: "rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100" },
-      { href: "/hasta-ekle", label: "+ Hasta", className: "rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-100" },
+      { href: "/randevu", label: "Randevu Oluştur", className: `${actionBase} border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100` },
+      { href: "/hasta-ekle", label: "Hasta Ekle", className: `${actionBase} border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100` },
     ],
   };
 
@@ -87,7 +91,7 @@ function getTopbarConfig(pathname: string): TopbarPageConfig {
     return {
       ...base,
       quickActions: [
-        { href: "/gorevler", label: "Gorev Merkezi", className: "rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100" },
+        { href: "/gorevler", label: "Görev Merkezi", className: `${actionBase} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100` },
       ],
     };
   }
@@ -96,7 +100,7 @@ function getTopbarConfig(pathname: string): TopbarPageConfig {
     return {
       ...base,
       quickActions: [
-        { href: "/hasta-ekle", label: "+ Yeni Hasta", className: "rounded-lg border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-100" },
+        { href: "/hasta-ekle", label: "Yeni Hasta", className: `${actionBase} border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100` },
       ],
     };
   }
@@ -105,7 +109,7 @@ function getTopbarConfig(pathname: string): TopbarPageConfig {
     return {
       ...base,
       quickActions: [
-        { href: "/hasta-takip", label: "Hasta Takip", className: "rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100" },
+        { href: "/hasta-takip", label: "Hasta Takip", className: `${actionBase} border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100` },
       ],
     };
   }
@@ -114,8 +118,8 @@ function getTopbarConfig(pathname: string): TopbarPageConfig {
     return {
       ...base,
       quickActions: [
-        { href: "/randevu", label: "Randevuya Git", className: "rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100" },
-        { href: "/gorevler", label: "Gorev Merkezi", className: "rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100" },
+        { href: "/randevu", label: "Randevular", className: `${actionBase} border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100` },
+        { href: "/gorevler", label: "Görev Merkezi", className: `${actionBase} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100` },
       ],
     };
   }
@@ -127,7 +131,7 @@ function getTopbarConfig(pathname: string): TopbarPageConfig {
       showSearch: pathname.startsWith("/lab") ? true : base.showSearch,
       compact: pathname.startsWith("/lab") ? true : base.compact,
       quickActions: [
-        { href: "/gorevler", label: "Gorev Merkezi", className: "rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100" },
+        { href: "/gorevler", label: "Görev Merkezi", className: `${actionBase} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100` },
       ],
     };
   }
@@ -141,7 +145,7 @@ function Clock() {
     const fmt = () =>
       setTime(new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }));
     fmt();
-    const t = setInterval(fmt, 1000);
+    const t = setInterval(fmt, 30000);
     return () => clearInterval(t);
   }, []);
   return <span className="tabular-nums text-sm font-semibold text-slate-700">{time}</span>;
@@ -154,7 +158,7 @@ export function Topbar({ user }: Props) {
   const [q, setQ] = useState("");
   const [searchResults, setSearchResults] = useState<{id: string; fullName: string; tcNo: string; phone: string}[]>([]);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
-  const getEffectiveRole = () => sessionStorage.getItem("dev-preview-role") || user.role;
+  const getEffectiveRole = useCallback(() => sessionStorage.getItem("dev-preview-role") || user.role, [user.role]);
   const [effectiveRole, setEffectiveRole] = useState(user.role);
   useEffect(() => {
     setEffectiveRole(getEffectiveRole());
@@ -167,10 +171,9 @@ export function Topbar({ user }: Props) {
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("preview-role-change", onStorage);
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user.role]);
+  }, [getEffectiveRole]);
   const hidePhone = effectiveRole === "DOKTOR" || effectiveRole === "ASISTAN";
-  const [alerts, setAlerts] = useState<AlertCounts>({ taksit: 0, stok: 0, lab: 0 });
+  const alerts = usePanelAlerts(effectiveRole);
   const [showAlerts, setShowAlerts] = useState(false);
   const [messageUnread, setMessageUnread] = useState(0);
   const [currentUserId, setCurrentUserId] = useState("");
@@ -248,39 +251,7 @@ export function Topbar({ user }: Props) {
     document.title = messageUnread > 0 ? `(${messageUnread}) ${base}` : base;
   }, [messageUnread]);
 
-  // Rol bazlı bildirim yetki haritası
-  // taksit: finans yetkisi olan roller (YONETICI, MUHASEBE, BANKO)
-  // stok:   stok yetkisi olan roller (YONETICI, MUHASEBE)
-  // lab:    lab yetkisi olan roller (YONETICI, DOKTOR, ASISTAN)
-  const canSeeTaksit = ["YONETICI", "SUPERADMIN", "MUHASEBE", "BANKO"].includes(effectiveRole);
-  const canSeeStok   = ["YONETICI", "SUPERADMIN", "MUHASEBE"].includes(effectiveRole);
-  const canSeeLab    = ["YONETICI", "SUPERADMIN", "DOKTOR", "ASISTAN"].includes(effectiveRole);
-
-  useEffect(() => {
-    async function loadAlerts() {
-      try {
-        const fetches = await Promise.allSettled([
-          canSeeTaksit ? fetch("/api/taksit-plani?status=GECIKTI") : Promise.resolve(null),
-          canSeeStok   ? fetch("/api/stock")                       : Promise.resolve(null),
-          canSeeLab    ? fetch("/api/lab-orders?status=BEKLIYOR")  : Promise.resolve(null),
-        ]);
-        const tData = canSeeTaksit && fetches[0].status === "fulfilled" && fetches[0].value?.ok ? await fetches[0].value.json() : null;
-        const sData = canSeeStok   && fetches[1].status === "fulfilled" && fetches[1].value?.ok ? await fetches[1].value.json() : null;
-        const lData = canSeeLab    && fetches[2].status === "fulfilled" && fetches[2].value?.ok ? await fetches[2].value.json() : null;
-
-        const overdueCount = Array.isArray(tData)
-          ? tData.reduce((sum: number, plan: any) =>
-              sum + (plan.taksitler || []).filter((t: any) => t.status === "GECIKTI").length, 0)
-          : 0;
-        const lowStock = Array.isArray(sData) ? sData.filter((i: any) => i.quantity < i.minQuantity).length : 0;
-        const labCount = Array.isArray(lData) ? lData.length : 0;
-        setAlerts({ taksit: overdueCount, stok: lowStock, lab: labCount });
-      } catch {}
-    }
-    loadAlerts();
-  // effectiveRole değişince bildirimleri yeniden yükle
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effectiveRole]);
+  const { canSeeTaksit, canSeeStok, canSeeLab } = getAlertPermissions(effectiveRole);
 
   // Dışarı tıklanınca kapat
   useEffect(() => {
@@ -356,17 +327,30 @@ export function Topbar({ user }: Props) {
   const totalAlerts = alerts.taksit + alerts.stok + alerts.lab;
   const displayName = user.fullName || "Kullanıcı";
   const initials = displayName.split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase();
+  const displayRole = roleLabel[effectiveRole] || user.role;
+  const displayRoleClass = roleBg[effectiveRole] || "bg-slate-100 text-slate-600";
 
   return (
-    <header className={`flex items-center justify-between border-b border-slate-200 bg-white shadow-sm ${pageConfig.compact ? "h-11 gap-3 px-4" : "h-14 gap-4 px-5"}`}>
+    <header className={`flex items-center justify-between border-b border-slate-200 bg-white shadow-sm ${pageConfig.compact ? "min-h-14 gap-2 px-3 py-2 sm:gap-3 sm:px-4" : "min-h-16 gap-2 px-3 py-2 sm:gap-4 sm:px-5"}`}>
       {/* Sol: Sayfa başlığı veya arama */}
       <div className={`flex flex-1 items-center ${pageConfig.compact ? "gap-2" : "gap-4"}`}>
+        <button
+          onClick={() => window.dispatchEvent(new Event("toggle-mobile-sidebar"))}
+          aria-label="Menüyü aç"
+          className="mr-2 inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 md:hidden"
+        >
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <line x1="3" y1="12" x2="21" y2="12" />
+            <line x1="3" y1="6" x2="21" y2="6" />
+            <line x1="3" y1="18" x2="21" y2="18" />
+          </svg>
+        </button>
         {pageConfig.showPageTitle && pageTitle && (
-          <span className="hidden text-sm font-semibold text-slate-700 md:block">{pageTitle}</span>
+          <span className="hidden text-base font-bold text-slate-800 md:block">{pageTitle}</span>
         )}
         {pageConfig.showSearch && <div className="relative flex max-w-sm flex-1">
           <form onSubmit={search} className="w-full">
-            <div ref={searchRef} className="relative flex items-center gap-2 rounded-lg border-2 border-blue-200 bg-blue-50 px-3 py-1.5 shadow-sm">
+            <div ref={searchRef} className="relative flex min-h-11 items-center gap-2 rounded-xl border-2 border-blue-200 bg-blue-50 px-3 py-2 shadow-sm">
               <svg className="h-4 w-4 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
               </svg>
@@ -376,10 +360,12 @@ export function Topbar({ user }: Props) {
                 onKeyDown={handleSearchKeyDown}
                 onFocus={() => { setShowSearchDropdown(true); setSelectedResultIdx(-1); }}
                 placeholder={pageConfig.searchPlaceholder}
+                role="combobox"
+                aria-controls="search-results"
                 aria-label="Hasta ara - ad, TC no veya telefon ile"
                 aria-expanded={showSearchDropdown}
                 aria-autocomplete="list"
-                className="flex-1 border-none bg-transparent text-sm font-medium outline-none placeholder-blue-400"
+                className="flex-1 border-none bg-transparent text-sm font-semibold outline-none placeholder-blue-400"
               />
               {q && (
                 <button
@@ -390,8 +376,8 @@ export function Topbar({ user }: Props) {
                   ✕
                 </button>
               )}
-              {searchResults.length > 0 && showSearchDropdown && (
-                <div className="absolute top-full left-0 right-0 z-50 mt-2 rounded-lg border border-blue-200 bg-white shadow-xl" role="listbox">
+                {searchResults.length > 0 && showSearchDropdown && (
+                <div id="search-results" className="absolute top-full left-0 right-0 z-50 mt-2 rounded-lg border border-blue-200 bg-white shadow-xl" role="listbox">
                   <div className="flex items-center justify-between border-b border-blue-100 px-4 py-2 text-xs font-bold text-blue-600">
                     <span>{searchResults.length} sonuç</span>
                   </div>
@@ -444,9 +430,9 @@ export function Topbar({ user }: Props) {
         {pageConfig.quickActions.length > 0 && (
           <div className="hidden items-center gap-2 md:flex">
             {pageConfig.quickActions.map((action) => (
-              <a key={action.href + action.label} href={action.href} className={action.className}>
+              <Link key={action.href + action.label} href={action.href} className={action.className}>
                 {action.label}
-              </a>
+              </Link>
             ))}
           </div>
         )}
@@ -476,7 +462,7 @@ export function Topbar({ user }: Props) {
               <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
             </svg>
             {totalAlerts > 0 && (
-              <span className="absolute -right-0.5 -top-0.5 flex h-4 w-4 items-center justify-center rounded-full bg-red-500 text-[9px] font-bold text-white">
+              <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-bold text-white">
                 {totalAlerts > 9 ? "9+" : totalAlerts}
               </span>
             )}
@@ -573,8 +559,8 @@ export function Topbar({ user }: Props) {
         <div className="flex items-center gap-2.5">
           <div className="hidden text-right md:block">
             <p className="text-sm font-semibold leading-tight text-slate-800">{displayName}</p>
-            <span className={"inline-block rounded-full px-2 py-0.5 text-[10px] font-bold " + (roleBg[user.role] ?? "bg-slate-100 text-slate-600")}>
-              {roleLabel[user.role] ?? user.role}
+            <span className={"inline-block rounded-full px-2.5 py-1 text-xs font-bold " + displayRoleClass}>
+              {displayRole}
             </span>
           </div>
           <a href="/profil" className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs font-bold text-white ring-2 ring-blue-200 transition hover:bg-blue-700" title="Profilim">

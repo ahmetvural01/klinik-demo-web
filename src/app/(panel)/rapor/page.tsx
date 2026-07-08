@@ -94,6 +94,7 @@ export default function RaporPage() {
     finally { setLoading(false); }
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (fromDate && toDate) void load(); }, [fromDate, toDate]);
 
   const TABS: { id: Tab; label: string }[] = [
@@ -106,17 +107,30 @@ export default function RaporPage() {
 
   const maxDr  = Math.max(...stats.doctorReports.map(d => d.ciro), 1);
   const maxExp = Math.max(...stats.expenseByCategory.map(e => e.amount), 1);
+  const headlineMetrics = [
+    { label: "Toplam Ciro",    val: stats.totalRevenue,    cls: "text-emerald-700", bg: "bg-emerald-50 border-emerald-100", isCount: false },
+    { label: "Net Kasa",       val: stats.netCash,         cls: stats.netCash >= 0 ? "text-blue-700" : "text-red-700", bg: "bg-blue-50 border-blue-100", isCount: false },
+    { label: "Ödenecek KDV",   val: Math.abs(stats.netVAT), cls: stats.netVAT >= 0 ? "text-amber-700" : "text-green-700", bg: "bg-amber-50 border-amber-100", isCount: false },
+    { label: "Gecikmiş Taksit", val: stats.overdueInstallments, cls: "text-violet-700", bg: "bg-violet-50 border-violet-100", isCount: true },
+  ];
+  const detailMetrics = [
+    { label: "Lab Maliyeti",   val: stats.totalLabCost,    cls: "text-red-600",     bg: "bg-red-50 border-red-100", isCount: false },
+    { label: "Giderler",       val: stats.totalExpenses,   cls: "text-orange-700",  bg: "bg-orange-50 border-orange-100", isCount: false },
+    { label: "Firma Alımı",    val: stats.totalFirmaAlim,  cls: "text-purple-700",  bg: "bg-purple-50 border-purple-100", isCount: false },
+    { label: "Muayene",        val: stats.totalExaminations, cls: "text-slate-800", bg: "bg-slate-50 border-slate-100", isCount: true },
+    { label: "Yeni Hasta",     val: stats.newPatients,     cls: "text-violet-700",  bg: "bg-violet-50 border-violet-100", isCount: true },
+  ];
 
   return (
     <>
     <section className="space-y-5">
       {/* Header */}
-      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-        <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-black text-slate-900">Yönetim Raporları</h1>
-          <p className="mt-0.5 text-xs text-slate-500">Hakediş hesabı · KDV özeti · Gelir vergisi tahmini · Doktor bazlı tam döküm</p>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-black text-slate-900">Raporlar</h1>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">Seçili dönem</span>
+        </div>
+        <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
           {/* Hızlı dönem butonları */}
           {([
             { key: "bugun", label: "Bugün" },
@@ -125,18 +139,18 @@ export default function RaporPage() {
             { key: "yil",   label: "Bu Yıl" },
           ] as const).map(p => (
             <button key={p.key} onClick={() => setQuickRange(p.key)}
-              className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-primary hover:text-white hover:border-primary transition">
+              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-bold text-slate-600 transition hover:border-primary hover:bg-primary hover:text-white">
               {p.label}
             </button>
           ))}
-          <div className="w-px h-6 bg-slate-200" />
+          <div className="hidden h-6 w-px bg-slate-200 lg:block" />
           <input type="datetime-local" value={fromDate} onChange={e => setFromDate(e.target.value)}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
+            className="min-w-[190px] flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 lg:flex-none" />
           <span className="text-slate-400 text-sm">—</span>
           <input type="datetime-local" value={toDate} onChange={e => setToDate(e.target.value)}
-            className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
+            className="min-w-[190px] flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 lg:flex-none" />
           <button onClick={load} disabled={loading}
-            className="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90 disabled:opacity-50">
+            className="flex min-h-11 items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90 disabled:opacity-50">
             {loading
               ? <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10" strokeOpacity={0.25}/><path d="M12 2a10 10 0 0110 10"/></svg>
               : <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>}
@@ -146,31 +160,37 @@ export default function RaporPage() {
       </div>
 
       {/* KPI Özet */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8">
-        {[
-          { label: "Toplam Ciro",    val: stats.totalRevenue,    cls: "text-emerald-700", bg: "bg-emerald-50 border-emerald-100" },
-          { label: "Lab Maliyeti",   val: stats.totalLabCost,    cls: "text-red-600",     bg: "bg-red-50 border-red-100" },
-          { label: "Giderler",       val: stats.totalExpenses,   cls: "text-orange-700",  bg: "bg-orange-50 border-orange-100" },
-          { label: "Firma Alımı",    val: stats.totalFirmaAlim,  cls: "text-purple-700",  bg: "bg-purple-50 border-purple-100" },
-          { label: "Net Kasa",       val: stats.netCash,         cls: stats.netCash >= 0 ? "text-blue-700" : "text-red-700", bg: "bg-blue-50 border-blue-100" },
-          { label: "Muayene",        val: stats.totalExaminations, cls: "text-slate-800", bg: "bg-slate-50 border-slate-100", isCount: true },
-          { label: "Yeni Hasta",     val: stats.newPatients,     cls: "text-violet-700",  bg: "bg-violet-50 border-violet-100", isCount: true },
-          { label: "Ödenecek KDV",   val: stats.netVAT,          cls: stats.netVAT >= 0 ? "text-amber-700" : "text-green-700", bg: "bg-amber-50 border-amber-100" },
-        ].map(c => (
-          <article key={c.label} className={`rounded-xl border p-3 shadow-sm ${c.bg}`}>
-            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{c.label}</p>
-            <p className={`mt-1 text-lg font-black ${c.cls}`}>
-              {c.isCount ? FMT(c.val as number) : CUR(c.val as number)}
-            </p>
-          </article>
-        ))}
+      <div className="space-y-3">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {headlineMetrics.map(c => (
+            <article key={c.label} className={`rounded-2xl border p-4 shadow-sm ${c.bg}`}>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{c.label}</p>
+              <p className={`mt-1 text-xl font-black ${c.cls}`}>{c.isCount ? FMT(c.val as number) : CUR(c.val as number)}</p>
+            </article>
+          ))}
+        </div>
+        <details className="group rounded-2xl border border-slate-100 bg-white shadow-sm">
+          <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-slate-700">
+            <span>Diğer özet göstergeler</span>
+            <span className="text-xs font-medium text-slate-400 group-open:hidden">Aç</span>
+            <span className="hidden text-xs font-medium text-slate-400 group-open:inline">Kapat</span>
+          </summary>
+          <div className="grid gap-3 border-t border-slate-100 p-4 sm:grid-cols-2 xl:grid-cols-5">
+            {detailMetrics.map(c => (
+              <article key={c.label} className={`rounded-2xl border p-4 ${c.bg}`}>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{c.label}</p>
+                <p className={`mt-1 text-lg font-black ${c.cls}`}>{c.isCount ? FMT(c.val as number) : CUR(c.val as number)}</p>
+              </article>
+            ))}
+          </div>
+        </details>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 rounded-xl border border-slate-100 bg-white p-1 shadow-sm overflow-x-auto">
+      <div className="sticky top-0 z-20 flex gap-1 rounded-2xl border border-slate-100 bg-white/95 p-1 shadow-sm overflow-x-auto backdrop-blur">
         {TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            className={`shrink-0 flex-1 rounded-lg px-3 py-2 text-sm font-semibold transition ${tab === t.id ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>
+            className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition ${tab === t.id ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>
             {t.label}
           </button>
         ))}
@@ -197,7 +217,7 @@ export default function RaporPage() {
                       <div className="flex-1 overflow-hidden rounded-full bg-slate-100 h-5">
                         <div className={`h-5 flex items-center justify-end pr-2 rounded-full ${item.color} transition-all`}
                           style={{ width: Math.max(8, pct) + "%" }}>
-                          <span className="text-[10px] font-bold text-white">{pct}%</span>
+                          <span className="text-xs font-bold text-white">{pct}%</span>
                         </div>
                       </div>
                       <span className="w-24 shrink-0 text-right text-xs font-bold text-slate-800">{CUR(item.val)}</span>
@@ -236,13 +256,13 @@ export default function RaporPage() {
       {/* ── DOKTOR HAKEDİŞ ──────────────────────────────────────────────── */}
       {tab === "doktorlar" && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
-            <p className="text-sm font-bold text-amber-800">Hakediş Hesaplama Formülü</p>
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
+            <p className="text-sm font-bold text-amber-800">Hakediş modeli</p>
             <p className="mt-1 text-xs text-amber-700">
-              Toplam Ciro → KK Masrafı (KK × KK%) + Lab Masrafı + Genel Masraf (Ciro × Genel%) = Toplam Gider → Brüt = Ciro − Gider → <strong>Hakediş = Brüt × Maaş%</strong>
+              Cirodan kart masrafı, lab ve genel giderler düşülür; kalan brüt tutar maaş oranıyla hakedişe çevrilir.
             </p>
             <p className="mt-1 text-xs text-amber-600">
-              Doktor yüzdelerini <Link href="/personel" className="underline font-bold">Personel sayfasından</Link> ayarlayabilirsiniz.
+              Oranları <Link href="/personel" className="font-bold underline">Personel</Link> üzerinden güncelleyebilirsiniz.
             </p>
           </div>
 
@@ -294,7 +314,7 @@ export default function RaporPage() {
                     }}
                     className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition">
                     <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-                    Yazdır / PDF
+                    PDF / Yazdır
                   </button>
                 </div>
                 <table className="w-full text-xs">
@@ -315,7 +335,7 @@ export default function RaporPage() {
                             </div>
                             <div>
                               <p className="font-semibold text-slate-800 text-xs">{dr.fullName}</p>
-                              <p className="text-[10px] text-slate-400">KK:{dr.kkYuzde}% Genel:{dr.genelYuzde}%</p>
+                              <p className="text-xs text-slate-400">KK: %{dr.kkYuzde} · Genel: %{dr.genelYuzde}</p>
                             </div>
                           </div>
                         </td>
@@ -331,8 +351,8 @@ export default function RaporPage() {
                         </td>
                         <td className="px-3 py-2.5">
                           <button onClick={() => setPrintDr(dr)}
-                            className="rounded border border-slate-200 px-2 py-1 text-[10px] font-semibold text-slate-500 hover:bg-slate-100 transition">
-                            Detay
+                            className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-100">
+                            Doktor Detayı
                           </button>
                         </td>
                       </tr>
@@ -379,10 +399,10 @@ export default function RaporPage() {
                             style={{ width: Math.max(4, pctCiro) + "%" }} />
                           <div className="absolute inset-y-0 left-0 flex items-center rounded-full bg-blue-600 transition-all"
                             style={{ width: Math.max(2, Math.round(pctCiro * pctHakedis / 100)) + "%" }}>
-                            {pctHakedis > 30 && <span className="pl-2 text-[10px] text-white font-bold">%{pctHakedis}</span>}
+                            {pctHakedis > 30 && <span className="pl-2 text-xs font-bold text-white">%{pctHakedis}</span>}
                           </div>
                         </div>
-                        <div className="flex gap-4 text-[10px] text-slate-500">
+                        <div className="flex flex-wrap gap-4 text-xs text-slate-500">
                           <span>KK: {CUR(dr.kkMasraf)}</span>
                           <span>Lab: {CUR(dr.labCost)}</span>
                           <span>Genel: {CUR(dr.genelMasraf)}</span>
@@ -408,7 +428,7 @@ export default function RaporPage() {
           <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-800">Gider Kategorileri</h3>
-              <Link href="/muhasebe?tab=gider" className="text-xs text-primary hover:underline">Tümü →</Link>
+              <Link href="/muhasebe?tab=gider" className="text-xs font-bold text-primary hover:underline">Tümünü Aç</Link>
             </div>
             {stats.expenseByCategory.length > 0 ? (
               <div className="space-y-3">
@@ -435,7 +455,7 @@ export default function RaporPage() {
           <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-800">Firma / Tedarikçi Alımları</h3>
-              <Link href="/firma" className="text-xs text-primary hover:underline">Tümü →</Link>
+              <Link href="/firma" className="text-xs font-bold text-primary hover:underline">Tümünü Aç</Link>
             </div>
             {stats.firmaByName && stats.firmaByName.length > 0 ? (
               <div className="space-y-2.5">
@@ -474,7 +494,7 @@ export default function RaporPage() {
                 <div key={r.label} className="flex justify-between items-start py-2 border-b border-slate-50">
                   <div>
                     <span className="text-slate-700">{r.sign} {r.label}</span>
-                    <p className="text-[10px] text-slate-400">{r.desc}</p>
+                    <p className="text-xs text-slate-400">{r.desc}</p>
                   </div>
                   <span className={`font-bold ${r.cls}`}>{CUR(r.val)}</span>
                 </div>
@@ -523,7 +543,7 @@ export default function RaporPage() {
                 <span className="font-black text-slate-900">Hesaplanan Gelir Vergisi</span>
                 <span className="text-xl font-black text-red-700">{CUR(stats.gelirVergisi)}</span>
               </div>
-              <p className="text-[10px] text-slate-400">* Tahmini hesaplama. Resmi vergi beyanı için mali müşavir ile görüşünüz.</p>
+              <p className="text-xs text-slate-400">* Tahmini hesaplama. Resmi vergi beyanı için mali müşavir ile görüşünüz.</p>
             </div>
           </div>
         </div>
@@ -540,10 +560,10 @@ export default function RaporPage() {
                   const pct = PCT(e.count, stats.topExaminations[0]?.count || 1);
                   return (
                     <div key={i} className="flex items-center gap-2.5">
-                      <span className="w-5 text-right text-[10px] font-bold text-slate-400">{i+1}</span>
+                      <span className="w-5 text-right text-xs font-bold text-slate-400">{i+1}</span>
                       <div className="flex-1 overflow-hidden rounded-full bg-slate-100 h-5">
                         <div className="h-5 flex items-center rounded-full bg-primary transition-all" style={{ width: Math.max(8, pct) + "%" }}>
-                          {pct > 20 && <span className="pl-2 text-[10px] font-bold text-white">{e.count}</span>}
+                          {pct > 20 && <span className="pl-2 text-xs font-bold text-white">{e.count}</span>}
                         </div>
                       </div>
                       <span className="w-7 text-right text-xs font-bold">{e.count}</span>
@@ -562,10 +582,10 @@ export default function RaporPage() {
                   const pct = PCT(t.count, stats.topTeeth[0]?.count || 1);
                   return (
                     <div key={i} className="flex items-center gap-2.5">
-                      <span className="w-5 text-right text-[10px] font-bold text-slate-400">{i+1}</span>
+                      <span className="w-5 text-right text-xs font-bold text-slate-400">{i+1}</span>
                       <div className="flex-1 overflow-hidden rounded-full bg-slate-100 h-5">
                         <div className="h-5 flex items-center rounded-full bg-accent transition-all" style={{ width: Math.max(8, pct) + "%" }}>
-                          {pct > 20 && <span className="pl-2 text-[10px] font-bold text-white">{t.count}</span>}
+                          {pct > 20 && <span className="pl-2 text-xs font-bold text-white">{t.count}</span>}
                         </div>
                       </div>
                       <span className="w-7 text-right text-xs font-bold">{t.count}</span>

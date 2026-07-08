@@ -2,14 +2,24 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
 
+function taksitPlanTenantWhere(id: string, institutionId: string | null | undefined, role: string) {
+  return {
+    id,
+    ...(role !== "SUPERADMIN" ? { patient: { institutionId } } : {}),
+  };
+}
+
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
     const auth = await requireAuth("payments:read");
     if (auth.error) return auth.error;
     const user = auth.user;
+    if (user.role !== "SUPERADMIN" && !user.institutionId) {
+      return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+    }
 
-    const plan = await (prisma as any).taksitPlan.findUnique({
-      where: { id: params.id },
+    const plan = await (prisma as any).taksitPlan.findFirst({
+      where: taksitPlanTenantWhere(params.id, user.institutionId, user.role),
       include: {
         patient: { select: { id: true, fullName: true, phone: true } },
         doctor: { select: { id: true, fullName: true } },
@@ -39,9 +49,18 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const auth = await requireAuth("payments:write");
     if (auth.error) return auth.error;
     const user = auth.user;
+    if (user.role !== "SUPERADMIN" && !user.institutionId) {
+      return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+    }
 
     const body = await req.json();
     const { status, notes } = body;
+
+    const existing = await (prisma as any).taksitPlan.findFirst({
+      where: taksitPlanTenantWhere(params.id, user.institutionId, user.role),
+      select: { id: true },
+    });
+    if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
     const plan = await (prisma as any).taksitPlan.update({
       where: { id: params.id },
@@ -60,6 +79,15 @@ export async function DELETE(_: NextRequest, { params }: { params: { id: string 
   try {
     const auth = await requireAuth("payments:write");
     if (auth.error) return auth.error;
+    if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
+      return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+    }
+
+    const existing = await (prisma as any).taksitPlan.findFirst({
+      where: taksitPlanTenantWhere(params.id, auth.user.institutionId, auth.user.role),
+      select: { id: true },
+    });
+    if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
     // Hatırlatıcıları sil, sonra plan (Taksit + TaksitOdeme cascade ile silinir)
     await prisma.$transaction(async (tx) => {

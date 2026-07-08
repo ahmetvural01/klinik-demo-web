@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { decodeTokenUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 type RouteContext = { params: { id: string } };
 
@@ -9,8 +9,11 @@ function canManageAll(role: string) {
 }
 
 export async function PATCH(req: Request, { params }: RouteContext) {
-  const user = decodeTokenUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("messages:write");
+  if (auth.error) return auth.error;
+  if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
+    return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+  }
 
   const id = params.id;
   if (!id) return NextResponse.json({ error: "Mesaj bulunamadı" }, { status: 404 });
@@ -22,10 +25,15 @@ export async function PATCH(req: Request, { params }: RouteContext) {
     return NextResponse.json({ error: "Mesaj en fazla 1000 karakter olabilir" }, { status: 400 });
   }
 
-  const message = await prisma.message.findUnique({ where: { id } });
+  const message = await prisma.message.findFirst({
+    where: {
+      id,
+      ...(auth.user.role !== "SUPERADMIN" ? { user: { institutionId: auth.user.institutionId } } : {}),
+    },
+  });
   if (!message) return NextResponse.json({ error: "Mesaj bulunamadı" }, { status: 404 });
 
-  const canEdit = message.userId === user.id || canManageAll(user.role);
+  const canEdit = message.userId === auth.user.id || canManageAll(auth.user.role);
   if (!canEdit) return NextResponse.json({ error: "Bu mesajı düzenleme yetkiniz yok" }, { status: 403 });
 
   const updated = await prisma.message.update({
@@ -38,16 +46,24 @@ export async function PATCH(req: Request, { params }: RouteContext) {
 }
 
 export async function DELETE(_: Request, { params }: RouteContext) {
-  const user = decodeTokenUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("messages:write");
+  if (auth.error) return auth.error;
+  if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
+    return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+  }
 
   const id = params.id;
   if (!id) return NextResponse.json({ error: "Mesaj bulunamadı" }, { status: 404 });
 
-  const message = await prisma.message.findUnique({ where: { id } });
+  const message = await prisma.message.findFirst({
+    where: {
+      id,
+      ...(auth.user.role !== "SUPERADMIN" ? { user: { institutionId: auth.user.institutionId } } : {}),
+    },
+  });
   if (!message) return NextResponse.json({ error: "Mesaj bulunamadı" }, { status: 404 });
 
-  const canDelete = message.userId === user.id || canManageAll(user.role);
+  const canDelete = message.userId === auth.user.id || canManageAll(auth.user.role);
   if (!canDelete) return NextResponse.json({ error: "Bu mesajı silme yetkiniz yok" }, { status: 403 });
 
   await prisma.message.delete({ where: { id } });

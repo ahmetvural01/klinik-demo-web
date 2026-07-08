@@ -14,6 +14,35 @@ type Patient = {
   insurance?: string | null;
 };
 
+type AuthCache = { id?: string; fullName?: string; role?: string };
+
+function readCachedAuthRole() {
+  if (typeof window === "undefined") return "";
+  const preview = sessionStorage.getItem("dev-preview-role");
+  if (preview) return preview;
+  const raw = sessionStorage.getItem("auth:me:v1");
+  if (!raw) return "";
+  try {
+    const cached = JSON.parse(raw) as AuthCache;
+    return cached.role || "";
+  } catch {
+    return "";
+  }
+}
+
+function readCachedPatients(query: string) {
+  if (typeof window === "undefined") return [] as Patient[];
+  const cacheKey = `patients:list:v2:${query.trim().toLocaleLowerCase("tr-TR")}`;
+  const raw = sessionStorage.getItem(cacheKey);
+  if (!raw) return [] as Patient[];
+  try {
+    const cached = JSON.parse(raw);
+    return Array.isArray(cached) ? cached : [];
+  } catch {
+    return [] as Patient[];
+  }
+}
+
 function HastaContent() {
   const searchParams = useSearchParams();
   const [query, setQuery] = useState(searchParams.get("q") || "");
@@ -24,15 +53,23 @@ function HastaContent() {
   const [pageSize, setPageSize] = useState(10);
   const [sortKey, setSortKey] = useState<keyof Patient | "">("fullName");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
-  const [userRole, setUserRole] = useState("");
+  const [userRole, setUserRole] = useState(() => readCachedAuthRole());
+  const [hydrated, setHydrated] = useState(false);
 
   const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
 
   useEffect(() => {
+    setHydrated(true);
+
     const applyRole = async () => {
       const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
       if (preview) {
         setUserRole(preview);
+        return;
+      }
+      const cachedRole = readCachedAuthRole();
+      if (cachedRole) {
+        setUserRole(cachedRole);
         return;
       }
       try {
@@ -52,7 +89,7 @@ function HastaContent() {
   }, []);
 
   const load = useCallback(async () => {
-    const cacheKey = `patients:list:${query.trim().toLocaleLowerCase("tr-TR")}`;
+    const cacheKey = `patients:list:v2:${query.trim().toLocaleLowerCase("tr-TR")}`;
     let hadCached = false;
     if (typeof window !== "undefined") {
       const raw = sessionStorage.getItem(cacheKey);
@@ -67,8 +104,8 @@ function HastaContent() {
       }
     }
 
-    setLoading(!hadCached);
     setError(null);
+    setLoading(true);
     try {
       const res = await fetch(`/api/patients?q=${encodeURIComponent(query)}`);
       const json = await res.json();
@@ -93,8 +130,9 @@ function HastaContent() {
   }, [query]);
 
   useEffect(() => {
+    if (!hydrated) return;
     void load();
-  }, [load]);
+  }, [load, hydrated]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -169,16 +207,16 @@ function HastaContent() {
   );
 
   return (
-    <section>
+    <section className="space-y-4">
       {/* Header */}
-      <div className="mb-5 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-black text-slate-900">Hasta Listesi</h1>
-          <p className="mt-0.5 text-xs text-slate-500">{sorted.length} kayıtlı hasta</p>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-black text-slate-900">Hastalar</h1>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700" suppressHydrationWarning>{sorted.length} kayıt</span>
         </div>
         <Link
           href="/hasta-ekle"
-          className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90"
+          className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90"
         >
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
             <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -188,7 +226,7 @@ function HastaContent() {
       </div>
 
       {/* Toolbar */}
-      <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
+      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
         <div className="relative flex-1 min-w-52">
           <svg className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
             <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
@@ -208,12 +246,43 @@ function HastaContent() {
         </div>
       </div>
 
-      {loading && <div className="flex items-center justify-center py-16 text-sm text-slate-400">Yükleniyor…</div>}
       {error && <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">{error}</p>}
 
-      {!loading && (
-        <div className="overflow-hidden rounded-xl border border-slate-100 bg-white shadow-sm">
-          <div className="overflow-auto">
+      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm" aria-busy={loading}>
+          <div className="divide-y divide-slate-100 md:hidden">
+            {viewRows.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 px-4 py-12 text-slate-400">
+                <svg className="h-10 w-10 text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                </svg>
+                <p className="text-sm">Hasta bulunamadı</p>
+              </div>
+            ) : viewRows.map((p) => (
+              <div key={p.id} className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <Link href={`/hasta-detay?id=${p.id}`} className="text-base font-bold text-slate-900">
+                      {p.fullName}
+                    </Link>
+                    <p className="mt-1 font-mono text-xs text-slate-500">TC: {p.tcNo || "-"}</p>
+                    {!hidePhone && <p className="mt-1 text-sm text-slate-600">{p.phone || "Telefon yok"}</p>}
+                  </div>
+                  {p.insurance && <span className="shrink-0 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">{p.insurance}</span>}
+                </div>
+                <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-500">
+                  <span>{p.gender || "Cinsiyet yok"}</span>
+                  <span>{p.birthDate ? new Date(p.birthDate).toLocaleDateString("tr-TR") : "Doğum tarihi yok"}</span>
+                  <span>{p.insurance || "Sigorta yok"}</span>
+                </div>
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  <Link href={`/hasta-detay?id=${p.id}`} className="rounded-lg bg-primary px-3 py-2 text-center text-sm font-bold text-white">Kartı Aç</Link>
+                  <Link href={`/hasta-ekle?id=${p.id}`} className="rounded-lg border border-slate-200 px-3 py-2 text-center text-sm font-semibold text-slate-700">Düzenle</Link>
+                  <button onClick={() => remove(p.id)} className="rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-600">Sil</button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="hidden overflow-auto md:block">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50">
                 <tr className="border-b border-slate-100">
@@ -268,14 +337,14 @@ function HastaContent() {
                       ) : <span className="text-slate-300">—</span>}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="flex items-center justify-center gap-1.5 opacity-0 transition group-hover:opacity-100">
-                        <Link href={`/hasta-detay?id=${p.id}`} title="Detay" className="rounded-lg bg-primary/10 p-1.5 text-primary transition hover:bg-primary hover:text-white">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <Link href={`/hasta-detay?id=${p.id}`} title="Hasta kartını aç" className="rounded-lg bg-primary/10 px-2.5 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white">
                           <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
                         </Link>
-                        <Link href={`/hasta-ekle?id=${p.id}`} title="Düzenle" className="rounded-lg bg-slate-100 p-1.5 text-slate-600 transition hover:bg-slate-200">
+                        <Link href={`/hasta-ekle?id=${p.id}`} title="Düzenle" className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-200">
                           <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
                         </Link>
-                        <button onClick={() => remove(p.id)} title="Sil" className="rounded-lg bg-red-50 p-1.5 text-red-500 transition hover:bg-red-100">
+                        <button onClick={() => remove(p.id)} title="Sil" className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-500 transition hover:bg-red-100">
                           <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
                         </button>
                       </div>
@@ -305,15 +374,14 @@ function HastaContent() {
               </button>
             </div>
           </div>
-        </div>
-      )}
+      </div>
     </section>
   );
 }
 
 export default function HastaPage() {
   return (
-    <Suspense fallback={<div className="flex items-center justify-center py-20 text-sm text-slate-400">Yükleniyor…</div>}>
+    <Suspense fallback={<div className="py-20" aria-hidden="true" />}>
       <HastaContent />
     </Suspense>
   );

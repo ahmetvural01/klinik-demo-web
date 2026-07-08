@@ -4,13 +4,14 @@ import { useEffect, useState } from "react";
 
 type Doctor = { id: string; fullName: string; role?: string; institutionId?: string };
 type FinanceData = { receivable: number; received: number; toReceive: number; totalTreatments: number; labCost: number; earned: number; topExaminations: any[]; topTeeth: any[]; payments: any[]; patientPayments: any[] };
+const EMPTY_FINANCE: FinanceData = { receivable: 0, received: 0, toReceive: 0, totalTreatments: 0, labCost: 0, earned: 0, topExaminations: [], topTeeth: [], payments: [], patientPayments: [] };
 
 export default function FinansPage() {
   const [staff, setStaff] = useState<Doctor[]>([]);
   const [selectedDoctor, setSelectedDoctor] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const [data, setData] = useState<FinanceData | null>(null);
+  const [data, setData] = useState<FinanceData>(EMPTY_FINANCE);
   const [loading, setLoading] = useState(false);
   const [userRole, setUserRole] = useState("");
   const [paymentModal, setPaymentModal] = useState(false);
@@ -68,7 +69,7 @@ export default function FinansPage() {
         <div className="flex flex-wrap items-center gap-2">
           {userRole === "DOKTOR" ? (
             <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-              {staff.find(s => s.id === selectedDoctor)?.fullName || "Yükleniyor..."}
+              {staff.find(s => s.id === selectedDoctor)?.fullName || "Doktor seçin"}
             </span>
           ) : (
             <select
@@ -82,7 +83,7 @@ export default function FinansPage() {
           )}
           <input type="date" className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" value={fromDate} onChange={e => setFromDate(e.target.value)} title="Başlangıç tarihi" />
           <input type="date" className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" value={toDate} onChange={e => setToDate(e.target.value)} title="Bitiş tarihi" />
-          <button onClick={loadFinance} disabled={!selectedDoctor} className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90 disabled:opacity-50">
+          <button onClick={loadFinance} disabled={!selectedDoctor || loading} className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90 disabled:opacity-50">
             Getir
           </button>
           {userRole === "YONETICI" && selectedDoctor && (
@@ -93,10 +94,7 @@ export default function FinansPage() {
         </div>
       </div>
 
-      {loading && <div className="flex items-center justify-center py-16 text-sm text-slate-400">Yükleniyor…</div>}
-
-      {!loading && data && (
-        <div className="space-y-5">
+      <div className="space-y-5" aria-busy={loading}>
           {/* KPI kartları */}
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
             {[
@@ -200,8 +198,7 @@ export default function FinansPage() {
               </div>
             </div>
           </div>
-        </div>
-      )}
+      </div>
 
       {paymentModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

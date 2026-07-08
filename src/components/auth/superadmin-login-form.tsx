@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { showToastSafe } from "@/lib/toast-client";
 
 export function SuperadminLoginForm() {
   const [identityNo, setIdentityNo] = useState("");
@@ -23,7 +24,9 @@ export function SuperadminLoginForm() {
 
     if (!res.ok) {
       const message = await res.json().catch(() => ({ message: "Giriş başarısız" }));
-      setError(message.message || "Giriş başarısız");
+      const msg = message.message || "Giriş başarısız";
+      setError(msg);
+      try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {}
       return;
     }
 

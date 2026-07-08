@@ -63,7 +63,7 @@ export default function InstitutionsPage() {
     if (res.ok) {
       setItems(await res.json());
     } else {
-      setMessage("Klinik listesi alinamadi");
+      setMessage("Klinik listesi alınamadı");
     }
     setLoading(false);
   };
@@ -110,12 +110,12 @@ export default function InstitutionsPage() {
     setSaving(false);
 
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: "Olusturma basarisiz" }));
-      setMessage(err.message || "Olusturma basarisiz");
+      const err = await res.json().catch(() => ({ message: "Oluşturma başarısız" }));
+      setMessage(err.message || "Oluşturma başarısız");
       return;
     }
 
-    setMessage("Klinik olusturuldu");
+    setMessage("Klinik oluşturuldu");
     setShowNew(false);
     setForm(emptyForm);
     void load();
@@ -148,8 +148,8 @@ export default function InstitutionsPage() {
         <header className="rounded-2xl bg-white p-5 shadow-sm border">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-black text-slate-900">Klinik Yonetimi</h1>
-              <p className="text-sm text-slate-500">Tum klinikleri buradan yonetin.</p>
+              <h1 className="text-2xl font-black text-slate-900">Klinik Yönetimi</h1>
+              <p className="text-sm text-slate-500">Tüm klinikleri buradan yönetin.</p>
             </div>
             <button
               onClick={() => setShowNew((v) => !v)}
@@ -171,12 +171,12 @@ export default function InstitutionsPage() {
 
         {showNew && (
           <section className="rounded-2xl bg-white p-5 shadow-sm border space-y-3">
-            <h2 className="font-bold text-slate-900">Yeni Klinik Olustur</h2>
+            <h2 className="font-bold text-slate-900">Yeni Klinik Oluştur</h2>
             <div className="grid gap-3 md:grid-cols-2">
-              <Input label="Klinik Adi" value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))} />
+              <Input label="Klinik Adı" value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))} />
               <Input label="Sahip Ad Soyad" value={form.ownerName} onChange={(v) => setForm((f) => ({ ...f, ownerName: v }))} />
               <Input label="Sahip TC" value={form.ownerIdentityNo} onChange={(v) => setForm((f) => ({ ...f, ownerIdentityNo: v }))} />
-              <Input label="Sahip Sifre" value={form.ownerPassword} onChange={(v) => setForm((f) => ({ ...f, ownerPassword: v }))} type="password" />
+              <Input label="Sahip Şifre" value={form.ownerPassword} onChange={(v) => setForm((f) => ({ ...f, ownerPassword: v }))} type="password" />
               <Input label="E-posta" value={form.email} onChange={(v) => setForm((f) => ({ ...f, email: v }))} />
               <Input label="Telefon" value={form.phone} onChange={(v) => setForm((f) => ({ ...f, phone: v }))} />
               <Input label="Vergi No" value={form.taxNo} onChange={(v) => setForm((f) => ({ ...f, taxNo: v }))} />
@@ -196,7 +196,7 @@ export default function InstitutionsPage() {
                 </select>
               </label>
               <label className="text-sm font-semibold text-slate-700">
-                Ilk SMS Bakiye
+                İlk SMS Bakiye
                 <input
                   type="number"
                   className="mt-1 w-full rounded-xl border px-3 py-2.5 text-sm"
@@ -210,7 +210,7 @@ export default function InstitutionsPage() {
               onClick={() => void createInstitution()}
               className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60"
             >
-              {saving ? "Kaydediliyor..." : "Klinigi Kaydet"}
+              {saving ? "Kaydediliyor..." : "Kliniği Kaydet"}
             </button>
           </section>
         )}
@@ -233,13 +233,13 @@ export default function InstitutionsPage() {
               {loading ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
-                    Yukleniyor...
+                    Yükleniyor...
                   </td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
-                    Klinik bulunamadi
+                    Klinik bulunamadı
                   </td>
                 </tr>
               ) : (

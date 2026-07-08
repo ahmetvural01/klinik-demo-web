@@ -15,11 +15,16 @@ export async function PUT(request: NextRequest, { params }: Params) {
   if (auth.error) return auth.error;
 
   const body = await request.json();
-  const existing = await (prisma as any).posDevice.findUnique({ where: { id: params.id } });
+  const existing = await (prisma as any).posDevice.findFirst({
+    where: {
+      id: params.id,
+      ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+    },
+  });
   if (!existing) return NextResponse.json({ message: "POS cihazı bulunamadı" }, { status: 404 });
 
   const updated = await (prisma as any).posDevice.update({
-    where: { id: params.id },
+    where: { id: existing.id },
     data: {
       ...(body.name     !== undefined && { name:     body.name.trim() }),
       ...(body.isActive !== undefined && { isActive: body.isActive }),
@@ -54,7 +59,15 @@ export async function DELETE(_: NextRequest, { params }: Params) {
   const auth = await requireAuth("settings:write");
   if (auth.error) return auth.error;
 
-  const deleted = await (prisma as any).posDevice.delete({ where: { id: params.id } });
+  const existing = await (prisma as any).posDevice.findFirst({
+    where: {
+      id: params.id,
+      ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+    },
+  });
+  if (!existing) return NextResponse.json({ message: "POS cihazı bulunamadı" }, { status: 404 });
+
+  const deleted = await (prisma as any).posDevice.delete({ where: { id: existing.id } });
   await writeAudit(auth.user.id, "POS_DELETE", `POS cihazı silindi: ${deleted.name}`);
   return NextResponse.json({ ok: true });
 }

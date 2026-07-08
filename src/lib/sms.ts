@@ -189,7 +189,7 @@ async function sendWithCustomProvider(provider: ProviderConfig, phone: string, m
     return {
       success: false,
       providerRaw: "CUSTOM_SEND_URL_MISSING",
-      error: "Provider sendUrl tanimli degil",
+      error: "SMS sağlayıcı gönderim adresi tanımlı değil",
       providerCode: provider.code,
     };
   }
@@ -301,7 +301,7 @@ export async function testProviderSend(providerId: string, phoneRaw: string, mes
     return {
       success: false,
       providerRaw: "INVALID_PHONE",
-      error: `Gecersiz telefon numarasi: ${phoneRaw}`,
+      error: `Geçersiz telefon numarası: ${phoneRaw}`,
       providerCode: provider.code,
     };
   }
@@ -387,7 +387,7 @@ async function getProviderBalanceInternal(provider: ProviderConfig): Promise<Sms
   }
 
   if (!provider.balanceUrl) {
-    return { success: false, raw: "", error: "balanceUrl tanimli degil" };
+    return { success: false, raw: "", error: "SMS bakiye adresi tanımlı değil" };
   }
 
   const headers = parseHeaders(provider.headersJson);
@@ -419,7 +419,7 @@ export async function sendSms(phoneRaw: string, message: string): Promise<SmsSen
     return {
       success: false,
       providerRaw: "INVALID_PHONE",
-      error: `Gecersiz telefon numarasi: ${phoneRaw}`,
+      error: `Geçersiz telefon numarası: ${phoneRaw}`,
     };
   }
 

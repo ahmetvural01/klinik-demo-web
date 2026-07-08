@@ -1,14 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const user = await getCurrentUser();
-    if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    const auth = await requireAuth("finance:write");
+    if (auth.error) return auth.error;
     const body = await req.json();
+    const existing = await (prisma as any).expenseCategory.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
+      select: { id: true },
+    });
+    if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
+
     const cat = await (prisma as any).expenseCategory.update({
-      where: { id: params.id },
+      where: { id: existing.id },
       data: body
     });
     return NextResponse.json(cat);

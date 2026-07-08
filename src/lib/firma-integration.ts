@@ -1,4 +1,5 @@
 import { writeAudit } from "@/lib/api";
+import { applyStockMovement } from "@/lib/stock-ledger";
 
 const SOURCE_PREFIX = "[SISTEM:FIRMA_ISLEM:";
 
@@ -7,7 +8,7 @@ type TxClient = any;
 type IntegrationInput = {
   tx: TxClient;
   userId: string;
-  firma: { id: string; name: string };
+  firma: { id: string; name: string; institutionId?: string | null };
   islem: {
     id: string;
     tarih: Date;
@@ -38,10 +39,10 @@ function buildBaseDescription(firmaName: string, itemName?: string | null, detai
   return pieces.join(" | ");
 }
 
-async function ensureExpenseCategory(tx: TxClient, name: string) {
-  const existing = await tx.expenseCategory.findUnique({ where: { name } });
+async function ensureExpenseCategory(tx: TxClient, name: string, institutionId?: string | null) {
+  const existing = await tx.expenseCategory.findFirst({ where: { name, ...(institutionId ? { institutionId } : {}) } });
   if (existing) return existing;
-  return tx.expenseCategory.create({ data: { name } });
+  return tx.expenseCategory.create({ data: { name, institutionId: institutionId || null } });
 }
 
 export async function applyFirmaIslemIntegration({
@@ -57,42 +58,29 @@ export async function applyFirmaIslemIntegration({
   const baseDescription = buildBaseDescription(firma.name, islem.urunHizmet, islem.aciklama);
 
   if (islem.islemTipi === "ALIM" && stockItemId && stockQuantity && stockQuantity > 0) {
-    const stockItem = await tx.stockItem.findUnique({ where: { id: stockItemId } });
+    await applyStockMovement({
+      tx,
+      stockItemId,
+      institutionId: firma.institutionId,
+      userId,
+      type: "GIRIS",
+      quantity: Number(stockQuantity),
+      note: `${baseDescription || "Tedarikçi alımı"} ${tag}`,
+      supplier: firma.name,
+      unitPrice: Number(islem.tutar) > 0 ? Number(islem.tutar) / Number(stockQuantity) : undefined,
+    });
 
-    if (stockItem) {
-      const nextQuantity = Number(stockItem.quantity) + Number(stockQuantity);
-      const nextUnitPrice = Number(islem.tutar) > 0 ? Number(islem.tutar) / Number(stockQuantity) : stockItem.unitPrice;
-
-      await tx.stockItem.update({
-        where: { id: stockItemId },
-        data: {
-          quantity: nextQuantity,
-          supplier: firma.name,
-          unitPrice: nextUnitPrice,
-        },
-      });
-
-      await tx.stockMovement.create({
-        data: {
-          stockItemId,
-          type: "GIRIS",
-          quantity: Number(stockQuantity),
-          note: `${baseDescription || "Tedarikçi alımı"} ${tag}`,
-          userId,
-        },
-      });
-
-      summary.stockApplied = true;
-      summary.notes.push("stok girişi oluşturuldu");
-    }
+    summary.stockApplied = true;
+    summary.notes.push("stok girişi oluşturuldu");
   }
 
   if (islem.islemTipi === "HIZMET" || islem.islemTipi === "ODEME") {
     const categoryName = islem.islemTipi === "HIZMET" ? "Firma Hizmeti" : "Firma Ödemesi";
-    const category = await ensureExpenseCategory(tx, categoryName);
+    const category = await ensureExpenseCategory(tx, categoryName, firma.institutionId);
 
     await tx.expense.create({
       data: {
+        institutionId: firma.institutionId || null,
         tarih: islem.tarih,
         categoryId: category.id,
         category: category.name,

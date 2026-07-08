@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
+import "./ensure-postgres.mjs";
 
-const PORT = process.env.PORT || "3001";
+const PORT = process.env.PORT || "3000";
 let stopping = false;
 let restartCount = 0;
 let childProcess = null;
@@ -12,6 +13,7 @@ const NEXT_DIST_DIR = resolve(process.cwd(), ".next-dev");
 
 const SELF_HEAL_PATTERNS = [
   "EBUSY: resource busy or locked",
+  "EINVAL: invalid argument, readlink",
   "Cannot find module 'next/dist/compiled/next-server/app-page.runtime.dev.js'",
   "Cannot find module 'react/jsx-runtime'",
 ];
@@ -82,11 +84,11 @@ process.on("SIGTERM", async () => {
 
 function run() {
   const child = process.platform === "win32"
-    ? spawn("cmd.exe", ["/d", "/s", "/c", `npm run dev -- -p ${PORT}`], {
+    ? spawn("cmd.exe", ["/d", "/s", "/c", `npm run dev:next -- -p ${PORT}`], {
         stdio: ["inherit", "pipe", "pipe"],
         env: process.env,
       })
-    : spawn("npm", ["run", "dev", "--", "-p", PORT], {
+    : spawn("npm", ["run", "dev:next", "--", "-p", PORT], {
         stdio: ["inherit", "pipe", "pipe"],
         env: process.env,
       });

@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("appointments:write");
+  if (auth.error) return auth.error;
 
   const body = await req.json();
   const { item, amount, invoiceNo, issuedAt, note } = body;
@@ -13,8 +13,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json({ error: "item ve amount zorunlu" }, { status: 400 });
   }
 
-  const orderMeta = await (prisma as any).labOrder.findUnique({
-    where: { id: params.id },
+  const orderMeta = await (prisma as any).labOrder.findFirst({
+    where: {
+      id: params.id,
+      ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
+    },
     select: { notes: true },
   });
 
@@ -57,7 +60,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     if (order?.labName) {
       const matchedFirma = await (prisma as any).firma.findFirst({
-        where: { name: { contains: order.labName, mode: "insensitive" }, isActive: true },
+        where: {
+          name: { contains: order.labName, mode: "insensitive" },
+          isActive: true,
+          ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        },
         select: { id: true },
       });
 

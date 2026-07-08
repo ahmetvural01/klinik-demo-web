@@ -5,6 +5,14 @@ import { prisma } from "@/lib/prisma";
 
 const TOKEN_NAME = "klinik_token";
 
+function readAuthToken() {
+  try {
+    return cookies().get(TOKEN_NAME)?.value || null;
+  } catch {
+    return null;
+  }
+}
+
 export type AuthPayload = {
   userId: string;
   role: string;
@@ -27,7 +35,7 @@ export function signToken(payload: AuthPayload) {
   const secret = process.env.JWT_SECRET;
 
   if (!secret) {
-    throw new Error("JWT_SECRET tanimli degil");
+    throw new Error("JWT_SECRET tanımlı değil");
   }
 
   return jwt.sign(payload, secret, { expiresIn: "7d" });
@@ -37,14 +45,14 @@ export function verifyToken(token: string) {
   const secret = process.env.JWT_SECRET;
 
   if (!secret) {
-    throw new Error("JWT_SECRET tanimli degil");
+    throw new Error("JWT_SECRET tanımlı değil");
   }
 
   return jwt.verify(token, secret) as AuthPayload;
 }
 
 export async function getCurrentUser() {
-  const token = cookies().get(TOKEN_NAME)?.value;
+  const token = readAuthToken();
 
   if (!token) {
     return null;
@@ -72,8 +80,16 @@ export async function getCurrentUser() {
  * requireAuth için yeterli: id, role, institutionId.
  */
 export function decodeTokenUser(): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean } | null {
-  const token = cookies().get(TOKEN_NAME)?.value;
+  const token = readAuthToken();
   if (!token) return null;
+  try {
+    return decodeTokenUserFromToken(token);
+  } catch {
+    return null;
+  }
+}
+
+export function decodeTokenUserFromToken(token: string): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean } | null {
   try {
     const payload = verifyToken(token);
     return {
@@ -91,7 +107,7 @@ export function decodeTokenUser(): { id: string; role: string; institutionId: st
 
 /** JWT'den DB sorgusu yapmadan kullanıcı bilgilerini al (layout için hızlı) */
 export function getCurrentUserFast(): { id: string; role: string; rawRole: string; institution: string; fullName: string } | null {
-  const token = cookies().get(TOKEN_NAME)?.value;
+  const token = readAuthToken();
   if (!token) return null;
   try {
     const payload = verifyToken(token);

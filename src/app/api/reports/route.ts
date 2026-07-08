@@ -21,6 +21,8 @@ export async function GET(request: NextRequest) {
   const auth = await requireAuth("reports:read");
   if (auth.error) return auth.error;
 
+  const institutionId = auth.user.institutionId;
+
   const from = request.nextUrl.searchParams.get("from") || request.nextUrl.searchParams.get("start");
   const to   = request.nextUrl.searchParams.get("to")   || request.nextUrl.searchParams.get("end");
 
@@ -42,41 +44,89 @@ export async function GET(request: NextRequest) {
     ],
   };
 
+  const institutionDoctors = institutionId
+    ? await prisma.user.findMany({
+        where: { institutionId, role: "DOKTOR", isActive: true },
+        select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
+      })
+    : [];
+  const doctorIds = institutionDoctors.map((doctor) => doctor.id);
+  const institutionPatientScope = doctorIds.length > 0
+    ? {
+        OR: [
+          { institutionId },
+          { examinations: { some: { doctorId: { in: doctorIds } } } },
+          { appointments: { some: { doctorId: { in: doctorIds } } } },
+        ],
+      }
+    : undefined;
+
   // ── Paralel sorgular ──────────────────────────────────────────────────────
   const [payments, examinations, labOrders, expenses, firmaIslemler, newPatients, taksitler, doctors] =
     await Promise.all([
       prisma.payment.findMany({
-        where: { createdAt: dateFilter },
+        where: institutionId
+          ? {
+              createdAt: dateFilter,
+              OR: [
+                { doctorId: { in: doctorIds } },
+                { patient: { institutionId } },
+              ],
+            }
+          : { createdAt: dateFilter },
         include: { patient: { select: { id: true } } },
       }),
       prisma.examination.findMany({
-        where: { diagnosedAt: dateFilter, ...treatmentOnlyWhere },
+        where: institutionId
+          ? { diagnosedAt: dateFilter, ...treatmentOnlyWhere, doctorId: { in: doctorIds } }
+          : { diagnosedAt: dateFilter, ...treatmentOnlyWhere },
         include: {
           doctor: { select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true } },
           patient: { select: { id: true } },
         },
       }),
       (prisma as any).labOrder.findMany({
-        where: { createdAt: dateFilter, status: { not: "IPTAL" } },
+        where: institutionId
+          ? { createdAt: dateFilter, status: { not: "IPTAL" }, patient: { institutionId } }
+          : { createdAt: dateFilter, status: { not: "IPTAL" } },
         include: { doctor: { select: { id: true, fullName: true } } },
       }),
       (prisma as any).expense.findMany({
-        where: { tarih: dateFilter, status: { not: "IPTAL" } },
-        include: { category: { select: { name: true } } },
+        where: {
+          tarih: dateFilter,
+          status: { not: "IPTAL" },
+          ...(institutionId ? { institutionId } : {}),
+        },
+        include: { expenseCategory: { select: { name: true } } },
       }),
       (prisma as any).firmaIslem.findMany({
-        where: { tarih: dateFilter, status: { not: "IPTAL" }, islemTipi: { in: ["ALIM", "HIZMET"] } },
+        where: {
+          tarih: dateFilter,
+          status: { not: "IPTAL" },
+          islemTipi: { in: ["ALIM", "HIZMET"] },
+          ...(institutionId ? { firma: { institutionId } } : {}),
+        },
         include: { firma: { select: { name: true } } },
       }),
-      prisma.patient.count({ where: { createdAt: dateFilter } }),
+      prisma.patient.count({
+        where: institutionId
+          ? { createdAt: dateFilter, institutionId }
+          : doctorIds.length > 0
+          ? { createdAt: dateFilter, ...institutionPatientScope }
+          : { createdAt: dateFilter },
+      }),
       (prisma as any).taksit.findMany({
-        where: { status: "GECIKTI" },
+        where: institutionId
+          ? { status: "GECIKTI", plan: { patient: { institutionId } } }
+          : { status: "GECIKTI" },
       }),
       // Doktorlar ve yüzdeleri (hakediş için)
-      prisma.user.findMany({
-        where: { role: "DOKTOR", isActive: true },
-        select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
-      }),
+      institutionId
+        ? Promise.resolve(institutionDoctors)
+        : prisma.user.findMany({
+            where: { role: "DOKTOR", isActive: true },
+            select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
+          }),
     ]);
 
   // Doktor yüzde map
@@ -200,7 +250,7 @@ export async function GET(request: NextRequest) {
   const totalExpenses = expenses.reduce((s: number, e: any) => s + Number(e.tutar), 0);
   const expenseByCategory: Record<string, number> = {};
   for (const e of expenses) {
-    const cat = e.category?.name || e.category || "Diğer";
+    const cat = e.expenseCategory?.name || e.category || "Diğer";
     expenseByCategory[cat] = (expenseByCategory[cat] || 0) + Number(e.tutar);
   }
 
@@ -244,8 +294,21 @@ export async function GET(request: NextRequest) {
 
   // Yıllık vergi tahmini (aynı yıl verisi üzerinden)
   const [annualPayments, annualExpenses] = await Promise.all([
-    prisma.payment.aggregate({ _sum: { amount: true }, where: { createdAt: { gte: yearStart, lte: yearEnd } } }),
-    (prisma as any).expense.findMany({ where: { tarih: { gte: yearStart, lte: yearEnd }, status: { not: "IPTAL" } }, select: { tutar: true, kdvOrani: true } }),
+    prisma.payment.aggregate({
+      _sum: { amount: true },
+      where: {
+        createdAt: { gte: yearStart, lte: yearEnd },
+        ...(institutionId ? { patient: { institutionId } } : {}),
+      },
+    }),
+    (prisma as any).expense.findMany({
+      where: {
+        tarih: { gte: yearStart, lte: yearEnd },
+        status: { not: "IPTAL" },
+        ...(institutionId ? { institutionId } : {}),
+      },
+      select: { tutar: true, kdvOrani: true },
+    }),
   ]);
   const annualRevenue = Number(annualPayments._sum.amount || 0) / (1 + REVENUE_VAT_RATE);
   const annualExpense = annualExpenses.reduce((s: number, e: any) => {

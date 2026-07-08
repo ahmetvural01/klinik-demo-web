@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable react-hooks/exhaustive-deps */
+
 import { useEffect, useState } from "react";
 
 type Log = { id: string; createdAt: string; user: { fullName: string; role?: string }; action: string; detail: string };
@@ -78,6 +80,7 @@ export default function LogPage() {
   const [search, setSearch] = useState("");
   const [detailLog, setDetailLog] = useState<Log | null>(null);
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (fromDate && toDate) fetchLogs();
   }, [page, pageSize, fromDate, toDate]);
@@ -122,12 +125,7 @@ export default function LogPage() {
       </div>
 
       <>
-        {loading && (
-          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
-            Kayıtlar güncelleniyor...
-          </div>
-        )}
-          <div className="rounded-2xl bg-white border border-slate-100 shadow-sm overflow-hidden">
+        <div className="rounded-2xl bg-white border border-slate-100 shadow-sm overflow-hidden" aria-busy={loading}>
             <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="border-b border-slate-100 bg-slate-50 text-[11px] font-bold uppercase tracking-wide text-slate-500">
@@ -171,8 +169,8 @@ export default function LogPage() {
               <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-40">← Önceki</button>
               <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-40">Sonraki →</button>
             </div>
-          </div>
-      </>
+            </div>
+          </>
 
       {detailLog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">

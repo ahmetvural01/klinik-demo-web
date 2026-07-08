@@ -1,13 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
+import { applyStockMovement } from "@/lib/stock-ledger";
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("finance:read");
+  if (auth.error) return auth.error;
 
-  const item = await (prisma as any).stockItem.findUnique({
-    where: { id: params.id },
+  const item = await (prisma as any).stockItem.findFirst({
+    where: {
+      id: params.id,
+      ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+    },
     include: { movements: { orderBy: { createdAt: "desc" }, take: 50 } },
   });
   if (!item) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
@@ -16,13 +20,21 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("finance:write");
+  if (auth.error) return auth.error;
 
   const body = await req.json();
   const { name, category, unit, minQuantity, unitPrice, supplier } = body;
 
   if (!name) return NextResponse.json({ error: "İsim zorunlu" }, { status: 400 });
+  const existing = await (prisma as any).stockItem.findFirst({
+    where: {
+      id: params.id,
+      ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+    },
+    select: { id: true },
+  });
+  if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
   const updated = await (prisma as any).stockItem.update({
     where: { id: params.id },
@@ -41,49 +53,51 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
 // PATCH: stock movement (GIRIS/CIKIS)
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("finance:write");
+  if (auth.error) return auth.error;
 
   const body = await req.json();
-  const { type, quantity, note } = body;
+  const { type, quantity, note, supplier, unitPrice } = body;
 
   if (!type || !quantity) return NextResponse.json({ error: "type ve quantity zorunlu" }, { status: 400 });
   if (!["GIRIS", "CIKIS"].includes(type)) return NextResponse.json({ error: "type: GIRIS veya CIKIS olmalı" }, { status: 400 });
   if (Number(quantity) <= 0) return NextResponse.json({ error: "Miktar pozitif olmalı" }, { status: 400 });
+  try {
+    const result = await (prisma as any).$transaction(async (tx: any) => {
+      return applyStockMovement({
+        tx,
+        stockItemId: params.id,
+        institutionId: auth.user.institutionId,
+        userId: auth.user.id,
+        type,
+        quantity: Number(quantity),
+        note,
+        supplier,
+        unitPrice: unitPrice !== undefined ? Number(unitPrice) : undefined,
+      });
+    });
 
-  const item = await (prisma as any).stockItem.findUnique({ where: { id: params.id } });
-  if (!item) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
-  if (!item.isActive) return NextResponse.json({ error: "Pasif stok kalemi güncellenemez" }, { status: 400 });
-
-  const delta = type === "GIRIS" ? Number(quantity) : -Number(quantity);
-  const newQty = Math.max(0, item.quantity + delta);
-
-  if (type === "CIKIS" && Number(quantity) > item.quantity) {
-    return NextResponse.json({
-      error: `Yetersiz stok. Mevcut: ${item.quantity}, İstenen çıkış: ${quantity}`,
-    }, { status: 400 });
+    return NextResponse.json({ ...result.item, isCritical: result.isCritical });
+  } catch (error) {
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Stok hareketi kaydedilemedi" }, { status: 400 });
   }
-
-  const [updated] = await (prisma as any).$transaction([
-    (prisma as any).stockItem.update({
-      where: { id: params.id },
-      data:  { quantity: newQty },
-    }),
-    (prisma as any).stockMovement.create({
-      data: { stockItemId: params.id, type, quantity: Number(quantity), note: note || null, userId: user.id },
-    }),
-  ]);
-
-  const isCritical = newQty < Number(item.minQuantity);
-  return NextResponse.json({ ...updated, isCritical });
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
-  const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+  const auth = await requireAuth("finance:write");
+  if (auth.error) return auth.error;
+
+  const existing = await (prisma as any).stockItem.findFirst({
+    where: {
+      id: params.id,
+      ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+    },
+    select: { id: true },
+  });
+  if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
   await (prisma as any).stockItem.update({
-    where: { id: params.id },
+    where: { id: existing.id },
     data:  { isActive: false },
   });
 

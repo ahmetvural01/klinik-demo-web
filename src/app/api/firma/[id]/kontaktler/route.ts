@@ -6,6 +6,14 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
+    const firma = await (prisma as any).firma.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
+      select: { id: true },
+    });
+    if (!firma) return NextResponse.json({ error: "Bulunamadi" }, { status: 404 });
 
     const kontaktler = await (prisma as any).firmaKontakt.findMany({
       where: { firmaId: params.id, isActive: true },
@@ -15,7 +23,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json(kontaktler);
   } catch (e) {
     console.error(e);
-    return NextResponse.json({ error: "Sunucu hatasi" }, { status: 500 });
+    return NextResponse.json([], { status: 200 });
   }
 }
 
@@ -23,6 +31,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
+    const firma = await (prisma as any).firma.findFirst({
+      where: {
+        id: params.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
+      select: { id: true },
+    });
+    if (!firma) return NextResponse.json({ error: "Bulunamadi" }, { status: 404 });
 
     const { ad, unvan, email, telefon, rol, isPrimary } = await req.json();
     if (!ad) return NextResponse.json({ error: "Kontakt adi zorunlu" }, { status: 400 });
@@ -50,6 +66,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     return NextResponse.json(kontakt, { status: 201 });
   } catch (e) {
     console.error(e);
-    return NextResponse.json({ error: "Sunucu hatasi" }, { status: 500 });
+    return NextResponse.json({ error: "Kontakt eklenemedi" }, { status: 503 });
   }
 }

@@ -12,7 +12,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
   const body = await request.json();
   const parsed = patientFollowUpUpdateSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ message: "Gecersiz takip guncellemesi" }, { status: 400 });
+    return NextResponse.json({ message: "Geçersiz takip güncellemesi" }, { status: 400 });
   }
 
   const existing = await prisma.patientFollowUp.findUnique({
@@ -20,7 +20,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     include: { patient: { select: { fullName: true } } },
   });
   if (!existing) {
-    return NextResponse.json({ message: "Takip kaydi bulunamadi" }, { status: 404 });
+    return NextResponse.json({ message: "Takip kaydı bulunamadı" }, { status: 404 });
   }
 
   const shouldClose = parsed.data.close === true || parsed.data.status === "KAPALI";
@@ -62,7 +62,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     },
   });
 
-  await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_UPDATE", `${existing.patient.fullName} takip kaydi guncellendi`);
+  await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_UPDATE", `${existing.patient.fullName} takip kaydı güncellendi`);
   return NextResponse.json(updated);
 }
 
@@ -76,11 +76,11 @@ export async function DELETE(_: NextRequest, { params }: Params) {
   });
 
   if (!existing) {
-    return NextResponse.json({ message: "Takip kaydi bulunamadi" }, { status: 404 });
+    return NextResponse.json({ message: "Takip kaydı bulunamadı" }, { status: 404 });
   }
 
   await prisma.patientFollowUp.delete({ where: { id: params.id } });
-  await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_DELETE", `${existing.patient.fullName} takip kaydi silindi`);
+  await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_DELETE", `${existing.patient.fullName} takip kaydı silindi`);
 
   return NextResponse.json({ ok: true });
 }

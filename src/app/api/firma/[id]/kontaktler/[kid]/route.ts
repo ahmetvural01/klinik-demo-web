@@ -7,11 +7,17 @@ export async function GET(req: NextRequest, { params }: { params: { id: string; 
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
 
-    const kontakt = await (prisma as any).firmaKontakt.findUnique({
-      where: { id: params.kid }
+    const kontakt = await (prisma as any).firmaKontakt.findFirst({
+      where: {
+        id: params.kid,
+        firmaId: params.id,
+        firma: {
+          ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        },
+      },
     });
     
-    if (!kontakt || kontakt.firmaId !== params.id) {
+    if (!kontakt) {
       return NextResponse.json({ error: "Bulunamadi" }, { status: 404 });
     }
 
@@ -28,6 +34,17 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     if (auth.error) return auth.error;
 
     const { ad, unvan, email, telefon, rol, isPrimary } = await req.json();
+    const existing = await (prisma as any).firmaKontakt.findFirst({
+      where: {
+        id: params.kid,
+        firmaId: params.id,
+        firma: {
+          ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        },
+      },
+      select: { id: true },
+    });
+    if (!existing) return NextResponse.json({ error: "Bulunamadi" }, { status: 404 });
 
     // Eğer primary olarak işaretlenirse, diğer primary'leri false'a çevir
     if (isPrimary) {
@@ -60,6 +77,17 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
+    const existing = await (prisma as any).firmaKontakt.findFirst({
+      where: {
+        id: params.kid,
+        firmaId: params.id,
+        firma: {
+          ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        },
+      },
+      select: { id: true },
+    });
+    if (!existing) return NextResponse.json({ error: "Bulunamadi" }, { status: 404 });
 
     // Soft delete
     const kontakt = await (prisma as any).firmaKontakt.update({

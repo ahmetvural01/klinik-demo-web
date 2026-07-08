@@ -18,19 +18,19 @@ export async function GET() {
         {
           code: "BILGI",
           title: "Bilgi SMS",
-          content: "{{institutionName}}: Sayin {{patientName}}, randevunuz olusturuldu. Tarih: {{dateTime}}.",
+          content: "{{institutionName}}: Sayın {{patientName}}, randevunuz oluşturuldu. Tarih: {{dateTime}}.",
           isActive: true,
         },
         {
           code: "HATIRLATMA",
           title: "Hatirlatma SMS",
-          content: "{{institutionName}}: Sayin {{patientName}}, randevu hatirlatmasi. Tarih: {{dateTime}}, Doktor: {{doctorName}}.",
+          content: "{{institutionName}}: Sayın {{patientName}}, randevu hatırlatması. Tarih: {{dateTime}}, Doktor: {{doctorName}}.",
           isActive: true,
         },
         {
           code: "ANKET",
           title: "Anket SMS",
-          content: "{{institutionName}}: Sayin {{patientName}}, randevunuz tamamlandi. Geri bildiriminiz bizim icin degerli.",
+          content: "{{institutionName}}: Sayın {{patientName}}, randevunuz tamamlandı. Geri bildiriminiz bizim için değerli.",
           isActive: true,
         },
       ],

@@ -38,7 +38,7 @@ const UPDATE_NOTES = [
 
 export default function DestekPage() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [newTicket, setNewTicket] = useState({ subject: "Destek Talebi", message: "" });
   const [sending, setSending] = useState(false);
   const [query, setQuery] = useState("");
@@ -94,9 +94,11 @@ export default function DestekPage() {
       )}
 
       {/* Header */}
-      <div>
-        <h1 className="text-lg font-bold text-slate-900">Destek</h1>
-        <p className="mt-0.5 text-sm text-slate-500">Teknik destek ve sistem güncellemeleri</p>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-black text-slate-900">Destek</h1>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{tickets.length} talep</span>
+        </div>
       </div>
 
       {/* WhatsApp */}
@@ -117,8 +119,8 @@ export default function DestekPage() {
       <div className="grid gap-5 lg:grid-cols-2">
         {/* Görüş Gönder */}
         <div className="rounded-2xl bg-white border border-slate-100 p-5 shadow-sm space-y-3">
-          <h3 className="text-sm font-bold text-slate-800">Görüş / Talep Gönder</h3>
-          <p className="text-xs text-slate-500">Öneri, hata bildirimi veya destek talebinizi iletebilirsiniz.</p>
+          <h3 className="text-base font-black text-slate-900">Yeni Destek Talebi</h3>
+          <p className="text-sm text-slate-500">Yaşadığınız sorunu veya önerinizi kısa ve anlaşılır şekilde yazın.</p>
           <div>
             <label className="mb-1 block text-xs font-semibold text-slate-500 uppercase">Konu</label>
             <input
@@ -137,9 +139,9 @@ export default function DestekPage() {
               className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none"
             />
           </div>
-          <button onClick={sendTicket} disabled={sending}
+          <button onClick={sendTicket} disabled={sending || loading}
             className="w-full rounded-xl bg-primary py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-50">
-            {sending ? "Gönderiliyor…" : "Gönder"}
+            {sending ? "Gönderiliyor…" : "Talebi Gönder"}
           </button>
         </div>
 
@@ -147,14 +149,14 @@ export default function DestekPage() {
         <div className="rounded-2xl bg-white border border-slate-100 p-5 shadow-sm space-y-3">
           <h3 className="text-sm font-bold text-slate-800">Sistem Güncellemeleri</h3>
           <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-2.5 text-sm font-semibold text-emerald-700">
-            ✓ Yazılımınız güncel
+            Yazılımınız güncel
           </div>
           <div className="max-h-72 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 p-3 space-y-3">
             {UPDATE_NOTES.map((row) => (
               <div key={row.version} className="border-b border-slate-100 last:border-0 pb-2 last:pb-0">
                 <p className="text-xs font-bold text-primary">{row.version} <span className="text-slate-400 font-normal">— {row.date}</span></p>
                 {row.notes.map((n, i) => (
-                  <p key={i} className="text-xs text-slate-600 mt-0.5">• {n}</p>
+                  <p key={i} className="text-xs text-slate-600 mt-0.5">{n}</p>
                 ))}
               </div>
             ))}
@@ -170,12 +172,27 @@ export default function DestekPage() {
             placeholder="Ara…"
             className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:border-primary focus:bg-white focus:outline-none" />
         </div>
-        {loading ? (
-          <div className="flex justify-center py-8">
-            <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        {(
+          <>
+          <div className="divide-y divide-slate-100 md:hidden">
+            {filteredTickets.length === 0 ? (
+              <div className="py-8 text-center text-slate-400">Henüz destek talebi gönderilmedi</div>
+            ) : filteredTickets.map(t => (
+              <div key={t.id} className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <p className="font-bold text-slate-900">{t.subject}</p>
+                  {t.answer
+                    ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-700">Yanıtlandı</span>
+                    : <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-700">Bekliyor</span>
+                  }
+                </div>
+                <p className="mt-2 text-sm text-slate-600">{t.message}</p>
+                {t.answer && <p className="mt-2 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">{t.answer}</p>}
+                <p className="mt-2 text-xs text-slate-400">{new Date(t.createdAt).toLocaleDateString("tr-TR")}</p>
+              </div>
+            ))}
           </div>
-        ) : (
-          <div className="overflow-x-auto">
+          <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-slate-100 bg-slate-50 text-[11px] font-bold uppercase tracking-wide text-slate-500">
@@ -187,7 +204,7 @@ export default function DestekPage() {
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {filteredTickets.length === 0 ? (
-                  <tr><td colSpan={4} className="py-8 text-center text-slate-400">Henüz görüş gönderilmedi</td></tr>
+                  <tr><td colSpan={4} className="py-8 text-center text-slate-400">Henüz destek talebi gönderilmedi</td></tr>
                 ) : filteredTickets.map(t => (
                   <tr key={t.id} className="hover:bg-slate-50">
                     <td className="px-4 py-3 font-medium text-slate-800">{t.subject}</td>
@@ -206,6 +223,7 @@ export default function DestekPage() {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </div>
     </div>

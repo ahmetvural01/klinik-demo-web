@@ -1,39 +1,70 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
-import { applyTaksitIntegration } from "@/lib/taksit-integration";
+import { createIntegratedPayment } from "@/lib/payment-ledger";
 
 export async function GET(req: NextRequest) {
-  const auth = await requireAuth("payments:read");
-  if (auth.error) return auth.error;
+  try {
+    const auth = await requireAuth("payments:read");
+    if (auth.error) return auth.error;
 
-  const { searchParams } = new URL(req.url);
-  const dateRaw = searchParams.get("date"); // YYYY-MM-DD
+    const institutionDoctors = auth.user.institutionId
+      ? await prisma.user.findMany({
+          where: { institutionId: auth.user.institutionId, role: "DOKTOR", isActive: true },
+          select: { id: true },
+        })
+      : [];
+    const doctorIds = institutionDoctors.map((doctor) => doctor.id);
+    const institutionFilter = auth.user.institutionId
+      ? {
+          OR: [
+            { doctorId: { in: doctorIds } },
+            { patient: { examinations: { some: { doctorId: { in: doctorIds } } } } },
+          ],
+        }
+      : {};
 
-  const date  = dateRaw ? new Date(dateRaw) : new Date();
-  const start = new Date(date);
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(date);
-  end.setHours(23, 59, 59, 999);
+    const { searchParams } = new URL(req.url);
+    const dateRaw = searchParams.get("date"); // YYYY-MM-DD
 
-  const payments = await prisma.payment.findMany({
-    where: { createdAt: { gte: start, lte: end } },
-    include: { patient: { select: { id: true, fullName: true } } },
-    orderBy: { createdAt: "desc" },
-  });
+    const date  = dateRaw ? new Date(dateRaw) : new Date();
+    const start = new Date(date);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(date);
+    end.setHours(23, 59, 59, 999);
 
-  const total = payments.reduce((s, p) => s + Number(p.amount), 0);
-  const byMethod: Record<string, number> = { NAKIT: 0, KREDI_KARTI: 0, HAVALE_EFT: 0 };
-  for (const p of payments) {
-    byMethod[p.method] = (byMethod[p.method] || 0) + Number(p.amount);
+    const payments = await prisma.payment.findMany({
+      where: {
+        createdAt: { gte: start, lte: end },
+        ...institutionFilter,
+      },
+      include: { patient: { select: { id: true, fullName: true } } },
+      orderBy: { createdAt: "desc" },
+    });
+
+    const total = payments.reduce((s, p) => s + Number(p.amount), 0);
+    const byMethod: Record<string, number> = { NAKIT: 0, KREDI_KARTI: 0, HAVALE_EFT: 0 };
+    for (const p of payments) {
+      byMethod[p.method] = (byMethod[p.method] || 0) + Number(p.amount);
+    }
+
+    return NextResponse.json({ date: start.toISOString(), total, byMethod, payments });
+  } catch {
+    return NextResponse.json({ date: new Date().toISOString(), total: 0, byMethod: { NAKIT: 0, KREDI_KARTI: 0, HAVALE_EFT: 0 }, payments: [] });
   }
-
-  return NextResponse.json({ date: start.toISOString(), total, byMethod, payments });
 }
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth("payments:write");
   if (auth.error) return auth.error;
+
+  const institutionDoctors = auth.user.institutionId
+    ? await prisma.user.findMany({
+        where: { institutionId: auth.user.institutionId, role: "DOKTOR", isActive: true },
+        select: { id: true },
+      })
+    : [];
+  const doctorIds = institutionDoctors.map((doctor) => doctor.id);
 
   const body = await req.json();
   const { patientId, doctorId, method, amount, description, posId } = body;
@@ -43,17 +74,38 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "amount ve method zorunlu" }, { status: 400 });
   }
 
-  const { payment, taksitInfo } = await prisma.$transaction(async (tx) => {
-    const created = await tx.payment.create({
-      data: { patientId: patientId || null, doctorId: doctorId || null, method, amount: numericAmount, description, posId: posId || null },
-      include: { patient: { select: { id: true, fullName: true } } },
+  if (auth.user.institutionId && doctorId && !doctorIds.includes(doctorId)) {
+    return NextResponse.json({ error: "Bu doktor kurum kapsamı disinda" }, { status: 403 });
+  }
+
+  if (auth.user.institutionId && patientId && doctorIds.length > 0) {
+    const relatedPatient = await prisma.patient.findFirst({
+      where: {
+        id: patientId,
+        OR: [
+          { examinations: { some: { doctorId: { in: doctorIds } } } },
+          { appointments: { some: { doctorId: { in: doctorIds } } } },
+        ],
+      },
+      select: { id: true },
     });
-    let taksitInfo = null;
-    if (patientId) {
-      taksitInfo = await applyTaksitIntegration(tx, patientId, numericAmount, method, posId || null);
+
+    if (!relatedPatient) {
+      return NextResponse.json({ error: "Hasta kurum kapsamı disinda" }, { status: 403 });
     }
-    return { payment: created, taksitInfo };
-  });
+  }
+
+  const { payment, taksitInfo } = await prisma.$transaction((tx) =>
+    createIntegratedPayment({
+      tx,
+      patientId,
+      doctorId,
+      method,
+      amount: numericAmount,
+      description,
+      posId,
+    })
+  );
 
   return NextResponse.json({ ...payment, taksitInfo }, { status: 201 });
 }

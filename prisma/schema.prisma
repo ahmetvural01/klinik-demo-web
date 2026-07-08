@@ -32,13 +32,45 @@ model Institution {
   serviceNote       String?
   suspendedUntil    DateTime?
   throttleMs        Int                       @default(0)
+  isDemo            Boolean                   @default(false)
+  demoExpiresAt     DateTime?
+  demoSourceRequestId String?
   owner             User?                     @relation("InstitutionOwner", fields: [ownerId], references: [id])
   adAssignments     InstitutionAdAssignment[]
+  announcements     Announcement[]
   clinicTasks       ClinicTask[]
+  demoRequests      DemoRequest[]             @relation("DemoRequestInstitution")
   invoices          Invoice[]
+  patients          Patient[]
+  priceItems        PriceItem[]
   settings          Setting?
   smsTransactions   SmsTransaction[]
+  stockItems        StockItem[]
+  expenseCategories ExpenseCategory[]
+  expenses          Expense[]
+  firmas            Firma[]
+  posDevices        PosDevice[]
   users             User[]
+}
+
+model DemoRequest {
+  id                String       @id @default(cuid())
+  institutionName   String
+  contactName       String
+  email             String
+  phone             String?
+  notes             String?
+  status            String       @default("DEMO_CREATED")
+  demoInstitutionId String?
+  demoExpiresAt     DateTime?
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  demoInstitution   Institution? @relation("DemoRequestInstitution", fields: [demoInstitutionId], references: [id])
+
+  @@index([email])
+  @@index([status])
+  @@index([demoInstitutionId])
+  @@index([createdAt])
 }
 
 model Advertisement {
@@ -298,7 +330,8 @@ model Profile {
 
 model Patient {
   id             String          @id @default(cuid())
-  tcNo           String          @unique
+  institutionId  String?
+  tcNo           String
   fullName       String
   phone          String
   address        String?
@@ -321,6 +354,7 @@ model Patient {
   bloodType      String?
   toothChart     String?
   referrer       String?
+  institution    Institution?    @relation(fields: [institutionId], references: [id])
   appointments   Appointment[]
   examinations   Examination[]
   labOrders      LabOrder[]
@@ -333,6 +367,8 @@ model Patient {
   taksitPlanlari TaksitPlan[]
   treatmentPlans TreatmentPlan[]
 
+  @@unique([institutionId, tcNo])
+  @@index([institutionId])
   @@index([fullName])
   @@index([phone])
 }
@@ -494,6 +530,7 @@ model Payment {
 
 model PriceItem {
   id         String   @id @default(cuid())
+  institutionId String?
   code       String
   treatment  String
   amount     Decimal  @db.Decimal(10, 2)
@@ -501,8 +538,10 @@ model PriceItem {
   isCustom   Boolean  @default(true)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+  institution Institution? @relation(fields: [institutionId], references: [id])
 
-  @@unique([code, treatment])
+  @@unique([institutionId, code, treatment])
+  @@index([institutionId])
 }
 
 model AuditLog {
@@ -575,9 +614,17 @@ model Message {
 }
 
 model Announcement {
-  id        String   @id @default(cuid())
-  text      String
-  createdAt DateTime @default(now())
+  id            String       @id @default(cuid())
+  institutionId String?
+  text          String
+  isActive      Boolean      @default(true)
+  startsAt      DateTime?
+  endsAt        DateTime?
+  createdById   String?
+  createdAt     DateTime     @default(now())
+  institution   Institution? @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@index([institutionId, isActive, createdAt])
 }
 
 model Prescription {
@@ -679,6 +726,7 @@ model LabOrderInvoice {
 
 model StockItem {
   id          String          @id @default(cuid())
+  institutionId String?
   name        String
   category    String          @default("SARF")
   unit        String          @default("adet")
@@ -689,7 +737,10 @@ model StockItem {
   isActive    Boolean         @default(true)
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
+  institution Institution?    @relation(fields: [institutionId], references: [id])
   movements   StockMovement[]
+
+  @@index([institutionId])
 }
 
 model StockMovement {
@@ -765,23 +816,34 @@ model TaksitOdeme {
 
 model PosDevice {
   id             String        @id @default(cuid())
-  name           String        @unique
+  institutionId  String?
+  name           String
   isActive       Boolean       @default(true)
   createdAt      DateTime      @default(now())
+  institution    Institution?  @relation(fields: [institutionId], references: [id])
   payments       Payment[]
   taksitOdemeler TaksitOdeme[]
+
+  @@unique([institutionId, name])
+  @@index([institutionId])
 }
 
 model ExpenseCategory {
   id        String    @id @default(cuid())
-  name      String    @unique
+  institutionId String?
+  name      String
   isActive  Boolean   @default(true)
   createdAt DateTime  @default(now())
+  institution Institution? @relation(fields: [institutionId], references: [id])
   expenses  Expense[]
+
+  @@unique([institutionId, name])
+  @@index([institutionId])
 }
 
 model Expense {
   id              String           @id @default(cuid())
+  institutionId   String?
   tarih           DateTime
   categoryId      String?
   category        String
@@ -793,15 +855,18 @@ model Expense {
   status          String           @default("AKTIF")
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
+  institution     Institution?     @relation(fields: [institutionId], references: [id])
   expenseCategory ExpenseCategory? @relation(fields: [categoryId], references: [id])
 
+  @@index([institutionId])
   @@index([tarih])
   @@index([status])
 }
 
 model Firma {
   id                String              @id @default(cuid())
-  name              String              @unique
+  institutionId     String?
+  name              String
   phone             String?
   iban              String?
   ibanName          String?
@@ -814,9 +879,12 @@ model Firma {
   isActive          Boolean             @default(true)
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
+  institution       Institution?        @relation(fields: [institutionId], references: [id])
   islemler          FirmaIslem[]
   kontaktler        FirmaKontakt[]
 
+  @@unique([institutionId, name])
+  @@index([institutionId])
   @@index([kategori])
   @@index([vendorScore])
 }

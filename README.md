@@ -98,6 +98,8 @@ KlinikSistem benzeri tum ana modulleri iceren modern full-stack klinik paneli.
 - Kimlik: 11509380760
 - Sifre: 10711453
 
+Hızlı yerel demo: uygulama çalışırken giriş sayfasındaki "Demo başlat" butonuna tıklayın. Bu buton lokal ortamda `npm run prisma:seed` çalıştırır ve demo verilerini yükler (dev-only).
+
 ## Notlar
 
 - Node.js 20+ gereklidir.

@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { useToast } from "@/components/ui/ToastProvider";
 
 export function LoginForm() {
   const [institution, setInstitution] = useState("");
@@ -10,9 +11,10 @@ export function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [remember, setRemember] = useState(false);
+  const { showToast } = useToast();
 
-  const onSubmit = async (event: FormEvent) => {
-    event.preventDefault();
+  const onSubmit = async (event?: FormEvent) => {
+    if (event) event.preventDefault();
     setLoading(true);
     setError(null);
 
@@ -29,7 +31,7 @@ export function LoginForm() {
       setError(message.message || "Giriş başarısız");
       return;
     }
-
+    try { showToast({ title: 'Giriş Başarılı', message: 'Panele yönlendiriliyorsunuz', duration: 2500, type: 'success' }); } catch {}
     window.location.href = "/anasayfa";
   };
 
@@ -78,6 +80,10 @@ export function LoginForm() {
 
           <h1 className="text-2xl font-black text-slate-900">Hesabınıza giriş yapın</h1>
           <p className="mt-1 text-sm text-slate-500">Klinik ve kimlik bilgilerinizi girin.</p>
+
+          <div className="mt-4 rounded-md border border-slate-100 bg-white p-3 text-sm text-slate-600">
+            Demo erişiminiz yoksa önce <a href="/#demo" className="font-semibold text-primary underline">demo talep formunu</a> doldurun. Size özel süreli demo kurumu oluşturulur.
+          </div>
 
           <form onSubmit={onSubmit} className="mt-8 space-y-4">
             <div>

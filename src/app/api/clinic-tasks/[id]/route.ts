@@ -6,7 +6,7 @@ import { clinicTaskUpdateSchema } from "@/lib/validators";
 type Params = { params: { id: string } };
 
 export async function PUT(request: NextRequest, { params }: Params) {
-  const auth = await requireAuth("*");
+  const auth = await requireAuth("dashboard:read");
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
@@ -17,13 +17,13 @@ export async function PUT(request: NextRequest, { params }: Params) {
     where: { id: params.id, institutionId: auth.user.institutionId },
   });
   if (!existing) {
-    return NextResponse.json({ message: "Gorev bulunamadi" }, { status: 404 });
+    return NextResponse.json({ message: "Görev bulunamadı" }, { status: 404 });
   }
 
   const body = await request.json();
   const parsed = clinicTaskUpdateSchema.safeParse(body);
   if (!parsed.success) {
-    return NextResponse.json({ message: "Gecersiz guncelleme verisi" }, { status: 400 });
+    return NextResponse.json({ message: "Geçersiz güncelleme verisi" }, { status: 400 });
   }
 
   const p = parsed.data;
@@ -94,7 +94,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 }
 
 export async function DELETE(_: NextRequest, { params }: Params) {
-  const auth = await requireAuth("*");
+  const auth = await requireAuth("dashboard:read");
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
@@ -106,7 +106,7 @@ export async function DELETE(_: NextRequest, { params }: Params) {
     select: { id: true, title: true },
   });
   if (!existing) {
-    return NextResponse.json({ message: "Gorev bulunamadi" }, { status: 404 });
+    return NextResponse.json({ message: "Görev bulunamadı" }, { status: 404 });
   }
 
   await prisma.clinicTask.delete({ where: { id: existing.id } });

@@ -5,9 +5,14 @@ node_modules/
 
 # Build outputs
 /.next/
+/.next-dev/
 /out/
 /build/
 /dist/
+
+# Local PostgreSQL data & DB backups (contains real patient data - never commit)
+/.pgdata/
+/backups/db/
 
 # Environment files
 .env
@@ -23,6 +28,8 @@ prisma/generated/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+postgres-direct.out.log
+postgres-direct.err.log
 
 # OS
 .DS_Store

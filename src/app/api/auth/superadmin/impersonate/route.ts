@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
   // Mevcut oturum superadmin mi?
   const currentUser = decodeTokenUser();
   if (!currentUser || currentUser.role !== "SUPERADMIN") {
-    return NextResponse.json({ message: "Yetkisiz" }, { status: 401 });
+    return NextResponse.json({ message: "Oturum gerekli" }, { status: 401 });
   }
 
   const body = (await request.json()) as { institutionId?: string; password?: string };

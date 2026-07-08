@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { usePanelAlerts } from "@/components/layout/use-panel-alerts";
 
 const I = (d: string, extra?: string) => (
-  <svg className={`h-[18px] w-[18px] shrink-0 ${extra ?? ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: d }} />
+  <svg aria-hidden="true" className={`h-[18px] w-[18px] shrink-0 ${extra ?? ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: d }} />
 );
 
 const ICONS: Record<string, JSX.Element> = {
@@ -62,7 +63,7 @@ function buildNavGroups(role: string): NavGroup[] {
   // Tüm roller için anasayfa girişi
   if (isYonetici || isDoktor || isAsistan || isBanko || isMuhasebe) {
     groups.push({
-      label: "Ana Menü",
+      label: "Bugün",
       items: [{ href: "/anasayfa", label: "Anasayfa", icon: "home" }],
     });
   }
@@ -74,7 +75,7 @@ function buildNavGroups(role: string): NavGroup[] {
       items: [
         { href: "/randevu",     label: "Randevular",  icon: "calendar" },
         { href: "/hasta",       label: "Hastalar",    icon: "users" },
-        ...(isYonetici || isDoktor || isAsistan || isBanko ? [{ href: "/gorevler", label: "Gorev Merkezi", icon: "clipboard" }] : []),
+        ...(isYonetici || isDoktor || isAsistan || isBanko ? [{ href: "/gorevler", label: "Görev Merkezi", icon: "clipboard" }] : []),
         ...(isYonetici || isDoktor || isAsistan ? [{ href: "/hasta-takip", label: "Hasta Takip", icon: "follow" }] : []),
       ],
     });
@@ -118,7 +119,7 @@ function buildNavGroups(role: string): NavGroup[] {
     groups.push({
       label: "Stok & Tedarik",
       items: [
-        { href: "/stok",  label: "Stok Yönetimi", icon: "box" },
+        { href: "/stok",  label: "Stok", icon: "box" },
         { href: "/firma", label: "Tedarikçiler",   icon: "firma" },
       ],
     });
@@ -132,7 +133,7 @@ function buildNavGroups(role: string): NavGroup[] {
         { href: "/personel", label: "Personeller",   icon: "person" },
         { href: "/fiyat",    label: "Fiyat Listesi", icon: "price" },
         { href: "/sms",      label: "SMS Modülü",    icon: "sms" },
-        { href: "/sistem-izleme", label: "Sistem Izleme", icon: "chart" },
+        { href: "/sistem-izleme", label: "Sistem İzleme", icon: "chart" },
         { href: "/ayar",     label: "Sistem Ayarları", icon: "settings" },
       ],
     });
@@ -162,12 +163,11 @@ const PREVIEW_ROLES = [
 export function Sidebar({ user }: { user: { fullName: string; role: string } }) {
   const pathname = usePathname();
   const router = useRouter();
-  const [alerts, setAlerts] = useState<{ taksit: number; stok: number; lab: number }>({ taksit: 0, stok: 0, lab: 0 });
   const [messageUnread, setMessageUnread] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [previewRole, setPreviewRole] = useState<string | null>(null);
   const [rolePickerOpen, setRolePickerOpen] = useState(false);
-  const isLoadingAlertsRef = useRef(false);
 
   const isSuperAdmin = user.role === "SUPERADMIN";
 
@@ -190,6 +190,16 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
     });
   };
 
+  useEffect(() => {
+    const h = () => setMobileOpen((v) => !v);
+    window.addEventListener("toggle-mobile-sidebar", h as EventListener);
+    return () => window.removeEventListener("toggle-mobile-sidebar", h as EventListener);
+  }, []);
+
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
   const handlePreviewRole = (role: string | null) => {
     if (role) {
       sessionStorage.setItem("dev-preview-role", role);
@@ -206,61 +216,20 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
   // SuperAdmin ise seçili preview rolü, yoksa gerçek rol
   const effectiveRole = (isSuperAdmin && previewRole) ? previewRole : userRole;
   const navGroups = buildNavGroups(effectiveRole);
+  const alerts = usePanelAlerts(effectiveRole);
 
   const activePreview = PREVIEW_ROLES.find(r => r.key === previewRole);
 
-  // Hangi uyarılar bu rol için gerekli
-  const needsTaksit = ["YONETICI", "BANKO", "MUHASEBE", "SUPERADMIN"].includes(effectiveRole);
-  const needsStok   = ["YONETICI", "MUHASEBE", "SUPERADMIN"].includes(effectiveRole);
-  const needsLab    = ["YONETICI", "DOKTOR", "ASISTAN", "SUPERADMIN"].includes(effectiveRole);
-
   useEffect(() => {
-    const load = async () => {
-      if (typeof document !== "undefined" && document.hidden) return;
-      if (isLoadingAlertsRef.current) return;
-      isLoadingAlertsRef.current = true;
-      try {
-        const fetches = await Promise.allSettled([
-          needsTaksit ? fetch("/api/taksit-plani?status=GECIKTI") : Promise.resolve(null),
-          needsStok   ? fetch("/api/stock")                       : Promise.resolve(null),
-          needsLab    ? fetch("/api/lab-orders?status=BEKLIYOR")  : Promise.resolve(null),
-        ]);
-        const tRes = fetches[0]; const sRes = fetches[1]; const lRes = fetches[2];
-        const tData = tRes.status === "fulfilled" && tRes.value?.ok ? await tRes.value.json() : null;
-        const sData = sRes.status === "fulfilled" && sRes.value?.ok ? await sRes.value.json() : null;
-        const lData = lRes.status === "fulfilled" && lRes.value?.ok ? await lRes.value.json() : null;
-
-        const overdueCount = Array.isArray(tData)
-          ? tData.reduce((sum: number, plan: any) =>
-              sum + (plan.taksitler || []).filter((t: any) => t.status === "GECIKTI").length, 0)
-          : 0;
-        const lowStock = Array.isArray(sData) ? sData.filter((i: any) => i.quantity < i.minQuantity).length : 0;
-        const labCount = Array.isArray(lData) ? lData.length : (lData?.total ?? 0);
-        setAlerts({ taksit: overdueCount, stok: lowStock, lab: labCount });
-      } catch { /* sessiz hata */ }
-      finally {
-        isLoadingAlertsRef.current = false;
-      }
-    };
-
-    const onVisibility = () => {
-      if (typeof document !== "undefined" && !document.hidden) {
-        void load();
-      }
-    };
-
-    load();
-    const timer = setInterval(load, 180_000); // 3 dakikada bir yenile
-    if (typeof document !== "undefined") {
-      document.addEventListener("visibilitychange", onVisibility);
-    }
-    return () => {
-      clearInterval(timer);
-      if (typeof document !== "undefined") {
-        document.removeEventListener("visibilitychange", onVisibility);
-      }
-    };
-  }, [needsTaksit, needsStok, needsLab]);
+    if (typeof window === "undefined") return;
+    const seen = new Set<string>();
+    const targets = buildNavGroups(effectiveRole).flatMap((group) => group.items.map((item) => item.href));
+    targets.forEach((href) => {
+      if (seen.has(href)) return;
+      seen.add(href);
+      Promise.resolve(router.prefetch(href)).catch(() => {});
+    });
+  }, [effectiveRole, router]);
 
   useEffect(() => {
     const syncUnread = () => {
@@ -291,7 +260,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
     return 0;
   };
 
-  const w = collapsed ? "w-[64px]" : "w-[240px]";
+  const w = collapsed ? "w-[68px]" : "w-[256px]";
 
   useEffect(() => {
     const coreRoutes = ["/anasayfa", "/randevu", "/hasta", "/hasta-takip", "/gorevler"];
@@ -315,14 +284,51 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
   }, [pathname, router]);
 
   return (
-    <aside className={`flex h-screen ${w} shrink-0 flex-col bg-[#0f172a] transition-all duration-200`}>
-      {/* Dev Mode Banner — preview aktifken göster */}
+    <div>
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 md:hidden">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setMobileOpen(false)} />
+          <div className="relative flex h-full">
+            <div className="w-64 bg-[#0f172a] p-3">
+              <div className="mb-3 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-blue-700">
+                    <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 2C8 2 5 5 5 8c0 2 .5 3.5 1 5l1 4.5C7.5 19 8.5 22 10 22h4c1.5 0 2.5-3 3-4.5l1-4.5c.5-1.5 1-3 1-5 0-3-3-6-7-6z"/></svg>
+                  </div>
+                  <p className="text-sm font-black text-white">KlinikModern</p>
+                </div>
+                <button onClick={() => setMobileOpen(false)} aria-label="Kapat" className="text-slate-300">✕</button>
+              </div>
+              <nav className="space-y-3">
+                {navGroups.map((group) => (
+                  <div key={group.label} className="border-t border-white/5 pt-2">
+                    <p className="mb-1 px-1 text-xs font-bold uppercase tracking-widest text-slate-400">{group.label}</p>
+                    <div className="flex flex-col gap-1">
+                      {group.items.map((it) => {
+                        const active = isActive(it.href);
+                        return (
+                        <Link key={it.href} href={it.href} onClick={() => setMobileOpen(false)} aria-current={active ? "page" : undefined} className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold ${active ? "bg-white text-slate-950" : "text-slate-200 hover:bg-white/10"}`}>
+                          <span className="text-slate-300">{ICONS[it.icon]}</span>
+                          <span>{it.label}</span>
+                        </Link>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </nav>
+            </div>
+          </div>
+        </div>
+      )}
+      <aside className={`hidden h-screen ${w} shrink-0 flex-col bg-[#0f172a] transition-all duration-200 md:flex`}>
+        {/* Rol görünümü aktifken göster */}
       {isSuperAdmin && activePreview && (
-        <div className={`flex items-center gap-1.5 px-3 py-1.5 text-[10px] font-bold text-white ${activePreview.color} shrink-0`}>
-          <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+        <div className={`flex items-center gap-2 px-3 py-2 text-xs font-bold text-white ${activePreview.color} shrink-0`}>
+          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
           </svg>
-          {!collapsed && <span>DEV: {activePreview.label} görünümü</span>}
+          {!collapsed && <span>{activePreview.label} görünümü</span>}
         </div>
       )}
 
@@ -341,7 +347,9 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
         <button
           onClick={toggleCollapsed}
           title={collapsed ? "Menüyü Genişlet" : "Menüyü Daralt"}
-          className="flex h-7 w-7 items-center justify-center rounded-lg text-slate-500 hover:bg-white/10 hover:text-slate-300 transition"
+          aria-pressed={collapsed}
+          aria-label={collapsed ? "Menüyü Genişlet" : "Menüyü Daralt"}
+          className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-white/10 hover:text-slate-300 transition"
         >
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
             {collapsed
@@ -353,14 +361,14 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
 
       {/* Kullanıcı kartı */}
       {userName && (
-        <div className={`mx-2 mb-2 flex items-center rounded-lg bg-white/5 py-2 ${collapsed ? "justify-center px-0" : "gap-2.5 px-3"}`}>
-          <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-600 text-[11px] font-bold text-white">
+        <div className={`mx-2 mb-3 flex items-center rounded-xl bg-white/5 py-2.5 ${collapsed ? "justify-center px-0" : "gap-3 px-3"}`}>
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white">
             {userName.charAt(0).toUpperCase()}
           </div>
           {!collapsed && (
             <div className="min-w-0 flex-1">
-              <p className="truncate text-[12px] font-semibold text-white">{userName}</p>
-              <p className="text-[10px] uppercase tracking-wide text-slate-500">
+              <p className="truncate text-sm font-semibold text-white">{userName}</p>
+              <p className="text-xs font-semibold uppercase text-slate-500">
                 {activePreview ? activePreview.label : (ROLE_LABELS[userRole] ?? userRole)}
               </p>
             </div>
@@ -368,35 +376,30 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
         </div>
       )}
 
-      {/* ── Rol Önizleyici (sadece SUPERADMIN) ─────────────────────────────── */}
+      {/* ── Rol Görünümü (sadece SUPERADMIN) ─────────────────────────────── */}
       {isSuperAdmin && (
-        <div className="mx-2 mb-2 shrink-0">
+        <details className="mx-2 mb-2 shrink-0">
           {!collapsed ? (
-            <div>
-              <button
-                onClick={() => setRolePickerOpen(prev => !prev)}
-                className="flex w-full items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-[11px] font-semibold text-slate-400 transition hover:bg-white/10 hover:text-slate-200"
-              >
-                {/* dev icon */}
-                <svg className="h-3.5 w-3.5 shrink-0 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
-                </svg>
-                <span className="flex-1 text-left">
-                  {previewRole ? `Önizleme: ${activePreview?.label}` : "Rol Önizleyici"}
-                </span>
-                <svg className={`h-3 w-3 shrink-0 transition-transform ${rolePickerOpen ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="6 9 12 15 18 9"/>
-                </svg>
-              </button>
-              {rolePickerOpen && (
-                <div className="mt-1 rounded-lg border border-white/10 bg-[#1e2d45] p-1.5">
-                  <p className="mb-1.5 px-1 text-[9px] font-bold uppercase tracking-widest text-slate-600">Rol seç</p>
+            <>
+              <summary className="flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-slate-100">
+                  <svg className="h-3.5 w-3.5 shrink-0 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+                  </svg>
+                  <span className="flex-1 text-left">
+                    {previewRole ? `Görünüm: ${activePreview?.label}` : "Rol Görünümü"}
+                  </span>
+                  <svg className="h-3 w-3 shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="6 9 12 15 18 9"/>
+                  </svg>
+                </summary>
+              <div className="mt-1 rounded-lg border border-white/10 bg-[#1e2d45] p-1.5">
+                  <p className="mb-1.5 px-1 text-xs font-bold uppercase text-slate-500">Rol seç</p>
                   <div className="flex flex-col gap-0.5">
                     {PREVIEW_ROLES.map(r => (
                       <button
                         key={r.key}
                         onClick={() => handlePreviewRole(previewRole === r.key ? null : r.key)}
-                        className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${
+                        className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition ${
                           previewRole === r.key
                             ? `${r.color} text-white`
                             : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
@@ -405,14 +408,14 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
                         <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${r.color}`} />
                         {r.label}
                         {previewRole === r.key && (
-                          <span className="ml-auto text-[9px] opacity-70">aktif</span>
+                          <span className="ml-auto text-xs opacity-80">aktif</span>
                         )}
                       </button>
                     ))}
                     {previewRole && (
                       <button
                         onClick={() => handlePreviewRole(null)}
-                        className="mt-0.5 flex items-center gap-2 rounded-md px-2 py-1.5 text-[11px] font-medium text-slate-500 hover:bg-white/10 hover:text-slate-300 transition"
+                        className="mt-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-500 hover:bg-white/10 hover:text-slate-300 transition"
                       >
                         <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -422,8 +425,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
                     )}
                   </div>
                 </div>
-              )}
-            </div>
+            </>
           ) : (
             /* Collapsed: dev icon + tooltip */
             <div className="relative group">
@@ -432,7 +434,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
                 className={`flex h-9 w-full items-center justify-center rounded-lg transition ${
                   previewRole ? "bg-violet-600/30 text-violet-400" : "text-slate-600 hover:bg-white/10 hover:text-slate-400"
                 }`}
-                title="Rol Önizleyici"
+                title="Rol Görünümü"
               >
                 <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
@@ -441,12 +443,12 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
               {/* Collapsed tooltip ile mini picker */}
               {rolePickerOpen && (
                 <div className="absolute left-full top-0 z-50 ml-2 min-w-[140px] rounded-lg border border-white/10 bg-[#1e2d45] p-1.5 shadow-xl">
-                  <p className="mb-1 px-1 text-[9px] font-bold uppercase tracking-widest text-slate-600">Rol seç</p>
+                  <p className="mb-1 px-1 text-xs font-bold uppercase text-slate-500">Rol seç</p>
                   {PREVIEW_ROLES.map(r => (
                     <button
                       key={r.key}
                       onClick={() => handlePreviewRole(previewRole === r.key ? null : r.key)}
-                      className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[11px] font-medium transition ${
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition ${
                         previewRole === r.key
                           ? `${r.color} text-white`
                           : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
@@ -459,7 +461,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
                   {previewRole && (
                     <button
                       onClick={() => handlePreviewRole(null)}
-                      className="mt-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-[11px] text-slate-500 hover:bg-white/10 hover:text-slate-300 transition"
+                      className="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-slate-500 hover:bg-white/10 hover:text-slate-300 transition"
                     >
                       <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -469,20 +471,20 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
                   )}
                 </div>
               )}
-              <div className="pointer-events-none absolute left-full top-1/2 z-40 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1 text-[12px] font-medium text-slate-100 opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
-                Rol Önizleyici
+                <div className="pointer-events-none absolute left-full top-1/2 z-40 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1 text-[12px] font-medium text-slate-100 opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                Rol Görünümü
               </div>
             </div>
           )}
-        </div>
+        </details>
       )}
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 pb-2">
         {navGroups.map((group, gi) => (
-          <div key={group.label} className={gi > 0 ? "mt-1 pt-1 border-t border-white/5" : ""}>
+          <div key={group.label} className={gi > 0 ? "mt-2 pt-2 border-t border-white/5" : ""}>
             {!collapsed && (
-              <p className="mb-0.5 mt-2 px-2 text-[9px] font-bold uppercase tracking-widest text-slate-600">
+              <p className="mb-1 mt-3 px-2 text-xs font-bold uppercase text-slate-500">
                 {group.label}
               </p>
             )}
@@ -495,34 +497,37 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
                   <Link
                     href={item.href}
                     onMouseEnter={() => router.prefetch(item.href)}
+                    aria-current={active ? "page" : undefined}
                     className={
-                      "flex items-center rounded-lg transition-all duration-150 " +
-                      (collapsed ? "justify-center px-0 py-2.5 mx-0" : "gap-2.5 px-3 py-2 text-[13px] font-medium") + " " +
+                      "relative flex items-center rounded-xl transition-all duration-150 " +
+                      (collapsed ? "justify-center px-0 py-3 mx-0" : "gap-3 px-3 py-3 text-sm font-semibold") + " " +
                       (active
-                        ? "bg-blue-600 text-white shadow-md shadow-blue-900/30"
-                        : "text-slate-400 hover:bg-white/5 hover:text-slate-100")
+                        ? "bg-white text-slate-950 shadow-md shadow-slate-950/20"
+                        : "text-slate-400 hover:bg-white/8 hover:text-slate-100") +
+                      " focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-blue-400"
                     }
                   >
-                    <span className={active ? "text-white" : "text-slate-500"}>
+                    {!collapsed && active && <span className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-blue-500" aria-hidden="true" />}
+                    <span className={active ? "text-blue-700" : "text-slate-500"}>
                       {ICONS[item.icon]}
                     </span>
                     {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
                     {!collapsed && badge > 0 && (
-                      <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[9px] font-bold text-white leading-none">
+                      <span className="rounded-full bg-red-500 px-2 py-1 text-xs font-bold text-white leading-none">
                         {badge > 99 ? "99+" : badge}
                       </span>
                     )}
                     {collapsed && badge > 0 && (
-                      <span className="absolute -right-0.5 -top-0.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-red-500 text-[8px] font-bold text-white">
+                      <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
                         {badge > 9 ? "9+" : badge}
                       </span>
                     )}
                   </Link>
                   {/* Collapsed tooltip */}
                   {collapsed && (
-                    <div className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1 text-[12px] font-medium text-slate-100 opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
+                    <div className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1 text-[12px] font-medium text-slate-100 opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                       {item.label}
-                      {badge > 0 && <span className="ml-1.5 rounded-full bg-red-500 px-1 py-0.5 text-[9px]">{badge}</span>}
+                      {badge > 0 && <span className="ml-1.5 rounded-full bg-red-500 px-1.5 py-0.5 text-xs">{badge}</span>}
                     </div>
                   )}
                 </div>
@@ -540,7 +545,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
               await fetch("/api/auth/logout", { method: "POST" });
               window.location.href = "/giris";
             }}
-            className={`flex w-full items-center rounded-lg text-slate-500 transition hover:bg-red-500/10 hover:text-red-400 ${collapsed ? "justify-center py-2.5 px-0" : "gap-2.5 px-3 py-2 text-[13px] font-medium"}`}
+            className={`flex w-full items-center rounded-xl text-slate-500 transition hover:bg-red-500/10 hover:text-red-400 ${collapsed ? "justify-center py-3 px-0" : "gap-3 px-3 py-3 text-sm font-medium"}`}
           >
             {ICONS.logout}
             {!collapsed && <span>Oturumu Kapat</span>}
@@ -553,5 +558,6 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
         </div>
       </div>
     </aside>
+  </div>
   );
 }

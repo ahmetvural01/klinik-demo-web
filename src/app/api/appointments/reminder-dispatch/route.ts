@@ -90,7 +90,7 @@ export async function POST(request: NextRequest) {
 
     const dateText = new Date(appointment.startAt).toLocaleString("tr-TR");
     const institutionName = settings.institutionName || institution.name;
-    const fallbackMessage = `${institutionName}: Sayin ${appointment.patient.fullName}, yarin ${dateText} tarihinde randevunuz bulunmaktadir. Doktor: ${appointment.doctor.fullName}.`;
+    const fallbackMessage = `${institutionName}: Sayın ${appointment.patient.fullName}, yarın ${dateText} tarihinde randevunuz bulunmaktadır. Doktor: ${appointment.doctor.fullName}.`;
     const message = smsTemplate
       ? renderTemplate(smsTemplate.content, {
           institutionName,

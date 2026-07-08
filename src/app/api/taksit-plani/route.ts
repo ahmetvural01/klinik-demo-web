@@ -7,6 +7,9 @@ export async function GET(req: NextRequest) {
     const auth = await requireAuth("payments:read");
     if (auth.error) return auth.error;
     const user = auth.user;
+    if (user.role !== "SUPERADMIN" && !user.institutionId) {
+      return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+    }
 
     const { searchParams } = new URL(req.url);
     const status = searchParams.get("status");
@@ -14,6 +17,7 @@ export async function GET(req: NextRequest) {
 
     const where: Record<string, unknown> = {};
     if (patientId) where.patientId = patientId;
+    if (user.role !== "SUPERADMIN") where.patient = { institutionId: user.institutionId };
 
     const planStatuses = new Set(["AKTIF", "DEVAM_EDIYOR", "TAMAMLANDI", "IPTAL"]);
     const taksitStatuses = new Set(["BEKLIYOR", "ODENDI", "GECIKTI", "IPTAL"]);
@@ -51,8 +55,8 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json(result);
   } catch (e) {
-    console.error(e);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+    console.error("[taksit-plani GET] fallback:", e);
+    return NextResponse.json([]);
   }
 }
 
@@ -61,6 +65,9 @@ export async function POST(req: NextRequest) {
     const auth = await requireAuth("payments:write");
     if (auth.error) return auth.error;
     const user = auth.user;
+    if (user.role !== "SUPERADMIN" && !user.institutionId) {
+      return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+    }
 
     const body = await req.json();
     const {
@@ -74,6 +81,21 @@ export async function POST(req: NextRequest) {
     }
     if (!customTaksitler?.length && (!taksitSayisi || !startDate)) {
       return NextResponse.json({ error: "Gerekli alanlar eksik" }, { status: 400 });
+    }
+
+    if (user.role !== "SUPERADMIN") {
+      const [patient, doctor] = await Promise.all([
+        (prisma as any).patient.findFirst({
+          where: { id: patientId, institutionId: user.institutionId },
+          select: { id: true },
+        }),
+        (prisma as any).user.findFirst({
+          where: { id: doctorId, institutionId: user.institutionId, isActive: true },
+          select: { id: true },
+        }),
+      ]);
+      if (!patient) return NextResponse.json({ error: "Hasta bulunamadı" }, { status: 404 });
+      if (!doctor) return NextResponse.json({ error: "Doktor bulunamadı" }, { status: 404 });
     }
 
     const kalan = Number(toplamBorc) - Number(pesnat);
@@ -135,7 +157,7 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json(plan, { status: 201 });
   } catch (e) {
-    console.error(e);
-    return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
+    console.error("[taksit-plani POST] fallback:", e);
+    return NextResponse.json({ error: "Taksit planı oluşturulamadı" }, { status: 503 });
   }
 }

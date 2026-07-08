@@ -33,7 +33,7 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
   };
 
   if (body.adIntensity && !["LOW", "MEDIUM", "HIGH"].includes(body.adIntensity)) {
-    return NextResponse.json({ message: "Gecersiz reklam yogunlugu" }, { status: 400 });
+    return NextResponse.json({ message: "Geçersiz reklam yoğunluğu" }, { status: 400 });
   }
 
   const institution = await prisma.institution.findUnique({ where: { id: params.id } });
@@ -64,7 +64,7 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
     const existingSet = new Set(existingAds.map((a) => a.id));
     const invalid = normalizedAssignments.find((a) => !existingSet.has(a.advertisementId));
     if (invalid) {
-      return NextResponse.json({ message: "Gecersiz kampanya secimi var" }, { status: 400 });
+      return NextResponse.json({ message: "Geçersiz kampanya seçimi var" }, { status: 400 });
     }
   }
 

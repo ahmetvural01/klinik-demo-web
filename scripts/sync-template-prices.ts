@@ -3,20 +3,28 @@ import { CUSTOM_DENTAL_TREATMENT_TEMPLATES, TDB_2026_CORE_PRICE_CATALOG } from "
 
 const prisma = new PrismaClient();
 
-async function syncStandardPrices() {
+async function syncStandardPrices(institutionId: string | null) {
   for (const item of TDB_2026_CORE_PRICE_CATALOG) {
-    await prisma.priceItem.upsert({
-      where: { code_treatment: { code: item.code, treatment: item.treatment } },
-      update: { amount: item.amount, isCustom: false },
-      create: { code: item.code, treatment: item.treatment, amount: item.amount, isCustom: false }
+    const existing = await prisma.priceItem.findFirst({
+      where: { institutionId, code: item.code, treatment: item.treatment },
     });
+    if (existing) {
+      await prisma.priceItem.update({
+        where: { id: existing.id },
+        data: { amount: item.amount, isCustom: false },
+      });
+    } else {
+      await prisma.priceItem.create({
+        data: { institutionId, code: item.code, treatment: item.treatment, amount: item.amount, isCustom: false },
+      });
+    }
   }
 }
 
-async function syncCustomPrices() {
+async function syncCustomPrices(institutionId: string | null) {
   const desiredByCode = new Map(CUSTOM_DENTAL_TREATMENT_TEMPLATES.map((item) => [item.code, item]));
   const existing = await prisma.priceItem.findMany({
-    where: { isCustom: true, code: { startsWith: "OZL-" } }
+    where: { institutionId, isCustom: true, code: { startsWith: "OZL-" } }
   });
 
   for (const row of existing) {
@@ -28,7 +36,7 @@ async function syncCustomPrices() {
 
   for (const item of CUSTOM_DENTAL_TREATMENT_TEMPLATES) {
     const current = await prisma.priceItem.findFirst({
-      where: { isCustom: true, code: item.code }
+      where: { institutionId, isCustom: true, code: item.code }
     });
 
     if (current) {
@@ -40,14 +48,19 @@ async function syncCustomPrices() {
     }
 
     await prisma.priceItem.create({
-      data: { code: item.code, treatment: item.treatment, amount: item.amount, isCustom: true }
+      data: { institutionId, code: item.code, treatment: item.treatment, amount: item.amount, isCustom: true }
     });
   }
 }
 
 async function main() {
-  await syncStandardPrices();
-  await syncCustomPrices();
+  const institutions = await prisma.institution.findMany({ select: { id: true } });
+  const institutionIds = institutions.length > 0 ? institutions.map((item) => item.id) : [null];
+
+  for (const institutionId of institutionIds) {
+    await syncStandardPrices(institutionId);
+    await syncCustomPrices(institutionId);
+  }
 
   const standardCount = await prisma.priceItem.count({ where: { isCustom: false } });
   const customCount = await prisma.priceItem.count({ where: { isCustom: true } });

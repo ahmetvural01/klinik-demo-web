@@ -10,49 +10,76 @@ function fmt(v: unknown): string {
 }
 
 export async function GET() {
-  const auth = await requireAuth();
-  if (auth.error) return auth.error;
+  try {
+    const auth = await requireAuth();
+    if (auth.error) return auth.error;
 
-  const profile = await prisma.user.findUnique({
-    where: { id: auth.user.id },
-    include: { profile: true }
-  });
+    const profile = await prisma.user.findUnique({
+      where: { id: auth.user.id },
+      include: { profile: true }
+    });
 
-  return NextResponse.json(profile);
+    return NextResponse.json(profile);
+  } catch (error) {
+    console.error("[profile GET] fallback:", error);
+    return NextResponse.json(null);
+  }
 }
 
 export async function PUT(request: NextRequest) {
   const auth = await requireAuth();
   if (auth.error) return auth.error;
 
-  const body = await request.json();
-  const currentProfile = await prisma.profile.findUnique({ where: { userId: auth.user.id } });
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ message: "Geçersiz veri" }, { status: 400 });
+  }
+  let currentProfile;
+  try {
+    currentProfile = await prisma.profile.findUnique({ where: { userId: auth.user.id } });
+  } catch (error) {
+    console.error("[profile PUT currentProfile] fallback:", error);
+    currentProfile = null;
+  }
   const passwordUpdated = Boolean(body.newPassword);
 
   if (body.newPassword) {
     const passwordHash = await bcrypt.hash(body.newPassword, 10);
-    await prisma.user.update({
-      where: { id: auth.user.id },
-      data: { passwordHash }
-    });
+    try {
+      await prisma.user.update({
+        where: { id: auth.user.id },
+        data: { passwordHash }
+      });
+    } catch (error) {
+      console.error("[profile PUT password] fallback:", error);
+      return NextResponse.json({ message: "Şifre güncellenemedi" }, { status: 503 });
+    }
   }
 
-  const profile = await prisma.profile.upsert({
-    where: { userId: auth.user.id },
-    update: {
-      workStart: body.workStart,
-      workEnd: body.workEnd,
-      hideAsDoctor: typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : (currentProfile?.hideAsDoctor ?? false),
-      educationMode: typeof body.educationMode === "boolean" ? body.educationMode : (currentProfile?.educationMode ?? false)
-    },
-    create: {
-      userId: auth.user.id,
-      workStart: body.workStart ?? "08:30",
-      workEnd: body.workEnd ?? "18:00",
-      hideAsDoctor: typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : false,
-      educationMode: typeof body.educationMode === "boolean" ? body.educationMode : false
-    }
-  });
+  let profile;
+  try {
+    profile = await prisma.profile.upsert({
+      where: { userId: auth.user.id },
+      update: {
+        workStart: body.workStart,
+        workEnd: body.workEnd,
+        hideAsDoctor: typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : (currentProfile?.hideAsDoctor ?? false),
+        educationMode: typeof body.educationMode === "boolean" ? body.educationMode : (currentProfile?.educationMode ?? false)
+      },
+      create: {
+        userId: auth.user.id,
+        workStart: body.workStart ?? "08:30",
+        workEnd: body.workEnd ?? "18:00",
+        hideAsDoctor: typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : false,
+        educationMode: typeof body.educationMode === "boolean" ? body.educationMode : false
+      }
+    });
+  } catch (error) {
+    console.error("[profile PUT] fallback:", error);
+    return NextResponse.json({ message: "Profil güncellenemedi" }, { status: 503 });
+  }
 
   const beforeParts: string[] = [];
   const afterParts: string[] = [];

@@ -11,6 +11,7 @@ const PUBLIC_PREFIXES = [
   "/klinik/giris",
   "/superadmin",
   "/api/auth/login",
+  "/api/demo-requests",
   "/api/auth/superadmin/login",
   "/api/auth/superadmin/impersonate",
   "/api/auth/logout",
@@ -68,7 +69,7 @@ export async function middleware(request: NextRequest) {
     const limit = checkRateLimit(`mw:${ip}`, 400, 60_000);
     if (!limit.ok) {
       metricIncrement("rate_limit_hits_total");
-      return NextResponse.json({ message: "Cok fazla istek. Lutfen kisa bir sure sonra tekrar deneyin." }, { status: 429 });
+      return NextResponse.json({ message: "Çok fazla istek gönderildi. Lütfen kısa bir süre sonra tekrar deneyin." }, { status: 429 });
     }
   }
 

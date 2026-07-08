@@ -3,6 +3,22 @@ import { PrismaClient } from "@prisma/client";
 declare global {
   // eslint-disable-next-line no-var
   var prismaGlobal: PrismaClient | undefined;
+  // eslint-disable-next-line no-var
+  var prismaShutdownHooksRegistered: boolean | undefined;
+}
+
+function buildDatabaseUrl() {
+  const raw = process.env.DATABASE_URL;
+  if (!raw) return raw;
+
+  try {
+    const url = new URL(raw);
+    // Bağlantı kopuksa isteklerin saniyelerce asılı kalmasını önle.
+    url.searchParams.set("connect_timeout", "1");
+    return url.toString();
+  } catch {
+    return raw;
+  }
 }
 
 function createPrismaClient() {
@@ -13,7 +29,7 @@ function createPrismaClient() {
         : ["error"],
     datasources: {
       db: {
-        url: process.env.DATABASE_URL,
+        url: buildDatabaseUrl(),
       },
     },
   });
@@ -63,7 +79,11 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 5, delayMs = 1000): 
 
 export { withRetry };
 
-// Uygulama kapanırken bağlantıyı düzgün kapat
-process.on("beforeExit", () => { void prisma.$disconnect(); });
-process.on("SIGINT", () => { void prisma.$disconnect(); });
-process.on("SIGTERM", () => { void prisma.$disconnect(); });
+// Uygulama kapanırken bağlantıyı düzgün kapat.
+// Next.js dev modunda modüller tekrar değerlendirildiği için listener'ları tek kez ekle.
+if (!global.prismaShutdownHooksRegistered) {
+  global.prismaShutdownHooksRegistered = true;
+  process.once("beforeExit", () => { void prisma.$disconnect(); });
+  process.once("SIGINT", () => { void prisma.$disconnect(); });
+  process.once("SIGTERM", () => { void prisma.$disconnect(); });
+}

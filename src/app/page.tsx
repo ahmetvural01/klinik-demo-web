@@ -1,5 +1,7 @@
 import Link from "next/link";
+import Image from "next/image";
 import { getSiteContent, DEFAULT_SITE_CONTENT } from "@/lib/site-content";
+import { DemoRequestForm } from "@/components/marketing/DemoRequestForm";
 
 export const dynamic = "force-dynamic";
 
@@ -76,11 +78,12 @@ export default async function RootPage() {
             playsInline
           />
         ) : site.heroImageUrl ? (
-          <img src={site.heroImageUrl} alt="KlinikModern" className="absolute inset-0 h-full w-full object-cover" />
+          <Image src={site.heroImageUrl} alt="KlinikModern" fill className="absolute inset-0 h-full w-full object-cover" />
         ) : (
-          <img
+          <Image
             src="https://images.unsplash.com/photo-1629904853716-f0bc54eea481?auto=format&fit=crop&w=1920&q=80"
             alt=""
+            fill
             className="absolute inset-0 h-full w-full object-cover"
             aria-hidden="true"
           />
@@ -128,7 +131,7 @@ export default async function RootPage() {
               {/* Trust badges */}
               <div className="mt-10 flex items-center gap-4 text-xs text-slate-400">
                 <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Ücretsiz kurulum desteği</span>
-                <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> 30 gün deneme</span>
+                <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> 14 gün demo</span>
                 <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Sözleşmesiz başla</span>
               </div>
             </div>
@@ -465,7 +468,9 @@ export default async function RootPage() {
                   {isVideoUrl(item) ? (
                     <video className="h-56 w-full object-cover" src={item} autoPlay muted loop playsInline controls />
                   ) : (
-                    <img src={item} alt={`KlinikModern ekran ${idx + 1}`} className="h-56 w-full object-cover" />
+                    <div className="relative h-56 w-full">
+                      <Image src={item} alt={`KlinikModern ekran ${idx + 1}`} fill className="object-cover" />
+                    </div>
                   )}
                 </div>
               ))}
@@ -592,18 +597,7 @@ export default async function RootPage() {
                 </div>
               </div>
 
-              {site.promoVideoUrl ? (
-                <div className="overflow-hidden rounded-2xl border border-white/20 shadow-2xl">
-                  <iframe
-                    className="h-64 w-full md:h-72"
-                    src={site.promoVideoUrl}
-                    title="KlinikModern Tanitim Videosu"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    referrerPolicy="strict-origin-when-cross-origin"
-                    allowFullScreen
-                  />
-                </div>
-              ) : null}
+              <DemoRequestForm />
             </div>
 
             {site.galleryImages.length > 0 && (
@@ -612,7 +606,9 @@ export default async function RootPage() {
                   isVideoUrl(img) ? (
                     <video key={`gv-${idx}`} src={img} className="h-44 w-full rounded-xl border border-white/20 object-cover" autoPlay muted loop playsInline controls />
                   ) : (
-                    <img key={`gi-${idx}`} src={img} alt={`Ekran ${idx + 1}`} className="h-44 w-full rounded-xl border border-white/20 object-cover" />
+                    <div key={`gi-${idx}`} className="relative h-44 w-full rounded-xl border border-white/20 overflow-hidden">
+                      <Image src={img} alt={`Ekran ${idx + 1}`} fill className="object-cover" />
+                    </div>
                   )
                 ))}
               </div>

@@ -7,44 +7,66 @@ import { requireAuth } from "@/lib/api";
  * Son 6 ayın aylık gelir ve gider toplamlarını döner.
  */
 export async function GET() {
-  const auth = await requireAuth("finance:read");
-  if (auth.error) return auth.error;
+  try {
+    const auth = await requireAuth("finance:read");
+    if (auth.error) return auth.error;
 
-  const months: { label: string; gelir: number; gider: number }[] = [];
+    const institutionId = auth.user.institutionId;
+    const institutionDoctors = institutionId
+      ? await prisma.user.findMany({
+          where: { institutionId, role: "DOKTOR", isActive: true },
+          select: { id: true },
+        })
+      : [];
+    const doctorIds = institutionDoctors.map((doctor) => doctor.id);
 
-  for (let i = 5; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(1);
-    d.setMonth(d.getMonth() - i);
-    d.setHours(0, 0, 0, 0);
+    const months: { label: string; gelir: number; gider: number }[] = [];
 
-    const start = new Date(d);
-    const end = new Date(d);
-    end.setMonth(end.getMonth() + 1);
-    end.setMilliseconds(-1);
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date();
+      d.setDate(1);
+      d.setMonth(d.getMonth() - i);
+      d.setHours(0, 0, 0, 0);
 
-    const label = d.toLocaleString("tr-TR", { month: "short", year: "2-digit" });
+      const start = new Date(d);
+      const end = new Date(d);
+      end.setMonth(end.getMonth() + 1);
+      end.setMilliseconds(-1);
 
-    const [gelirRows, giderRows] = await Promise.all([
-      prisma.payment.aggregate({
-        _sum: { amount: true },
-        where: { createdAt: { gte: start, lte: end } },
-      }),
-      (prisma as any).expense.aggregate({
-        _sum: { tutar: true },
-        where: {
-          tarih: { gte: start, lte: end },
-          status: { not: "IPTAL" },
-        },
-      }),
-    ]);
+      const label = d.toLocaleString("tr-TR", { month: "short", year: "2-digit" });
 
-    months.push({
-      label,
-      gelir: Number(gelirRows._sum.amount ?? 0),
-      gider: Number(giderRows._sum.tutar ?? 0),
-    });
+      const [gelirRows, giderRows] = await Promise.all([
+        prisma.payment.aggregate({
+          _sum: { amount: true },
+          where: institutionId
+            ? {
+                createdAt: { gte: start, lte: end },
+                OR: [
+                  { doctorId: { in: doctorIds } },
+                  { patient: { institutionId } },
+                ],
+              }
+            : { createdAt: { gte: start, lte: end } },
+        }),
+        (prisma as any).expense.aggregate({
+          _sum: { tutar: true },
+          where: {
+            tarih: { gte: start, lte: end },
+            status: { not: "IPTAL" },
+            ...(institutionId ? { institutionId } : {}),
+          },
+        }),
+      ]);
+
+      months.push({
+        label,
+        gelir: Number(gelirRows._sum.amount ?? 0),
+        gider: Number(giderRows._sum.tutar ?? 0),
+      });
+    }
+
+    return NextResponse.json(months);
+  } catch {
+    return NextResponse.json([]);
   }
-
-  return NextResponse.json(months);
 }

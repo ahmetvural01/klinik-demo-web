@@ -12,51 +12,6 @@ async function cleanupVisibleMarkerText() {
     { table: "Setting", column: "institutionAddress" },
     { table: "User", column: "fullName" },
     { table: "Patient", column: "fullName" },
-    { table: "Patient", column: "notes" },
-    { table: "Appointment", column: "note" },
-    { table: "PatientFollowUp", column: "note" },
-    { table: "PatientFollowUpEvent", column: "summary" },
-    { table: "PatientFollowUpEvent", column: "detail" },
-    { table: "PatientFollowUpEvent", column: "patientResponse" },
-    { table: "PatientFollowUpEvent", column: "nextStep" },
-    { table: "Examination", column: "note" },
-    { table: "Payment", column: "description" },
-    { table: "TreatmentPlan", column: "title" },
-    { table: "TreatmentPlan", column: "notes" },
-    { table: "TreatmentStep", column: "treatmentName" },
-    { table: "TreatmentStep", column: "note" },
-    { table: "LabOrder", column: "notes" },
-    { table: "LabTrip", column: "description" },
-    { table: "LabTrip", column: "sentNote" },
-    { table: "LabTrip", column: "receivedNote" },
-    { table: "StockItem", column: "name" },
-    { table: "StockItem", column: "supplier" },
-    { table: "StockMovement", column: "note" },
-    { table: "TaksitPlan", column: "baslik" },
-    { table: "TaksitPlan", column: "notes" },
-    { table: "Taksit", column: "note" },
-    { table: "TaksitOdeme", column: "note" },
-    { table: "Reminder", column: "note" },
-    { table: "Expense", column: "description" },
-    { table: "Firma", column: "notes" },
-    { table: "FirmaIslem", column: "urunHizmet" },
-    { table: "FirmaIslem", column: "aciklama" },
-    { table: "SupportTicket", column: "subject" },
-    { table: "SupportTicket", column: "message" },
-    { table: "SupportTicket", column: "answer" },
-    { table: "Message", column: "text" },
-    { table: "Announcement", column: "text" },
-    { table: "Advertisement", column: "title" },
-    { table: "Advertisement", column: "content" },
-    { table: "Advertisement", column: "sponsorName" },
-    { table: "SmsPackage", column: "name" },
-    { table: "SmsPackage", column: "description" },
-    { table: "Invoice", column: "description" },
-    { table: "InvoiceReminder", column: "message" },
-    { table: "MockSmsLog", column: "message" },
-    { table: "MockSmsLog", column: "responseData" },
-    { table: "PriceItem", column: "treatment" },
-    { table: "AuditLog", column: "detail" },
   ];
 
   for (const target of targets) {
@@ -199,13 +154,19 @@ async function main() {
     { tcNo: "98000000002", fullName: `Demo Mehmet Kaya ${MARKER}`, phone: "05550000102", gender: "E" },
     { tcNo: "98000000003", fullName: `Demo Elif Demir ${MARKER}`, phone: "05550000103", gender: "K" },
     { tcNo: "98000000004", fullName: `Demo Kerem Aydin ${MARKER}`, phone: "05550000104", gender: "E" },
+    { tcNo: "98000000005", fullName: `Demo Zeynep Arslan ${MARKER}`, phone: "05550000105", gender: "K" },
+    { tcNo: "98000000006", fullName: `Demo Burak Sahin ${MARKER}`, phone: "05550000106", gender: "E" },
+    { tcNo: "98000000007", fullName: `Demo Selin Koc ${MARKER}`, phone: "05550000107", gender: "K" },
+    { tcNo: "98000000008", fullName: `Demo Murat Ozkan ${MARKER}`, phone: "05550000108", gender: "E" },
+    { tcNo: "98000000009", fullName: `Demo Deniz Acar ${MARKER}`, phone: "05550000109", gender: "K" },
+    { tcNo: "98000000010", fullName: `Demo Can Erdem ${MARKER}`, phone: "05550000110", gender: "E" },
   ] as const;
 
   const createdPatients: Array<{ id: string; fullName: string; phone: string }> = [];
 
   for (const p of demoPatients) {
     const patient = await prisma.patient.upsert({
-      where: { tcNo: p.tcNo },
+      where: { institutionId_tcNo: { institutionId: institution.id, tcNo: p.tcNo } },
       update: {
         fullName: p.fullName,
         phone: p.phone,
@@ -215,6 +176,7 @@ async function main() {
         referrer: "Sosyal Medya",
       },
       create: {
+        institutionId: institution.id,
         tcNo: p.tcNo,
         fullName: p.fullName,
         phone: p.phone,
@@ -255,6 +217,20 @@ async function main() {
     type: "STANDART",
   });
 
+  for (let i = 4; i < createdPatients.length; i += 1) {
+    const startAt = new Date(tomorrow);
+    startAt.setHours(9 + (i % 6), (i % 2) * 30, 0, 0);
+    await upsertAppointmentByMarker({
+      patientId: createdPatients[i].id,
+      doctorId,
+      marker: `${MARKER}-APPT-${i + 1}`,
+      startAt,
+      endAt: new Date(startAt.getTime() + 30 * 60_000),
+      status: i % 3 === 0 ? "ONAYLANDI" : "BEKLIYOR",
+      type: i % 2 === 0 ? "KONTROL" : "STANDART",
+    });
+  }
+
   const followUp = await upsertFollowUpByMarker({
     patientId: createdPatients[1].id,
     appointmentId: appointmentB.id,
@@ -285,6 +261,14 @@ async function main() {
     nextStep: "3 gun sonra geri arama",
   });
 
+  await upsertClinicTaskByMarker({
+    institutionId: institution.id,
+    patientId: createdPatients[3].id,
+    createdById: managerId,
+    assignedToId: createdUsers[Role.ASISTAN].id,
+    marker: `${MARKER}-TASK-1`,
+  });
+
   await upsertExaminationByMarker({
     patientId: createdPatients[0].id,
     doctorId,
@@ -292,9 +276,9 @@ async function main() {
   });
 
   const pos = await prisma.posDevice.upsert({
-    where: { name: `Demo POS ${MARKER}` },
+    where: { institutionId_name: { institutionId: institution.id, name: `Demo POS ${MARKER}` } },
     update: { isActive: true },
-    create: { name: `Demo POS ${MARKER}`, isActive: true },
+    create: { institutionId: institution.id, name: `Demo POS ${MARKER}`, isActive: true },
   });
 
   await upsertPaymentByMarker({
@@ -319,7 +303,7 @@ async function main() {
 
   await upsertLabTrips(labOrder.id, `${MARKER}-TRIP`);
 
-  const stock = await upsertStockItemByMarker(`${MARKER}-STOCK-1`, managerId);
+  const stock = await upsertStockItemByMarker(`${MARKER}-STOCK-1`, managerId, institution.id);
 
   await upsertStockMovement(stock.id, managerId, `${MARKER}-MOVE-1`);
 
@@ -334,18 +318,19 @@ async function main() {
   await upsertReminderByMarker(createdPatients[3].id, taksitPlan.id, `${MARKER}-REM-1`);
 
   const expenseCategory = await prisma.expenseCategory.upsert({
-    where: { name: `Demo Gider Kategorisi ${MARKER}` },
+    where: { institutionId_name: { institutionId: institution.id, name: `Demo Gider Kategorisi ${MARKER}` } },
     update: { isActive: true },
-    create: { name: `Demo Gider Kategorisi ${MARKER}`, isActive: true },
+    create: { institutionId: institution.id, name: `Demo Gider Kategorisi ${MARKER}`, isActive: true },
     select: { id: true },
   });
 
-  await upsertExpenseByMarker(expenseCategory.id, `${MARKER}-EXP-1`);
+  await upsertExpenseByMarker(expenseCategory.id, `${MARKER}-EXP-1`, institution.id);
 
   const firma = await prisma.firma.upsert({
-    where: { name: "Demo Tedarikci" },
+    where: { institutionId_name: { institutionId: institution.id, name: "Demo Tedarikci" } },
     update: { isActive: true, phone: "02120000000" },
     create: {
+      institutionId: institution.id,
       name: "Demo Tedarikci",
       phone: "02120000000",
       notes: `${MARKER} Demo firma`,
@@ -358,7 +343,11 @@ async function main() {
 
   await upsertSupportTicketByMarker(managerId, `${MARKER}-SUP-1`);
   await upsertMessageByMarker(createdUsers[Role.ASISTAN].id, `${MARKER}-MSG-1`);
-  await upsertAnnouncementByMarker(`${MARKER}-ANN-1`);
+  await upsertAnnouncementByMarker({
+    institutionId: institution.id,
+    createdById: managerId,
+    marker: `${MARKER}-ANN-1`,
+  });
 
   const ad = await upsertAdvertisementByMarker(`${MARKER}-AD-1`);
 
@@ -429,7 +418,8 @@ async function main() {
 
   await prisma.priceItem.upsert({
     where: {
-      code_treatment: {
+      institutionId_code_treatment: {
+        institutionId: institution.id,
         code: "D-001",
         treatment: `Demo Tedavi ${MARKER}`,
       },
@@ -440,6 +430,7 @@ async function main() {
       isCustom: true,
     },
     create: {
+      institutionId: institution.id,
       code: "D-001",
       treatment: `Demo Tedavi ${MARKER}`,
       amount: new Prisma.Decimal(1250),
@@ -598,6 +589,61 @@ async function upsertFollowUpEventByMarker(args: {
   });
 }
 
+async function upsertClinicTaskByMarker(args: {
+  institutionId: string;
+  patientId: string;
+  createdById: string;
+  assignedToId: string;
+  marker: string;
+}) {
+  const existing = await prisma.clinicTask.findFirst({
+    where: { institutionId: args.institutionId, title: { contains: args.marker } },
+    include: { assignees: true },
+  });
+
+  const dueAt = new Date(Date.now() + 2 * 24 * 60 * 60_000);
+  if (existing) {
+    await prisma.clinicTask.update({
+      where: { id: existing.id },
+      data: {
+        patientId: args.patientId,
+        title: `${args.marker} Hasta geri arama`,
+        details: "Tedavi planı onayı için hasta aranacak.",
+        type: "ARAMA",
+        priority: 1,
+        status: "ACIK",
+        dueAt,
+        assignedToId: args.assignedToId,
+        createdById: args.createdById,
+      },
+    });
+
+    const hasAssignee = existing.assignees.some((assignee) => assignee.userId === args.assignedToId);
+    if (!hasAssignee) {
+      await prisma.clinicTaskAssignee.create({
+        data: { taskId: existing.id, userId: args.assignedToId },
+      });
+    }
+    return;
+  }
+
+  await prisma.clinicTask.create({
+    data: {
+      institutionId: args.institutionId,
+      patientId: args.patientId,
+      title: `${args.marker} Hasta geri arama`,
+      details: "Tedavi planı onayı için hasta aranacak.",
+      type: "ARAMA",
+      priority: 1,
+      status: "ACIK",
+      dueAt,
+      assignedToId: args.assignedToId,
+      createdById: args.createdById,
+      assignees: { create: [{ userId: args.assignedToId }] },
+    },
+  });
+}
+
 async function upsertExaminationByMarker(args: { patientId: string; doctorId: string; marker: string }) {
   const existing = await prisma.examination.findFirst({
     where: { patientId: args.patientId, note: { contains: args.marker } },
@@ -744,12 +790,13 @@ async function upsertLabTrips(labOrderId: string, marker: string) {
   });
 }
 
-async function upsertStockItemByMarker(marker: string, userId: string) {
-  const existing = await prisma.stockItem.findFirst({ where: { name: { contains: marker } } });
+async function upsertStockItemByMarker(marker: string, userId: string, institutionId: string) {
+  const existing = await prisma.stockItem.findFirst({ where: { institutionId, name: { contains: marker } } });
   if (existing) return existing;
 
   const item = await prisma.stockItem.create({
     data: {
+      institutionId,
       name: `Kompozit Refil ${marker}`,
       category: "SARF",
       unit: "adet",
@@ -894,8 +941,8 @@ async function upsertReminderByMarker(patientId: string, planId: string, marker:
   });
 }
 
-async function upsertExpenseByMarker(categoryId: string, marker: string) {
-  const existing = await prisma.expense.findFirst({ where: { description: { contains: marker } } });
+async function upsertExpenseByMarker(categoryId: string, marker: string, institutionId: string) {
+  const existing = await prisma.expense.findFirst({ where: { institutionId, description: { contains: marker } } });
   const tarih = new Date();
 
   if (existing) {
@@ -903,6 +950,7 @@ async function upsertExpenseByMarker(categoryId: string, marker: string) {
       where: { id: existing.id },
       data: {
         tarih,
+        institutionId,
         categoryId,
         category: "Sarf",
         description: `${marker} Eldiven ve sarf alimi`,
@@ -916,6 +964,7 @@ async function upsertExpenseByMarker(categoryId: string, marker: string) {
   await prisma.expense.create({
     data: {
       tarih,
+      institutionId,
       categoryId,
       category: "Sarf",
       description: `${marker} Eldiven ve sarf alimi`,
@@ -992,12 +1041,31 @@ async function upsertMessageByMarker(userId: string, marker: string) {
   });
 }
 
-async function upsertAnnouncementByMarker(marker: string) {
-  const existing = await prisma.announcement.findFirst({ where: { text: { contains: marker } } });
-  if (existing) return;
+async function upsertAnnouncementByMarker(args: { institutionId: string; createdById: string; marker: string }) {
+  const existing = await prisma.announcement.findFirst({
+    where: { institutionId: args.institutionId, text: { contains: args.marker } },
+  });
+  if (existing) {
+    await prisma.announcement.update({
+      where: { id: existing.id },
+      data: {
+        text: `${args.marker} Demo kurum duyurusu: Bugunun onceligi randevu ve tahsilat takibi.`,
+        isActive: true,
+        createdById: args.createdById,
+        startsAt: null,
+        endsAt: new Date(Date.now() + 14 * 24 * 60 * 60_000),
+      },
+    });
+    return;
+  }
 
   await prisma.announcement.create({
-    data: { text: `${marker} Haftalik sistem bakimi cumartesi 23:00` },
+    data: {
+      institutionId: args.institutionId,
+      text: `${args.marker} Demo kurum duyurusu: Bugunun onceligi randevu ve tahsilat takibi.`,
+      createdById: args.createdById,
+      endsAt: new Date(Date.now() + 14 * 24 * 60 * 60_000),
+    },
   });
 }
 

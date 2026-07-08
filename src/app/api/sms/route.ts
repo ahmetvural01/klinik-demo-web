@@ -162,9 +162,9 @@ export async function POST(request: NextRequest) {
       const dateText = new Date(appt.startAt).toLocaleString("tr-TR");
       const institutionName = settings.institutionName || institution.name;
       const fallbackMessage = smsType === "BILGI"
-        ? `${institutionName}: Sayin ${appt.patient.fullName}, randevunuz olusturuldu. Tarih: ${dateText}.`
+        ? `${institutionName}: Sayın ${appt.patient.fullName}, randevunuz oluşturuldu. Tarih: ${dateText}.`
         : smsType === "HATIRLATMA"
-          ? `${institutionName}: Sayin ${appt.patient.fullName}, randevu hatirlatmasi. Tarih: ${dateText}, Doktor: ${appt.doctor.fullName}.`
+          ? `${institutionName}: Sayın ${appt.patient.fullName}, randevu hatırlatması. Tarih: ${dateText}, Doktor: ${appt.doctor.fullName}.`
           : `${institutionName}: Randevunuz tamamlandi. Degerlendirmeniz bizim icin cok degerli.`;
 
       const message = smsTemplate

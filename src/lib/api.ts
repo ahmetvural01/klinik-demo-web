@@ -16,6 +16,8 @@ type CachedInstitution = {
   throttleMs: number;
   paymentGraceUntil: Date | null;
   suspendedUntil: Date | null;
+  isDemo: boolean;
+  demoExpiresAt: Date | null;
   expiresAt: number;
 };
 const _instCache = new Map<string, CachedInstitution>();
@@ -49,6 +51,8 @@ async function getCachedInstitution(institutionId: string) {
       throttleMs: true,
       paymentGraceUntil: true,
       suspendedUntil: true,
+      isDemo: true,
+      demoExpiresAt: true,
     },
   });
 
@@ -75,11 +79,15 @@ export async function requireAuth(permission?: string) {
   const user = decodeTokenUser();
 
   if (!user) {
-    return { error: NextResponse.json({ message: "Yetkisiz" }, { status: 401 }) };
+    return { error: NextResponse.json({ message: "Oturum gerekli" }, { status: 401 }) };
+  }
+
+  if (permission === "superadmin" && user.role !== "SUPERADMIN") {
+    return { error: NextResponse.json({ message: "Bu işlem için süper yönetici yetkisi gerekli." }, { status: 403 }) };
   }
 
   if (permission && !can(user.role as import("@prisma/client").Role, permission)) {
-    return { error: NextResponse.json({ message: "Yasak" }, { status: 403 }) };
+    return { error: NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 }) };
   }
 
   // SUPERADMIN için kurum kontrolü yok
@@ -95,6 +103,15 @@ export async function requireAuth(permission?: string) {
 
     if (!institution.isActive) {
       return { error: NextResponse.json({ message: "Kurum pasif durumda. Lütfen yöneticinizle iletişime geçin." }, { status: 423 }) };
+    }
+
+    if (institution.isDemo && institution.demoExpiresAt && institution.demoExpiresAt < now) {
+      return {
+        error: NextResponse.json(
+          { message: "Demo erişim süresi doldu. Devam etmek için satış ekibiyle iletişime geçin.", demoExpired: true },
+          { status: 423 }
+        ),
+      };
     }
 
     if (institution.suspendedUntil && institution.suspendedUntil > now) {
@@ -153,8 +170,8 @@ export async function requireAuth(permission?: string) {
       }
     }
 
-    // Throttle: sadece throttleMs > 0 ise bekle
-    if (institution.throttleMs > 0) {
+    // Okuma istekleri anında dönsün; gecikme sadece yazma işlemlerinde kalsın.
+    if (institution.throttleMs > 0 && isWritePermission(permission)) {
       await new Promise((r) => setTimeout(r, Math.min(institution.throttleMs, 3000)));
     }
   }

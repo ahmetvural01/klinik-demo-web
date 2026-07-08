@@ -29,7 +29,7 @@ export default function SmsPage() {
     smsDefaultSurvey: false,
   });
   const [smsSentCount, setSmsSentCount] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [type, setType] = useState<"upcoming" | "past">("upcoming");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [smsType, setSmsType] = useState<"BILGI" | "HATIRLATMA" | "ANKET">("HATIRLATMA");
@@ -57,6 +57,7 @@ export default function SmsPage() {
     } catch {}
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void load(); }, []);
 
   const changeType = (t: "upcoming" | "past") => {
@@ -125,16 +126,17 @@ export default function SmsPage() {
         }`}>{toast.type === "success" ? "✓" : "✕"} {toast.text}</div>
       )}
       {/* Başlık */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">SMS Yönetimi</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Hasta SMS servisi ve hatırlatma yönetimi</p>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-black text-slate-900">SMS</h1>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{appointments.length} randevu</span>
+          <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-700">{selectedIds.size} seçili</span>
         </div>
         <div className="flex gap-2 items-center">
           <span className={`rounded-full px-3 py-1 text-sm font-semibold ${
             settings.smsEnabled ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"
           }`}>
-            {settings.smsEnabled ? "✓ SMS Aktif" : "✗ SMS Pasif"}
+            {settings.smsEnabled ? "SMS Aktif" : "SMS Pasif"}
           </span>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-600">
             Toplam: <b>{smsSentCount}</b>
@@ -190,37 +192,57 @@ export default function SmsPage() {
             {/* SMS tipi */}
             <select value={smsType} onChange={e => setSmsType(e.target.value as typeof smsType)}
               className="rounded-lg border px-3 py-2 text-sm">
-              <option value="HATIRLATMA">📅 Randevu Hatırlatma</option>
-              <option value="BILGI">ℹ️ Bilgi SMS</option>
-              <option value="ANKET">📋 Anket SMS</option>
+              <option value="HATIRLATMA">Randevu Hatırlatma</option>
+              <option value="BILGI">Bilgi SMS</option>
+              <option value="ANKET">Anket SMS</option>
             </select>
             {/* Toplu seç */}
             <button onClick={selectAll} className="rounded-lg border px-3 py-2 text-sm hover:bg-gray-50">
               {selectedIds.size === appointments.length && appointments.length > 0 ? "Seçimi Kaldır" : "Tümünü Seç"}
             </button>
             {/* SMS gönder */}
-            <button onClick={sendSms} disabled={!selectedIds.size || sending || !settings.smsEnabled}
+            <button onClick={sendSms} disabled={!selectedIds.size || sending || loading || !settings.smsEnabled}
               className="ml-auto rounded-lg bg-primary px-5 py-2 text-sm font-semibold text-white disabled:opacity-50">
-              {sending ? "Gönderiliyor..." : `📱 ${selectedIds.size > 0 ? selectedIds.size + " Hastaya " : ""}SMS Gönder`}
+              {sending ? "Gönderiliyor..." : selectedIds.size > 0 ? `${selectedIds.size} Hastaya SMS Gönder` : "SMS Gönder"}
             </button>
           </div>
 
           {!settings.smsEnabled && (
-            <div className="rounded-lg bg-red-50 border border-red-200 p-3 text-sm text-red-700">
-              ⚠️ SMS servisi devre dışı. Sistem Ayarları&apos;ndan aktif edin.
+            <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              SMS servisi devre dışı. Gönderim yapabilmek için SMS ayarlarını aktif edin.
             </div>
           )}
 
-          {loading ? (
-            <p className="text-center py-8 text-gray-500">Yükleniyor...</p>
-          ) : appointments.length === 0 ? (
+          {appointments.length === 0 ? (
             <div className="rounded-lg border bg-white p-8 text-center text-gray-500">
-              <p className="text-4xl mb-2">📭</p>
               <p>Randevu bulunamadı</p>
             </div>
           ) : (
-            <div className="overflow-x-auto rounded-lg border bg-white">
-              <table className="w-full text-sm border-collapse">
+            <>
+            <div className="divide-y divide-slate-100 rounded-2xl border border-slate-100 bg-white md:hidden">
+              {appointments.map(appt => {
+                const selected = selectedIds.has(appt.id);
+                return (
+                  <label key={appt.id} className={`block p-4 ${selected ? "bg-blue-50" : ""}`}>
+                    <div className="flex items-start gap-3">
+                      <input type="checkbox" checked={selected} onChange={() => toggleSelect(appt.id)} className="mt-1 rounded" />
+                      <div className="min-w-0 flex-1">
+                        <p className="font-bold text-slate-900">{appt.patient.fullName}</p>
+                        <p className="mt-1 text-sm text-slate-600">{appt.patient.phone}</p>
+                        <p className="mt-1 text-xs text-slate-500">{appt.doctor.fullName} · {new Date(appt.startAt).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</p>
+                        <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
+                          {appt.smsInfo && <span className="rounded-full bg-blue-100 px-2 py-1 font-semibold text-blue-700">Bilgi gönderildi</span>}
+                          {appt.smsReminder && <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-700">Hatırlatma gönderildi</span>}
+                          {appt.smsSurvey && <span className="rounded-full bg-purple-100 px-2 py-1 font-semibold text-purple-700">Anket gönderildi</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </label>
+                );
+              })}
+            </div>
+            <div className="hidden overflow-x-auto rounded-2xl border border-slate-100 bg-white md:block">
+              <table className="w-full border-collapse text-sm">
                 <thead className="bg-gray-50">
                   <tr>
                     <th className="px-3 py-2 text-left w-8">
@@ -257,14 +279,15 @@ export default function SmsPage() {
                           "bg-yellow-100 text-yellow-700"
                         }`}>{appt.status}</span>
                       </td>
-                      <td className="px-3 py-2 text-center">{appt.smsInfo ? "✅" : "—"}</td>
-                      <td className="px-3 py-2 text-center">{appt.smsReminder ? "✅" : "—"}</td>
-                      <td className="px-3 py-2 text-center">{appt.smsSurvey ? "✅" : "—"}</td>
+                      <td className="px-3 py-2 text-center">{appt.smsInfo ? "Gönderildi" : "—"}</td>
+                      <td className="px-3 py-2 text-center">{appt.smsReminder ? "Gönderildi" : "—"}</td>
+                      <td className="px-3 py-2 text-center">{appt.smsSurvey ? "Gönderildi" : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            </>
           )}
         </div>
       )}
@@ -275,7 +298,6 @@ export default function SmsPage() {
           <p className="text-sm text-gray-500">Son 50 SMS gönderim kaydı:</p>
           {logs.length === 0 ? (
             <div className="rounded-lg border bg-white p-8 text-center text-gray-500">
-              <p className="text-4xl mb-2">📭</p>
               <p>Henüz SMS gönderimi yapılmadı</p>
             </div>
           ) : (
@@ -309,7 +331,7 @@ export default function SmsPage() {
 
       {/* SMS Ayarları sekmesi */}
       {tab === "ayar" && (
-        <div className="rounded-lg border bg-white p-5 max-w-lg space-y-4">
+        <div className="max-w-2xl space-y-4 rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
           <h3 className="font-bold text-gray-800">SMS Varsayılan Ayarları</h3>
           <p className="text-sm text-gray-500">Bu ayarlar yeni randevu oluşturulurken otomatik uygulanır. Detaylı ayarlar için Sistem Ayarları sayfasını kullanın.</p>
           <div className="space-y-3">

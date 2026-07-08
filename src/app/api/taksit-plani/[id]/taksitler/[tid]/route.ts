@@ -10,6 +10,10 @@ export async function PATCH(
   try {
     const auth = await requireAuth("payments:write");
     if (auth.error) return auth.error;
+    const user = auth.user;
+    if (user.role !== "SUPERADMIN" && !user.institutionId) {
+      return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+    }
 
     const body = await req.json();
     const { tutar, yontem = "NAKIT", posId, note } = body;
@@ -20,11 +24,23 @@ export async function PATCH(
 
     const taksit = await (prisma as any).taksit.findUnique({
       where: { id: params.tid },
-      include: { plan: true }
+      include: { plan: { include: { patient: { select: { institutionId: true } } } } }
     });
     if (!taksit) return NextResponse.json({ error: "Taksit bulunamadı" }, { status: 404 });
+    if (taksit.planId !== params.id) return NextResponse.json({ error: "Taksit bulunamadı" }, { status: 404 });
+    if (user.role !== "SUPERADMIN" && taksit.plan.patient?.institutionId !== user.institutionId) {
+      return NextResponse.json({ error: "Taksit bulunamadı" }, { status: 404 });
+    }
     if (taksit.status === "ODENDI") {
       return NextResponse.json({ error: "Bu taksit zaten ödenmiş" }, { status: 400 });
+    }
+
+    if (posId && user.role !== "SUPERADMIN") {
+      const pos = await (prisma as any).posDevice.findFirst({
+        where: { id: posId, institutionId: user.institutionId },
+        select: { id: true },
+      });
+      if (!pos) return NextResponse.json({ error: "POS cihazı bulunamadı" }, { status: 404 });
     }
 
     const odemeAmt = Math.min(Number(tutar), Number(taksit.kalan));

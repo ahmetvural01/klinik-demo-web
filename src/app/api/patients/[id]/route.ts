@@ -113,8 +113,11 @@ export async function GET(_: NextRequest, { params }: Params) {
   const auth = await requireAuth("patients:read");
   if (auth.error) return auth.error;
 
-  const patient = await prisma.patient.findUnique({
-    where: { id: params.id },
+  const patient = await prisma.patient.findFirst({
+    where: {
+      id: params.id,
+      ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+    },
     include: {
       appointments: { include: { doctor: { select: { fullName: true } } }, orderBy: { startAt: "desc" } },
       examinations: { include: { doctor: { select: { fullName: true } } }, orderBy: { diagnosedAt: "desc" } },
@@ -151,7 +154,12 @@ export async function PUT(request: NextRequest, { params }: Params) {
   if (auth.error) return auth.error;
 
   const body = await request.json();
-  const existing = await prisma.patient.findUnique({ where: { id: params.id } });
+  const existing = await prisma.patient.findFirst({
+    where: {
+      id: params.id,
+      ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+    },
+  });
 
   if (!existing) {
     return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });
@@ -216,6 +224,18 @@ export async function PUT(request: NextRequest, { params }: Params) {
 export async function DELETE(_: NextRequest, { params }: Params) {
   const auth = await requireAuth("patients:write");
   if (auth.error) return auth.error;
+
+  const existing = await prisma.patient.findFirst({
+    where: {
+      id: params.id,
+      ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+    },
+    select: { id: true },
+  });
+
+  if (!existing) {
+    return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });
+  }
 
   const deleted = await prisma.$transaction(async (tx) => {
     // Önce taksit planlarının ID'lerini al (reminder silimi için)

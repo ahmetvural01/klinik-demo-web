@@ -80,7 +80,7 @@ export const DEFAULT_SITE_CONTENT: SiteContentPayload = {
       title: "KURUMSAL",
       price: "Ozel Teklif",
       period: "coklu klinik icin",
-      items: ["Cok sube ve merkezi yonetim", "Ozel entegrasyon destegi", "Kurumsal SLA"],
+      items: ["Çok şube ve merkezi yönetim", "Özel entegrasyon desteği", "Kurumsal SLA"],
       color: "emerald",
     },
   ],

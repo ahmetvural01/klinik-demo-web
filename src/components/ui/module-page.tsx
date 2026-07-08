@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { showToastSafe } from "@/lib/toast-client";
 
 type FieldConfig = {
   name: string;
@@ -26,7 +27,7 @@ type Props = {
 
 function formatValue(value: unknown) {
   if (value === null || value === undefined) return "-";
-  if (typeof value === "boolean") return value ? "Evet" : "Hayir";
+  if (typeof value === "boolean") return value ? "Evet" : "Hayır";
   if (typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
@@ -103,12 +104,14 @@ export function ModulePage({
     try {
       const res = await fetch(listUrl());
       if (!res.ok) {
-        throw new Error(`${res.status} - Veri alÄ±namadÄ±`);
+        throw new Error(`${res.status} - Veri alınamadı`);
       }
       const json = await res.json();
       setData(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Bilinmeyen hata");
+      const msg = err instanceof Error ? err.message : "Bilinmeyen hata";
+      setError(msg);
+      try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {}
     } finally {
       setLoading(false);
     }
@@ -133,8 +136,8 @@ export function ModulePage({
       });
 
       if (!response.ok) {
-        const body = await response.json().catch(() => ({ message: "KayÄ±t baÅŸarÄ±sÄ±z" }));
-        throw new Error(body.message ?? "KayÄ±t baÅŸarÄ±sÄ±z");
+        const body = await response.json().catch(() => ({ message: "Kayıt başarısız" }));
+        throw new Error(body.message ?? "Kayıt başarısız");
       }
 
       await load();
@@ -145,7 +148,9 @@ export function ModulePage({
       });
       setForm(reset);
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "KayÄ±t hatasÄ±");
+      const msg = submitError instanceof Error ? submitError.message : "Kayıt hatası";
+      setError(msg);
+      try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {}
     } finally {
       setSaving(false);
     }
@@ -191,14 +196,16 @@ export function ModulePage({
       });
 
       if (!response.ok) {
-        const body = await response.json().catch(() => ({ message: "GÃ¼ncelleme baÅŸarÄ±sÄ±z" }));
-        throw new Error(body.message ?? "GÃ¼ncelleme baÅŸarÄ±sÄ±z");
+        const body = await response.json().catch(() => ({ message: "Güncelleme başarısız" }));
+        throw new Error(body.message ?? "Güncelleme başarısız");
       }
 
       cancelEdit();
       await load();
     } catch (updateError) {
-      setError(updateError instanceof Error ? updateError.message : "GÃ¼ncelleme hatasÄ±");
+      const msg = updateError instanceof Error ? updateError.message : "Güncelleme hatası";
+      setError(msg);
+      try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {}
     } finally {
       setUpdating(false);
     }
@@ -209,7 +216,7 @@ export function ModulePage({
     const rowId = String(row[idKey] ?? "");
     if (!rowId) return;
 
-    const okay = window.confirm("Bu kaydi silmek istediginize emin misiniz?");
+    const okay = window.confirm("Bu kaydı silmek istediğinize emin misiniz?");
     if (!okay) return;
 
     setDeletingId(rowId);
@@ -220,13 +227,15 @@ export function ModulePage({
       });
 
       if (!response.ok) {
-        const body = await response.json().catch(() => ({ message: "Silme baÅŸarÄ±sÄ±z" }));
-        throw new Error(body.message ?? "Silme baÅŸarÄ±sÄ±z");
+        const body = await response.json().catch(() => ({ message: "Silme başarısız" }));
+        throw new Error(body.message ?? "Silme başarısız");
       }
 
       await load();
     } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : "Silme hatasi");
+      const msg = deleteError instanceof Error ? deleteError.message : "Silme hatasi";
+      setError(msg);
+      try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {}
     } finally {
       setDeletingId(null);
     }
@@ -235,7 +244,7 @@ export function ModulePage({
   const renderData = () => {
     if (Array.isArray(data)) {
       if (data.length === 0) {
-        return <p className="text-sm text-gray-500">KayÄ±t bulunamadÄ±.</p>;
+        return <p className="text-sm text-gray-500">Kayıt bulunamadı.</p>;
       }
 
       const rows: Array<Record<string, unknown>> = data
@@ -248,28 +257,28 @@ export function ModulePage({
       return (
         <div className="overflow-auto rounded-lg border">
           <table className="min-w-full text-left text-sm">
-            <thead className="bg-gray-100 text-xs uppercase text-gray-600">
+            <thead className="bg-gray-100 text-sm uppercase text-gray-600">
               <tr>
                 {columns.map((column) => (
                   <th key={column} className="px-3 py-2 font-semibold">{column}</th>
                 ))}
-                {canEditDelete && <th className="px-3 py-2 font-semibold">Ä°ÅŸlem</th>}
+                {canEditDelete && <th className="px-3 py-2 font-semibold">İşlem</th>}
               </tr>
             </thead>
             <tbody>
               {rows.map((row, index) => (
                 <tr key={index} className="border-t align-top">
                   {columns.map((column) => (
-                    <td key={column} className="px-3 py-2 text-xs">{formatValue(row[column])}</td>
+                    <td key={column} className="px-3 py-3 text-sm">{formatValue(row[column])}</td>
                   ))}
                   {canEditDelete && (
-                    <td className="px-3 py-2 text-xs">
+                    <td className="px-3 py-3 text-sm">
                       <div className="flex gap-2">
-                        <button onClick={() => startEdit(row)} className="rounded bg-primary px-2 py-1 text-white">Duzenle</button>
+                        <button onClick={() => startEdit(row)} className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white">Düzenle</button>
                         <button
                           onClick={() => handleDelete(row)}
                           disabled={deletingId === String(row[idKey] ?? "")}
-                          className="rounded bg-danger px-2 py-1 text-white disabled:opacity-50"
+                          className="rounded-lg bg-danger px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
                         >
                           Sil
                         </button>
@@ -296,7 +305,7 @@ export function ModulePage({
             <div className="grid gap-3 md:grid-cols-4">
               {numericEntries.map(([key, value]) => (
                 <div key={key} className="rounded-lg border bg-white p-3">
-                  <p className="text-xs uppercase text-gray-500">{key}</p>
+                  <p className="text-sm font-semibold uppercase text-gray-500">{key}</p>
                   <p className="text-2xl font-bold text-primary">{String(value)}</p>
                 </div>
               ))}
@@ -307,7 +316,7 @@ export function ModulePage({
             <div className="grid gap-2 md:grid-cols-2">
               {scalarEntries.map(([key, value]) => (
                 <div key={key} className="rounded-lg border bg-white px-3 py-2 text-sm">
-                  <span className="text-xs uppercase text-gray-500">{key}</span>
+                  <span className="text-sm font-semibold uppercase text-gray-500">{key}</span>
                   <p className="font-semibold text-gray-800">{formatValue(value)}</p>
                 </div>
               ))}
@@ -328,15 +337,15 @@ export function ModulePage({
 
             return (
               <div key={section} className="rounded-lg border">
-                <p className="border-b bg-gray-100 px-3 py-2 text-xs font-semibold uppercase text-gray-600">{section}</p>
+                <p className="border-b bg-gray-100 px-3 py-3 text-sm font-semibold uppercase text-gray-600">{section}</p>
                 <div className="overflow-auto">
-                  <table className="min-w-full text-left text-xs">
+                  <table className="min-w-full text-left text-sm">
                     <thead>
                       <tr className="bg-white text-gray-600">
                         {columns.map((column) => (
                           <th key={column} className="px-3 py-2">{column}</th>
                         ))}
-                        {canEditDelete && <th className="px-3 py-2">Ä°ÅŸlem</th>}
+                        {canEditDelete && <th className="px-3 py-2">İşlem</th>}
                       </tr>
                     </thead>
                     <tbody>
@@ -348,11 +357,11 @@ export function ModulePage({
                           {canEditDelete && (
                             <td className="px-3 py-2">
                               <div className="flex gap-2">
-                                <button onClick={() => startEdit(row)} className="rounded bg-primary px-2 py-1 text-white">Duzenle</button>
+                                <button onClick={() => startEdit(row)} className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white">Düzenle</button>
                                 <button
                                   onClick={() => handleDelete(row)}
                                   disabled={deletingId === String(row[idKey] ?? "")}
-                                  className="rounded bg-danger px-2 py-1 text-white disabled:opacity-50"
+                                  className="rounded-lg bg-danger px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
                                 >
                                   Sil
                                 </button>
@@ -410,7 +419,7 @@ export function ModulePage({
               if (field.type === "textarea") {
                 return (
                   <label key={field.name} className="md:col-span-2">
-                    <span className="mb-1 block text-xs text-gray-600">{field.label}</span>
+                    <span className="mb-1.5 block text-sm font-semibold text-gray-700">{field.label}</span>
                     <textarea
                       value={String(form[field.name] ?? "")}
                       onChange={(event) => setForm((prev) => ({ ...prev, [field.name]: event.target.value }))}
@@ -424,7 +433,7 @@ export function ModulePage({
               if (field.type === "select") {
                 return (
                   <label key={field.name}>
-                    <span className="mb-1 block text-xs text-gray-600">{field.label}</span>
+                    <span className="mb-1.5 block text-sm font-semibold text-gray-700">{field.label}</span>
                     <select
                       value={String(form[field.name] ?? "")}
                       onChange={(event) => setForm((prev) => ({ ...prev, [field.name]: event.target.value }))}
@@ -455,7 +464,7 @@ export function ModulePage({
 
               return (
                 <label key={field.name}>
-                  <span className="mb-1 block text-xs text-gray-600">{field.label}</span>
+                  <span className="mb-1.5 block text-sm font-semibold text-gray-700">{field.label}</span>
                   <input
                     type={field.type ?? "text"}
                     value={String(form[field.name] ?? "")}
@@ -481,13 +490,13 @@ export function ModulePage({
 
       {editingId && activeEditFields && (
         <div className="mb-4 rounded-lg border border-primary/30 bg-white p-4">
-          <h3 className="mb-3 text-sm font-semibold text-gray-700">KayÄ±t DÃ¼zenle</h3>
+          <h3 className="mb-3 text-sm font-semibold text-gray-700">Kayıt Düzenle</h3>
           <div className="grid gap-3 md:grid-cols-2">
             {activeEditFields.map((field) => {
               if (field.type === "textarea") {
                 return (
                   <label key={field.name} className="md:col-span-2">
-                    <span className="mb-1 block text-xs text-gray-600">{field.label}</span>
+                    <span className="mb-1.5 block text-sm font-semibold text-gray-700">{field.label}</span>
                     <textarea
                       value={String(editForm[field.name] ?? "")}
                       onChange={(event) => setEditForm((prev) => ({ ...prev, [field.name]: event.target.value }))}
@@ -501,7 +510,7 @@ export function ModulePage({
               if (field.type === "select") {
                 return (
                   <label key={field.name}>
-                    <span className="mb-1 block text-xs text-gray-600">{field.label}</span>
+                    <span className="mb-1.5 block text-sm font-semibold text-gray-700">{field.label}</span>
                     <select
                       value={String(editForm[field.name] ?? "")}
                       onChange={(event) => setEditForm((prev) => ({ ...prev, [field.name]: event.target.value }))}
@@ -532,7 +541,7 @@ export function ModulePage({
 
               return (
                 <label key={field.name}>
-                  <span className="mb-1 block text-xs text-gray-600">{field.label}</span>
+                  <span className="mb-1.5 block text-sm font-semibold text-gray-700">{field.label}</span>
                   <input
                     type={field.type ?? "text"}
                     value={String(editForm[field.name] ?? "")}
@@ -553,13 +562,13 @@ export function ModulePage({
               {updating ? "Güncelleniyor..." : "Güncelle"}
             </button>
             <button onClick={cancelEdit} className="rounded-lg bg-gray-500 px-3 py-2 text-sm font-semibold text-white">
-              Vazgec
+              Vazgeç
             </button>
           </div>
         </div>
       )}
 
-      {loading && <p>Yukleniyor...</p>}
+      {loading && <p>Yükleniyor...</p>}
       {error && <p className="text-danger">{error}</p>}
       {!loading && !error && renderData()}
     </section>

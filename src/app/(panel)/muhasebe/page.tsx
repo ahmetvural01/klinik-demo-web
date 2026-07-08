@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 
@@ -69,15 +69,60 @@ const TAKSIT_STATUS_BADGE: Record<string, string> = {
 };
 
 const INP = "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-blue-400 focus:bg-white focus:outline-none";
+const MUHASEBE_CACHE_KEY = "muhasebe:page:v1";
+
+function readMuhasebeCache() {
+  if (typeof window === "undefined") return null;
+  const raw = sessionStorage.getItem(MUHASEBE_CACHE_KEY);
+  if (!raw) return null;
+  try {
+    const cached = JSON.parse(raw) as {
+      userRole?: string;
+      kasaToday?: { total: number; byMethod: Record<string, number>; payments: Payment[] };
+      expenseToday?: { total: number };
+      expenseMonth?: { total: number; expenses: Expense[] };
+      firmas?: FirmaData[];
+      stockItems?: StockItem[];
+      taksitOverdue?: { count: number; amount: number };
+      trendData?: TrendMonth[];
+      alacaklar?: AlacakRow[];
+      alacakTotal?: number;
+      patients?: PatientOption[];
+      posDevices?: PosDevice[];
+      taksitPlans?: TaksitPlan[];
+      reminders?: Reminder[];
+      taksitDoctors?: Doctor[];
+    };
+    return {
+      userRole: cached.userRole || "",
+      kasaToday: cached.kasaToday || { total: 0, byMethod: {}, payments: [] },
+      expenseToday: cached.expenseToday || { total: 0 },
+      expenseMonth: cached.expenseMonth || { total: 0, expenses: [] },
+      firmas: Array.isArray(cached.firmas) ? cached.firmas : [],
+      stockItems: Array.isArray(cached.stockItems) ? cached.stockItems : [],
+      taksitOverdue: cached.taksitOverdue || { count: 0, amount: 0 },
+      trendData: Array.isArray(cached.trendData) ? cached.trendData : [],
+      alacaklar: Array.isArray(cached.alacaklar) ? cached.alacaklar : [],
+      alacakTotal: Number(cached.alacakTotal || 0),
+      patients: Array.isArray(cached.patients) ? cached.patients : [],
+      posDevices: Array.isArray(cached.posDevices) ? cached.posDevices : [],
+      taksitPlans: Array.isArray(cached.taksitPlans) ? cached.taksitPlans : [],
+      reminders: Array.isArray(cached.reminders) ? cached.reminders : [],
+      taksitDoctors: Array.isArray(cached.taksitDoctors) ? cached.taksitDoctors : [],
+    };
+  } catch {
+    return null;
+  }
+}
 
 const TABS = [
-  { id: "genel",    label: "📊 Genel Bakış"       },
-  { id: "gelir",    label: "💰 Gelir / Tahsilat"   },
-  { id: "gider",    label: "💸 Gider"              },
-  { id: "taksit",   label: "📋 Taksit / Alacak"   },
-  { id: "alacak",   label: "👤 Hasta Alacakları"  },
-  { id: "cari",     label: "🏭 Tedarikçi / Cari"  },
-  { id: "hakedis",  label: "👨‍⚕️ Hakedişler"       },
+  { id: "genel",    label: "Genel Bakış"      },
+  { id: "gelir",    label: "Gelir / Tahsilat" },
+  { id: "gider",    label: "Gider"             },
+  { id: "taksit",   label: "Taksit / Alacak"  },
+  { id: "alacak",   label: "Hasta Alacakları" },
+  { id: "cari",     label: "Tedarikçi / Cari" },
+  { id: "hakedis",  label: "Hakedişler"       },
 ] as const;
 type TabId = (typeof TABS)[number]["id"];
 
@@ -517,6 +562,79 @@ export default function MuhasebePage() {
   const [hakOdeForm,      setHakOdeForm]      = useState({ tutar: "", aciklama: "" });
   const [hakOdeSaving,    setHakOdeSaving]    = useState(false);
 
+  const summaryCards = [
+    { label: "Bugün Gelir",     value: fmt(kasaToday.total),       tone: "text-emerald-700", bg: "bg-emerald-50",  border: "border-emerald-100", banko: true  },
+    { label: "Bugün Net",       value: fmt(todayNet),              tone: todayNet >= 0 ? "text-blue-700" : "text-red-700", bg: "bg-blue-50", border: "border-blue-100", banko: true },
+    { label: "Gecikmiş Taksit", value: `${taksitOverdue.count} adet`, tone: "text-violet-700", bg: "bg-violet-50", border: "border-violet-100", banko: true  },
+    { label: "Tedarikçi Borcu", value: fmt(supplierDebt),          tone: "text-amber-700",   bg: "bg-amber-50",    border: "border-amber-100",   banko: false },
+    { label: "Bugün Gider",     value: fmt(expenseToday.total),    tone: "text-red-700",     bg: "bg-red-50",      border: "border-red-100",     banko: false },
+    { label: "Aylık Gider",     value: fmt(expenseMonth.total),    tone: "text-slate-800",   bg: "bg-slate-50",    border: "border-slate-100",   banko: false },
+  ].filter(c => userRole !== "BANKO" || c.banko);
+
+  const primarySummaryCards = summaryCards.slice(0, 4);
+  const secondarySummaryCards = summaryCards.slice(4);
+
+  useLayoutEffect(() => {
+    const cached = readMuhasebeCache();
+    if (!cached) return;
+    setUserRole(cached.userRole);
+    setKasaToday(cached.kasaToday);
+    setExpenseToday(cached.expenseToday);
+    setExpenseMonth(cached.expenseMonth);
+    setFirmas(cached.firmas);
+    setStockItems(cached.stockItems);
+    setTaksitOverdue(cached.taksitOverdue);
+    setTrendData(cached.trendData);
+    setAlacaklar(cached.alacaklar);
+    setAlacakTotal(cached.alacakTotal);
+    setPatients(cached.patients);
+    setPosDevices(cached.posDevices);
+    setTaksitPlans(cached.taksitPlans);
+    setReminders(cached.reminders);
+    setHakDoctors(cached.taksitDoctors);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(MUHASEBE_CACHE_KEY, JSON.stringify({
+        userRole,
+        kasaToday,
+        expenseToday,
+        expenseMonth,
+        firmas,
+        stockItems,
+        taksitOverdue,
+        trendData,
+        alacaklar,
+        alacakTotal,
+        patients,
+        posDevices,
+        taksitPlans,
+        reminders,
+        taksitDoctors: hakDoctors,
+      }));
+    } catch {
+      // Cache başarısız olsa da sayfa çalışmaya devam etsin.
+    }
+  }, [
+    userRole,
+    kasaToday,
+    expenseToday,
+    expenseMonth,
+    firmas,
+    stockItems,
+    taksitOverdue,
+    trendData,
+    alacaklar,
+    alacakTotal,
+    patients,
+    posDevices,
+    taksitPlans,
+    reminders,
+    hakDoctors,
+  ]);
+
   const loadDoctorFinance = useCallback(async (id: string) => {
     if (!id) { setDoctorFinance(null); return; }
     setHakLoading(true);
@@ -578,41 +696,53 @@ export default function MuhasebePage() {
       {/* Toast */}
       {toast && (
         <div className={`fixed right-5 top-5 z-[100] flex items-center gap-2.5 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${toast.type === "success" ? "bg-emerald-500" : "bg-red-500"}`}>
-          {toast.type === "success" ? "✓" : "✕"} {toast.text}
+          {toast.text}
         </div>
       )}
 
-      {/* Page Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-xs font-black uppercase tracking-[0.22em] text-blue-700">Entegre Muhasebe Sistemi</p>
-          <h1 className="mt-0.5 text-2xl font-black text-slate-900">Muhasebe Merkezi</h1>
-          <p className="mt-1 text-sm text-slate-500">Gelir, gider, taksit, cari hesap, hakediş — tüm finansal işlemler tek ekrandan.</p>
+      {/* Compact Page Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-black text-slate-900">Muhasebe</h1>
+          <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-700">Bugün {fmt(kasaToday.total)}</span>
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-700">{taksitOverdue.count} gecikmiş taksit</span>
         </div>
-        <Link href="/rapor" className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">
-          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
-          Raporlar
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => changeTab("taksit")} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">Taksitler</button>
+          <button onClick={() => changeTab("cari")} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">Cari</button>
+          <button onClick={() => changeTab("gider")} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">Gider</button>
+          <Link href="/rapor" className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-100">Raporlar</Link>
+        </div>
       </div>
 
       {/* KPI Summary */}
       {loading
         ? <div className="h-28 animate-pulse rounded-2xl bg-slate-100" />
         : (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-            {[
-              { label: "Bugün Gelir",     value: fmt(kasaToday.total),       tone: "text-emerald-700", bg: "bg-emerald-50",  border: "border-emerald-100", banko: true  },
-              { label: "Bugün Gider",     value: fmt(expenseToday.total),    tone: "text-red-700",     bg: "bg-red-50",      border: "border-red-100",     banko: false },
-              { label: "Bugün Net",       value: fmt(todayNet),              tone: todayNet >= 0 ? "text-blue-700" : "text-red-700", bg: "bg-blue-50", border: "border-blue-100", banko: true },
-              { label: "Aylık Gider",     value: fmt(expenseMonth.total),    tone: "text-slate-800",   bg: "bg-slate-50",    border: "border-slate-100",   banko: false },
-              { label: "Tedarikçi Borcu", value: fmt(supplierDebt),          tone: "text-amber-700",   bg: "bg-amber-50",    border: "border-amber-100",   banko: false },
-              { label: "Gecikmiş Taksit", value: `${taksitOverdue.count} adet`, tone: "text-violet-700", bg: "bg-violet-50", border: "border-violet-100", banko: true  },
-            ].filter(c => userRole !== "BANKO" || c.banko).map(c => (
-              <article key={c.label} className={`${c.bg} ${c.border} rounded-2xl border p-4`}>
-                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{c.label}</p>
-                <p className={`mt-1 text-xl font-black ${c.tone}`}>{c.value}</p>
-              </article>
-            ))}
+          <div className="space-y-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              {primarySummaryCards.map(c => (
+                <article key={c.label} className={`${c.bg} ${c.border} rounded-2xl border p-4 shadow-sm`}>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{c.label}</p>
+                  <p className={`mt-1 text-xl font-black ${c.tone}`}>{c.value}</p>
+                </article>
+              ))}
+            </div>
+            <details className="group rounded-2xl border border-slate-100 bg-white shadow-sm" open={userRole === "BANKO"}>
+              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-slate-700">
+                <span>Diğer finans göstergeleri</span>
+                <span className="text-xs font-medium text-slate-400 group-open:hidden">Aç</span>
+                <span className="text-xs font-medium text-slate-400 hidden group-open:inline">Kapat</span>
+              </summary>
+              <div className="grid grid-cols-1 gap-3 border-t border-slate-100 p-4 sm:grid-cols-2 xl:grid-cols-2">
+                {secondarySummaryCards.map(c => (
+                  <article key={c.label} className={`${c.bg} ${c.border} rounded-2xl border p-4`}>
+                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{c.label}</p>
+                    <p className={`mt-1 text-xl font-black ${c.tone}`}>{c.value}</p>
+                  </article>
+                ))}
+              </div>
+            </details>
           </div>
         )
       }
@@ -620,7 +750,7 @@ export default function MuhasebePage() {
       {/* Alerts */}
       {!loading && (taksitOverdue.count > 0 || supplierDebt > 0 || criticalStock.length > 0) && (
         <div className="space-y-1.5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-          <p className="mb-2 text-xs font-black uppercase tracking-wide text-amber-800">⚠ Dikkat Gerektiren İşler</p>
+          <p className="mb-2 text-xs font-black uppercase tracking-wide text-amber-800">Dikkat Gerektiren İşler</p>
           {taksitOverdue.count > 0 && (
             <div className="flex items-center justify-between rounded-xl bg-red-100 px-3 py-2 text-sm text-red-800">
               <span><b>{taksitOverdue.count}</b> gecikmiş taksit — {fmt(taksitOverdue.amount)} tahsil edilmeli</span>
@@ -643,10 +773,10 @@ export default function MuhasebePage() {
       )}
 
       {/* Tab Navigation */}
-      <div className="flex gap-1 overflow-x-auto rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
+        <div className="sticky top-0 z-20 flex gap-1 overflow-x-auto rounded-2xl border border-slate-100 bg-white/95 p-1.5 shadow-sm backdrop-blur">
         {visibleTabs.map(tab => (
           <button key={tab.id} onClick={() => changeTab(tab.id)}
-            className={`shrink-0 rounded-xl px-4 py-2 text-xs font-bold transition ${activeTab === tab.id ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"}`}>
+            className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition ${activeTab === tab.id ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"}`}>
             {tab.label}
           </button>
         ))}
@@ -664,9 +794,9 @@ export default function MuhasebePage() {
               <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
                 <div className="mb-4 flex items-center justify-between">
                   <h2 className="text-sm font-black text-slate-900">6 Aylık Gelir / Gider Trendi</h2>
-                  <div className="flex gap-4 text-[10px] text-slate-500">
-                    <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400" />Gelir</span>
-                    <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-red-400" />Gider</span>
+                  <div className="flex gap-4 text-xs text-slate-500">
+                    <span className="flex items-center gap-1.5 text-xs"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400" />Gelir</span>
+                    <span className="flex items-center gap-1.5 text-xs"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-red-400" />Gider</span>
                   </div>
                 </div>
                 <div className="flex items-end gap-3">
@@ -677,7 +807,7 @@ export default function MuhasebePage() {
                     return (
                       <div key={i} className="group relative flex flex-1 flex-col items-center gap-1">
                         {/* Tooltip */}
-                        <div className="pointer-events-none absolute bottom-full mb-2 hidden w-40 rounded-xl border border-slate-100 bg-white p-2.5 shadow-xl group-hover:block z-10 text-[10px]">
+                        <div className="pointer-events-none absolute bottom-full z-10 mb-2 hidden w-40 rounded-xl border border-slate-100 bg-white p-2.5 text-xs shadow-xl group-hover:block">
                           <p className="font-bold text-slate-800 mb-1">{m.label}</p>
                           <p className="text-emerald-600">Gelir: {fmt(m.gelir)}</p>
                           <p className="text-red-600">Gider: {fmt(m.gider)}</p>
@@ -687,7 +817,7 @@ export default function MuhasebePage() {
                           <div className="w-[45%] rounded-t-md bg-emerald-400 transition-all" style={{ height: `${gelirH}px` }} />
                           <div className="w-[45%] rounded-t-md bg-red-400 transition-all" style={{ height: `${giderH}px` }} />
                         </div>
-                        <span className="text-[9px] font-semibold text-slate-500">{m.label}</span>
+                        <span className="text-xs font-semibold text-slate-500">{m.label}</span>
                       </div>
                     );
                   })}
@@ -702,14 +832,14 @@ export default function MuhasebePage() {
             <div className="mb-4 grid grid-cols-3 gap-3">
               {(["NAKIT","KREDI_KARTI","HAVALE_EFT"] as const).map(k => (
                 <div key={k} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
-                  <p className="text-[10px] font-bold uppercase text-slate-500">{METHOD_LABELS[k]}</p>
+                  <p className="text-xs font-bold uppercase text-slate-500">{METHOD_LABELS[k]}</p>
                   <p className="mt-1 text-base font-black text-slate-800">{fmt(kasaToday.byMethod?.[k] || 0)}</p>
                 </div>
               ))}
             </div>
             <div className="overflow-hidden rounded-xl border border-slate-100">
               <table className="w-full text-xs">
-                <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                   <th className="px-3 py-2 text-left">Yöntem</th>
                   <th className="px-3 py-2 text-left">Hasta</th>
                   <th className="px-3 py-2 text-right">Tutar</th>
@@ -730,7 +860,7 @@ export default function MuhasebePage() {
             </div>
             {kasaToday.payments.length > 8 && (
               <button onClick={() => changeTab("gelir")} className="mt-3 w-full rounded-xl border border-slate-200 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-                Tümünü Gör ({kasaToday.payments.length} kayıt) →
+                Tümünü Gör ({kasaToday.payments.length} kayıt)
               </button>
             )}
           </section>
@@ -739,7 +869,7 @@ export default function MuhasebePage() {
             <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-sm font-black text-slate-900">Bu Ay Giderler</h2>
-                <button onClick={() => changeTab("gider")} className="text-xs font-semibold text-blue-700 hover:underline">Tümü →</button>
+                <button onClick={() => changeTab("gider")} className="text-xs font-bold text-blue-700 hover:underline">Tümünü Aç</button>
               </div>
               <div className="space-y-2">
                 {expenseMonth.expenses.length === 0
@@ -748,7 +878,7 @@ export default function MuhasebePage() {
                     <div key={e.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5">
                       <div>
                         <p className="text-sm font-semibold text-slate-800">{e.category}</p>
-                        <p className="text-[11px] text-slate-500">{e.description || "—"}</p>
+                        <p className="text-xs text-slate-500">{e.description || "—"}</p>
                       </div>
                       <span className="text-sm font-black text-red-700">{fmt(e.tutar)}</span>
                     </div>
@@ -759,7 +889,7 @@ export default function MuhasebePage() {
             <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
               <div className="mb-3 flex items-center justify-between">
                 <h2 className="text-sm font-black text-slate-900">Tedarikçi Bakiyeleri</h2>
-                <button onClick={() => changeTab("cari")} className="text-xs font-semibold text-blue-700 hover:underline">Tümü →</button>
+                <button onClick={() => changeTab("cari")} className="text-xs font-bold text-blue-700 hover:underline">Tümünü Aç</button>
               </div>
               <div className="space-y-2">
                 {firmas.filter(f => f.bakiye > 0).sort((a, b) => b.bakiye - a.bakiye).slice(0, 4).map(f => (
@@ -820,7 +950,7 @@ export default function MuhasebePage() {
                     {(["NAKIT","KREDI_KARTI","HAVALE_EFT","MAIL_ORDER","DIGER"] as const).map(m => (
                       <button key={m} type="button" onClick={() => setTahForm(f => ({ ...f, method: m, posId: "" }))}
                         className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${tahForm.method === m ? "bg-emerald-600 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
-                        {m === "NAKIT" ? "💵 Nakit" : m === "KREDI_KARTI" ? "💳 Kart" : m === "HAVALE_EFT" ? "🏦 Havale" : m === "MAIL_ORDER" ? "📧 Mail Order" : "📌 Diğer"}
+                        {m === "NAKIT" ? "Nakit" : m === "KREDI_KARTI" ? "Kart" : m === "HAVALE_EFT" ? "Havale" : m === "MAIL_ORDER" ? "Mail Order" : "Diğer"}
                       </button>
                     ))}
                   </div>
@@ -866,7 +996,7 @@ export default function MuhasebePage() {
                 const total = filteredPayments.filter(p => p.method === m).reduce((s, p) => s + Number(p.amount), 0);
                 return (
                   <div key={m} className="px-4 py-3">
-                    <p className="text-[10px] font-bold uppercase text-slate-500">{METHOD_LABELS[m]}</p>
+                    <p className="text-xs font-bold uppercase text-slate-500">{METHOD_LABELS[m]}</p>
                     <p className="mt-0.5 text-base font-black text-slate-800">{fmt(total)}</p>
                   </div>
                 );
@@ -874,7 +1004,7 @@ export default function MuhasebePage() {
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
-                <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                   <th className="px-4 py-3 text-left">Tarih</th>
                   <th className="px-4 py-3 text-left">Hasta</th>
                   <th className="px-4 py-3 text-left">Yöntem</th>
@@ -889,7 +1019,7 @@ export default function MuhasebePage() {
                         <td className="whitespace-nowrap px-4 py-3 text-slate-400">{fmtDate(p.createdAt)}</td>
                         <td className="px-4 py-3 font-semibold text-slate-800">{p.patient?.fullName || "—"}</td>
                         <td className="px-4 py-3">
-                          <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">{METHOD_LABELS[p.method] || p.method}</span>
+                          <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">{METHOD_LABELS[p.method] || p.method}</span>
                         </td>
                         <td className="px-4 py-3 text-slate-500">{p.description || "—"}</td>
                         <td className="px-4 py-3 text-right font-black text-emerald-700">{fmt(p.amount)}</td>
@@ -1002,7 +1132,7 @@ export default function MuhasebePage() {
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
-                <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                   <th className="px-4 py-3 text-left">Tarih</th>
                   <th className="px-4 py-3 text-left">Kategori</th>
                   <th className="px-4 py-3 text-left">Açıklama</th>
@@ -1019,7 +1149,7 @@ export default function MuhasebePage() {
                       <tr key={e.id} className="hover:bg-slate-50">
                         <td className="whitespace-nowrap px-4 py-3 text-slate-400">{fmtDate(e.tarih)}</td>
                         <td className="px-4 py-3">
-                          <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-700">{e.category}</span>
+                          <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs text-slate-700">{e.category}</span>
                         </td>
                         <td className="max-w-[160px] truncate px-4 py-3 text-slate-500">{e.description || "—"}</td>
                         <td className="px-4 py-3">{METHOD_LABELS[e.yontem || ""] || e.yontem || "—"}</td>
@@ -1027,7 +1157,7 @@ export default function MuhasebePage() {
                         <td className="px-4 py-3 text-slate-500">{e.faturaNo || "—"}</td>
                         <td className="px-4 py-3 text-right font-black text-red-700">{fmt(e.tutar)}</td>
                         <td className="px-4 py-3">
-                          <button onClick={() => deleteGider(e.id)} className="rounded px-2 py-0.5 text-[10px] text-red-400 hover:bg-red-50 hover:text-red-600">Sil</button>
+                          <button onClick={() => deleteGider(e.id)} className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 hover:text-red-700">Sil</button>
                         </td>
                       </tr>
                     ))
@@ -1085,7 +1215,7 @@ export default function MuhasebePage() {
               { label: "Bugün Vadeli",  value: String(taksitKPIs.bugunVade),color: "text-emerald-700", bg: "bg-emerald-50" },
             ].map(k => (
               <div key={k.label} className={`${k.bg} rounded-2xl border border-slate-100 p-4`}>
-                <p className="text-[10px] font-bold uppercase text-slate-500">{k.label}</p>
+                <p className="text-xs font-bold uppercase text-slate-500">{k.label}</p>
                 <p className={`mt-0.5 text-xl font-black ${k.color}`}>{k.value}</p>
               </div>
             ))}
@@ -1115,17 +1245,17 @@ export default function MuhasebePage() {
             if (allTaksitler.length === 0) return null;
             return (
               <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-                <p className="mb-3 text-xs font-black text-slate-700">Alacak Yaşlandırma Tablosu</p>
+                <p className="mb-3 text-sm font-black text-slate-800">Alacak Yaşlandırma Tablosu</p>
                 <div className="mb-2 flex h-4 overflow-hidden rounded-full">
                   {buckets.map(b => b.amount > 0 && <div key={b.label} className={`${b.color} transition-all`} style={{ width: `${(b.amount / totalAmt) * 100}%` }} />)}
                 </div>
-                <div className="grid grid-cols-5 gap-2">
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
                   {buckets.map(b => (
-                    <div key={b.label} className="text-center">
+                    <div key={b.label} className="rounded-xl bg-slate-50 px-2 py-2 text-center">
                       <div className={`mx-auto mb-1 h-2 w-2 rounded-full ${b.color}`} />
-                      <p className="text-[9px] font-semibold text-slate-500">{b.label}</p>
-                      <p className="text-[10px] font-black text-slate-800">{b.count} taksit</p>
-                      <p className="text-[10px] text-slate-600">{fmt(b.amount)}</p>
+                      <p className="text-xs font-semibold text-slate-500">{b.label}</p>
+                      <p className="text-xs font-black text-slate-800">{b.count} taksit</p>
+                      <p className="text-xs text-slate-600">{fmt(b.amount)}</p>
                     </div>
                   ))}
                 </div>
@@ -1134,14 +1264,14 @@ export default function MuhasebePage() {
           })()}
 
           {/* Sub-tabs */}
-          <div className="flex gap-1 border-b border-slate-200">
+          <div className="flex flex-wrap gap-1 rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
             {([
               { key: "liste",      label: "Plan Listesi" },
-              { key: "olustur",    label: "+ Yeni Plan" },
+              { key: "olustur",    label: "Yeni Plan" },
               { key: "hatirlatma", label: `Hatırlatmalar (${reminders.filter(r => r.status === "AKTIF").length})` },
             ] as const).map(t => (
               <button key={t.key} onClick={() => setTaksitSubTab(t.key)}
-                className={`px-4 py-2 text-xs font-bold transition ${taksitSubTab === t.key ? "border-b-2 border-slate-900 text-slate-900" : "text-slate-500 hover:text-slate-700"}`}>
+                className={`rounded-xl px-4 py-2.5 text-sm font-bold transition ${taksitSubTab === t.key ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-800"}`}>
                 {t.label}
               </button>
             ))}
@@ -1149,13 +1279,13 @@ export default function MuhasebePage() {
 
           {/* Plan Listesi */}
           {taksitSubTab === "liste" && (
-            <div className="flex gap-4">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
               <div className="min-w-0 flex-1">
                 <div className="mb-3 flex flex-wrap gap-2">
                   <input value={taksitSearch} onChange={e => setTaksitSearch(e.target.value)}
-                    placeholder="Hasta / doktor / başlık…" className="w-48 rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
+                    placeholder="Hasta, doktor veya plan ara" className="min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-400 sm:w-64" />
                   <select value={taksitStatus} onChange={e => setTaksitStatus(e.target.value)}
-                    className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-blue-400">
+                    className="min-h-11 rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-400">
                     <option value="HEPSI">Tüm Durumlar</option>
                     <option value="AKTIF">Aktif</option>
                     <option value="DEVAM_EDIYOR">Devam Ediyor</option>
@@ -1163,9 +1293,7 @@ export default function MuhasebePage() {
                     <option value="IPTAL">İptal</option>
                   </select>
                 </div>
-                {taksitLoading
-                  ? <div className="py-10 text-center text-sm text-slate-400">Yükleniyor…</div>
-                  : filteredTaksitPlans.length === 0
+                {filteredTaksitPlans.length === 0
                     ? <div className="py-10 text-center text-sm text-slate-400">Taksit planı bulunamadı</div>
                     : (
                       <div className="space-y-2">
@@ -1175,24 +1303,24 @@ export default function MuhasebePage() {
                           const bek    = plan.taksitler.filter(t => t.status === "BEKLIYOR").length;
                           return (
                             <div key={plan.id} onClick={() => { setSelectedPlan(plan); loadPlanDetail(plan.id); }}
-                              className={`cursor-pointer rounded-xl border p-3 transition-all ${selectedPlan?.id === plan.id ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                              className={`cursor-pointer rounded-2xl border p-4 transition-all ${selectedPlan?.id === plan.id ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex flex-wrap items-center gap-2">
-                                    <span className="text-xs font-bold text-slate-900">{plan.patient.fullName}</span>
-                                    {plan.baslik && <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-600">{plan.baslik}</span>}
-                                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${TAKSIT_STATUS_BADGE[plan.status]}`}>{plan.status}</span>
+                                    <span className="text-sm font-black text-slate-900">{plan.patient.fullName}</span>
+                                    {plan.baslik && <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs text-slate-600">{plan.baslik}</span>}
+                                    <span className={`rounded-lg px-2 py-1 text-xs font-bold ${TAKSIT_STATUS_BADGE[plan.status]}`}>{plan.status}</span>
                                   </div>
-                                  <div className="mt-0.5 flex flex-wrap gap-x-3 text-[10px] text-slate-500">
+                                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
                                     <span>Dr: {plan.doctor.fullName}</span>
                                     <span>{plan.taksitSayisi} taksit / {PERIODS[plan.period]}</span>
                                     <span className={kalan > 0 ? "font-semibold text-amber-600" : "font-semibold text-emerald-600"}>Kalan: {fmt(kalan)}</span>
                                   </div>
                                 </div>
                                 <div className="flex shrink-0 flex-col items-end gap-1">
-                                  {gec > 0 && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">{gec} gecikti</span>}
-                                  {bek > 0 && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700">{bek} bekliyor</span>}
-                                  <button onClick={e => { e.stopPropagation(); cancelPlan(plan.id); }} className="mt-1 text-[10px] text-red-400 hover:text-red-600">İptal</button>
+                                  {gec > 0 && <span className="rounded-lg bg-red-100 px-2 py-1 text-xs font-bold text-red-700">{gec} gecikti</span>}
+                                  {bek > 0 && <span className="rounded-lg bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">{bek} bekliyor</span>}
+                                  <button onClick={e => { e.stopPropagation(); cancelPlan(plan.id); }} className="mt-1 rounded-lg border border-red-100 px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 hover:text-red-700">Planı İptal Et</button>
                                 </div>
                               </div>
                             </div>
@@ -1205,13 +1333,15 @@ export default function MuhasebePage() {
 
               {/* Plan Detay */}
               {planDetail && (
-                <div className="w-80 shrink-0">
+                <div className="min-w-0">
                   <div className="sticky top-4 space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center justify-between">
-                      <h3 className="text-xs font-black text-slate-800">Taksit Detayı</h3>
-                      <button onClick={() => { setSelectedPlan(null); setPlanDetail(null); }} className="rounded p-1 text-slate-400 hover:bg-slate-100">✕</button>
+                      <h3 className="text-sm font-black text-slate-900">Taksit Detayı</h3>
+                      <button onClick={() => { setSelectedPlan(null); setPlanDetail(null); }} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100" aria-label="Detayı kapat">
+                        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                      </button>
                     </div>
-                    <div className="space-y-0.5 text-[11px] text-slate-600">
+                    <div className="space-y-1 text-sm text-slate-600">
                       <p><b>Hasta:</b> {planDetail.patient.fullName}</p>
                       <p><b>Doktor:</b> {planDetail.doctor.fullName}</p>
                       <p><b>Toplam Borç:</b> {fmt(planDetail.toplamBorc)}</p>
@@ -1220,10 +1350,10 @@ export default function MuhasebePage() {
                     </div>
                     <div className="max-h-96 space-y-1.5 overflow-y-auto pr-1">
                       {planDetail.taksitler.map(t => (
-                        <div key={t.id} className={`rounded-lg border p-2 text-[10px] ${t.status === "GECIKTI" ? "border-red-200 bg-red-50" : "border-slate-100 bg-slate-50"}`}>
+                        <div key={t.id} className={`rounded-xl border p-3 text-xs ${t.status === "GECIKTI" ? "border-red-200 bg-red-50" : "border-slate-100 bg-slate-50"}`}>
                           <div className="flex items-center justify-between">
                             <span className="font-semibold text-slate-700">#{t.siraNo} — {fmtDate(t.vadeDate)}</span>
-                            <span className={`rounded px-1.5 py-0.5 text-[9px] font-bold ${TAKSIT_STATUS_BADGE[t.status] ?? ""}`}>{t.status}</span>
+                            <span className={`rounded-lg px-2 py-1 text-xs font-bold ${TAKSIT_STATUS_BADGE[t.status] ?? ""}`}>{t.status}</span>
                           </div>
                           <div className="mt-0.5 flex justify-between text-slate-500">
                             <span>Tutar: {fmt(t.tutar)}</span>
@@ -1231,7 +1361,7 @@ export default function MuhasebePage() {
                           </div>
                           {t.status !== "ODENDI" && t.status !== "IPTAL" && (
                             <button onClick={() => { setShowOdeModal(t); setOdeForm({ tutar: String(t.kalan), yontem: "NAKIT", note: "" }); }}
-                              className="mt-1.5 w-full rounded bg-emerald-600 py-1 text-[10px] font-bold text-white hover:bg-emerald-700">
+                              className="mt-2 w-full rounded-lg bg-emerald-600 py-2 text-sm font-bold text-white hover:bg-emerald-700">
                               Tahsilat Yap
                             </button>
                           )}
@@ -1310,7 +1440,7 @@ export default function MuhasebePage() {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-bold text-slate-800">Hatırlatmalar</h2>
-                <button onClick={() => setShowRemModal(true)} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700">+ Ekle</button>
+                <button onClick={() => setShowRemModal(true)} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700">Hatırlatma Ekle</button>
               </div>
               {reminders.length === 0
                 ? <div className="py-10 text-center text-sm text-slate-400">Hatırlatma bulunamadı</div>
@@ -1323,14 +1453,14 @@ export default function MuhasebePage() {
                         <div key={r.id} className={`flex items-center justify-between gap-3 rounded-xl border p-3 ${isPast ? "border-red-200 bg-red-50" : isToday ? "border-amber-200 bg-amber-50" : "border-slate-200 bg-white"}`}>
                           <div className="flex-1">
                             <p className="text-xs font-semibold text-slate-800">{r.note}</p>
-                            <div className="mt-0.5 flex gap-3 text-[10px] text-slate-500">
+                            <div className="mt-1 flex flex-wrap gap-3 text-xs text-slate-500">
                               {r.patient && <span>Hasta: {r.patient.fullName}</span>}
                               <span>Tarih: {fmtDate(r.reminderDate)}</span>
                               <span className={`rounded px-1.5 py-0.5 font-semibold ${r.status === "AKTIF" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{r.status}</span>
                             </div>
                           </div>
                           {r.status === "AKTIF" && (
-                            <button onClick={() => completeReminder(r.id)} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-[10px] font-bold text-white hover:bg-emerald-700">Tamamla</button>
+                            <button onClick={() => completeReminder(r.id)} className="rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700">Tamamla</button>
                           )}
                         </div>
                       );
@@ -1429,15 +1559,15 @@ export default function MuhasebePage() {
           {/* Özet KPI */}
           <div className="grid grid-cols-3 gap-3">
             <div className="rounded-2xl border border-violet-100 bg-violet-50 p-4">
-              <p className="text-[10px] font-bold uppercase text-slate-500">Toplam Alacak</p>
+              <p className="text-xs font-bold uppercase text-slate-500">Toplam Alacak</p>
               <p className="mt-1 text-xl font-black text-violet-700">{fmt(alacakTotal)}</p>
             </div>
             <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-              <p className="text-[10px] font-bold uppercase text-slate-500">Borçlu Hasta</p>
+              <p className="text-xs font-bold uppercase text-slate-500">Borçlu Hasta</p>
               <p className="mt-1 text-xl font-black text-slate-800">{alacaklar.length} kişi</p>
             </div>
             <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
-              <p className="text-[10px] font-bold uppercase text-slate-500">Ortalama Bakiye</p>
+              <p className="text-xs font-bold uppercase text-slate-500">Ortalama Bakiye</p>
               <p className="mt-1 text-xl font-black text-amber-700">{fmt(alacaklar.length > 0 ? alacakTotal / alacaklar.length : 0)}</p>
             </div>
           </div>
@@ -1447,7 +1577,7 @@ export default function MuhasebePage() {
             : (
               <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
                 <table className="w-full text-xs">
-                  <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                  <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                     <th className="px-4 py-3 text-left">Hasta</th>
                     <th className="px-4 py-3 text-left">Telefon</th>
                     <th className="px-4 py-3 text-right">Tedavi Toplamı</th>
@@ -1468,7 +1598,7 @@ export default function MuhasebePage() {
                           <tr key={a.id} className="hover:bg-slate-50">
                             <td className="px-4 py-3">
                               <Link href={`/hasta-detay/${a.id}`} className="font-semibold text-slate-800 hover:text-blue-700 hover:underline">{a.fullName}</Link>
-                              {a.discountRate > 0 && <span className="ml-1.5 rounded bg-green-100 px-1 py-0.5 text-[9px] text-green-700">%{a.discountRate} indirim</span>}
+                              {a.discountRate > 0 && <span className="ml-1.5 rounded-lg bg-green-100 px-2 py-1 text-xs text-green-700">%{a.discountRate} indirim</span>}
                             </td>
                             <td className="px-4 py-3 text-slate-500">{a.phone}</td>
                             <td className="px-4 py-3 text-right text-slate-700">{fmt(a.brutTedavi)}</td>
@@ -1485,7 +1615,7 @@ export default function MuhasebePage() {
                             <td className="px-4 py-3 text-right font-black text-violet-700">{fmt(a.bakiye)}</td>
                             <td className="px-4 py-3">
                               <button onClick={() => { setShowTahForm(true); changeTab("gelir"); setTahForm(f => ({ ...f, patientId: a.id })); ensurePatients(); ensurePos(); }}
-                                className="rounded-lg bg-emerald-600 px-2.5 py-1 text-[10px] font-bold text-white hover:bg-emerald-700">
+                                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">
                                 Tahsilat
                               </button>
                             </td>
@@ -1514,7 +1644,7 @@ export default function MuhasebePage() {
             <h2 className="text-sm font-black text-slate-900">Tedarikçi Cari Hesaplar</h2>
             <div className="flex gap-2">
               <input placeholder="Firma ara…" value={cariSearch} onChange={e => setCariSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
-              <Link href="/firma" className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700">Satın Alma / Ödeme →</Link>
+              <Link href="/firma" className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700">Satın Alma / Ödeme</Link>
             </div>
           </div>
           <div className="grid grid-cols-3 gap-3">
@@ -1524,14 +1654,14 @@ export default function MuhasebePage() {
               { label: "Toplam Ödenen",           value: fmt(filteredFirmas.reduce((s, f) => s + f.odenen, 0)),tone: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-100" },
             ].map(c => (
               <div key={c.label} className={`${c.bg} ${c.border} rounded-2xl border p-4`}>
-                <p className="text-[10px] font-bold uppercase text-slate-500">{c.label}</p>
+                <p className="text-xs font-bold uppercase text-slate-500">{c.label}</p>
                 <p className={`mt-1 text-xl font-black ${c.tone}`}>{c.value}</p>
               </div>
             ))}
           </div>
           <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
             <table className="w-full text-xs">
-              <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+              <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                 <th className="px-4 py-3 text-left">Firma</th>
                 <th className="px-4 py-3 text-right">Toplam Alınan</th>
                 <th className="px-4 py-3 text-right">Toplam Ödenen</th>
@@ -1549,12 +1679,12 @@ export default function MuhasebePage() {
                       <td className="px-4 py-3 text-right font-bold text-emerald-700">{fmt(f.odenen)}</td>
                       <td className="px-4 py-3 text-right font-black text-slate-900">{fmt(f.bakiye)}</td>
                       <td className="px-4 py-3 text-center">
-                        <span className={`rounded-lg px-2 py-0.5 text-[10px] font-bold ${f.bakiye > 0 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
+                        <span className={`rounded-lg px-2 py-1 text-xs font-bold ${f.bakiye > 0 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
                           {f.bakiye > 0 ? "Borçlu" : "Kapalı"}
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        <Link href="/firma" className="text-[10px] text-blue-600 hover:underline">Detay →</Link>
+                        <Link href="/firma" className="text-xs font-bold text-blue-600 hover:underline">Detay</Link>
                       </td>
                     </tr>
                   ))
@@ -1586,9 +1716,7 @@ export default function MuhasebePage() {
           </div>
           {!selectedDoctor
             ? <div className="rounded-2xl bg-slate-50 py-16 text-center text-sm text-slate-400">Görüntülemek için bir doktor seçin</div>
-            : hakLoading
-              ? <div className="py-12 text-center text-sm text-slate-400">Yükleniyor…</div>
-              : doctorFinance && (
+            : doctorFinance && (
                 <div className="space-y-4">
                   <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     {[
@@ -1598,7 +1726,7 @@ export default function MuhasebePage() {
                       { label: "Ödenen Hakediş",  value: fmt(Number(doctorFinance.earned) || 0),          tone: "text-slate-900",   bg: "bg-slate-100"  },
                     ].map(c => (
                       <div key={c.label} className={`${c.bg} rounded-2xl p-5`}>
-                        <p className="text-[10px] font-bold uppercase text-slate-500">{c.label}</p>
+                        <p className="text-xs font-bold uppercase text-slate-500">{c.label}</p>
                         <p className={`mt-1 text-2xl font-black ${c.tone}`}>{c.value}</p>
                       </div>
                     ))}
@@ -1609,7 +1737,7 @@ export default function MuhasebePage() {
                         <h3 className="text-sm font-black text-slate-900">En Çok Yapılan Tedaviler</h3>
                       </div>
                       <table className="w-full text-xs">
-                        <thead><tr className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
+                        <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                           <th className="px-4 py-3 text-left">Tedavi</th>
                           <th className="px-4 py-3 text-right">Adet</th>
                         </tr></thead>

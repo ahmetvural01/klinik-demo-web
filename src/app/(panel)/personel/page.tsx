@@ -1,7 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useEffect, useState } from "react";
+import { showToastSafe } from "@/lib/toast-client";
 
 type Staff = {
   id: string;
@@ -59,7 +61,7 @@ export default function PersonelPage() {
   const [filterRole, setFilterRole] = useState("");
   const [filterStatus, setFilterStatus] = useState<"" | "aktif" | "pasif">("");
 
-  // Hakediş yüzde düzenleyici
+  // Doktor ödeme oranı düzenleyici
   const [editYuzde, setEditYuzde] = useState<{ id: string; kk: string; genel: string; maas: string } | null>(null);
   const [savingYuzde, setSavingYuzde] = useState(false);
 
@@ -71,7 +73,9 @@ export default function PersonelPage() {
       if (!res.ok) throw new Error("Personeller alınamadı");
       setStaff(await res.json());
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Bilinmeyen hata");
+      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
+      setError(msg);
+      try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {}
     } finally {
       setLoading(false);
     }
@@ -100,7 +104,9 @@ export default function PersonelPage() {
     });
 
     if (!res.ok) {
-      setError("Durum güncellenemedi");
+      const msg = "Durum güncellenemedi";
+      setError(msg);
+      try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {}
       return;
     }
 
@@ -130,17 +136,17 @@ export default function PersonelPage() {
     });
     setSavingYuzde(false);
     if (res.ok) { setEditYuzde(null); await load(); }
-    else setError("Yüzdeler kaydedilemedi");
+    else { const msg = "Yüzdeler kaydedilemedi"; setError(msg); try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {} }
   };
 
   return (
     <section className="space-y-5">
-      {/* Hakediş Yüzde Düzenleyici Modal */}
+      {/* Doktor ödeme oranı düzenleyici */}
       {editYuzde && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
           <div className="w-full max-w-sm rounded-2xl border border-slate-100 bg-white p-6 shadow-2xl">
-            <h2 className="mb-1 text-base font-black text-slate-900">Hakediş Yüzdeleri</h2>
-            <p className="mb-5 text-xs text-slate-500">Doktorun kasa gider payını ve maaş yüzdesini ayarlayın. Varsayılan: KK %3 · Genel %15 · Maaş %40</p>
+            <h2 className="mb-1 text-lg font-black text-slate-900">Doktor Ödeme Oranları</h2>
+            <p className="mb-5 text-sm text-slate-500">Bu oranlar doktor raporlarında ve ödeme hesabında kullanılır. Emin değilseniz varsayılan değerleri koruyun.</p>
             <div className="space-y-4">
               {[
                 { label: "KK Masraf %", key: "kk" as const, help: "Kredi kartı gelirinden düşülecek % (banka komisyonu)" },
@@ -153,7 +159,7 @@ export default function PersonelPage() {
                     value={editYuzde[f.key]}
                     onChange={e => setEditYuzde(prev => prev ? { ...prev, [f.key]: e.target.value } : null)}
                     className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                  <p className="mt-0.5 text-[10px] text-slate-400">{f.help}</p>
+                  <p className="mt-1 text-xs text-slate-400">{f.help}</p>
                 </div>
               ))}
             </div>
@@ -161,7 +167,7 @@ export default function PersonelPage() {
               <button onClick={() => setEditYuzde(null)} className="flex-1 rounded-lg border border-slate-200 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">İptal</button>
               <button onClick={saveHakedisYuzde} disabled={savingYuzde}
                 className="flex-1 rounded-lg bg-primary py-2 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50">
-                {savingYuzde ? "Kaydediliyor…" : "Kaydet"}
+                {savingYuzde ? "Kaydediliyor…" : "Oranları Kaydet"}
               </button>
             </div>
           </div>
@@ -169,26 +175,41 @@ export default function PersonelPage() {
       )}
 
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-black text-slate-900">Personeller</h1>
-          <p className="mt-0.5 text-xs text-slate-500">Klinik çalışanları ve rol yönetimi</p>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-black text-slate-900">Personel</h1>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{staff.length} kişi</span>
+          <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-700">{staff.filter(s => s.isActive).length} aktif</span>
         </div>
-        <Link href="/personel-ekle" className="flex items-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90">
+        <Link href="/personel-ekle" className="flex min-h-11 items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90">
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Yeni Personel
+          Yeni Personel Ekle
         </Link>
       </div>
 
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          { label: "Toplam Personel", value: staff.length },
+          { label: "Aktif Çalışan", value: staff.filter(s => s.isActive).length },
+          { label: "Diş Hekimi", value: staff.filter(s => s.role === "DOKTOR").length },
+          { label: "Pasif Kayıt", value: staff.filter(s => !s.isActive).length },
+        ].map(card => (
+          <div key={card.label} className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{card.label}</p>
+            <p className="mt-1 text-2xl font-black text-slate-900">{card.value}</p>
+          </div>
+        ))}
+      </div>
+
       {/* Arama & Filtre */}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
+      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
         <div className="relative flex-1 min-w-48">
           <svg className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
             <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
           </svg>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Ad veya TC kimlik ara…" className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20" />
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Ad veya TC kimlik ara" className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20" />
         </div>
-        <select value={filterRole} onChange={e => setFilterRole(e.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-primary focus:outline-none">
+        <select value={filterRole} onChange={e => setFilterRole(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 focus:border-primary focus:outline-none">
           <option value="">Tüm Unvanlar</option>
           <option value="YONETICI">Yönetici</option>
           <option value="DOKTOR">Diş Hekimi</option>
@@ -196,14 +217,14 @@ export default function PersonelPage() {
           <option value="BANKO">Banko Personeli</option>
           <option value="MUHASEBE">Muhasebe</option>
         </select>
-        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as "" | "aktif" | "pasif")} className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-primary focus:outline-none">
+        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as "" | "aktif" | "pasif")} className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 focus:border-primary focus:outline-none">
           <option value="">Tüm Durumlar</option>
           <option value="aktif">Aktif</option>
           <option value="pasif">Pasif</option>
         </select>
       </div>
 
-      {loading && <div className="flex items-center justify-center py-16 text-sm text-slate-400">Yükleniyor…</div>}
+      <div aria-busy={loading} />
       {error && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">{error}</p>}
 
       {(() => {
@@ -235,55 +256,55 @@ export default function PersonelPage() {
           <div key={role}>
             <h3 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-400">
               <span>{roleLabel[role] || role}</span>
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-500">{members.length}</span>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-500">{members.length}</span>
             </h3>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {members.map((p) => (
                 <article key={p.id} className={`group relative rounded-xl border border-slate-100 bg-white p-4 shadow-sm transition hover:shadow-md ${!p.isActive ? "opacity-60" : ""}`}>
                   <div className="flex items-start gap-3">
                     {p.profile?.photoUrl ? (
-                      <img src={p.profile.photoUrl} alt={p.fullName} className="h-12 w-12 flex-shrink-0 rounded-full border-2 border-slate-100 object-cover" loading="lazy" />
+                      <Image src={p.profile.photoUrl || ''} alt={p.fullName} width={48} height={48} className="h-12 w-12 flex-shrink-0 rounded-full border-2 border-slate-100 object-cover" />
                     ) : (
-                      <img src={avatarDataUrl(p.fullName, p.role)} alt={p.fullName} className="h-12 w-12 flex-shrink-0 rounded-full border-2 border-slate-100 object-cover" loading="lazy" />
+                        <Image src={avatarDataUrl(p.fullName, p.role)} alt={p.fullName} width={48} height={48} className="h-12 w-12 flex-shrink-0 rounded-full border-2 border-slate-100 object-cover" />
                     )}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <h4 className="truncate text-sm font-bold text-slate-900">{p.fullName}</h4>
-                        <span className={`flex-shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${p.isActive ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
+                        <span className={`flex-shrink-0 rounded-full px-2.5 py-1 text-xs font-bold ${p.isActive ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
                           {p.isActive ? "Aktif" : "Pasif"}
                         </span>
                       </div>
-                      <p className="mt-0.5 font-mono text-[11px] text-slate-400">TC: {p.identityNo}</p>
-                      <p className="mt-0.5 text-[11px] text-slate-400">
+                      <p className="mt-0.5 font-mono text-xs text-slate-400">TC: {p.identityNo}</p>
+                      <p className="mt-0.5 text-xs text-slate-400">
                         {p.profile?.workStart || "08:30"} — {p.profile?.workEnd || "18:00"}
                       </p>
-                      <span className={`mt-1.5 inline-block rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${ROLE_COLORS[p.role] || "bg-slate-100 text-slate-600"}`}>
+                      <span className={`mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${ROLE_COLORS[p.role] || "bg-slate-100 text-slate-600"}`}>
                         {roleLabel[p.role] || p.role}
                       </span>
                     </div>
                   </div>
-                  <div className="mt-3.5 flex items-center gap-2 border-t border-slate-50 pt-3">
-                    <Link href={`/personel-ekle?id=${p.id}`} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50">
-                      Düzenle
+                  <div className="mt-3.5 flex flex-wrap items-center gap-2 border-t border-slate-50 pt-3">
+                    <Link href={`/personel-ekle?id=${p.id}`} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50">
+                      Personeli Düzenle
                     </Link>
                     <button
                       onClick={() => setActive(p.id, !p.isActive)}
-                      className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold transition ${p.isActive ? "border-red-100 text-red-600 hover:bg-red-50" : "border-emerald-100 text-emerald-600 hover:bg-emerald-50"}`}
+                      className={`rounded-lg border px-3 py-2 text-xs font-bold transition ${p.isActive ? "border-red-100 text-red-600 hover:bg-red-50" : "border-emerald-100 text-emerald-600 hover:bg-emerald-50"}`}
                     >
                       {p.isActive ? "Pasif Yap" : "Aktif Yap"}
                     </button>
                     {p.role === "DOKTOR" && (
                       <button
                         onClick={() => setEditYuzde({ id: p.id, kk: String(p.kkYuzde ?? 3), genel: String(p.genelYuzde ?? 15), maas: String(p.maasYuzde ?? 40) })}
-                        className="ml-auto rounded-lg border border-primary/20 bg-primary/5 px-3 py-1.5 text-[11px] font-semibold text-primary hover:bg-primary/10 transition"
-                        title="Hakediş yüzdelerini ayarla"
+                        className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-bold text-primary transition hover:bg-primary/10 sm:ml-auto"
+                        title="Doktor ödeme oranlarını ayarla"
                       >
-                        % Hakediş
+                        Ödeme Oranları
                       </button>
                     )}
                   </div>
                   {p.role === "DOKTOR" && (
-                    <div className="mt-2 flex gap-3 text-[10px] text-slate-400 border-t border-slate-50 pt-2">
+                    <div className="mt-2 flex flex-wrap gap-3 border-t border-slate-50 pt-2 text-xs text-slate-500">
                       <span>KK: <b className="text-slate-600">%{p.kkYuzde ?? 3}</b></span>
                       <span>Genel: <b className="text-slate-600">%{p.genelYuzde ?? 15}</b></span>
                       <span>Maaş: <b className="text-slate-600">%{p.maasYuzde ?? 40}</b></span>

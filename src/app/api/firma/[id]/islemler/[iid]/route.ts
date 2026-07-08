@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
 import { reverseFirmaIslemIntegration } from "@/lib/firma-integration";
 import { writeAudit } from "@/lib/api";
 
@@ -9,12 +9,18 @@ export async function PATCH(
   { params }: { params: { id: string; iid: string } }
 ) {
   try {
-    const user = await getCurrentUser();
-    if (!user) return NextResponse.json({ error: "Yetkisiz" }, { status: 401 });
+    const auth = await requireAuth("finance:write");
+    if (auth.error) return auth.error;
     const body = await req.json();
-    const existing = await (prisma as any).firmaIslem.findUnique({
-      where: { id: params.iid },
-      include: { firma: { select: { name: true } } },
+    const existing = await (prisma as any).firmaIslem.findFirst({
+      where: {
+        id: params.iid,
+        firmaId: params.id,
+        firma: {
+          ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        },
+      },
+      include: { firma: { select: { name: true, institutionId: true } } },
     });
 
     if (!existing) {
@@ -30,7 +36,7 @@ export async function PATCH(
       });
 
       if (isCancelling) {
-        await reverseFirmaIslemIntegration(tx, user.id, params.iid);
+        await reverseFirmaIslemIntegration(tx, auth.user.id, params.iid);
       }
 
       return updated;
@@ -38,7 +44,7 @@ export async function PATCH(
 
     if (isCancelling) {
       await writeAudit(
-        user.id,
+        auth.user.id,
         "FIRMA_ISLEM_CANCEL",
         `${existing.firma?.name || "Firma"} işlemi iptal edildi.\nOtomatik işlemler geri alındı.`
       );
@@ -46,6 +52,6 @@ export async function PATCH(
 
     return NextResponse.json({ islem, message: isCancelling ? "İşlem iptal edildi ve otomatik etkiler geri alındı" : "İşlem güncellendi" });
   } catch (e) {
-    return NextResponse.json({ error: "Sunucu hatasi" }, { status: 500 });
+    return NextResponse.json({ error: "Islem guncellenemedi" }, { status: 503 });
   }
 }

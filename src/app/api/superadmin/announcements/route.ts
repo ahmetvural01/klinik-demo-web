@@ -18,6 +18,7 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: "desc" },
       skip,
       take: limit,
+      include: { institution: { select: { id: true, name: true, isDemo: true } } },
     }),
   ]);
 
@@ -29,11 +30,39 @@ export async function POST(request: NextRequest) {
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
 
-  const body = await request.json() as { text: string };
+  const body = await request.json() as { text: string; institutionIds?: string[]; allInstitutions?: boolean; endsAt?: string | null };
   if (!body.text?.trim()) return NextResponse.json({ message: "text zorunlu" }, { status: 400 });
 
-  const ann = await prisma.announcement.create({ data: { text: body.text.trim() } });
-  return NextResponse.json(ann, { status: 201 });
+  const targetInstitutions = body.allInstitutions
+    ? await prisma.institution.findMany({ where: { isActive: true }, select: { id: true } })
+    : await prisma.institution.findMany({
+        where: { id: { in: Array.isArray(body.institutionIds) ? body.institutionIds : [] }, isActive: true },
+        select: { id: true },
+      });
+
+  const uniqueInstitutions = targetInstitutions.filter((institution, index, list) =>
+    list.findIndex((item) => item.id === institution.id) === index,
+  );
+
+  if (uniqueInstitutions.length === 0) {
+    return NextResponse.json({ message: "En az bir kurum seçilmeli" }, { status: 400 });
+  }
+
+  const endsAt = body.endsAt ? new Date(body.endsAt) : null;
+  if (body.endsAt && Number.isNaN(endsAt?.getTime())) {
+    return NextResponse.json({ message: "Bitiş tarihi geçersiz" }, { status: 400 });
+  }
+
+  const result = await prisma.announcement.createMany({
+    data: uniqueInstitutions.map((institution) => ({
+      institutionId: institution.id,
+      text: body.text.trim(),
+      createdById: auth.user.id,
+      endsAt,
+    })),
+  });
+
+  return NextResponse.json({ ok: true, created: result.count }, { status: 201 });
 }
 
 export async function DELETE(request: NextRequest) {
@@ -45,6 +74,6 @@ export async function DELETE(request: NextRequest) {
   const id = searchParams.get("id");
   if (!id) return NextResponse.json({ message: "id zorunlu" }, { status: 400 });
 
-  await prisma.announcement.delete({ where: { id } });
+  await prisma.announcement.updateMany({ where: { id }, data: { isActive: false } });
   return NextResponse.json({ ok: true });
 }

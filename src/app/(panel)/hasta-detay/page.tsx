@@ -95,6 +95,15 @@ type ClinicTask = {
 type Tab = "bilgi" | "randevular" | "gorevler" | "tedavi" | "odeme" | "recete" | "notlar" | "lab" | "duzenle";
 type ToothStatus = TSType;
 
+type PatientDetailData = Patient & {
+  appointments: Appt[];
+  examinations: Exam[];
+  payments: Pay[];
+  prescriptions: Rx[];
+  labOrders: LabOrder[];
+  taksitPlanlari: TaksitPlan[];
+};
+
 const TAB_ITEMS: { key: Tab; label: string }[] = [
   { key: "bilgi", label: "Özet" },
   { key: "randevular", label: "Randevular" },
@@ -317,7 +326,7 @@ function LabDentalChart({ selected, onChange }: { selected: number[]; onChange: 
       <button
         type="button"
         onClick={() => toggle(num)}
-        className={`flex h-8 w-8 items-center justify-center rounded-lg border text-[10px] font-semibold transition-all ${
+        className={`flex h-8 w-8 items-center justify-center rounded-lg border text-xs font-semibold transition-all ${
           active ? "border-transparent bg-slate-800 text-white shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:bg-slate-50"
         }`}
         title={`Diş ${num}`}
@@ -339,7 +348,7 @@ function LabDentalChart({ selected, onChange }: { selected: number[]; onChange: 
             key={label}
             type="button"
             onClick={() => selectGroup(group)}
-            className="rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 transition hover:bg-slate-100 hover:border-slate-300"
+            className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-100"
           >
             {label}
           </button>
@@ -348,7 +357,7 @@ function LabDentalChart({ selected, onChange }: { selected: number[]; onChange: 
           <button
             type="button"
             onClick={() => onChange([])}
-            className="rounded-md border border-red-100 bg-red-50 px-2.5 py-1 text-[11px] font-medium text-red-500 transition hover:bg-red-100"
+            className="rounded-lg border border-red-100 bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-500 transition hover:bg-red-100"
           >
             Temizle
           </button>
@@ -356,7 +365,7 @@ function LabDentalChart({ selected, onChange }: { selected: number[]; onChange: 
       </div>
 
       <div className="mb-1.5">
-        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Üst Çene</p>
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Üst Çene</p>
         <div className="flex gap-1">
           {UPPER_RIGHT.map((n) => <ToothBtn key={n} num={n} />)}
           <div className="mx-1 border-l border-dashed border-slate-300" />
@@ -365,7 +374,7 @@ function LabDentalChart({ selected, onChange }: { selected: number[]; onChange: 
       </div>
 
       <div className="mt-1.5">
-        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Alt Çene</p>
+        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Alt Çene</p>
         <div className="flex gap-1">
           {LOWER_RIGHT.map((n) => <ToothBtn key={n} num={n} />)}
           <div className="mx-1 border-l border-dashed border-slate-300" />
@@ -374,7 +383,7 @@ function LabDentalChart({ selected, onChange }: { selected: number[]; onChange: 
       </div>
 
       {selected.length > 0 && (
-        <p className="mt-2 text-[11px] text-slate-500">
+        <p className="mt-2 text-xs text-slate-500">
           <span className="font-semibold text-slate-700">{selected.length} diş</span> seçili: {selected.join(", ")}
         </p>
       )}
@@ -387,7 +396,7 @@ function HastaDetayContent() {
   const search = useSearchParams();
   const id = search.get("id") || "";
   const requestedTab = search.get("tab");
-  const [data, setData] = useState<Patient | null>(null);
+  const [data, setData] = useState<PatientDetailData | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [tab, setTab] = useState<Tab>("bilgi");
@@ -600,20 +609,29 @@ function HastaDetayContent() {
 
       const d = await res.json();
       const taskJson = await taskRes.json().catch(() => []);
-      setData(d);
+      const normalizedData: PatientDetailData = {
+        ...d,
+        appointments: Array.isArray(d?.appointments) ? d.appointments : [],
+        examinations: Array.isArray(d?.examinations) ? d.examinations : [],
+        payments: Array.isArray(d?.payments) ? d.payments : [],
+        prescriptions: Array.isArray(d?.prescriptions) ? d.prescriptions : [],
+        labOrders: Array.isArray(d?.labOrders) ? d.labOrders : [],
+        taksitPlanlari: Array.isArray(d?.taksitPlanlari) ? d.taksitPlanlari : [],
+      };
+      setData(normalizedData);
       setClinicTasks(Array.isArray(taskJson) ? taskJson : []);
       setEditForm({
-        fullName: d.fullName, tcNo: d.tcNo, phone: d.phone, gender: d.gender,
-        address: d.address || "", insurance: d.insurance || "", referrer: d.referrer || "",
-        discountRate: d.discountRate, notes: d.notes || "",
-        surgeries: d.surgeries || "", medications: d.medications || "",
-        otherDiseases: d.otherDiseases || "", bloodType: d.bloodType || "",
-        birthDate: d.birthDate ? new Date(d.birthDate).toISOString().slice(0, 10) : "",
-        hasAllergy: d.hasAllergy, hasHepatitis: d.hasHepatitis, hasKidney: d.hasKidney,
-        hasDiabetes: d.hasDiabetes, hasHeart: d.hasHeart, hasBloodIssue: d.hasBloodIssue
+        fullName: normalizedData.fullName, tcNo: normalizedData.tcNo, phone: normalizedData.phone, gender: normalizedData.gender,
+        address: normalizedData.address || "", insurance: normalizedData.insurance || "", referrer: normalizedData.referrer || "",
+        discountRate: normalizedData.discountRate, notes: normalizedData.notes || "",
+        surgeries: normalizedData.surgeries || "", medications: normalizedData.medications || "",
+        otherDiseases: normalizedData.otherDiseases || "", bloodType: normalizedData.bloodType || "",
+        birthDate: normalizedData.birthDate ? new Date(normalizedData.birthDate).toISOString().slice(0, 10) : "",
+        hasAllergy: normalizedData.hasAllergy, hasHepatitis: normalizedData.hasHepatitis, hasKidney: normalizedData.hasKidney,
+        hasDiabetes: normalizedData.hasDiabetes, hasHeart: normalizedData.hasHeart, hasBloodIssue: normalizedData.hasBloodIssue
       });
-      if (d.toothChart) {
-        try { setToothMap(JSON.parse(d.toothChart)); } catch { setToothMap({}); }
+      if (normalizedData.toothChart) {
+        try { setToothMap(JSON.parse(normalizedData.toothChart)); } catch { setToothMap({}); }
       } else {
         setToothMap({});
       }
@@ -626,6 +644,7 @@ function HastaDetayContent() {
     }
   };
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { void load(); }, [id]);
 
   useEffect(() => {
@@ -633,7 +652,7 @@ function HastaDetayContent() {
     setTab(requestedTab);
   }, [requestedTab]);
 
-  // Lab gidiş formu otomatik taslak doldurma
+  // Laboratuvar gönderim formu otomatik taslak doldurma
   useEffect(() => {
     if (!labOrderDetail || labTripSuggested) return;
     const template = WORKFLOW_TEMPLATES[labOrderDetail.labType] ?? [];
@@ -807,14 +826,14 @@ function HastaDetayContent() {
         }),
       });
       const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.error || "Gidiş adımı eklenemedi");
+      if (!response.ok) throw new Error(payload?.error || "Laboratuvar gönderimi eklenemedi");
 
       await Promise.all([refreshLabOrderDetail(labOrderDetail.id), load()]);
       setLabTripForm({ sentItem: "", requestedItem: "", impressionMethod: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
       setLabTripSuggested(false);
-      showToast("success", "Gidiş adımı eklendi");
+      showToast("success", "Laboratuvar gönderimi eklendi");
     } catch (error) {
-      const msg = error instanceof Error ? error.message : "Gidiş adımı eklenemedi";
+      const msg = error instanceof Error ? error.message : "Laboratuvar gönderimi eklenemedi";
       setLabActionError(msg);
       showToast("error", msg);
     } finally {
@@ -1540,7 +1559,17 @@ function HastaDetayContent() {
     });
   };
 
-  if (loading) return <div className="flex items-center justify-center h-40"><div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
+  if (loading) return (
+    <section className="space-y-4 rounded-xl border border-slate-100 bg-white p-6 shadow-sm">
+      <div className="h-6 w-40 animate-pulse rounded bg-slate-100" />
+      <div className="grid gap-3 md:grid-cols-3">
+        <div className="h-24 animate-pulse rounded-lg bg-slate-50" />
+        <div className="h-24 animate-pulse rounded-lg bg-slate-50" />
+        <div className="h-24 animate-pulse rounded-lg bg-slate-50" />
+      </div>
+      <div className="h-56 animate-pulse rounded-lg bg-slate-50" />
+    </section>
+  );
   if (!data) return <section className="rounded-xl bg-white border border-slate-100 p-6 shadow-sm"><p>{loadError || "Hasta bulunamadı"}. <Link href="/hasta" className="text-primary underline">Geri Dön</Link></p></section>;
 
   const totalPaid = data.payments.reduce((s, p) => s + Number(p.amount), 0);
@@ -1562,28 +1591,48 @@ function HastaDetayContent() {
         <div className={`fixed right-5 top-5 z-[100] flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${
           toast.type === "success" ? "bg-emerald-500" : "bg-red-500"
         }`}>
-          {toast.type === "success" ? "✓" : "✕"} {toast.text}
+          {toast.text}
         </div>
       )}
 
-      <div className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-white p-4">
-        <div className="flex flex-1 items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary text-lg font-bold text-white">
+      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-base font-bold text-white">
             {data.fullName.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase()}
           </div>
-          <div className="flex-1">
-            <h2 className="text-xl font-bold text-slate-900">{data.fullName}</h2>
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-xl font-black text-slate-900">{data.fullName}</h2>
             <p className="text-sm text-slate-500">TC: {data.tcNo}{(currentUserRole !== "DOKTOR" && currentUserRole !== "ASISTAN") ? ` · ${data.phone}` : ""}</p>
           </div>
         </div>
 
-        <Link href="/hasta" className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50 transition">← Geri Dön</Link>
+        <Link href="/hasta" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">Hasta Listesi</Link>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <button onClick={() => selectTab("randevular")} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left hover:bg-white hover:shadow-sm">
+            <p className="text-xs font-bold uppercase text-slate-500">Randevu</p>
+            <p className="mt-1 text-lg font-black text-slate-900">{data.appointments.length}</p>
+          </button>
+          <button onClick={() => selectTab("tedavi")} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left hover:bg-white hover:shadow-sm">
+            <p className="text-xs font-bold uppercase text-slate-500">Tedavi</p>
+            <p className="mt-1 text-lg font-black text-slate-900">{tedaviler.length}</p>
+          </button>
+          <button onClick={() => selectTab("odeme")} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left hover:bg-white hover:shadow-sm">
+            <p className="text-xs font-bold uppercase text-slate-500">Ödenen</p>
+            <p className="mt-1 text-lg font-black text-emerald-700">{totalPaid.toFixed(0)} TL</p>
+          </button>
+          <button onClick={() => selectTab("odeme")} className={`rounded-xl border px-3 py-2 text-left hover:bg-white hover:shadow-sm ${totalDebt > 0 ? "border-red-100 bg-red-50" : "border-emerald-100 bg-emerald-50"}`}>
+            <p className="text-xs font-bold uppercase text-slate-500">Kalan</p>
+            <p className={`mt-1 text-lg font-black ${totalDebt > 0 ? "text-red-700" : "text-emerald-700"}`}>{totalDebt.toFixed(0)} TL</p>
+          </button>
+        </div>
       </div>
 
-      <div className="flex flex-wrap gap-1 border-b">
+      <div className="sticky top-0 z-20 flex gap-1 overflow-x-auto rounded-2xl border border-slate-100 bg-white/95 p-1.5 shadow-sm backdrop-blur">
         {visibleTabItems.map(t => (
           <button key={t.key} onClick={() => selectTab(t.key)}
-            className={"rounded-t px-4 py-2 text-sm font-semibold transition-colors " + (tab === t.key ? "border-b-2 border-primary bg-white text-primary" : "text-gray-600 hover:text-primary")}>
+            className={"shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors " + (tab === t.key ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900")}>
             {t.label}
           </button>
         ))}
@@ -1750,15 +1799,15 @@ function HastaDetayContent() {
                     <td className="px-3 py-2">
                       <div className="flex flex-wrap gap-1">
                         {t.status !== "TAMAMLANDI" && (
-                          <button onClick={() => void updateClinicTaskStatus(t.id, "TAMAMLANDI")} disabled={taskBusyId === t.id} className="rounded border border-emerald-300 px-2 py-1 text-[11px] text-emerald-700 hover:bg-emerald-50">Tamamla</button>
+                          <button onClick={() => void updateClinicTaskStatus(t.id, "TAMAMLANDI")} disabled={taskBusyId === t.id} className="rounded-lg border border-emerald-300 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">Tamamla</button>
                         )}
                         {t.status !== "BEKLEMEDE" && t.status !== "TAMAMLANDI" && (
-                          <button onClick={() => void updateClinicTaskStatus(t.id, "BEKLEMEDE")} disabled={taskBusyId === t.id} className="rounded border border-amber-300 px-2 py-1 text-[11px] text-amber-700 hover:bg-amber-50">Beklet</button>
+                          <button onClick={() => void updateClinicTaskStatus(t.id, "BEKLEMEDE")} disabled={taskBusyId === t.id} className="rounded-lg border border-amber-300 px-2.5 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50">Beklet</button>
                         )}
                         {t.status !== "ACIK" && (
-                          <button onClick={() => void updateClinicTaskStatus(t.id, "ACIK")} disabled={taskBusyId === t.id} className="rounded border border-blue-300 px-2 py-1 text-[11px] text-blue-700 hover:bg-blue-50">Açık Yap</button>
+                          <button onClick={() => void updateClinicTaskStatus(t.id, "ACIK")} disabled={taskBusyId === t.id} className="rounded-lg border border-blue-300 px-2.5 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-50">Açık Yap</button>
                         )}
-                        <button onClick={() => void deleteClinicTask(t.id)} disabled={taskBusyId === t.id} className="rounded border border-rose-300 px-2 py-1 text-[11px] text-rose-700 hover:bg-rose-50">Sil</button>
+                        <button onClick={() => void deleteClinicTask(t.id)} disabled={taskBusyId === t.id} className="rounded-lg border border-rose-300 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50">Sil</button>
                       </div>
                     </td>
                   </tr>
@@ -2009,7 +2058,7 @@ function HastaDetayContent() {
                             disabled={isSaving}
                             className="rounded bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-200 disabled:opacity-50 whitespace-nowrap"
                           >
-                            {isSaving ? "..." : "✓ Tedaviye Aktar"}
+                            {isSaving ? "..." : "Tedaviye Aktar"}
                           </button>
                           <button
                             onClick={() => { void deleteExamRecord(e.id, false); }}
@@ -2238,7 +2287,7 @@ function HastaDetayContent() {
                 const total = data.payments.filter((p: {method:string}) => p.method === m).reduce((s: number, p: {amount: string|number}) => s + Number(p.amount), 0);
                 return (
                   <div key={m} className="px-4 py-3">
-                    <p className="text-[10px] font-bold uppercase text-slate-500">{LABELS[m]}</p>
+                    <p className="text-xs font-bold uppercase text-slate-500">{LABELS[m]}</p>
                     <p className="mt-0.5 text-base font-black text-slate-800">{"₺" + new Intl.NumberFormat("tr-TR",{minimumFractionDigits:2}).format(total)}</p>
                   </div>
                 );
@@ -2255,7 +2304,7 @@ function HastaDetayContent() {
                   return (
                     <tr key={p.id} className="border-b hover:bg-slate-50">
                       <td className="px-3 py-2 text-xs">{new Date(p.createdAt).toLocaleDateString("tr-TR")}</td>
-                      <td className="px-3 py-2"><span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold text-emerald-700">{ML[p.method] || p.method}</span></td>
+                      <td className="px-3 py-2"><span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">{ML[p.method] || p.method}</span></td>
                       <td className="px-3 py-2 text-xs">{p.description||"—"}</td>
                       <td className="px-3 py-2 text-right font-semibold text-emerald-700">{"₺" + Number(p.amount).toLocaleString("tr-TR",{minimumFractionDigits:2})}</td>
                       <td className="px-3 py-2 text-center"><button onClick={async()=>{if(!window.confirm("Ödeme silinsin mi?"))return;const res=await fetch("/api/payments/"+p.id,{method:"DELETE"});if(!res.ok){const err=await res.json().catch(()=>({}));showToast("error",err.message||"Ödeme silinemedi");return;}showToast("success","Ödeme silindi");void load();}} className="rounded-lg bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600 hover:bg-red-200">Sil</button></td>
@@ -2395,7 +2444,7 @@ function HastaDetayContent() {
                             return (
                               <div className={`flex justify-between px-3 py-2 text-xs font-semibold border-t ${diff > 0.02 ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'}`}>
                                 <span>Toplam: ₺{sumAmounts.toLocaleString("tr-TR", {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
-                                <span>{diff > 0.02 ? `⚠ Beklenen: ₺${expected.toLocaleString("tr-TR", {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : '✓ Tutar eşleşiyor'}</span>
+                                <span>{diff > 0.02 ? `Beklenen: ₺${expected.toLocaleString("tr-TR", {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : "Tutar eşleşiyor"}</span>
                               </div>
                             );
                           })()}
@@ -2425,8 +2474,8 @@ function HastaDetayContent() {
                 <div className="mt-6 flex justify-end gap-2 border-t pt-4">
                   <button onClick={() => {setInstallmentModalOpen(false); setInstallmentStep("borç"); setInstallmentPreview([]);}} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">İptal</button>
                   {(installmentStep === "plan" || installmentStep === "onay") && <button onClick={handleInstallmentPrevStep} className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">← Geri</button>}
-                  {installmentStep !== "onay" && <button onClick={handleInstallmentNextStep} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">İleri →</button>}
-                  {installmentStep === "onay" && <button onClick={createInstallmentPlan} disabled={installmentLoading} className="rounded-lg bg-green-600 px-6 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60">{installmentLoading ? "Oluşturuluyor..." : "✓ Planı Oluştur"}</button>}
+                  {installmentStep !== "onay" && <button onClick={handleInstallmentNextStep} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700">Devam Et</button>}
+                  {installmentStep === "onay" && <button onClick={createInstallmentPlan} disabled={installmentLoading} className="rounded-lg bg-green-600 px-6 py-2 text-sm font-semibold text-white hover:bg-green-700 disabled:opacity-60">{installmentLoading ? "Oluşturuluyor..." : "Planı Oluştur"}</button>}
                 </div>
               </div>
             </div>
@@ -2435,7 +2484,7 @@ function HastaDetayContent() {
           <div className="rounded-lg border bg-white p-4">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="font-semibold">Ödeme Planları</h3>
-              <Link href="/muhasebe?tab=taksit" className="text-xs text-primary hover:underline">Tüm Planlar →</Link>
+              <Link href="/muhasebe?tab=taksit" className="text-xs font-bold text-primary hover:underline">Tüm Planları Aç</Link>
             </div>
             {(!data.taksitPlanlari || data.taksitPlanlari.length === 0) ? (
               <p className="py-4 text-center text-sm text-slate-500">Bu hasta için ödeme planı bulunmuyor.</p>
@@ -2603,7 +2652,7 @@ function HastaDetayContent() {
               disabled={rxSaving || currentRecipeDrugs.length === 0}
               className="w-full rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-700 transition disabled:opacity-50"
             >
-              {rxSaving ? "Reçete Kaydediliyor..." : "✓ Reçeteyi Kaydet"}
+              {rxSaving ? "Reçete Kaydediliyor..." : "Reçeteyi Kaydet"}
             </button>
           </div>
 
@@ -2703,7 +2752,7 @@ function HastaDetayContent() {
                 </div>
               </div>
               <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">İş Türü Adet Dağılımı</p>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">İş Türü Adet Dağılımı</p>
                 <div className="mt-2 flex flex-wrap gap-2">
                   {Object.entries(
                     data.labOrders.reduce((acc, order) => {
@@ -2761,7 +2810,7 @@ function HastaDetayContent() {
                           <td className="px-3 py-2 text-slate-700">{l.labName || "—"}</td>
                           <td className="px-3 py-2 font-medium">
                             <div>{l.labType}</div>
-                            {l.notes && <p className="line-clamp-1 text-[11px] font-normal text-slate-500">{l.notes}</p>}
+                            {l.notes && <p className="line-clamp-1 text-xs font-normal text-slate-500">{l.notes}</p>}
                           </td>
                           <td className="px-3 py-2 text-slate-600">{l.doctor?.fullName || "—"}</td>
                           <td className="px-3 py-2 text-right font-bold text-red-600">{l.price ? `₺${Number(l.price).toLocaleString("tr-TR")}` : "—"}</td>
@@ -2937,7 +2986,7 @@ function HastaDetayContent() {
                               setLabNewForm((prev) => ({ ...prev, sentItem: "Ölçü", requestedItem: opt }));
                             }
                           }}
-                          className={`rounded border px-2 py-1 text-[11px] transition ${
+                          className={`rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition ${
                             isActive
                               ? "border-slate-800 bg-slate-800 text-white"
                               : "border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100"
@@ -3020,7 +3069,10 @@ function HastaDetayContent() {
 
             <div className="max-h-[78vh] overflow-y-auto p-5">
               {labDetailLoading ? (
-                <p className="text-sm text-slate-500">Laboratuvar detayı yükleniyor...</p>
+                <div className="space-y-2" aria-busy="true">
+                  <div className="h-4 w-56 animate-pulse rounded bg-slate-100" />
+                  <div className="h-4 w-40 animate-pulse rounded bg-slate-100" />
+                </div>
               ) : !labOrderDetail ? (
                 <div className="space-y-3">
                   <p className="text-sm text-red-600">{labActionError || "Laboratuvar detayı yüklenemedi."}</p>
@@ -3038,19 +3090,19 @@ function HastaDetayContent() {
                 <div className="space-y-4">
                   <div className="grid gap-3 md:grid-cols-4">
                     <div className="rounded-lg border bg-slate-50 p-3">
-                      <p className="text-[11px] uppercase text-slate-500">Durum</p>
+                      <p className="text-xs font-semibold uppercase text-slate-500">Durum</p>
                       <p className="text-sm font-semibold text-slate-800">{labOrderDetail.status.replace(/_/g, " ")}</p>
                     </div>
                     <div className="rounded-lg border bg-slate-50 p-3">
-                      <p className="text-[11px] uppercase text-slate-500">Lab</p>
+                      <p className="text-xs font-semibold uppercase text-slate-500">Laboratuvar</p>
                       <p className="text-sm font-semibold text-slate-800">{labOrderDetail.labName || "—"}</p>
                     </div>
                     <div className="rounded-lg border bg-slate-50 p-3">
-                      <p className="text-[11px] uppercase text-slate-500">Toplam Adım</p>
+                      <p className="text-xs font-semibold uppercase text-slate-500">Toplam Gönderim</p>
                       <p className="text-sm font-semibold text-slate-800">{labOrderDetail.trips.length}</p>
                     </div>
                     <div className="rounded-lg border bg-slate-50 p-3">
-                      <p className="text-[11px] uppercase text-slate-500">Son Hareket</p>
+                      <p className="text-xs font-semibold uppercase text-slate-500">Son Hareket</p>
                       <p className="text-sm font-semibold text-slate-800">
                         {(() => {
                           const latestTs = (labOrderDetail.trips || []).reduce((acc, trip) => {
@@ -3070,12 +3122,12 @@ function HastaDetayContent() {
 
                   <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                     <p className="font-semibold">Asistan Ekranı</p>
-                    <p className="mt-0.5">Bu ekranda sadece geçmiş adımları görür, adım düzenler ve yeni gidiş eklersiniz.</p>
+                    <p className="mt-0.5">Bu ekranda laboratuvar gönderimlerini görür, düzenler ve yeni gönderim eklersiniz.</p>
                   </div>
 
                   <div className="grid gap-4 lg:grid-cols-2">
                     <div className="rounded-lg border p-3">
-                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Yeni Gidiş Ekle</p>
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Yeni Laboratuvar Gönderimi</p>
                       <div className="space-y-2">
                         {/* Workflow öneri şeridi */}
                         {(() => {
@@ -3093,7 +3145,7 @@ function HastaDetayContent() {
                               : suggestion?.send;
                           return template.length > 0 ? (
                             <div className="rounded-lg border border-slate-100 bg-slate-50 p-2">
-                              <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-400">
+                              <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
                                 {labOrderDetail.labType} · Adım {Math.min(stepIndex + 1, template.length)}/{template.length}
                               </p>
                               <div className="flex gap-1">
@@ -3101,7 +3153,7 @@ function HastaDetayContent() {
                                   <div
                                     key={i}
                                     title={`${step.send} → ${step.request}`}
-                                    className={`flex-1 rounded px-1 py-1 text-center text-[10px] leading-tight ${
+                                    className={`flex-1 rounded px-1 py-1 text-center text-xs leading-tight ${
                                       i < stepIndex
                                         ? "bg-emerald-100 text-emerald-700"
                                         : i === stepIndex
@@ -3114,7 +3166,7 @@ function HastaDetayContent() {
                                 ))}
                               </div>
                               {suggestion && (
-                                <p className="mt-1 text-[10px] text-slate-500">
+                                <p className="mt-1 text-xs text-slate-500">
                                   Öneri:{" "}
                                   <span className="font-medium text-slate-700">{suggestedSend || suggestion.send}</span> gönder →{" "}
                                   <span className="font-medium text-slate-700">{suggestion.request}</span> iste
@@ -3176,13 +3228,13 @@ function HastaDetayContent() {
                           disabled={labActionSaving || !labTripForm.sentItem.trim()}
                           className="w-full rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
                         >
-                          Gidiş Adımı Ekle
+                          Gönderimi Kaydet
                         </button>
                       </div>
                     </div>
 
                     <div className="rounded-lg border">
-                      <div className="border-b px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Gidiş-Geliş Geçmişi</div>
+                      <div className="border-b px-3 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Gönderim ve Geliş Geçmişi</div>
                       <div className="max-h-[52vh] space-y-2 overflow-y-auto p-3">
                         {labOrderDetail.trips.length === 0 ? (
                           <p className="text-xs text-slate-500">Henüz adım yok.</p>
@@ -3195,7 +3247,7 @@ function HastaDetayContent() {
                                   <p className="font-semibold text-slate-800">#{trip.order} · {parsed.sentItem || "Adım"}</p>
                                   <button
                                     onClick={() => startEditTripFromPatientDetail(trip)}
-                                    className="rounded border border-slate-300 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                                    className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                                   >
                                     Düzenle
                                   </button>
@@ -3209,7 +3261,7 @@ function HastaDetayContent() {
 
                                 {editingTripId === trip.id && (
                                   <div className="mt-2 space-y-2 rounded border border-amber-200 bg-amber-50 p-2.5">
-                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800">Adım Düzenle</p>
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-800">Gönderimi Düzenle</p>
                                     <input
                                       value={labTripEditForm.sentItem}
                                       onChange={(e) => setLabTripEditForm((prev) => ({ ...prev, sentItem: e.target.value }))}
