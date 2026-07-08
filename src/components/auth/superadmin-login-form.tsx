@@ -38,8 +38,8 @@ export function SuperadminLoginForm() {
       <form onSubmit={onSubmit} className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-7 text-white shadow-2xl">
         <div className="mb-6">
           <p className="text-xs tracking-widest text-emerald-300">YÖNETİM PANELİ</p>
-          <h1 className="mt-2 text-3xl font-black">Yonetici Girisi</h1>
-          <p className="mt-1 text-sm text-slate-300">Sistem yonetimi icin kimlik bilgilerinizi girin.</p>
+          <h1 className="mt-2 text-3xl font-black">Yönetici Girişi</h1>
+          <p className="mt-1 text-sm text-slate-300">Sistem yönetimi için kimlik bilgilerinizi girin.</p>
         </div>
 
         <label className="mb-4 block text-sm font-semibold text-slate-200">
@@ -54,7 +54,7 @@ export function SuperadminLoginForm() {
         </label>
 
         <label className="mb-4 block text-sm font-semibold text-slate-200">
-          Sifre
+          Şifre
           <input
             className="mt-1 w-full rounded-xl border border-white/20 bg-white/5 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300"
             type="password"

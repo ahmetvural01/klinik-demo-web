@@ -95,11 +95,20 @@ async function loadAlerts(role: string): Promise<PanelAlertCounts> {
 }
 
 export function usePanelAlerts(role: string) {
-  const [alerts, setAlerts] = useState<PanelAlertCounts>(() => readCached(role) || EMPTY_ALERTS);
+  // Başlangıç değeri her zaman sabit (EMPTY_ALERTS) olmalı: sunucu tarafında
+  // localStorage yok, istemci tarafında ise varsa önbellek farklı bir değer
+  // dönebilir. Bu, ilk render'da sunucu/istemci HTML'inin uyuşmamasına
+  // (hydration mismatch) ve tüm sayfanın gereksiz yere client-side yeniden
+  // render edilmesine yol açıyordu. Önbellek artık yalnızca useEffect
+  // içinde (hydration tamamlandıktan sonra) uygulanıyor.
+  const [alerts, setAlerts] = useState<PanelAlertCounts>(EMPTY_ALERTS);
 
   useEffect(() => {
     if (!role) return;
     let cancelled = false;
+
+    const cached = readCached(role);
+    if (cached) setAlerts(cached);
 
     const refresh = async (force = false) => {
       if (typeof document !== "undefined" && document.hidden) return;
