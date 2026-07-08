@@ -10,7 +10,10 @@ export async function GET(request: NextRequest) {
   const patientId = request.nextUrl.searchParams.get("patientId");
 
   const prescriptions = await prisma.prescription.findMany({
-    where: { patientId: patientId || undefined },
+    where: {
+      ...(patientId ? { patientId } : {}),
+      ...(auth.user.role !== "SUPERADMIN" ? { patient: { institutionId: auth.user.institutionId } } : {}),
+    },
     orderBy: { createdAt: "desc" }
   });
 
@@ -26,6 +29,16 @@ export async function POST(request: NextRequest) {
 
   if (!parsed.success) {
     return NextResponse.json({ message: "Geçersiz reçete verisi" }, { status: 400 });
+  }
+
+  if (auth.user.role !== "SUPERADMIN") {
+    const patient = await prisma.patient.findFirst({
+      where: { id: parsed.data.patientId, institutionId: auth.user.institutionId },
+      select: { id: true },
+    });
+    if (!patient) {
+      return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });
+    }
   }
 
   const prescription = await prisma.prescription.create({

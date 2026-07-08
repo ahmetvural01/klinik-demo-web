@@ -37,7 +37,7 @@ export async function GET(_: NextRequest, { params }: Params) {
     return NextResponse.json({ message: "Personel bulunamadı" }, { status: 404 });
   }
 
-  if (auth.user.role !== "SUPERADMIN" && auth.user.institutionId && user.institutionId !== auth.user.institutionId) {
+  if (auth.user.role !== "SUPERADMIN" && user.institutionId !== auth.user.institutionId) {
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
   }
 
@@ -54,7 +54,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     return NextResponse.json({ message: "Personel bulunamadı" }, { status: 404 });
   }
 
-  if (auth.user.role !== "SUPERADMIN" && auth.user.institutionId && existing.institutionId !== auth.user.institutionId) {
+  if (auth.user.role !== "SUPERADMIN" && existing.institutionId !== auth.user.institutionId) {
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
   }
 
@@ -130,7 +130,7 @@ export async function DELETE(_: NextRequest, { params }: Params) {
     return NextResponse.json({ message: "Personel bulunamadı" }, { status: 404 });
   }
 
-  if (auth.user.role !== "SUPERADMIN" && auth.user.institutionId && existing.institutionId !== auth.user.institutionId) {
+  if (auth.user.role !== "SUPERADMIN" && existing.institutionId !== auth.user.institutionId) {
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
   }
 

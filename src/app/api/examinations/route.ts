@@ -8,21 +8,15 @@ export async function GET(request: NextRequest) {
   if (auth.error) return auth.error;
 
   const patientId = request.nextUrl.searchParams.get("patientId");
-  const institutionDoctors = auth.user.institutionId
-    ? await prisma.user.findMany({
-        where: { institutionId: auth.user.institutionId, role: "DOKTOR", isActive: true },
-        select: { id: true },
-      })
-    : [];
-  const doctorIds = institutionDoctors.map((doctor) => doctor.id);
 
   const examinations = await prisma.examination.findMany({
     where: {
       ...(patientId ? { patientId } : {}),
-      ...(doctorIds.length > 0 ? { doctorId: { in: doctorIds } } : {}),
+      ...(auth.user.role !== "SUPERADMIN" ? { patient: { institutionId: auth.user.institutionId } } : {}),
     },
     include: { patient: true, doctor: true },
-    orderBy: { diagnosedAt: "desc" }
+    orderBy: { diagnosedAt: "desc" },
+    take: 500,
   });
 
   return NextResponse.json(examinations);
@@ -32,14 +26,6 @@ export async function POST(request: NextRequest) {
   const auth = await requireAuth("examinations:write");
   if (auth.error) return auth.error;
 
-  const institutionDoctors = auth.user.institutionId
-    ? await prisma.user.findMany({
-        where: { institutionId: auth.user.institutionId, role: "DOKTOR", isActive: true },
-        select: { id: true },
-      })
-    : [];
-  const doctorIds = institutionDoctors.map((doctor) => doctor.id);
-
   const body = await request.json();
   const parsed = examinationSchema.safeParse(body);
 
@@ -47,8 +33,19 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Geçersiz muayene verisi" }, { status: 400 });
   }
 
-  if (auth.user.institutionId && doctorIds.length > 0 && !doctorIds.includes(parsed.data.doctorId)) {
-    return NextResponse.json({ message: "Doktor kurum kapsamı disinda" }, { status: 403 });
+  if (auth.user.role !== "SUPERADMIN") {
+    const [patient, doctor] = await Promise.all([
+      prisma.patient.findFirst({
+        where: { id: parsed.data.patientId, institutionId: auth.user.institutionId },
+        select: { id: true },
+      }),
+      prisma.user.findFirst({
+        where: { id: parsed.data.doctorId, institutionId: auth.user.institutionId, isActive: true },
+        select: { id: true },
+      }),
+    ]);
+    if (!patient) return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });
+    if (!doctor) return NextResponse.json({ message: "Doktor kurum kapsamı dışında" }, { status: 403 });
   }
 
   const examination = await prisma.examination.create({

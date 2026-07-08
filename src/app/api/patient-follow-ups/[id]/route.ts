@@ -15,8 +15,11 @@ export async function PUT(request: NextRequest, { params }: Params) {
     return NextResponse.json({ message: "Geçersiz takip güncellemesi" }, { status: 400 });
   }
 
-  const existing = await prisma.patientFollowUp.findUnique({
-    where: { id: params.id },
+  const existing = await prisma.patientFollowUp.findFirst({
+    where: {
+      id: params.id,
+      ...(auth.user.role !== "SUPERADMIN" ? { patient: { institutionId: auth.user.institutionId } } : {}),
+    },
     include: { patient: { select: { fullName: true } } },
   });
   if (!existing) {
@@ -70,8 +73,11 @@ export async function DELETE(_: NextRequest, { params }: Params) {
   const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
 
-  const existing = await prisma.patientFollowUp.findUnique({
-    where: { id: params.id },
+  const existing = await prisma.patientFollowUp.findFirst({
+    where: {
+      id: params.id,
+      ...(auth.user.role !== "SUPERADMIN" ? { patient: { institutionId: auth.user.institutionId } } : {}),
+    },
     include: { patient: { select: { fullName: true } } },
   });
 

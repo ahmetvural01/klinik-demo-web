@@ -25,12 +25,19 @@ function normalizeOptionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+function examinationTenantWhere(id: string, role: string, institutionId: string | null | undefined) {
+  return {
+    id,
+    ...(role !== "SUPERADMIN" ? { patient: { institutionId } } : {}),
+  };
+}
+
 export async function GET(_: NextRequest, { params }: Params) {
   const auth = await requireAuth("examinations:read");
   if (auth.error) return auth.error;
 
-  const examination = await prisma.examination.findUnique({
-    where: { id: params.id },
+  const examination = await prisma.examination.findFirst({
+    where: examinationTenantWhere(params.id, auth.user.role, auth.user.institutionId),
     include: { patient: true, doctor: true }
   });
 
@@ -48,7 +55,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
   const body = await request.json();
 
   // Mevcut kaydı al
-  const existing = await prisma.examination.findUnique({ where: { id: params.id } });
+  const existing = await prisma.examination.findFirst({
+    where: examinationTenantWhere(params.id, auth.user.role, auth.user.institutionId),
+  });
   if (!existing) {
     return NextResponse.json({ message: "Muayene kaydı bulunamadı" }, { status: 404 });
   }
@@ -111,6 +120,14 @@ export async function PUT(request: NextRequest, { params }: Params) {
 export async function DELETE(_: NextRequest, { params }: Params) {
   const auth = await requireAuth("examinations:write");
   if (auth.error) return auth.error;
+
+  const existing = await prisma.examination.findFirst({
+    where: examinationTenantWhere(params.id, auth.user.role, auth.user.institutionId),
+    select: { id: true },
+  });
+  if (!existing) {
+    return NextResponse.json({ message: "Muayene kaydı bulunamadı" }, { status: 404 });
+  }
 
   await prisma.examination.delete({ where: { id: params.id } });
   await writeAudit(auth.user.id, "EXAM_DELETE", `Muayene kaydı silindi (${params.id})`);

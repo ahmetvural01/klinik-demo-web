@@ -50,16 +50,24 @@ async function syncAppointmentReminder(appointment: {
 
 type Params = { params: { id: string } };
 
-async function isEligibleAppointmentDoctor(doctorId: string) {
+async function isEligibleAppointmentDoctor(doctorId: string, institutionId: string | null | undefined, role: string) {
   const doctor = await prisma.user.findUnique({
     where: { id: doctorId },
-    select: { isActive: true, role: true, profile: { select: { hideAsDoctor: true } } },
+    select: { isActive: true, role: true, institutionId: true, profile: { select: { hideAsDoctor: true } } },
   });
 
   if (!doctor || !doctor.isActive) return false;
+  if (role !== "SUPERADMIN" && doctor.institutionId !== institutionId) return false;
   if (["DOKTOR", "SUPERADMIN", "ADMIN"].includes(doctor.role)) return true;
   if (doctor.role === "YONETICI") return !Boolean(doctor.profile?.hideAsDoctor);
   return false;
+}
+
+function appointmentTenantWhere(id: string, role: string, institutionId: string | null | undefined) {
+  return {
+    id,
+    ...(role !== "SUPERADMIN" ? { patient: { institutionId } } : {}),
+  };
 }
 
 const APPOINTMENT_STATUS_LABELS: Record<string, string> = {
@@ -83,8 +91,8 @@ export async function GET(_: NextRequest, { params }: Params) {
   const auth = await requireAuth("appointments:read");
   if (auth.error) return auth.error;
 
-  const appointment = await prisma.appointment.findUnique({
-    where: { id: params.id },
+  const appointment = await prisma.appointment.findFirst({
+    where: appointmentTenantWhere(params.id, auth.user.role, auth.user.institutionId),
     include: { patient: true, doctor: true }
   });
 
@@ -101,8 +109,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
   const body = await request.json();
 
-  const existing = await prisma.appointment.findUnique({
-    where: { id: params.id },
+  const existing = await prisma.appointment.findFirst({
+    where: appointmentTenantWhere(params.id, auth.user.role, auth.user.institutionId),
     include: { patient: true, doctor: true }
   });
 
@@ -163,7 +171,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     return NextResponse.json({ message: "Geçersiz randevu verisi" }, { status: 400 });
   }
 
-  const eligibleDoctor = await isEligibleAppointmentDoctor(parsed.data.doctorId);
+  const eligibleDoctor = await isEligibleAppointmentDoctor(parsed.data.doctorId, auth.user.institutionId, auth.user.role);
   if (!eligibleDoctor) {
     return NextResponse.json({ message: "Secilen personel randevu doktoru olarak kullanilamaz." }, { status: 400 });
   }
@@ -252,8 +260,8 @@ export async function DELETE(_: NextRequest, { params }: Params) {
   const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
 
-  const existing = await prisma.appointment.findUnique({
-    where: { id: params.id },
+  const existing = await prisma.appointment.findFirst({
+    where: appointmentTenantWhere(params.id, auth.user.role, auth.user.institutionId),
     include: { patient: { select: { fullName: true } } },
   });
   if (!existing)

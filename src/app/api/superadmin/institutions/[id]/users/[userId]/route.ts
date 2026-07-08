@@ -97,6 +97,14 @@ export async function DELETE(
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
 
+  const existingUser = await prisma.user.findUnique({
+    where: { id: params.userId },
+    select: { institutionId: true },
+  });
+  if (!existingUser || existingUser.institutionId !== params.id) {
+    return NextResponse.json({ message: "Kullanıcı bulunamadı" }, { status: 404 });
+  }
+
   const updated = await prisma.user.update({
     where: { id: params.userId },
     data: { isActive: false },

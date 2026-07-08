@@ -22,6 +22,9 @@ export async function GET(request: NextRequest) {
     if (from && to) {
       where.date = { gte: from, lte: to };
     }
+    if (auth.user.role !== "SUPERADMIN") {
+      where.doctor = { institutionId: auth.user.institutionId };
+    }
 
     const blocks = await prisma.doctorBlock.findMany({
       where,
@@ -58,6 +61,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Başlangıç saati bitiş saatinden önce olmalı" }, { status: 400 });
   }
 
+  if (auth.user!.role !== "SUPERADMIN") {
+    const doctor = await prisma.user.findFirst({
+      where: { id: doctorId, institutionId: auth.user!.institutionId },
+      select: { id: true },
+    });
+    if (!doctor) {
+      return NextResponse.json({ message: "Doktor bulunamadı" }, { status: 404 });
+    }
+  }
+
   try {
     const block = await prisma.doctorBlock.create({
       data: { doctorId, date, startTime, endTime, reason: reason || null },
@@ -87,6 +100,16 @@ export async function DELETE(request: NextRequest) {
   if (!id) return NextResponse.json({ message: "id gerekli" }, { status: 400 });
 
   try {
+    const existing = await prisma.doctorBlock.findFirst({
+      where: {
+        id,
+        ...(auth.user!.role !== "SUPERADMIN" ? { doctor: { institutionId: auth.user!.institutionId } } : {}),
+      },
+      select: { id: true },
+    });
+    if (!existing) {
+      return NextResponse.json({ message: "Blok bulunamadı" }, { status: 404 });
+    }
     await prisma.doctorBlock.delete({ where: { id } });
     return NextResponse.json({ ok: true });
   } catch (error) {

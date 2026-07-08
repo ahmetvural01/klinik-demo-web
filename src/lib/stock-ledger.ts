@@ -36,23 +36,30 @@ export async function applyStockMovement({
   if (!item) throw new Error("Stok kalemi bulunamadı");
   if (!item.isActive) throw new Error("Pasif stok kalemi güncellenemez");
 
-  const currentQuantity = Number(item.quantity);
-  const nextQuantity = type === "GIRIS"
-    ? currentQuantity + quantity
-    : currentQuantity - quantity;
-
-  if (nextQuantity < 0) {
-    throw new Error(`Yetersiz stok. Mevcut: ${currentQuantity}, İstenen çıkış: ${quantity}`);
-  }
-
-  const updated = await tx.stockItem.update({
-    where: { id: stockItemId },
-    data: {
-      quantity: nextQuantity,
-      ...(type === "GIRIS" && supplier !== undefined ? { supplier: supplier || null } : {}),
-      ...(type === "GIRIS" && unitPrice !== undefined ? { unitPrice } : {}),
-    },
-  });
+  // Çıkış için: eşzamanlı iki hareketin birbirinin üzerine yazmasını (lost update)
+  // önlemek amacıyla, koşullu atomik bir UPDATE ile miktarın hâlâ yeterli olduğunu
+  // veritabanı seviyesinde garanti ediyoruz. GİRİŞ için basit artırma yeterli.
+  const updated =
+    type === "GIRIS"
+      ? await tx.stockItem.update({
+          where: { id: stockItemId },
+          data: {
+            quantity: { increment: quantity },
+            ...(supplier !== undefined ? { supplier: supplier || null } : {}),
+            ...(unitPrice !== undefined ? { unitPrice } : {}),
+          },
+        })
+      : await (async () => {
+          const result = await tx.stockItem.updateMany({
+            where: { id: stockItemId, quantity: { gte: quantity } },
+            data: { quantity: { decrement: quantity } },
+          });
+          if (result.count === 0) {
+            const fresh = await tx.stockItem.findUnique({ where: { id: stockItemId }, select: { quantity: true } });
+            throw new Error(`Yetersiz stok. Mevcut: ${Number(fresh?.quantity ?? 0)}, İstenen çıkış: ${quantity}`);
+          }
+          return tx.stockItem.findUnique({ where: { id: stockItemId } });
+        })();
 
   const movement = await tx.stockMovement.create({
     data: {

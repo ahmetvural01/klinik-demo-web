@@ -11,8 +11,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   if (!description) return NextResponse.json({ error: "description zorunlu" }, { status: 400 });
 
-  const order = await (prisma as any).labOrder.findUnique({
-    where: { id: params.id },
+  const order = await (prisma as any).labOrder.findFirst({
+    where: {
+      id: params.id,
+      ...(auth.user.role !== "SUPERADMIN" ? { patient: { institutionId: auth.user.institutionId } } : {}),
+    },
     select: { id: true },
   });
   if (!order) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });

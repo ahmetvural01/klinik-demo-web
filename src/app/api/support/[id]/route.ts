@@ -9,13 +9,20 @@ function fmt(v: unknown): string {
   return String(v);
 }
 
+function supportTenantWhere(id: string, role: string, institutionId: string | null | undefined) {
+  return {
+    id,
+    ...(role !== "SUPERADMIN" ? { user: { institutionId } } : {}),
+  };
+}
+
 export async function GET(_: NextRequest, { params }: Params) {
   const auth = await requireAuth("support:read");
   if (auth.error) return auth.error;
 
-  const ticket = await prisma.supportTicket.findUnique({
-    where: { id: params.id },
-    include: { user: true }
+  const ticket = await prisma.supportTicket.findFirst({
+    where: supportTenantWhere(params.id, auth.user.role, auth.user.institutionId),
+    include: { user: { select: { id: true, fullName: true, role: true, institutionId: true } } }
   });
 
   if (!ticket) {
@@ -30,7 +37,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
   if (auth.error) return auth.error;
 
   const body = await request.json();
-  const existing = await prisma.supportTicket.findUnique({ where: { id: params.id } });
+  const existing = await prisma.supportTicket.findFirst({
+    where: supportTenantWhere(params.id, auth.user.role, auth.user.institutionId),
+  });
   if (!existing) {
     return NextResponse.json({ message: "Destek kaydı bulunamadı" }, { status: 404 });
   }
@@ -72,6 +81,14 @@ export async function PUT(request: NextRequest, { params }: Params) {
 export async function DELETE(_: NextRequest, { params }: Params) {
   const auth = await requireAuth("support:write");
   if (auth.error) return auth.error;
+
+  const existing = await prisma.supportTicket.findFirst({
+    where: supportTenantWhere(params.id, auth.user.role, auth.user.institutionId),
+    select: { id: true, subject: true },
+  });
+  if (!existing) {
+    return NextResponse.json({ message: "Destek kaydı bulunamadı" }, { status: 404 });
+  }
 
   const ticket = await prisma.supportTicket.delete({ where: { id: params.id } });
   await writeAudit(auth.user.id, "SUPPORT_DELETE", `Destek talebi silindi (${ticket.subject})`);

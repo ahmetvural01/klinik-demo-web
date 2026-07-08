@@ -11,12 +11,18 @@ export async function PATCH(
 
   const body = await req.json();
 
-  const existing = await (prisma as any).labTrip.findUnique({
-    where: { id: params.tripId },
+  const existing = await (prisma as any).labTrip.findFirst({
+    where: {
+      id: params.tripId,
+      labOrderId: params.id,
+      ...(auth.user.role !== "SUPERADMIN"
+        ? { labOrder: { patient: { institutionId: auth.user.institutionId } } }
+        : {}),
+    },
     select: { id: true, labOrderId: true },
   });
 
-  if (!existing || existing.labOrderId !== params.id) {
+  if (!existing) {
     return NextResponse.json({ error: "Adım bulunamadı" }, { status: 404 });
   }
 

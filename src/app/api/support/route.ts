@@ -7,8 +7,9 @@ export async function GET() {
   if (auth.error) return auth.error;
 
   const tickets = await prisma.supportTicket.findMany({
+    where: auth.user.role !== "SUPERADMIN" ? { user: { institutionId: auth.user.institutionId } } : {},
     orderBy: { createdAt: "desc" },
-    include: { user: true }
+    include: { user: { select: { id: true, fullName: true, role: true, institutionId: true } } }
   });
 
   return NextResponse.json(tickets);

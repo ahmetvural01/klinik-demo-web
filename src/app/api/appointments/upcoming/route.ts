@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
       startAt: { gte: now },
       status: { not: "IPTAL" },
       patient: {
+        ...(auth.user.role !== "SUPERADMIN" ? { institutionId: auth.user.institutionId } : {}),
         OR: [
           { fullName: { contains: q, mode: "insensitive" } },
           { tcNo: { contains: q, mode: "insensitive" } },

@@ -15,7 +15,10 @@ export async function GET(request: NextRequest) {
     const q = sp.get("q") || "";
 
     const where: Record<string, unknown> = {};
-    where.user = { role: { not: "SUPERADMIN" } };
+    where.user = {
+      role: { not: "SUPERADMIN" },
+      ...(auth.user.role !== "SUPERADMIN" ? { institutionId: auth.user.institutionId } : {}),
+    };
     if (from || to) {
       where.createdAt = {
         ...(from ? { gte: new Date(from) } : {}),
@@ -34,7 +37,7 @@ export async function GET(request: NextRequest) {
       prisma.auditLog.count({ where }),
       prisma.auditLog.findMany({
         where,
-        include: { user: true },
+        include: { user: { select: { id: true, fullName: true, role: true } } },
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,
         take: limit

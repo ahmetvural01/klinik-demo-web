@@ -44,6 +44,10 @@ export async function POST(request: NextRequest) {
       planId: null,
       reminderDate: { lte: now },
       note: { startsWith: APPT_REMINDER_PREFIX },
+      // Baska bir kurumun hatirlatmalari bu dagitim cagrisinda hic
+      // cekilmesin (once cekilip "TAMAMLANDI" olarak tuketilmesin diye) —
+      // aksi halde o kurumun hatirlatmasi hic gonderilmeden kaybolur.
+      patient: { institutionId: auth.user.institutionId },
     },
     orderBy: { reminderDate: "asc" },
     take,

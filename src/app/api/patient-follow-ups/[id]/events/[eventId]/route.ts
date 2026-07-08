@@ -11,7 +11,11 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (auth.error) return auth.error;
 
     const event = await prisma.patientFollowUpEvent.findFirst({
-      where: { id: params.eventId, followUpId: params.id },
+      where: {
+        id: params.eventId,
+        followUpId: params.id,
+        ...(auth.user.role !== "SUPERADMIN" ? { followUp: { patient: { institutionId: auth.user.institutionId } } } : {}),
+      },
       include: {
         followUp: {
           select: {
@@ -63,7 +67,11 @@ export async function DELETE(_: NextRequest, { params }: Params) {
     if (auth.error) return auth.error;
 
     const event = await prisma.patientFollowUpEvent.findFirst({
-      where: { id: params.eventId, followUpId: params.id },
+      where: {
+        id: params.eventId,
+        followUpId: params.id,
+        ...(auth.user.role !== "SUPERADMIN" ? { followUp: { patient: { institutionId: auth.user.institutionId } } } : {}),
+      },
       include: {
         followUp: {
           select: {
