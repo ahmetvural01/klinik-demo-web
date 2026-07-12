@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function GET() {
   const auth = await requireAuth("announcements:read");
@@ -36,7 +36,7 @@ export async function GET() {
     return NextResponse.json(announcements);
   } catch (error) {
     console.error("[announcements GET] fallback:", error);
-    return NextResponse.json([]);
+    return NextResponse.json({ message: "Duyurular yüklenemedi." }, { status: 503 });
   }
 }
 
@@ -58,6 +58,7 @@ export async function POST(req: Request) {
         createdById: auth.user.id,
       },
     });
+    await writeAudit(auth.user.id, "ANNOUNCEMENT_CREATE", text.trim());
     return NextResponse.json(ann);
   } catch (error) {
     console.error("[announcements POST] fallback:", error);
@@ -78,6 +79,7 @@ export async function DELETE(req: Request) {
       where: { id, institutionId: auth.user.institutionId },
       data: { isActive: false },
     });
+    await writeAudit(auth.user.id, "ANNOUNCEMENT_DELETE", id);
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("[announcements DELETE] fallback:", error);

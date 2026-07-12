@@ -3,10 +3,28 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState, useRef } from "react";
-import { TeethMap, ToothButton, ToothStatus as TSType, TOOTH_STATUS_LABELS, TOOTH_STATUS_BADGE } from "@/components/ToothChart";
+import { OdontogramSelector, ToothStatus as TSType, TOOTH_STATUS_LABELS } from "@/components/ToothChart";
 import PhoneInput from "@/components/PhoneInput";
+import { PatientConsentPanel } from "@/components/PatientConsentPanel";
+import { SearchSelect } from "@/components/ui/SearchSelect";
+import { LabOrderForm } from "@/components/lab/LabOrderForm";
 import { MEDICATION_TEMPLATES } from "@/lib/medications";
-import { ACTIVE_PRICE_LIST_STORAGE_KEY, CUSTOM_DENTAL_TREATMENT_TEMPLATES, TDB_2026_CORE_PRICE_CATALOG } from "@/lib/dental-treatment-catalog";
+import { ACTIVE_PRICE_LIST_STORAGE_KEY, TDB_2026_CORE_PRICE_CATALOG } from "@/lib/dental-treatment-catalog";
+import { confirmDialog } from "@/lib/confirm-client";
+import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
+import { addPdfSection, addPdfTitle, createPdfDoc } from "@/lib/pdf-export";
+
+type PatientDocument = {
+  id: string;
+  category: "BELGE" | "RONTGEN" | "FOTOGRAF";
+  fileName: string;
+  mimeType: string;
+  fileSize: number;
+  toothNo?: string | null;
+  note?: string | null;
+  createdAt: string;
+  uploadedBy?: { fullName: string } | null;
+};
 
 type LabOrder = { id: string; labName?: string; labType: string; status: string; price?: number | null; notes?: string | null; createdAt: string; doctor?: { fullName: string } | null };
 type LabTrip = {
@@ -74,9 +92,9 @@ type Patient = {
 };
 type Appt = { id: string; startAt: string; endAt: string; type: string; status: string; doctor?: { fullName: string } };
 type Exam = { id: string; treatmentName: string; toothNo?: string | null; amount: string | number; status: string; diagnosedAt: string; doctorId: string; doctor?: { id: string; fullName: string } };
-type Pay = { id: string; amount: string | number; method: string; description?: string | null; createdAt: string };
+type Pay = { id: string; amount: string | number; method: string; description?: string | null; createdAt: string; doctorId?: string | null; doctor?: { id: string; fullName: string } | null; posId?: string | null };
 type Rx = { id: string; drugs: string; note?: string | null; createdAt: string };
-type StaffLite = { id: string; fullName: string; role: string };
+type StaffLite = { id: string; fullName: string; role: string; profile?: { hideAsDoctor?: boolean | null } | null };
 type ClinicTask = {
   id: string;
   title: string;
@@ -92,8 +110,10 @@ type ClinicTask = {
   createdBy?: { id: string; fullName: string } | null;
   createdAt: string;
 };
-type Tab = "bilgi" | "randevular" | "gorevler" | "tedavi" | "odeme" | "recete" | "notlar" | "lab" | "duzenle";
+type Tab = "bilgi" | "randevular" | "gorevler" | "tedavi" | "odeme" | "recete" | "notlar" | "lab" | "belgeler" | "duzenle";
 type ToothStatus = TSType;
+type ExportFormat = "pdf" | "excel";
+type PatientExportSection = "profile" | "completedTreatments" | "plannedTreatments" | "payments" | "balance" | "appointments" | "labOrders" | "prescriptions" | "documents" | "notes";
 
 type PatientDetailData = Patient & {
   appointments: Appt[];
@@ -113,10 +133,50 @@ const TAB_ITEMS: { key: Tab; label: string }[] = [
   { key: "recete", label: "Reçete" },
   { key: "notlar", label: "Notlar" },
   { key: "lab", label: "Laboratuvar" },
+  { key: "belgeler", label: "Belgeler & Onam" },
   { key: "duzenle", label: "Düzenle" },
 ];
 
-const isValidTab = (value: string | null): value is Tab => TAB_ITEMS.some(item => item.key === value);
+const PRIMARY_TAB_ORDER: Tab[] = ["bilgi", "tedavi", "lab", "odeme", "randevular"];
+const MORE_TAB_ORDER: Tab[] = ["recete", "notlar", "gorevler", "belgeler", "duzenle"];
+const TAB_SHORT_LABELS: Partial<Record<Tab, string>> = {
+  bilgi: "Özet",
+  tedavi: "Tedavi",
+  lab: "Laboratuvar",
+  odeme: "Finans",
+  randevular: "Randevular",
+  recete: "Reçete",
+  notlar: "Notlar",
+  gorevler: "Görevler",
+  belgeler: "Belgeler",
+  duzenle: "Hasta Bilgileri",
+};
+
+const PATIENT_EXPORT_SECTIONS: { key: PatientExportSection; label: string; description: string }[] = [
+  { key: "profile", label: "Hasta Bilgileri", description: "Kimlik, iletişim, sağlık uyarıları ve kurum bilgileri" },
+  { key: "completedTreatments", label: "Yapılan Tedaviler", description: "Tamamlanan/ücrete yansıyan tedavi kayıtları" },
+  { key: "plannedTreatments", label: "Yapılacak Tedaviler", description: "Muayene listesi ve bekleyen tedavi planı adımları" },
+  { key: "payments", label: "Ödemeler", description: "Tahsilat, ödeme yöntemi, POS ve hekim bilgileri" },
+  { key: "balance", label: "Kalan Ödeme", description: "Tedavi toplamı, indirim, ödenen ve kalan bakiye özeti" },
+  { key: "appointments", label: "Randevular", description: "Geçmiş ve gelecek randevu kayıtları" },
+  { key: "labOrders", label: "Laboratuvar", description: "Lab işleri, prova/gönderim, fatura ve firma bağlantısı" },
+  { key: "prescriptions", label: "Reçeteler", description: "Yazılan ilaç ve reçete notları" },
+  { key: "documents", label: "Belgeler", description: "Belge/röntgen dosya listesi ve onam kayıtları" },
+  { key: "notes", label: "Notlar", description: "Hasta dosyasındaki klinik notlar" },
+];
+
+const DEFAULT_PATIENT_EXPORT_SELECTION: Record<PatientExportSection, boolean> = {
+  profile: true,
+  completedTreatments: true,
+  plannedTreatments: true,
+  payments: true,
+  balance: true,
+  appointments: false,
+  labOrders: false,
+  prescriptions: false,
+  documents: false,
+  notes: false,
+};
 
 const isDiagnosisStatus = (status: string | null | undefined) => {
   const normalized = String(status || "").toLocaleLowerCase("tr-TR");
@@ -124,6 +184,14 @@ const isDiagnosisStatus = (status: string | null | undefined) => {
 };
 
 const isChargeableTreatment = (status: string | null | undefined) => !isDiagnosisStatus(status);
+
+const isEffectiveDoctor = (staff: StaffLite) =>
+  staff.role === "DOKTOR" || (staff.role === "YONETICI" && staff.profile?.hideAsDoctor === false);
+
+const TREAT_ADULT_UPPER = ["18", "17", "16", "15", "14", "13", "12", "11", "21", "22", "23", "24", "25", "26", "27", "28"];
+const TREAT_ADULT_LOWER = ["48", "47", "46", "45", "44", "43", "42", "41", "31", "32", "33", "34", "35", "36", "37", "38"];
+const TREAT_CHILD_UPPER = ["55", "54", "53", "52", "51", "61", "62", "63", "64", "65"];
+const TREAT_CHILD_LOWER = ["85", "84", "83", "82", "81", "71", "72", "73", "74", "75"];
 
 const TASK_TYPE_LABELS: Record<ClinicTask["type"], string> = {
   PARCA_SIPARIS: "Parça Sipariş",
@@ -342,24 +410,8 @@ function LabDentalChart({ selected, onChange }: { selected: number[]; onChange: 
     }
   };
 
-  const ToothBtn = ({ num }: { num: number }) => {
-    const active = selected.includes(num);
-    return (
-      <button
-        type="button"
-        onClick={() => toggle(num)}
-        className={`flex h-8 w-8 items-center justify-center rounded-lg border text-xs font-semibold transition-all ${
-          active ? "border-transparent bg-slate-800 text-white shadow-sm" : "border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:bg-slate-50"
-        }`}
-        title={`Diş ${num}`}
-      >
-        {num}
-      </button>
-    );
-  };
-
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+    <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
       <div className="mb-2.5 flex flex-wrap gap-1.5">
         {[
           { label: "Üst Çene", group: [...UPPER_RIGHT, ...UPPER_LEFT] },
@@ -386,23 +438,11 @@ function LabDentalChart({ selected, onChange }: { selected: number[]; onChange: 
         )}
       </div>
 
-      <div className="mb-1.5">
-        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Üst Çene</p>
-        <div className="flex gap-1">
-          {UPPER_RIGHT.map((n) => <ToothBtn key={n} num={n} />)}
-          <div className="mx-1 border-l border-dashed border-slate-300" />
-          {UPPER_LEFT.map((n) => <ToothBtn key={n} num={n} />)}
-        </div>
-      </div>
-
-      <div className="mt-1.5">
-        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">Alt Çene</p>
-        <div className="flex gap-1">
-          {LOWER_RIGHT.map((n) => <ToothBtn key={n} num={n} />)}
-          <div className="mx-1 border-l border-dashed border-slate-300" />
-          {LOWER_LEFT.map((n) => <ToothBtn key={n} num={n} />)}
-        </div>
-      </div>
+      <OdontogramSelector
+        selected={selected.map(String)}
+        onToggle={(num) => toggle(Number(num))}
+        dentition="adult"
+      />
 
       {selected.length > 0 && (
         <p className="mt-2 text-xs text-slate-500">
@@ -417,17 +457,44 @@ function HastaDetayContent() {
   const router = useRouter();
   const search = useSearchParams();
   const id = search.get("id") || "";
-  const requestedTab = search.get("tab");
   const [data, setData] = useState<PatientDetailData | null>(null);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState("");
   const [tab, setTab] = useState<Tab>("bilgi");
   const [payMethod, setPayMethod] = useState("NAKIT");
+  const [payDate, setPayDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [payAmount, setPayAmount] = useState("");
   const [payDesc, setPayDesc] = useState("");
   const [payPosId, setPayPosId] = useState("");
   const [payDoctorId, setPayDoctorId] = useState("");
+  const [editingPaymentId, setEditingPaymentId] = useState("");
   const [payLoading, setPayLoading] = useState(false);
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const closePaymentModal = () => {
+    setPaymentModalOpen(false);
+    setEditingPaymentId("");
+    setPayDate(new Date().toISOString().slice(0, 10));
+    setPayAmount("");
+    setPayDesc("");
+    setPayPosId("");
+    setPayDoctorId("");
+    setPayMethod("NAKIT");
+  };
+  useEscapeClose(closePaymentModal, paymentModalOpen);
+  const [exportModalOpen, setExportModalOpen] = useState(false);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>("pdf");
+  const [exportSelection, setExportSelection] = useState<Record<PatientExportSection, boolean>>(DEFAULT_PATIENT_EXPORT_SELECTION);
+  const [exportHideDoctor, setExportHideDoctor] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  useEscapeClose(() => setExportModalOpen(false), exportModalOpen);
+  const [documents, setDocuments] = useState<PatientDocument[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState(false);
+  const [documentsLoaded, setDocumentsLoaded] = useState(false);
+  const [docCategory, setDocCategory] = useState<"BELGE" | "RONTGEN" | "FOTOGRAF">("BELGE");
+  const [docToothNo, setDocToothNo] = useState("");
+  const [docNote, setDocNote] = useState("");
+  const [docUploading, setDocUploading] = useState(false);
+  const [docUploadError, setDocUploadError] = useState("");
   const [currentUserId, setCurrentUserId] = useState("");
   // Başlangıçta sessionStorage'dan oku — flash'siz render
   const [currentUserRole, setCurrentUserRole] = useState(() =>
@@ -436,8 +503,10 @@ function HastaDetayContent() {
 
   // Rol bazlı sekme filtreleme
   // BANKO: tedavi, recete, lab sekmeleri API tarafından engellendi
+  // DOKTOR: patients:write yetkisi yok — "Düzenle" sekmesi doldurulup kaydedilemez, gösterilmemeli
   const visibleTabItems = TAB_ITEMS.filter(t => {
-    if (currentUserRole === "BANKO") return !["tedavi", "recete", "lab"].includes(t.key);
+    if (currentUserRole === "BANKO") return !["tedavi", "recete", "lab", "belgeler"].includes(t.key);
+    if (currentUserRole === "DOKTOR") return t.key !== "duzenle";
     return true;
   });
   const [posDevices, setPosDevices] = useState<{ id: string; name: string; isActive: boolean }[]>([]);
@@ -446,6 +515,7 @@ function HastaDetayContent() {
   const [noteText, setNoteText] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
   const [clinicTasks, setClinicTasks] = useState<ClinicTask[]>([]);
+  const [treatmentPlans, setTreatmentPlans] = useState<{ id: string; title: string; status: string; totalCost: number | string | null; steps: { id: string }[] }[]>([]);
   const [taskTitle, setTaskTitle] = useState("");
   const [taskType, setTaskType] = useState<ClinicTask["type"]>("PARCA_SIPARIS");
   const [taskPriority, setTaskPriority] = useState(2);
@@ -482,21 +552,26 @@ function HastaDetayContent() {
   const [treatmentSaving, setTreatmentSaving] = useState(false);
   // Yazdırma modalleri
   const [treatmentPrintOpen, setTreatmentPrintOpen] = useState(false);
+  useEscapeClose(() => setTreatmentPrintOpen(false), treatmentPrintOpen);
   const [selectedTreatForPrint, setSelectedTreatForPrint] = useState<string[]>([]);
   const [paymentPrintOpen, setPaymentPrintOpen] = useState(false);
+  useEscapeClose(() => setPaymentPrintOpen(false), paymentPrintOpen);
   const [selectedPayForPrint, setSelectedPayForPrint] = useState<string[]>([]);
   const [showPricesInPrint, setShowPricesInPrint] = useState(true);
   // Muayene listesi inline düzenleme
   const [examInlineEdits, setExamInlineEdits] = useState<Record<string, { amount: string; doctorId: string; toothNo?: string; treatmentName?: string; diagnosedAt?: string }>>({});
   const [selectedDiagnozIds, setSelectedDiagnozIds] = useState<string[]>([]);
   const [bulkConverting, setBulkConverting] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [examSavingId, setExamSavingId] = useState<string | null>(null);
   // Tedavi formu - muayene tarzı
-  const [priceList, setPriceList] = useState<{id:string;treatment:string;amount:number}[]>([]);
+  const [priceList, setPriceList] = useState<{id:string;code?:string;treatment:string;amount:number;isTemplate?:boolean}[]>([]);
   const [treatDropdownId, setTreatDropdownId] = useState("");
+  const [treatmentQuery, setTreatmentQuery] = useState("");
+  const [treatmentDropdownOpen, setTreatmentDropdownOpen] = useState(false);
   const [treatCustomAmount, setTreatCustomAmount] = useState("");
   const [treatSelectedTeeth, setTreatSelectedTeeth] = useState<string[]>([]);
-  const [treatToothType, setTreatToothType] = useState<"adult"|"child"|"general">("adult");
+  const [treatToothType, setTreatToothType] = useState<"adult"|"child">("adult");
   const [treatDoctorId, setTreatDoctorId] = useState("");
   const [doctorOptions, setDoctorOptions] = useState<StaffLite[]>([]);
   const [globalLabNames, setGlobalLabNames] = useState<string[]>([]);
@@ -507,8 +582,10 @@ function HastaDetayContent() {
   // Finans / taksitlendirme
   const [installmentLoading, setInstallmentLoading] = useState(false);
   const [installmentModalOpen, setInstallmentModalOpen] = useState(false);
+  useEscapeClose(() => setInstallmentModalOpen(false), installmentModalOpen);
   const [installmentStep, setInstallmentStep] = useState<"borç" | "plan" | "onay">("borç");
   const installmentModalRef = useRef<HTMLDivElement>(null);
+  const moreMenuRef = useRef<HTMLDetailsElement>(null);
   const [installmentForm, setInstallmentForm] = useState({
     toplamBorc: "",
     pesnat: "0",
@@ -540,6 +617,9 @@ function HastaDetayContent() {
     requestedItem: "",
     impressionMethod: "" as ImpressionMethod,
   });
+  const [labNewDoctorSearch, setLabNewDoctorSearch] = useState("");
+  const [labNewLabSearch, setLabNewLabSearch] = useState("");
+  const [labNewTypeSearch, setLabNewTypeSearch] = useState("");
   const [labTripForm, setLabTripForm] = useState({
     sentItem: "",
     requestedItem: "",
@@ -589,9 +669,32 @@ function HastaDetayContent() {
   };
 
   const knownLabs = useMemo(() => {
-    const patientLabs = (data?.labOrders || []).map((order) => order.labName || "").filter(Boolean);
-    return Array.from(new Set([...globalLabNames, ...patientLabs]));
-  }, [data?.labOrders, globalLabNames]);
+    return Array.from(new Set(globalLabNames.map((name) => name.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "tr"));
+  }, [globalLabNames]);
+
+  const labNewDoctorOptions = useMemo(() => {
+    const q = labNewDoctorSearch.trim().toLocaleLowerCase("tr-TR");
+    return doctorOptions
+      .filter((doctor) => !q || doctor.fullName.toLocaleLowerCase("tr-TR").includes(q))
+      .slice(0, 40)
+      .map((doctor) => ({ id: doctor.id, label: doctor.fullName }));
+  }, [doctorOptions, labNewDoctorSearch]);
+
+  const labNewLabOptions = useMemo(() => {
+    const q = labNewLabSearch.trim().toLocaleLowerCase("tr-TR");
+    return knownLabs
+      .filter((lab) => !q || lab.toLocaleLowerCase("tr-TR").includes(q))
+      .slice(0, 40)
+      .map((lab) => ({ id: lab, label: lab }));
+  }, [knownLabs, labNewLabSearch]);
+
+  const labNewTypeOptions = useMemo(() => {
+    const q = labNewTypeSearch.trim().toLocaleLowerCase("tr-TR");
+    return LAB_CATEGORIES
+      .flatMap((category) => category.items.map((item) => ({ id: item, label: item, meta: category.group })))
+      .filter((type) => !q || type.label.toLocaleLowerCase("tr-TR").includes(q) || type.meta.toLocaleLowerCase("tr-TR").includes(q))
+      .slice(0, 60);
+  }, [labNewTypeSearch]);
 
   const syncTabInUrl = (nextTab: Tab) => {
     const params = new URLSearchParams(window.location.search);
@@ -603,6 +706,11 @@ function HastaDetayContent() {
     setTab(nextTab);
     syncTabInUrl(nextTab);
   };
+  const visibleTabKeys = new Set(visibleTabItems.map((item) => item.key));
+  const primaryTabs = PRIMARY_TAB_ORDER.filter((key) => visibleTabKeys.has(key));
+  const moreTabs = MORE_TAB_ORDER.filter((key) => visibleTabKeys.has(key));
+  const isMoreTabActive = moreTabs.includes(tab);
+  const tabLabel = (key: Tab) => TAB_SHORT_LABELS[key] || TAB_ITEMS.find((item) => item.key === key)?.label || key;
 
   const toBirthDateIso = (value?: string | null) => value ? new Date(value + "T00:00:00.000Z").toISOString() : null;
 
@@ -619,9 +727,12 @@ function HastaDetayContent() {
     if (!silent) setLoading(true);
     setLoadError("");
     try {
-      const [res, taskRes] = await Promise.all([
-        fetch("/api/patients/" + id),
-        fetch(`/api/clinic-tasks?patientId=${id}&take=200`),
+      const [res, taskRes, planRes] = await Promise.all([
+        fetch("/api/patients/" + id, { cache: "no-store" }),
+        fetch(`/api/clinic-tasks?patientId=${id}&take=200`, { cache: "no-store" }),
+        // Hasta detayında tedavi planları hiç görünmüyordu — hasta-detay ile
+        // tedavi-plani arasındaki zincir kopuktu (bkz. denetim raporu Tema 6/7).
+        fetch(`/api/treatment-plans?patientId=${id}&take=50`, { cache: "no-store" }),
       ]);
       if (!res.ok) {
         setData(null);
@@ -631,6 +742,7 @@ function HastaDetayContent() {
 
       const d = await res.json();
       const taskJson = await taskRes.json().catch(() => []);
+      const planJson = await planRes.json().catch(() => ({ items: [] }));
       const normalizedData: PatientDetailData = {
         ...d,
         appointments: Array.isArray(d?.appointments) ? d.appointments : [],
@@ -642,6 +754,7 @@ function HastaDetayContent() {
       };
       setData(normalizedData);
       setClinicTasks(Array.isArray(taskJson) ? taskJson : []);
+      setTreatmentPlans(Array.isArray(planJson?.items) ? planJson.items : []);
       // Sessiz (gerçek zamanlı) yenilemede duzenle formunu ezmiyoruz — kullanıcı o an
       // formu dolduruyor olabilir.
       if (!silent || tab !== "duzenle") {
@@ -671,7 +784,18 @@ function HastaDetayContent() {
   };
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { void load(); }, [id]);
+  useEffect(() => {
+    setTab("bilgi");
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get("tab") !== "bilgi") {
+        params.set("tab", "bilgi");
+        window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
+      }
+    }
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   // Başka bir personel bu hastaya ödeme/borç/randevu/tedavi kaydı eklediğinde
   // sayfayı sessizce (tam ekran yenileme olmadan) güncelle.
@@ -689,10 +813,20 @@ function HastaDetayContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  // Sekmeye geri dönüldüğünde (arka planda kaçırılmış olabilecek olayları) tazele.
   useEffect(() => {
-    if (!isValidTab(requestedTab)) return;
-    setTab(requestedTab);
-  }, [requestedTab]);
+    const refreshVisible = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void load(true);
+    };
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => {
+      window.removeEventListener("focus", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   // Laboratuvar gönderim formu otomatik taslak doldurma
   useEffect(() => {
@@ -754,9 +888,11 @@ function HastaDetayContent() {
 
   const openLabCreateModal = () => {
     setLabCreateError("");
+    const defaultDoctorId = doctorOptions[0]?.id || "";
+    const defaultLabName = knownLabs[0] || "";
     setLabNewForm({
-      doctorId: doctorOptions[0]?.id || "",
-      labName: knownLabs[0] || "",
+      doctorId: defaultDoctorId,
+      labName: defaultLabName,
       customLabName: "",
       labType: "",
       teeth: "",
@@ -765,6 +901,9 @@ function HastaDetayContent() {
       requestedItem: "",
       impressionMethod: "",
     });
+    setLabNewDoctorSearch(doctorOptions.find((d) => d.id === defaultDoctorId)?.fullName || "");
+    setLabNewLabSearch(defaultLabName);
+    setLabNewTypeSearch("");
     setLabCreateModalOpen(true);
   };
 
@@ -774,9 +913,15 @@ function HastaDetayContent() {
     setLabCreateError("");
   };
 
+  useEscapeClose(closeLabCreateModal, labCreateModalOpen);
+
   const createOrderFromPatientDetail = async () => {
-    const resolvedLabName = labNewForm.labName === "__new_lab__" ? labNewForm.customLabName.trim() : labNewForm.labName.trim();
+    const resolvedLabName = labNewForm.labName.trim();
     if (!id || !labNewForm.doctorId || !resolvedLabName || !labNewForm.labType.trim()) return;
+    if (!knownLabs.includes(resolvedLabName)) {
+      setLabCreateError("Laboratuvar önce Firma Kartları ekranında Laboratuvar olarak işaretlenmelidir.");
+      return;
+    }
 
     setLabCreateSaving(true);
     setLabCreateError("");
@@ -848,6 +993,8 @@ function HastaDetayContent() {
     setLabTripEditForm({ sentItem: "", requestedItem: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
     setEditingTripId(null);
   };
+
+  useEscapeClose(closeLabDetailModal, labDetailModalOpen);
 
   const createTripFromPatientDetail = async () => {
     if (!labOrderDetail || !labTripForm.sentItem.trim()) return;
@@ -971,14 +1118,15 @@ function HastaDetayContent() {
 
     fetch("/api/staff")
       .then(r => r.ok ? r.json() : [])
-      .then((list: StaffLite[]) => setDoctorOptions((list || []).filter(s => s.role === "DOKTOR" || s.role === "YONETICI")))
+      .then((list: StaffLite[]) => setDoctorOptions((list || []).filter(isEffectiveDoctor)))
       .catch(() => {});
 
-    fetch("/api/lab-orders")
+    fetch("/api/firma", { cache: "no-store" })
       .then(r => r.ok ? r.json() : [])
-      .then((list: Array<{ labName?: string }>) => {
-        const names = (Array.isArray(list) ? list : [])
-          .map((item) => (item?.labName || "").trim())
+      .then((rows: { name?: string; kategori?: string; isActive?: boolean }[]) => {
+        const names = (Array.isArray(rows) ? rows : [])
+          .filter((firma) => firma.kategori === "LAB" && firma.name)
+          .map((firma) => String(firma.name).trim())
           .filter(Boolean);
         setGlobalLabNames(Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, "tr")));
       })
@@ -1018,11 +1166,27 @@ function HastaDetayContent() {
     };
   }, [activePriceList, priceListSourceReady]);
 
+  const saveActivePriceList = async (next: "standard" | "custom") => {
+    setActivePriceList(next);
+    window.localStorage.setItem(ACTIVE_PRICE_LIST_STORAGE_KEY, next);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ activePriceList: next }),
+      });
+      if (!res.ok) throw new Error("settings");
+      showToast("success", next === "custom" ? "Özel fiyat listesi kullanılacak" : "TDB 2026 tarifesi kullanılacak");
+    } catch {
+      showToast("error", "Fiyat kaynağı kaydedilemedi");
+    }
+  };
+
   const addDirectToExaminationList = async (toothNo?: string) => {
     if (!treatDropdownId) return showToast("error", "Önce tedavi seçin");
     if (!treatDoctorId && !currentUserId) return showToast("error", "Önce doktor seçin");
 
-    const fallbackTreatmentPool = activePriceList === "custom" ? CUSTOM_DENTAL_TREATMENT_TEMPLATES : TDB_2026_CORE_PRICE_CATALOG;
+    const fallbackTreatmentPool = TDB_2026_CORE_PRICE_CATALOG;
     const selected = [...priceList, ...fallbackTreatmentPool].find(p => p.id === treatDropdownId);
     if (!selected) return showToast("error", "Geçerli bir tedavi seçin");
 
@@ -1053,6 +1217,43 @@ function HastaDetayContent() {
     if (toothNo) setTreatSelectedTeeth(prev => prev.includes(toothNo) ? prev : [...prev, toothNo]);
     showToast("success", toothNo ? `${toothNo} no'lu diş muayene listesine eklendi` : "Genel muayene listesine eklendi");
     void load();
+  };
+
+  const addTeethToExaminationList = async (_teeth: string[], label: string) => {
+    if (treatmentSaving) return;
+    if (!treatDropdownId) return showToast("error", "Önce tedavi seçin");
+    if (!treatDoctorId && !currentUserId) return showToast("error", "Önce doktor seçin");
+
+    const selected = [...priceList, ...TDB_2026_CORE_PRICE_CATALOG].find(p => p.id === treatDropdownId);
+    if (!selected) return showToast("error", "Geçerli bir tedavi seçin");
+
+    setTreatmentSaving(true);
+    try {
+      const res = await fetch("/api/examinations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patientId: id,
+          doctorId: treatDoctorId || currentUserId,
+          treatmentName: selected.treatment,
+          toothNo: label,
+          amount: treatCustomAmount ? Number(treatCustomAmount) : Number(selected.amount || 0),
+          status: "Diagnoz (Ön Teşhis)",
+          diagnosedAt: new Date().toISOString(),
+          note: newTreatmentNote || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || `${label} kaydı eklenemedi`);
+      }
+      showToast("success", `${label} için tek muayene kaydı eklendi`);
+      void load();
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Çene seçimi eklenemedi");
+    } finally {
+      setTreatmentSaving(false);
+    }
   };
 
   const addTreatment = async () => {
@@ -1095,16 +1296,22 @@ function HastaDetayContent() {
     const downPayment = Number(installmentForm.pesnat) || 0;
     const remaining = totalDebt - downPayment;
     const installmentCount = Number(installmentForm.taksitSayisi) || 1;
-    const perInstallment = remaining / installmentCount;
-    
+    // Kuruş küsuratı son taksite eklenir; aksi halde taksitlerin toplamı "remaining"i tutturamaz
+    // ve hasta hesabında asla kapanmayan bir kuruş bakiyesi kalır.
+    const perInstallment = Math.round((remaining / installmentCount) * 100) / 100;
+
     const daysMap: Record<string, number> = {HAFTALIK: 7, IKIHALFTALIK: 14, AYLIK: 30, IKIAYLIK: 60, UCAYLIK: 90, ALTIAYLIK: 180, YILLIK: 365};
     const daysDiff = daysMap[installmentForm.period] || 30;
     const startDate = new Date(installmentForm.startDate);
-    
+
     const preview = Array.from({length: installmentCount}, (_, i) => {
       const dueDate = new Date(startDate);
       dueDate.setDate(dueDate.getDate() + (i * daysDiff));
-      return {date: dueDate.toISOString().slice(0, 10), amount: perInstallment};
+      const isLast = i === installmentCount - 1;
+      const amount = isLast
+        ? Math.round((remaining - perInstallment * (installmentCount - 1)) * 100) / 100
+        : perInstallment;
+      return {date: dueDate.toISOString().slice(0, 10), amount};
     });
     setInstallmentPreview(preview);
   };
@@ -1176,29 +1383,14 @@ function HastaDetayContent() {
     }, 150);
   };
 
-  const TOOTH_CLR: Record<string, string> = {
-    saglikli:"#f7f0e0",cukur:"#fca5a5",dolgu:"#fef08a",cekilen:"#d1d5db",kaplik:"#bfdbfe",kanal:"#e9d5ff",eksik:"#f1f5f9"
-  };
-
   const buildToothChartHtml = (map: Record<string, string>): string => {
-    const upper = [18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28];
-    const lower = [48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38];
-    const cell = (n: number) => {
-      const s = map[String(n)];
-      const bg = s ? (TOOTH_CLR[s] || "#fff") : "#fff";
-      const line = s === "cekilen" ? "text-decoration:line-through;" : "";
-      return `<div class="t-cell" style="background:${bg};${line}">${n}</div>`;
-    };
-    const sep = `<div class="t-div"></div>`;
-    return `<div class="tooth-chart">
-      <div style="text-align:center;font-size:8.5px;font-weight:700;color:#1e3a5f;margin-bottom:3px;letter-spacing:0.5px">DİŞ ŞEMASI (FDI)</div>
-      <div class="tooth-row">${upper.slice(0,8).map(cell).join("")}${sep}${upper.slice(8).map(cell).join("")}</div>
-      <div style="height:4px;border-bottom:1px dashed #cbd5e1;margin:1px 14px"></div>
-      <div class="tooth-row">${lower.slice(0,8).map(cell).join("")}${sep}${lower.slice(8).map(cell).join("")}</div>
-      <div style="display:flex;justify-content:center;gap:10px;margin-top:5px;flex-wrap:wrap">
-        ${[["#fca5a5","Çürük"],["#fef08a","Dolgu"],["#bfdbfe","Kaplık"],["#e9d5ff","Kanal"],["#d1d5db","Çekilmiş"]].map(([c,l])=>`<span style="display:flex;align-items:center;gap:3px;font-size:7.5px;color:#64748b"><span style="width:9px;height:9px;background:${c};border:0.5px solid #cbd5e1;border-radius:1px;display:inline-block"></span>${l}</span>`).join("")}
-      </div>
-    </div>`;
+    const rows = Object.entries(map)
+      .filter(([, status]) => status && status !== "saglikli")
+      .sort(([a], [b]) => Number(a) - Number(b))
+      .map(([tooth, status]) => `<tr><td>${tooth}</td><td>${TOOTH_STATUS_LABELS[status as ToothStatus] || status}</td></tr>`)
+      .join("");
+
+    return `<table class="tooth-chart"><thead><tr><th>Diş No</th><th>Durum</th></tr></thead><tbody>${rows || `<tr><td colspan="2" style="text-align:center;color:#94a3b8">İşaretli diş kaydı yok</td></tr>`}</tbody></table>`;
   };
 
   const buildPatientBar = () => {
@@ -1215,7 +1407,7 @@ function HastaDetayContent() {
 
   const buildHeader = (docTitle: string, docType: string) => {
     return `<div class="header">
-      <div><div class="h-title">${clinicName || "KlinikModern"}</div><div class="h-sub">Diş Sağlığı Merkezi</div></div>
+      <div><div class="h-title">${clinicName || "Klinik"}</div><div class="h-sub">Diş Sağlığı Merkezi</div></div>
       <div class="h-right"><div style="font-size:12px;font-weight:700;letter-spacing:1px">${docType}</div><div style="font-size:9px;opacity:0.8">${new Date().toLocaleDateString("tr-TR")}</div></div>
     </div>`;
   };
@@ -1321,7 +1513,7 @@ function HastaDetayContent() {
 
   const bulkConvertDiagnozlar = async () => {
     if (selectedDiagnozIds.length === 0) return;
-    if (!window.confirm(`${selectedDiagnozIds.length} muayene kaydı tedaviye aktarılsın mı?`)) return;
+    if (!(await confirmDialog(`${selectedDiagnozIds.length} muayene kaydı tedaviye aktarılsın mı?`))) return;
     setBulkConverting(true);
     const examList = (data?.examinations || []).filter(e => isDiagnosisStatus(e.status));
     let errCount = 0;
@@ -1358,8 +1550,36 @@ function HastaDetayContent() {
     void load();
   };
 
+  const bulkDeleteDiagnozlar = async () => {
+    if (selectedDiagnozIds.length === 0) return;
+    const selectedCount = selectedDiagnozIds.length;
+    if (!(await confirmDialog({
+      message: `${selectedCount} bekleyen tedavi kaydı silinsin mi? Bu işlem geri alınamaz.`,
+      danger: true,
+      confirmText: "Sil",
+    }))) return;
+
+    setBulkDeleting(true);
+    let errCount = 0;
+    for (const eId of selectedDiagnozIds) {
+      const res = await fetch("/api/examinations/" + eId, { method: "DELETE" });
+      if (!res.ok) errCount++;
+    }
+    setBulkDeleting(false);
+    if (errCount > 0) showToast("error", `${errCount} kayıt silinemedi`);
+    else showToast("success", `${selectedCount} kayıt silindi`);
+    const deletedIds = [...selectedDiagnozIds];
+    setSelectedDiagnozIds([]);
+    setExamInlineEdits(prev => { const n = {...prev}; deletedIds.forEach(id => delete n[id]); return n; });
+    void load();
+  };
+
   const deleteExamRecord = async (examId: string, asTreatment = false) => {
-    const ok = window.confirm(asTreatment ? "Tedavi kaydı silinsin mi?" : "Muayene kaydı silinsin mi?");
+    const ok = await confirmDialog({
+      message: asTreatment ? "Tedavi kaydı silinsin mi?" : "Muayene kaydı silinsin mi?",
+      danger: true,
+      confirmText: "Sil",
+    });
     if (!ok) return;
 
     const res = await fetch("/api/examinations/" + examId, { method: "DELETE" });
@@ -1424,26 +1644,43 @@ function HastaDetayContent() {
     `);
   };
 
+  const startEditPayment = (p: { id: string; createdAt: string; method: string; description?: string | null; amount: string | number; doctorId?: string | null; posId?: string | null }) => {
+    setEditingPaymentId(p.id);
+    setPayAmount(String(Number(p.amount)));
+    setPayMethod(p.method);
+    setPayDesc(p.description || "");
+    setPayPosId(p.posId || "");
+    setPayDoctorId(p.doctorId || "");
+    setPayDate(new Date(p.createdAt).toISOString().slice(0, 10));
+    setPaymentModalOpen(true);
+  };
+
   const addPayment = async () => {
     const amount = Number(payAmount);
     if (!Number.isFinite(amount) || amount <= 0) return showToast("error", "Geçerli bir tutar girin");
     if (!payDoctorId) return showToast("error", "Lütfen bir doktor seçin");
+    if ((payMethod === "KREDI_KARTI" || payMethod === "MAIL_ORDER") && !payPosId) {
+      return showToast("error", "Kart / mail order tahsilatı için POS seçimi zorunlu");
+    }
     setPayLoading(true);
-    const res = await fetch("/api/payments", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ patientId: id, method: payMethod, amount, description: payDesc, doctorId: payDoctorId, ...(payPosId && { posId: payPosId }) })
-    });
+    const res = editingPaymentId
+      ? await fetch("/api/payments/" + editingPaymentId, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ method: payMethod, amount, description: payDesc, doctorId: payDoctorId, posId: payPosId || null, createdAt: new Date(payDate + "T00:00:00").toISOString() })
+        })
+      : await fetch("/api/payments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ patientId: id, method: payMethod, amount, description: payDesc, doctorId: payDoctorId, ...(payPosId && { posId: payPosId }) })
+        });
     if (res.ok) {
-      setPayAmount("");
-      setPayDesc("");
-      setPayPosId("");
-      setPayDoctorId("");
-      showToast("success", "Ödeme kaydedildi");
+      showToast("success", editingPaymentId ? "Ödeme güncellendi" : "Ödeme kaydedildi");
+      closePaymentModal();
       void load();
     } else {
       const err = await res.json().catch(() => ({}));
-      showToast("error", err.message || "Ödeme kaydedilemedi");
+      showToast("error", err.message || (editingPaymentId ? "Ödeme güncellenemedi" : "Ödeme kaydedilemedi"));
     }
     setPayLoading(false);
   };
@@ -1520,7 +1757,7 @@ function HastaDetayContent() {
   };
 
   const deleteClinicTask = async (taskId: string) => {
-    if (!window.confirm("Görev silinsin mi?")) return;
+    if (!(await confirmDialog({ message: "Görev silinsin mi?", danger: true, confirmText: "Sil" }))) return;
     setTaskBusyId(taskId);
     const res = await fetch("/api/clinic-tasks/" + taskId, { method: "DELETE" });
     setTaskBusyId("");
@@ -1572,7 +1809,7 @@ function HastaDetayContent() {
   };
 
   const deleteRecete = async (rxId: string) => {
-    if (!window.confirm("Reçete silinsin mi?")) return;
+    if (!(await confirmDialog({ message: "Reçete silinsin mi?", danger: true, confirmText: "Sil" }))) return;
     const res = await fetch("/api/prescriptions/" + rxId, { method: "DELETE" });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -1581,6 +1818,97 @@ function HastaDetayContent() {
     showToast("success", "Reçete silindi");
     void load();
   };
+
+  const loadDocuments = async () => {
+    if (!id) return;
+    setDocumentsLoading(true);
+    try {
+      const res = await fetch(`/api/documents?patientId=${id}`, { cache: "no-store" });
+      if (!res.ok) {
+        showToast("error", "Belgeler/röntgenler yüklenemedi. Lütfen tekrar deneyin.");
+        setDocuments([]);
+        return;
+      }
+      const json = await res.json().catch(() => []);
+      setDocuments(Array.isArray(json) ? json : []);
+    } catch {
+      setDocuments([]);
+    } finally {
+      setDocumentsLoading(false);
+      setDocumentsLoaded(true);
+    }
+  };
+
+  const uploadDocument = async (file: File) => {
+    if (!id) return;
+    setDocUploadError("");
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+    if (!allowedTypes.includes(file.type)) {
+      const message = "Yalnızca JPG, PNG, WEBP veya PDF dosyası yüklenebilir.";
+      setDocUploadError(message);
+      return showToast("error", message);
+    }
+    if (file.size > 15 * 1024 * 1024) {
+      const message = "Dosya boyutu en fazla 15MB olabilir.";
+      setDocUploadError(message);
+      return showToast("error", message);
+    }
+    setDocUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("patientId", id);
+      formData.append("category", docCategory);
+      if (docToothNo.trim()) formData.append("toothNo", docToothNo.trim());
+      if (docNote.trim()) formData.append("note", docNote.trim());
+      formData.append("file", file);
+
+      const res = await fetch("/api/documents", { method: "POST", body: formData });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const message = json?.error || "Belge yüklenemedi";
+        setDocUploadError(message);
+        showToast("error", message);
+        return;
+      }
+      setDocuments((prev) => [json as PatientDocument, ...prev]);
+      setDocToothNo("");
+      setDocNote("");
+      showToast("success", "Belge yüklendi");
+      void loadDocuments();
+    } catch {
+      const message = "Belge yüklenirken bağlantı hatası oluştu";
+      setDocUploadError(message);
+      showToast("error", message);
+    } finally {
+      setDocUploading(false);
+    }
+  };
+
+  const deleteDocument = async (docId: string) => {
+    if (!(await confirmDialog({ message: "Bu belge silinsin mi? Bu işlem geri alınamaz.", danger: true, confirmText: "Sil" }))) return;
+    const res = await fetch(`/api/documents/${docId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast("error", err?.error || "Belge silinemedi");
+      return;
+    }
+    setDocuments((prev) => prev.filter((d) => d.id !== docId));
+    showToast("success", "Belge silindi");
+  };
+
+  useEffect(() => {
+    if (tab === "belgeler" && !documentsLoaded) void loadDocuments();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, id]);
+
+  useEffect(() => {
+    const onRealtime = () => {
+      if (tab === "belgeler") void loadDocuments();
+    };
+    window.addEventListener("ks:realtime-sync", onRealtime);
+    return () => window.removeEventListener("ks:realtime-sync", onRealtime);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, id]);
 
   const saveToothChart = async () => {
     setToothSaving(true);
@@ -1625,6 +1953,364 @@ function HastaDetayContent() {
     ["Alerji", data.hasAllergy], ["Hepatit", data.hasHepatitis], ["Böbrek", data.hasKidney],
     ["Diyabet", data.hasDiabetes], ["Kalp", data.hasHeart], ["Kan Sorunu", data.hasBloodIssue]
   ] as [string, boolean][]).filter(([, v]) => v);
+  const canOpenTab = (key: Tab) => visibleTabItems.some((item) => item.key === key);
+  const now = Date.now();
+  const upcomingAppointments = data.appointments
+    .filter((a) => new Date(a.startAt).getTime() >= now && !["IPTAL", "TAMAMLANDI"].includes(a.status))
+    .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
+  const activeLabs = data.labOrders.filter((l) => l.status !== "TAMAMLANDI");
+  const activeTasks = clinicTasks.filter((task) => !["TAMAMLANDI", "IPTAL"].includes(task.status));
+  const unpaidInstallmentCount = data.taksitPlanlari.reduce((sum, plan) => (
+    sum + (plan.taksitler || []).filter((item) => toNumber(item.kalan) > 0 || ["BEKLIYOR", "GECIKTI"].includes(item.status)).length
+  ), 0);
+  const criticalActionItems: {
+    id: string;
+    title: string;
+    detail: string;
+    tone: string;
+    action: string;
+    onClick: () => void;
+  }[] = [
+    ...(healthFlags.length > 0 ? [{
+      id: "health",
+      title: "Sağlık uyarısı var",
+      detail: healthFlags.map(([label]) => label).join(", "),
+      tone: "border-red-100 bg-red-50 text-red-700",
+      action: canOpenTab("duzenle") ? "Düzenle" : "Kontrol Et",
+      onClick: () => canOpenTab("duzenle") ? selectTab("duzenle") : selectTab("bilgi"),
+    }] : []),
+    ...(totalDebt > 0 ? [{
+      id: "debt",
+      title: "Tahsilat bekliyor",
+      detail: `Kalan bakiye ${totalDebt.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} TL`,
+      tone: "border-amber-100 bg-amber-50 text-amber-700",
+      action: "Ödeme Al",
+      onClick: () => setPaymentModalOpen(true),
+    }] : []),
+    ...(upcomingAppointments[0] ? [{
+      id: "next-appointment",
+      title: "Sıradaki randevu",
+      detail: `${new Date(upcomingAppointments[0].startAt).toLocaleString("tr-TR")} · ${upcomingAppointments[0].doctor?.fullName || "Doktor belirtilmedi"}`,
+      tone: "border-blue-100 bg-blue-50 text-blue-700",
+      action: "Randevular",
+      onClick: () => selectTab("randevular"),
+    }] : []),
+    ...(activeLabs.length > 0 && canOpenTab("lab") ? [{
+      id: "lab",
+      title: `${activeLabs.length} açık laboratuvar işi`,
+      detail: activeLabs.slice(0, 2).map((l) => `${l.labType}${l.labName ? ` · ${l.labName}` : ""}`).join(" / "),
+      tone: "border-violet-100 bg-violet-50 text-violet-700",
+      action: "Lab Aç",
+      onClick: () => selectTab("lab"),
+    }] : []),
+    ...(diagnozlar.length > 0 && canOpenTab("tedavi") ? [{
+      id: "diagnosis",
+      title: `${diagnozlar.length} tedavi bekleyen kayıt`,
+      detail: "Muayene listesinden tedaviye aktarılabilir.",
+      tone: "border-emerald-100 bg-emerald-50 text-emerald-700",
+      action: "Tedavi",
+      onClick: () => selectTab("tedavi"),
+    }] : []),
+    ...(activeTasks.length > 0 && canOpenTab("gorevler") ? [{
+      id: "task",
+      title: `${activeTasks.length} açık görev`,
+      detail: activeTasks[0]?.title || "Hasta için takip gerektiren görev var.",
+      tone: "border-indigo-100 bg-indigo-50 text-indigo-700",
+      action: "Görevler",
+      onClick: () => selectTab("gorevler"),
+    }] : []),
+    ...(unpaidInstallmentCount > 0 && canOpenTab("odeme") ? [{
+      id: "installment",
+      title: `${unpaidInstallmentCount} bekleyen taksit`,
+      detail: "Ödeme planı kontrol edilmeli.",
+      tone: "border-slate-200 bg-slate-50 text-slate-700",
+      action: "Finans",
+      onClick: () => selectTab("odeme"),
+    }] : []),
+  ].slice(0, 6);
+
+  const exportSelectedKeys = PATIENT_EXPORT_SECTIONS.filter((section) => exportSelection[section.key]).map((section) => section.key);
+  const escapeExcelCell = (value: unknown) => String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+  const dateText = (value: unknown) => value ? new Date(String(value)).toLocaleDateString("tr-TR") : "-";
+  const dateTimeText = (value: unknown) => value ? new Date(String(value)).toLocaleString("tr-TR") : "-";
+  const moneyText = (value: unknown) => `${Number(value || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL`;
+  const safeFilePart = (value: string) => value.trim().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "hasta";
+
+  const buildPatientExportSections = (patient: Record<string, any>) => {
+    const exams = Array.isArray(patient.examinations) ? patient.examinations : [];
+    const completed = exams.filter((e) => isChargeableTreatment(e.status));
+    const plannedFromExams = exams.filter((e) => isDiagnosisStatus(e.status));
+    const plans = Array.isArray(patient.treatmentPlans) ? patient.treatmentPlans : [];
+    const plannedFromPlans = plans.flatMap((plan) =>
+      (Array.isArray(plan.steps) ? plan.steps : [])
+        .filter((step: Record<string, any>) => !["TAMAMLANDI", "IPTAL"].includes(String(step.status || "")))
+        .map((step: Record<string, any>) => ({
+          source: plan.title || "Tedavi Planı",
+          date: step.doneAt || plan.createdAt,
+          treatmentName: step.treatmentName,
+          toothNo: step.toothNo,
+          amount: step.amount,
+          status: step.status || plan.status,
+          doctor: plan.doctor,
+          note: step.note || plan.notes,
+        }))
+    );
+    const health = [
+      patient.hasAllergy && "Alerji",
+      patient.hasHepatitis && "Hepatit",
+      patient.hasKidney && "Böbrek",
+      patient.hasDiabetes && "Diyabet",
+      patient.hasHeart && "Kalp",
+      patient.hasBloodIssue && "Kan Sorunu",
+    ].filter(Boolean).join(", ") || "Aktif uyarı yok";
+
+    return {
+      profile: {
+        title: "Hasta Bilgileri",
+        headers: ["Alan", "Değer"],
+        rows: [
+          ["Ad Soyad", patient.fullName],
+          ["TC Kimlik", patient.tcNo],
+          ["Telefon", patient.phone],
+          ["Cinsiyet", patient.gender || "-"],
+          ["Doğum Tarihi", patient.birthDate ? dateText(patient.birthDate) : "-"],
+          ["Kurum / Sigorta", patient.insurance || "-"],
+          ["İndirim", `%${patient.discountRate || 0}`],
+          ["Sağlık Uyarıları", health],
+          ["Kullandığı İlaçlar", patient.medications || "-"],
+          ["Geçirdiği İşlemler", patient.surgeries || "-"],
+          ["Diğer Hastalıklar", patient.otherDiseases || "-"],
+        ],
+      },
+      completedTreatments: {
+        title: "Yapılan Tedaviler",
+        headers: exportHideDoctor ? ["Tarih", "Tedavi", "Diş", "Tutar", "Durum"] : ["Tarih", "Tedavi", "Diş", "Tutar", "Hekim", "Durum"],
+        rows: completed.map((e: Record<string, any>) => [
+          dateText(e.diagnosedAt),
+          e.treatmentName || "-",
+          e.toothNo || "-",
+          moneyText(e.amount),
+          ...(exportHideDoctor ? [] : [e.doctor?.fullName || "-"]),
+          e.status || "-",
+        ]),
+      },
+      plannedTreatments: {
+        title: "Yapılacak / Planlanan Tedaviler",
+        headers: exportHideDoctor ? ["Kaynak", "Tarih", "Tedavi", "Diş", "Tutar", "Durum"] : ["Kaynak", "Tarih", "Tedavi", "Diş", "Tutar", "Hekim", "Durum"],
+        rows: [
+          ...plannedFromExams.map((e: Record<string, any>) => [
+            "Muayene Listesi",
+            dateText(e.diagnosedAt),
+            e.treatmentName || "-",
+            e.toothNo || "-",
+            moneyText(e.amount),
+            ...(exportHideDoctor ? [] : [e.doctor?.fullName || "-"]),
+            e.status || "-",
+          ]),
+          ...plannedFromPlans.map((e: Record<string, any>) => [
+            e.source || "Tedavi Planı",
+            dateText(e.date),
+            e.treatmentName || "-",
+            e.toothNo || "-",
+            moneyText(e.amount),
+            ...(exportHideDoctor ? [] : [e.doctor?.fullName || "-"]),
+            e.status || "-",
+          ]),
+        ],
+      },
+      payments: {
+        title: "Ödemeler",
+        headers: exportHideDoctor ? ["Tarih", "Tutar", "Yöntem", "POS", "Açıklama"] : ["Tarih", "Tutar", "Yöntem", "POS", "Hekim", "Açıklama"],
+        rows: (Array.isArray(patient.payments) ? patient.payments : []).map((p: Record<string, any>) => [
+          dateTimeText(p.createdAt),
+          moneyText(p.amount),
+          String(p.method || "-").replace(/_/g, " "),
+          p.pos?.name || "-",
+          ...(exportHideDoctor ? [] : [p.doctor?.fullName || "-"]),
+          p.description || "-",
+        ]),
+      },
+      balance: {
+        title: "Kalan Ödeme Özeti",
+        headers: ["Alan", "Tutar"],
+        rows: [
+          ["Brüt tedavi toplamı", moneyText(totalCharged)],
+          ["İndirim oranı", `%${Number(patient.discountRate || 0)}`],
+          ["İndirimli tedavi toplamı", moneyText(discountedTotal)],
+          ["Ödenen toplam", moneyText(totalPaid)],
+          ["Kalan ödeme", moneyText(totalDebt)],
+        ],
+      },
+      appointments: {
+        title: "Randevular",
+        headers: exportHideDoctor ? ["Başlangıç", "Bitiş", "Tip", "Durum", "Not"] : ["Başlangıç", "Bitiş", "Hekim", "Tip", "Durum", "Not"],
+        rows: (Array.isArray(patient.appointments) ? patient.appointments : []).map((a: Record<string, any>) => [
+          dateTimeText(a.startAt),
+          dateTimeText(a.endAt),
+          ...(exportHideDoctor ? [] : [a.doctor?.fullName || "-"]),
+          a.type || "-",
+          APPOINTMENT_STATUS_LABELS[a.status || ""] || a.status || "-",
+          a.note || "-",
+        ]),
+      },
+      labOrders: {
+        title: "Laboratuvar Kayıtları",
+        headers: exportHideDoctor ? ["Tarih", "Laboratuvar", "Firma", "İş", "Diş", "Durum", "Fatura", "Tutar"] : ["Tarih", "Laboratuvar", "Firma", "İş", "Diş", "Durum", "Fatura", "Tutar", "Hekim"],
+        rows: (Array.isArray(patient.labOrders) ? patient.labOrders : []).map((l: Record<string, any>) => [
+          dateText(l.createdAt),
+          l.labName || "-",
+          l.firma?.name || "-",
+          l.labType || "-",
+          l.teeth || "-",
+          String(l.status || "-").replace(/_/g, " "),
+          l.invoiceNo || (Array.isArray(l.invoices) && l.invoices[0]?.invoiceNo) || "-",
+          moneyText(l.price || (Array.isArray(l.invoices) ? l.invoices.reduce((sum: number, inv: Record<string, any>) => sum + Number(inv.amount || 0), 0) : 0)),
+          ...(exportHideDoctor ? [] : [l.doctor?.fullName || "-"]),
+        ]),
+      },
+      prescriptions: {
+        title: "Reçeteler",
+        headers: exportHideDoctor ? ["Tarih", "İlaçlar", "Not"] : ["Tarih", "Hekim", "İlaçlar", "Not"],
+        rows: (Array.isArray(patient.prescriptions) ? patient.prescriptions : []).map((rx: Record<string, any>) => [
+          dateText(rx.createdAt),
+          ...(exportHideDoctor ? [] : [rx.doctor?.fullName || "-"]),
+          rx.drugs || "-",
+          rx.note || "-",
+        ]),
+      },
+      documents: {
+        title: "Belgeler ve Onamlar",
+        headers: ["Tarih", "Tür", "Başlık / Dosya", "Durum", "Not"],
+        rows: [
+          ...(Array.isArray(patient.documents) ? patient.documents : []).map((doc: Record<string, any>) => [
+            dateText(doc.createdAt),
+            doc.category || "Belge",
+            doc.fileName || "-",
+            doc.toothNo ? `Diş ${doc.toothNo}` : "-",
+            doc.note || "-",
+          ]),
+          ...(Array.isArray(patient.consents) ? patient.consents : []).map((consent: Record<string, any>) => [
+            dateText(consent.signedAt),
+            "Onam",
+            consent.title || "-",
+            consent.status || "-",
+            consent.voidReason || consent.signerName || "-",
+          ]),
+        ],
+      },
+      notes: {
+        title: "Hasta Notları",
+        headers: ["Not"],
+        rows: patient.notes ? [[patient.notes]] : [],
+      },
+    } satisfies Record<PatientExportSection, { title: string; headers: string[]; rows: (string | number)[][] }>;
+  };
+
+  const downloadPatientExportExcel = (sections: ReturnType<typeof buildPatientExportSections>, keys: PatientExportSection[], fileName: string) => {
+    const tables = keys.map((key) => {
+      const section = sections[key];
+      return `
+        <h2>${escapeExcelCell(section.title)}</h2>
+        <table>
+          <thead><tr>${section.headers.map((header) => `<th>${escapeExcelCell(header)}</th>`).join("")}</tr></thead>
+          <tbody>${
+            section.rows.length
+              ? section.rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeExcelCell(cell)}</td>`).join("")}</tr>`).join("")
+              : `<tr><td colspan="${section.headers.length}">Kayıt yok</td></tr>`
+          }</tbody>
+        </table>`;
+    }).join("<br/>");
+    const html = `
+      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
+      <head><meta charset="UTF-8" />
+      <style>
+        body{font-family:Arial,sans-serif;color:#111827;background:#fff}
+        .cover{border:1px solid #cbd5e1;padding:14px;margin-bottom:14px}
+        .brand{font-size:10pt;color:#475569;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+        h1{font-size:20pt;margin:4px 0 6px;color:#0f172a}
+        h2{font-size:13pt;margin:16px 0 6px;color:#0f172a}
+        .meta{font-size:9pt;color:#64748b;margin-bottom:4px}
+        .pill{display:inline-block;border:1px solid #cbd5e1;background:#f8fafc;padding:4px 8px;margin:4px 6px 0 0;font-size:9pt}
+        table{border-collapse:collapse;width:100%;font-size:10pt;margin-bottom:10px}
+        th{background:#0f172a;color:#fff;text-align:left;padding:8px;border:1px solid #334155}
+        td{padding:7px;border:1px solid #cbd5e1;mso-number-format:"\\@";vertical-align:top}
+        tr:nth-child(even) td{background:#f8fafc}
+      </style></head>
+      <body>
+        <div class="cover">
+          <div class="brand">${escapeExcelCell(clinicName || "Klinik")}</div>
+          <h1>Hasta Dışa Aktarım Raporu</h1>
+          <div class="meta">${escapeExcelCell(data.fullName)} · TC: ${escapeExcelCell(data.tcNo)} · ${escapeExcelCell(new Date().toLocaleString("tr-TR"))}</div>
+          <span class="pill">Format: Excel</span>
+          <span class="pill">Bölüm: ${keys.length}</span>
+          <span class="pill">Doktor bilgisi: ${exportHideDoctor ? "Gizli" : "Görünür"}</span>
+        </div>
+        ${tables}
+      </body></html>`;
+    const blob = new Blob(["\uFEFF" + html], { type: "application/vnd.ms-excel;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${fileName}.xls`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const downloadPatientExportPdf = (sections: ReturnType<typeof buildPatientExportSections>, keys: PatientExportSection[], fileName: string) => {
+    const doc = createPdfDoc("l");
+    doc.setFillColor(15, 23, 42);
+    doc.rect(0, 0, 297, 24, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(16);
+    doc.text("Hasta Dışa Aktarım Raporu", 14, 13);
+    doc.setFontSize(9);
+    doc.text(`${clinicName || "Klinik"} · ${data.fullName} · ${new Date().toLocaleString("tr-TR")}`, 14, 20);
+    doc.setTextColor(17, 24, 39);
+    doc.setFontSize(9);
+    doc.text(`TC: ${data.tcNo}   Bölüm: ${keys.length}   Doktor bilgisi: ${exportHideDoctor ? "Gizli" : "Görünür"}`, 14, 31);
+    let y = 40;
+    keys.forEach((key) => {
+      if (y > 175) {
+        doc.addPage();
+        addPdfTitle(doc, "Hasta Dışa Aktarım Raporu", `${data.fullName} · Devam`);
+        y = 30;
+      }
+      const section = sections[key];
+      y = addPdfSection(doc, y, section.title, section.headers, section.rows);
+    });
+    doc.save(`${fileName}.pdf`);
+  };
+
+  const runPatientExport = async () => {
+    const keys = exportSelectedKeys;
+    if (keys.length === 0) {
+      showToast("error", "Dışa aktarmak için en az bir bölüm seçin.");
+      return;
+    }
+    setExportBusy(true);
+    try {
+      const res = await fetch(`/api/patients/${data.id}/export`, { cache: "no-store" });
+      if (!res.ok) {
+        showToast("error", "Hasta verileri dışa aktarılamadı.");
+        return;
+      }
+      const payload = await res.json();
+      const patient = payload?.patient || data;
+      const sections = buildPatientExportSections(patient);
+      const fileName = `hasta-raporu-${safeFilePart(data.fullName)}-${new Date().toISOString().slice(0, 10)}`;
+      if (exportFormat === "pdf") downloadPatientExportPdf(sections, keys, fileName);
+      else downloadPatientExportExcel(sections, keys, fileName);
+      setExportModalOpen(false);
+      showToast("success", "Dışa aktarım hazırlandı.");
+    } catch {
+      showToast("error", "Dışa aktarım sırasında hata oluştu.");
+    } finally {
+      setExportBusy(false);
+    }
+  };
 
   return (
     <section className="space-y-4">
@@ -1637,90 +2323,218 @@ function HastaDetayContent() {
         </div>
       )}
 
-      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+      <div className="rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-base font-bold text-white">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-base font-bold text-white">
             {data.fullName.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase()}
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="truncate text-xl font-black text-slate-900">{data.fullName}</h2>
-            <p className="text-sm text-slate-500">TC: {data.tcNo}{(currentUserRole !== "DOKTOR" && currentUserRole !== "ASISTAN") ? ` · ${data.phone}` : ""}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="truncate text-lg font-black text-slate-900">{data.fullName}</h2>
+              {healthFlags.length > 0 && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-700">Sağlık uyarısı</span>}
+              {totalDebt > 0 && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700">Kalan {totalDebt.toLocaleString("tr-TR", { maximumFractionDigits: 0 })} TL</span>}
+            </div>
+            <p className="mt-0.5 text-xs text-slate-500">TC: {data.tcNo}{(currentUserRole !== "DOKTOR" && currentUserRole !== "ASISTAN") ? ` · ${data.phone}` : ""}</p>
           </div>
         </div>
 
-        <Link href="/hasta" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">Hasta Listesi</Link>
+        <div className="flex items-center gap-2">
+          <details className="relative">
+            <summary className="cursor-pointer list-none rounded-xl bg-slate-950 px-3 py-2 text-sm font-bold text-white transition hover:bg-slate-800">
+              + İşlem
+            </summary>
+            <div className="absolute right-0 z-30 mt-2 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+              {canOpenTab("tedavi") && <button onClick={() => selectTab("tedavi")} className="block w-full px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">Tedavi Ekle</button>}
+              <button onClick={() => setPaymentModalOpen(true)} className="block w-full px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">Ödeme Al</button>
+              {canOpenTab("lab") && <button onClick={openLabCreateModal} className="block w-full px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">Lab İşi</button>}
+              {canOpenTab("recete") && <button onClick={() => selectTab("recete")} className="block w-full px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">Reçete</button>}
+              <button onClick={() => selectTab("bilgi")} className="block w-full px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50">Not Ekle</button>
+            </div>
+          </details>
+          <button
+            type="button"
+            onClick={() => setExportModalOpen(true)}
+            title="Hasta dosyasını seçili içeriklerle PDF veya Excel olarak dışa aktar"
+            className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+          >
+            Dışa Aktar
+          </button>
+          <Link href="/hasta" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">Liste</Link>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-          <button onClick={() => selectTab("randevular")} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left hover:bg-white hover:shadow-sm">
-            <p className="text-xs font-bold uppercase text-slate-500">Randevu</p>
-            <p className="mt-1 text-lg font-black text-slate-900">{data.appointments.length}</p>
+        </div>
+        <div className="mt-3 grid gap-2 border-t border-slate-100 pt-3 sm:grid-cols-4">
+          <button onClick={() => canOpenTab("randevular") && selectTab("randevular")} className="rounded-lg bg-slate-50 px-3 py-2 text-left text-xs text-slate-500 hover:bg-slate-100">
+            <span className="block font-bold uppercase">Randevu</span><span className="text-sm font-black text-slate-900">{data.appointments.length}</span>
           </button>
-          <button onClick={() => selectTab("tedavi")} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left hover:bg-white hover:shadow-sm">
-            <p className="text-xs font-bold uppercase text-slate-500">Tedavi</p>
-            <p className="mt-1 text-lg font-black text-slate-900">{tedaviler.length}</p>
+          <button onClick={() => canOpenTab("tedavi") && selectTab("tedavi")} className="rounded-lg bg-slate-50 px-3 py-2 text-left text-xs text-slate-500 hover:bg-slate-100">
+            <span className="block font-bold uppercase">Tedavi</span><span className="text-sm font-black text-slate-900">{tedaviler.length}</span>
           </button>
-          <button onClick={() => selectTab("odeme")} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2 text-left hover:bg-white hover:shadow-sm">
-            <p className="text-xs font-bold uppercase text-slate-500">Ödenen</p>
-            <p className="mt-1 text-lg font-black text-emerald-700">{totalPaid.toFixed(0)} TL</p>
+          <button onClick={() => canOpenTab("odeme") && selectTab("odeme")} className="rounded-lg bg-slate-50 px-3 py-2 text-left text-xs text-slate-500 hover:bg-slate-100">
+            <span className="block font-bold uppercase">Ödenen</span><span className="text-sm font-black text-emerald-700">{totalPaid.toLocaleString("tr-TR", { maximumFractionDigits: 0 })} TL</span>
           </button>
-          <button onClick={() => selectTab("odeme")} className={`rounded-xl border px-3 py-2 text-left hover:bg-white hover:shadow-sm ${totalDebt > 0 ? "border-red-100 bg-red-50" : "border-emerald-100 bg-emerald-50"}`}>
-            <p className="text-xs font-bold uppercase text-slate-500">Kalan</p>
-            <p className={`mt-1 text-lg font-black ${totalDebt > 0 ? "text-red-700" : "text-emerald-700"}`}>{totalDebt.toFixed(0)} TL</p>
+          <button onClick={() => canOpenTab("odeme") && selectTab("odeme")} className="rounded-lg bg-slate-50 px-3 py-2 text-left text-xs text-slate-500 hover:bg-slate-100">
+            <span className="block font-bold uppercase">Kalan</span><span className={`text-sm font-black ${totalDebt > 0 ? "text-red-700" : "text-emerald-700"}`}>{totalDebt.toLocaleString("tr-TR", { maximumFractionDigits: 0 })} TL</span>
           </button>
         </div>
       </div>
 
-      <div className="sticky top-0 z-20 flex gap-1 overflow-x-auto rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
-        {visibleTabItems.map(t => (
-          <button key={t.key} onClick={() => selectTab(t.key)}
-            className={"shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors " + (tab === t.key ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900")}>
-            {t.label}
-          </button>
-        ))}
+      <div className="sticky top-0 z-20 flex items-center justify-between gap-2 rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
+        <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+          {primaryTabs.map((tabKey) => (
+            <button
+              key={tabKey}
+              type="button"
+              onClick={() => selectTab(tabKey)}
+              className={"shrink-0 rounded-xl px-4 py-2 text-sm font-black transition-colors " + (tab === tabKey ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900")}
+            >
+              {tabLabel(tabKey)}
+            </button>
+          ))}
+        </div>
+        {moreTabs.length > 0 && (
+          <details ref={moreMenuRef} className="relative shrink-0">
+            <summary className={"cursor-pointer list-none rounded-xl px-4 py-2 text-sm font-black transition-colors " + (isMoreTabActive ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900")}>
+              Diğer
+            </summary>
+            <div className="absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+              {moreTabs.map((tabKey) => (
+                <button
+                  key={tabKey}
+                  type="button"
+                  onClick={() => {
+                    selectTab(tabKey);
+                    if (moreMenuRef.current) moreMenuRef.current.open = false;
+                  }}
+                  className={"block w-full px-3 py-2 text-left text-sm font-semibold transition-colors " + (tab === tabKey ? "bg-slate-50 text-slate-950" : "text-slate-700 hover:bg-slate-50")}
+                >
+                  {tabLabel(tabKey)}
+                </button>
+              ))}
+            </div>
+          </details>
+        )}
       </div>
 
       {tab === "bilgi" && (
-        <div className="grid gap-4 md:grid-cols-2">
-          <div className="rounded-lg border bg-white p-4">
-            <h3 className="mb-3 font-semibold text-gray-700">Hasta Bilgileri</h3>
-            <table className="w-full text-sm">
-              <tbody>
-                {[["Ad Soyad",data.fullName],["TC No",data.tcNo],...(currentUserRole !== "DOKTOR" && currentUserRole !== "ASISTAN" ? [["Telefon",data.phone]] : []),["Cinsiyet",data.gender==="ERKEK"||data.gender==="Erkek"?"Erkek":"Kadın"],["Doğum Tarihi",data.birthDate?new Date(data.birthDate).toLocaleDateString("tr-TR"):"-"],["Anlaşmalı Kurum",data.insurance||"-"],["Referans Eden",(data.referrer || "-")],["İndirim","%"+data.discountRate],["Adres",data.address||"-"],["Kan Grubu",(data as any).bloodType||"-"]].map(([lbl,val])=>(
-                  <tr key={lbl} className="border-b">
-                    <td className="py-1.5 pr-4 text-gray-500 font-medium whitespace-nowrap">{lbl}:</td>
-                    <td className="py-1.5">{val}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="space-y-3">
-            <div className="rounded-lg border bg-white p-4">
-              <h3 className="mb-3 font-semibold text-gray-700">Sağlık Bilgileri</h3>
-              <div className="flex flex-wrap gap-2">
-                {healthFlags.length > 0 ? healthFlags.map(([label]) => (
-                  <span key={label} className="rounded-full bg-red-100 px-3 py-1 text-xs font-semibold text-red-700">
-                    ! {label}
-                  </span>
-                )) : (
-                  <span className="text-xs text-slate-400">Bilinen sağlık sorunu yok</span>
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+              <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
+                <div>
+                  <h3 className="text-base font-black text-slate-900">Açık İşler</h3>
+                  <p className="text-xs text-slate-500">Bu hasta için aksiyon gerektiren başlıklar.</p>
+                </div>
+                <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-600">{criticalActionItems.length} kayıt</span>
+              </div>
+              {criticalActionItems.length === 0 ? (
+                <div className="px-5 py-8 text-sm text-slate-500">Aksiyon gerektiren açık başlık görünmüyor.</div>
+              ) : (
+                <div className="grid gap-2 p-3 md:grid-cols-2">
+                  {criticalActionItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={item.onClick}
+                      className={`rounded-xl border px-4 py-3 text-left transition hover:shadow-sm ${item.tone}`}
+                    >
+                      <span className="block text-sm font-black text-slate-900">{item.title}</span>
+                      <span className="mt-1 block line-clamp-2 text-xs text-slate-600">{item.detail}</span>
+                      <span className="mt-2 inline-block text-xs font-black">{item.action}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-base font-black text-slate-900">Hasta Notu</h3>
+                  <p className="text-xs text-slate-500">Kısa klinik notu buradan eklenir; eski notlar altta korunur.</p>
+                </div>
+                {data.notes && (
+                  <button
+                    type="button"
+                    onClick={() => selectTab("notlar")}
+                    className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                  >
+                    Not Arşivi
+                  </button>
                 )}
               </div>
-              {data.medications && <p className="mt-2 text-xs text-gray-600"><span className="font-medium">İlaçlar:</span> {data.medications}</p>}
-              {data.surgeries && <p className="mt-1 text-xs text-gray-600"><span className="font-medium">Ameliyatlar:</span> {data.surgeries}</p>}
-              {(data as any).otherDiseases && <p className="mt-1 text-xs text-gray-600"><span className="font-medium">Diğer Hastalıklar:</span> {(data as any).otherDiseases}</p>}
-            </div>
-            <div className="rounded-lg border bg-white p-4">
-              <h3 className="mb-2 font-semibold text-gray-700">Finansal Özet</h3>
-              <div className="grid grid-cols-2 gap-2 text-center text-sm md:grid-cols-4">
-                <div className="rounded-lg bg-gray-50 p-2"><p className="text-xs text-gray-500">Brüt Tedavi</p><p className="font-bold">{totalCharged.toFixed(2)} TL</p></div>
-                <div className="rounded-lg bg-orange-50 p-2"><p className="text-xs text-gray-500">İndirim</p><p className="font-bold text-orange-600">%{data.discountRate}</p></div>
-                <div className="rounded-lg bg-blue-50 p-2"><p className="text-xs text-gray-500">Net Tutar</p><p className="font-bold text-blue-700">{discountedTotal.toFixed(2)} TL</p></div>
-                <div className={"rounded-lg p-2 " + (totalDebt>0?"bg-red-50":"bg-green-50")}><p className="text-xs text-gray-500">Kalan</p><p className={"font-bold " + (totalDebt>0?"text-red-600":"text-green-600")}>{totalDebt.toFixed(2)} TL</p></div>
+              {data.notes && (
+                <div className="mb-3 max-h-28 overflow-auto whitespace-pre-wrap rounded-xl bg-slate-50 p-3 text-xs leading-relaxed text-slate-600">
+                  {data.notes}
+                </div>
+              )}
+              <textarea
+                value={noteText}
+                onChange={(e) => setNoteText(e.target.value)}
+                rows={3}
+                placeholder="Hasta için kısa not yazın..."
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-blue-400 focus:ring-2 focus:ring-blue-100"
+              />
+              <div className="mt-3 flex justify-end">
+                <button
+                  type="button"
+                  onClick={saveNote}
+                  disabled={noteSaving || !noteText.trim()}
+                  className="rounded-xl bg-slate-950 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {noteSaving ? "Kaydediliyor..." : "Notu Kaydet"}
+                </button>
               </div>
             </div>
           </div>
+
+          <aside className="space-y-4">
+            <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h3 className="text-base font-black text-slate-900">Hasta Profili</h3>
+                <button onClick={() => selectTab("duzenle")} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50">Düzenle</button>
+              </div>
+              <dl className="space-y-2 text-sm">
+                {[
+                  ...(currentUserRole !== "DOKTOR" && currentUserRole !== "ASISTAN" ? [["Telefon", data.phone]] : []),
+                  ["Cinsiyet", data.gender === "ERKEK" || data.gender === "Erkek" ? "Erkek" : "Kadın"],
+                  ["Kurum", data.insurance || "-"],
+                  ["Referans", data.referrer || "-"],
+                ].map(([label, value]) => (
+                  <div key={label} className="grid grid-cols-[92px_minmax(0,1fr)] gap-2">
+                    <dt className="text-xs font-bold uppercase text-slate-400">{label}</dt>
+                    <dd className="min-w-0 truncate font-semibold text-slate-800">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+              <div className="mt-4 border-t border-slate-100 pt-4">
+                <p className="mb-2 text-xs font-bold uppercase text-slate-400">Sağlık Uyarıları</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {healthFlags.length > 0 ? healthFlags.map(([label]) => (
+                    <span key={label} className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-bold text-red-700">{label}</span>
+                  )) : (
+                    <span className="text-xs font-semibold text-slate-400">Aktif uyarı yok</span>
+                  )}
+                </div>
+                {(data.medications || data.surgeries || data.otherDiseases || data.notes) && (
+                  <div className="mt-3 space-y-1.5 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+                    {data.medications && <p><span className="font-bold text-slate-700">İlaç:</span> {data.medications}</p>}
+                    {data.surgeries && <p><span className="font-bold text-slate-700">Ameliyat:</span> {data.surgeries}</p>}
+                    {data.otherDiseases && <p><span className="font-bold text-slate-700">Diğer:</span> {data.otherDiseases}</p>}
+                    {data.notes && <p><span className="font-bold text-slate-700">Not:</span> {data.notes}</p>}
+                  </div>
+                )}
+              </div>
+              <div className="mt-4 border-t border-slate-100 pt-4">
+                <p className="mb-2 text-xs font-bold uppercase text-slate-400">Finans</p>
+                <div className="space-y-1 text-sm">
+                  <div className="flex justify-between"><span className="text-slate-500">Net tedavi</span><span className="font-bold text-slate-900">{discountedTotal.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} TL</span></div>
+                  <div className="flex justify-between"><span className="text-slate-500">Ödenen</span><span className="font-bold text-emerald-700">{totalPaid.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} TL</span></div>
+                  <div className="flex justify-between border-t border-slate-100 pt-1"><span className="font-bold text-slate-700">Kalan</span><span className={`font-black ${totalDebt > 0 ? "text-red-700" : "text-emerald-700"}`}>{totalDebt.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} TL</span></div>
+                </div>
+              </div>
+            </div>
+          </aside>
         </div>
       )}
 
@@ -1865,25 +2679,86 @@ function HastaDetayContent() {
         const LOWER = ["48","47","46","45","44","43","42","41","31","32","33","34","35","36","37","38"];
         const UPPER_C = ["55","54","53","52","51","61","62","63","64","65"];
         const LOWER_C = ["85","84","83","82","81","71","72","73","74","75"];
-        const fallbackTreatmentPool = activePriceList === "custom" ? CUSTOM_DENTAL_TREATMENT_TEMPLATES : TDB_2026_CORE_PRICE_CATALOG;
+        const fallbackTreatmentPool = TDB_2026_CORE_PRICE_CATALOG;
         // Katalog + DB listesini birleştir: DB'de eksik kayıt olsa bile tüm tedaviler görünür.
-        const treatmentMap = new Map<string, { id: string; treatment: string; amount: number }>();
-        for (const item of fallbackTreatmentPool) treatmentMap.set(item.id, item);
-        for (const item of priceList) treatmentMap.set(item.id, item);
+        const treatmentMap = new Map<string, { id: string; code?: string; treatment: string; amount: number; isTemplate?: boolean }>();
+        const treatmentKey = (item: { code?: string; treatment: string }) => `${item.code || ""}::${item.treatment.toLocaleLowerCase("tr-TR")}`;
+        for (const item of fallbackTreatmentPool) treatmentMap.set(treatmentKey(item), item);
+        for (const item of priceList) treatmentMap.set(treatmentKey(item), item);
         const treatmentPool = Array.from(treatmentMap.values()).sort((a, b) => a.treatment.localeCompare(b.treatment, "tr"));
+        const treatmentQueryNorm = treatmentQuery.trim().toLocaleLowerCase("tr-TR");
+        const filteredTreatmentPool = treatmentPool
+          .filter((p) => !treatmentQueryNorm || p.treatment.toLocaleLowerCase("tr-TR").includes(treatmentQueryNorm) || String(p.code || "").toLocaleLowerCase("tr-TR").includes(treatmentQueryNorm))
+          .slice(0, 80);
         const onToothPick = async (n: string) => {
           if (treatmentSaving) return;
           await addDirectToExaminationList(n);
         };
         const selectedPriceItem = treatmentPool.find(p => p.id === treatDropdownId);
+        // ASISTAN'ın examinations:write yetkisi yok — liste görüntülenir ama yazma eylemleri gizlenir.
+        const canWriteExam = currentUserRole !== "ASISTAN";
+        const planStatusLabel: Record<string, string> = { PLANLANDI: "Planlandı", DEVAM_EDIYOR: "Devam Ediyor", TAMAMLANDI: "Tamamlandı", IPTAL: "İptal" };
+        const planStatusCls: Record<string, string> = {
+          PLANLANDI: "bg-slate-100 text-slate-700", DEVAM_EDIYOR: "bg-blue-100 text-blue-700",
+          TAMAMLANDI: "bg-emerald-100 text-emerald-700", IPTAL: "bg-red-100 text-red-700",
+        };
         return (
         <div className="space-y-4">
+          {treatmentPlans.length > 0 && (
+            <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-sm font-bold text-blue-900">Tedavi Planları</h3>
+                <Link href="/tedavi-plani" className="text-xs font-semibold text-blue-700 underline">Tümünü Yönet</Link>
+              </div>
+              <p className="mb-3 text-xs text-blue-800">
+                Bu tutarlar aşağıdaki "Kalan" bakiyeye otomatik yansımaz — plan, hasta muayeneye/tedaviye geldikçe
+                aşağıdan ayrıca faturalandırılır. Aradaki farkı kontrol için burada gösteriliyor.
+              </p>
+              <div className="space-y-2">
+                {treatmentPlans.map((plan) => (
+                  <div key={plan.id} className="flex items-center justify-between rounded-lg border border-blue-100 bg-white px-3 py-2 text-sm">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-semibold text-slate-800">{plan.title}</p>
+                      <p className="text-xs text-slate-500">{plan.steps.length} adım</p>
+                    </div>
+                    <span className={`mr-3 rounded-full px-2 py-0.5 text-[11px] font-semibold ${planStatusCls[plan.status] || "bg-slate-100 text-slate-700"}`}>
+                      {planStatusLabel[plan.status] || plan.status}
+                    </span>
+                    {plan.totalCost != null && <span className="font-bold text-slate-700">₺{Number(plan.totalCost).toLocaleString("tr-TR")}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {currentUserRole === "ASISTAN" ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+            Yeni muayene/tedavi eklemek için doktor yetkisi gereklidir. Mevcut kayıtları aşağıdaki listede görüntüleyebilirsiniz.
+          </div>
+          ) : (
           <div className="rounded-xl border bg-white p-4 shadow-sm">
             <h3 className="text-lg font-bold text-slate-900">Muayene/Tedavi Oluştur</h3>
             <p className="mb-4 mt-1 text-sm text-slate-500">Doktor ve tedavi seçin. Diş şemasından tıkladığınız dişler otomatik olarak muayene listesine aktarılır.</p>
 
-            <div className="mb-4 rounded-lg border bg-slate-50 px-3 py-2 text-xs text-slate-600">
-              Aktif kaynak: <span className="font-semibold">{activePriceList === "custom" ? "Özel Fiyat Listesi" : "TDB 2026 Tarife Listesi"}</span>. Bu seçim Fiyat Listesi sayfasından yönetilir.
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+              <div className="text-xs text-slate-600">
+                Fiyat kaynağı: <span className="font-semibold text-slate-900">{activePriceList === "custom" ? "Özel fiyat listesi" : "TDB 2026 tarifesi"}</span>
+              </div>
+              <div className="flex rounded-lg border border-slate-200 bg-white p-1">
+                <button
+                  type="button"
+                  onClick={() => void saveActivePriceList("standard")}
+                  className={`rounded-md px-3 py-1.5 text-xs font-bold transition ${activePriceList === "standard" ? "bg-blue-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}
+                >
+                  TDB 2026
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void saveActivePriceList("custom")}
+                  className={`rounded-md px-3 py-1.5 text-xs font-bold transition ${activePriceList === "custom" ? "bg-orange-500 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}
+                >
+                  Özel Liste
+                </button>
+              </div>
             </div>
 
             <div className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
@@ -1898,79 +2773,114 @@ function HastaDetayContent() {
                   {doctorOptions.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
                 </select>
               </div>
-              <div className="flex items-center overflow-hidden rounded-lg border">
+              <div className="relative flex items-center overflow-visible rounded-lg border">
                 <span className="shrink-0 bg-primary px-3 py-2 text-sm font-semibold text-white">Tedavi</span>
-                <select className="flex-1 border-none px-3 py-2 text-sm outline-none" value={treatDropdownId} onChange={e => { setTreatDropdownId(e.target.value); const p=treatmentPool.find(x=>x.id===e.target.value); if(p) setTreatCustomAmount(String(p.amount)); }}>
-                  <option value="">Tedavi seçin...</option>
-                  {treatmentPool.map(p => <option key={p.id} value={p.id}>{p.treatment}</option>)}
-                </select>
+                <input
+                  value={treatmentQuery}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setTreatmentQuery(value);
+                    setTreatmentDropdownOpen(true);
+                    const exact = treatmentPool.find((p) => p.treatment.toLocaleLowerCase("tr-TR") === value.trim().toLocaleLowerCase("tr-TR") || p.code === value.trim());
+                    if (exact) {
+                      setTreatDropdownId(exact.id);
+                      setTreatCustomAmount(String(exact.amount));
+                    } else {
+                      setTreatDropdownId("");
+                    }
+                  }}
+                  onFocus={() => setTreatmentDropdownOpen(true)}
+                  onBlur={() => setTimeout(() => setTreatmentDropdownOpen(false), 150)}
+                  placeholder="Tedavi adı veya kod yazarak ara..."
+                  className="min-w-0 flex-1 border-none px-3 py-2 text-sm outline-none"
+                />
+                {treatmentDropdownOpen && (
+                  <div className="absolute left-16 right-0 top-full z-50 mt-1 max-h-80 overflow-auto rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+                    {filteredTreatmentPool.length === 0 ? (
+                      <div className="px-3 py-3 text-sm text-slate-400">Tedavi bulunamadı</div>
+                    ) : (
+                      filteredTreatmentPool.map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            setTreatDropdownId(p.id);
+                            setTreatmentQuery(p.treatment);
+                            setTreatCustomAmount(String(p.amount));
+                            setTreatmentDropdownOpen(false);
+                          }}
+                          className={`flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-blue-50 ${treatDropdownId === p.id ? "bg-blue-50 text-blue-700" : "text-slate-700"}`}
+                        >
+                          <span className="min-w-0">
+                            <span className="block truncate font-semibold">{p.treatment}</span>
+                            <span className="text-xs text-slate-400">{p.code || "Özel"} · {activePriceList === "custom" ? "Özel liste" : "TDB"}</span>
+                          </span>
+                          <span className="shrink-0 font-bold text-slate-900">{Number(p.amount || 0).toLocaleString("tr-TR")} TL</span>
+                        </button>
+                      ))
+                    )}
+                  </div>
+                )}
               </div>
             </div>
 
-            <div className="mb-4 rounded-2xl border border-slate-200 bg-gradient-to-b from-slate-50 via-white to-slate-100 p-4 shadow-sm">
+            <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex gap-1">
-                  {(["adult","child","general"] as const).map(k => (
+                  {(["adult","child"] as const).map(k => (
                     <button key={k} type="button" onClick={() => { setTreatToothType(k); setTreatSelectedTeeth([]); }}
-                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${treatToothType===k ? (k==="general"?"bg-emerald-600 text-white":"bg-primary text-white") : "bg-white text-slate-600 border hover:bg-slate-100"}`}>
-                      {k === "adult" ? "Yetişkin Dişleri" : k === "child" ? "Çocuk Dişleri" : "Genel Muayene"}
+                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${treatToothType===k ? "bg-primary text-white" : "bg-white text-slate-600 border hover:bg-slate-100"}`}>
+                      {k === "adult" ? "Yetişkin Dişleri" : "Çocuk Dişleri"}
                     </button>
                   ))}
                 </div>
                 {treatSelectedTeeth.length > 0 && <button className="text-xs text-slate-500 hover:text-red-600" onClick={() => setTreatSelectedTeeth([])}>Seçimi Temizle</button>}
               </div>
 
-              {treatToothType === "general" && (
-                <div className="rounded-lg border-2 border-dashed border-green-300 bg-green-50 p-4 text-center">
-                  <p className="font-semibold text-green-700">Genel Muayene seçildi</p>
-                  <p className="text-sm text-green-600">Diş numarası gerekmez</p>
+              <div className="mb-3 flex flex-wrap gap-2 rounded-xl border border-slate-100 bg-slate-50 p-2">
+                {[
+                  {
+                    label: "Üst Çene",
+                    teeth: treatToothType === "adult" ? TREAT_ADULT_UPPER : TREAT_CHILD_UPPER,
+                  },
+                  {
+                    label: "Alt Çene",
+                    teeth: treatToothType === "adult" ? TREAT_ADULT_LOWER : TREAT_CHILD_LOWER,
+                  },
+                  {
+                    label: "Tüm Çene",
+                    teeth: treatToothType === "adult"
+                      ? [...TREAT_ADULT_UPPER, ...TREAT_ADULT_LOWER]
+                      : [...TREAT_CHILD_UPPER, ...TREAT_CHILD_LOWER],
+                  },
+                ].map((group) => (
                   <button
+                    key={group.label}
                     type="button"
-                    onClick={() => { void addDirectToExaminationList(); }}
+                    onClick={() => { void addTeethToExaminationList(group.teeth, group.label); }}
                     disabled={treatmentSaving}
-                    className="mt-3 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    {treatmentSaving ? "Ekleniyor..." : "Genel Muayene Ekle"}
+                    {group.label}
                   </button>
-                </div>
-              )}
+                ))}
+              </div>
 
               {treatToothType === "adult" && (
-                <div className="overflow-x-auto rounded-xl border border-amber-200 bg-gradient-to-b from-amber-50/70 via-white to-slate-50 p-3">
-                  <div style={{ minWidth: 760 }}>
-                    <div className="mb-2 text-center text-xs font-semibold uppercase tracking-[0.25em] text-slate-500">Üst Çene</div>
-                    <div className="mb-3 flex items-end justify-center gap-0.5 border-b-2 border-dashed border-amber-200 pb-3">
-                      {UPPER.slice(0,8).map(n => <ToothButton key={n} num={n} selected={treatSelectedTeeth.includes(n)} onClick={() => { void onToothPick(n); }} />)}
-                      <div className="mx-3 self-stretch border-l-2 border-dashed border-amber-300"/>
-                      {UPPER.slice(8).map(n => <ToothButton key={n} num={n} selected={treatSelectedTeeth.includes(n)} onClick={() => { void onToothPick(n); }} />)}
-                    </div>
-                    <div className="flex items-start justify-center gap-0.5 pt-2">
-                      {LOWER.slice(0,8).map(n => <ToothButton key={n} num={n} selected={treatSelectedTeeth.includes(n)} onClick={() => { void onToothPick(n); }} />)}
-                      <div className="mx-3 self-stretch border-l-2 border-dashed border-amber-300"/>
-                      {LOWER.slice(8).map(n => <ToothButton key={n} num={n} selected={treatSelectedTeeth.includes(n)} onClick={() => { void onToothPick(n); }} />)}
-                    </div>
-                    <div className="mt-2 text-center text-xs font-semibold uppercase tracking-[0.25em] text-slate-500">Alt Çene</div>
-                  </div>
-                </div>
+                <OdontogramSelector
+                  selected={treatSelectedTeeth}
+                  onToggle={(num) => { void onToothPick(num); }}
+                  dentition="adult"
+                />
               )}
 
               {treatToothType === "child" && (
-                <div className="overflow-x-auto rounded-xl border border-amber-200 bg-gradient-to-b from-amber-50/70 via-white to-slate-50 p-3">
-                  <div style={{ minWidth: 500 }}>
-                    <div className="mb-2 text-center text-xs font-semibold uppercase tracking-[0.25em] text-slate-500">Üst Çene (Süt)</div>
-                    <div className="mb-3 flex items-end justify-center gap-0.5 border-b-2 border-dashed border-amber-200 pb-3">
-                      {UPPER_C.slice(0,5).map(n => <ToothButton key={n} num={n} selected={treatSelectedTeeth.includes(n)} onClick={() => { void onToothPick(n); }} />)}
-                      <div className="mx-3 self-stretch border-l-2 border-dashed border-amber-300"/>
-                      {UPPER_C.slice(5).map(n => <ToothButton key={n} num={n} selected={treatSelectedTeeth.includes(n)} onClick={() => { void onToothPick(n); }} />)}
-                    </div>
-                    <div className="flex items-start justify-center gap-0.5 pt-2">
-                      {LOWER_C.slice(0,5).map(n => <ToothButton key={n} num={n} selected={treatSelectedTeeth.includes(n)} onClick={() => { void onToothPick(n); }} />)}
-                      <div className="mx-3 self-stretch border-l-2 border-dashed border-amber-300"/>
-                      {LOWER_C.slice(5).map(n => <ToothButton key={n} num={n} selected={treatSelectedTeeth.includes(n)} onClick={() => { void onToothPick(n); }} />)}
-                    </div>
-                    <div className="mt-2 text-center text-xs font-semibold uppercase tracking-[0.25em] text-slate-500">Alt Çene (Süt)</div>
-                  </div>
-                </div>
+                <OdontogramSelector
+                  selected={treatSelectedTeeth}
+                  onToggle={(num) => { void onToothPick(num); }}
+                  dentition="child"
+                />
               )}
 
               {treatSelectedTeeth.length > 0 && (
@@ -1987,10 +2897,11 @@ function HastaDetayContent() {
                 <input type="number" className="flex-1 border-none px-3 py-2 text-sm outline-none" value={treatCustomAmount} onChange={e => setTreatCustomAmount(e.target.value)} placeholder={selectedPriceItem ? String(selectedPriceItem.amount) : "0"} />
               </div>
               <div className="flex items-center rounded-lg border bg-gray-50 px-3 py-2 text-sm text-slate-600 md:col-span-2">
-                Dişe tıkladığınız anda kayıt otomatik olarak Muayene Listesi (Tedavi Bekleyen) tablosuna eklenir.
+                Dişe tıklarsanız diş bazlı, çene butonuna tıklarsanız tek çene kaydı Muayene Listesi tablosuna eklenir.
               </div>
             </div>
           </div>
+          )}
 
           <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
             <div className="flex items-center justify-between border-b bg-slate-50 px-4 py-3">
@@ -1999,14 +2910,21 @@ function HastaDetayContent() {
                 <span className="text-xs text-slate-400">{diagnozlar.length} kayıt</span>
               </div>
               <div className="flex items-center gap-2">
-                {selectedDiagnozIds.length > 0 && (
+                {canWriteExam && selectedDiagnozIds.length > 0 && (
                   <>
                     <button
                       onClick={() => { void bulkConvertDiagnozlar(); }}
-                      disabled={bulkConverting}
+                      disabled={bulkConverting || bulkDeleting}
                       className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                     >
                       {bulkConverting ? "Aktarılıyor..." : `Seçilenleri Tedaviye Aktar (${selectedDiagnozIds.length})`}
+                    </button>
+                    <button
+                      onClick={() => { void bulkDeleteDiagnozlar(); }}
+                      disabled={bulkConverting || bulkDeleting}
+                      className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-60"
+                    >
+                      {bulkDeleting ? "Siliniyor..." : `Seçilenleri Sil (${selectedDiagnozIds.length})`}
                     </button>
                     <button onClick={() => setSelectedDiagnozIds([])} className="text-xs text-slate-400 hover:text-slate-600">Seçimi Temizle</button>
                   </>
@@ -2017,11 +2935,13 @@ function HastaDetayContent() {
               <thead className="border-b bg-gray-50 text-xs uppercase text-gray-500">
                 <tr>
                   <th className="w-8 px-3 py-2 text-center">
+                    {canWriteExam && (
                     <input type="checkbox"
                       checked={diagnozlar.length > 0 && selectedDiagnozIds.length === diagnozlar.length}
                       onChange={ev => setSelectedDiagnozIds(ev.target.checked ? diagnozlar.map(d => d.id) : [])}
                       className="rounded"
                     />
+                    )}
                   </th>
                   <th className="px-3 py-2 text-left">Tarih</th>
                   <th className="px-3 py-2 text-left">Muayene Notu</th>
@@ -2042,11 +2962,13 @@ function HastaDetayContent() {
                   return (
                     <tr key={e.id} className={`border-b ${selectedDiagnozIds.includes(e.id) ? "bg-amber-50" : "hover:bg-gray-50"}`}>
                       <td className="px-3 py-2 text-center">
+                        {canWriteExam && (
                         <input type="checkbox"
                           checked={selectedDiagnozIds.includes(e.id)}
                           onChange={ev => setSelectedDiagnozIds(prev => ev.target.checked ? [...prev, e.id] : prev.filter(x => x !== e.id))}
                           className="rounded"
                         />
+                        )}
                       </td>
                       <td className="px-3 py-2 text-xs whitespace-nowrap">{new Date(e.diagnosedAt).toLocaleDateString("tr-TR")}</td>
                       <td className="px-3 py-2">{e.treatmentName}</td>
@@ -2055,6 +2977,7 @@ function HastaDetayContent() {
                         <input
                           type="number" min="0" step="0.01"
                           value={currentAmount}
+                          disabled={!canWriteExam}
                           onChange={ev => setExamInlineEdits(prev => ({
                             ...prev,
                             [e.id]: {
@@ -2063,12 +2986,13 @@ function HastaDetayContent() {
                               doctorId: prev[e.id]?.doctorId ?? (e.doctorId ?? ""),
                             }
                           }))}
-                          className="w-24 rounded border border-transparent bg-transparent px-2 py-1 text-right text-xs font-semibold hover:border-gray-300 focus:border-blue-400 focus:bg-white focus:outline-none"
+                          className="w-24 rounded border border-transparent bg-transparent px-2 py-1 text-right text-xs font-semibold hover:border-gray-300 focus:border-blue-400 focus:bg-white focus:outline-none disabled:opacity-70"
                         />
                       </td>
                       <td className="px-2 py-1.5">
                         <select
                           value={currentDoctorId}
+                          disabled={!canWriteExam}
                           onChange={ev => setExamInlineEdits(prev => ({
                             ...prev,
                             [e.id]: {
@@ -2077,7 +3001,7 @@ function HastaDetayContent() {
                               doctorId: ev.target.value,
                             }
                           }))}
-                          className="w-full min-w-[110px] rounded border border-transparent bg-transparent px-2 py-1 text-xs hover:border-gray-300 focus:border-blue-400 focus:bg-white focus:outline-none"
+                          className="w-full min-w-[110px] rounded border border-transparent bg-transparent px-2 py-1 text-xs hover:border-gray-300 focus:border-blue-400 focus:bg-white focus:outline-none disabled:opacity-70"
                         >
                           <option value="">— Seçin —</option>
                           {doctorOptions.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
@@ -2085,7 +3009,8 @@ function HastaDetayContent() {
                       </td>
                       <td className="px-3 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          {hasEdits && (
+                          {!canWriteExam && <span className="text-xs text-slate-300">—</span>}
+                          {canWriteExam && hasEdits && (
                             <button
                               onClick={() => { void saveExamInlineEdit(e); }}
                               disabled={isSaving}
@@ -2095,6 +3020,7 @@ function HastaDetayContent() {
                               {isSaving ? "⏳" : "💾"}
                             </button>
                           )}
+                          {canWriteExam && (
                           <button
                             onClick={() => { void convertExamDirect(e); }}
                             disabled={isSaving}
@@ -2102,6 +3028,8 @@ function HastaDetayContent() {
                           >
                             {isSaving ? "..." : "Tedaviye Aktar"}
                           </button>
+                          )}
+                          {canWriteExam && (
                           <button
                             onClick={() => { void deleteExamRecord(e.id, false); }}
                             disabled={isSaving}
@@ -2109,6 +3037,7 @@ function HastaDetayContent() {
                           >
                             Sil
                           </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -2145,6 +3074,7 @@ function HastaDetayContent() {
                         <input
                           type="date"
                           value={currentDiagnosedAt}
+                          disabled={!canWriteExam}
                           onChange={ev => setExamInlineEdits(prev => ({
                             ...prev,
                             [e.id]: {
@@ -2162,6 +3092,7 @@ function HastaDetayContent() {
                       <td className="px-2 py-1.5">
                         <input
                           value={currentTreatmentName}
+                          disabled={!canWriteExam}
                           onChange={ev => setExamInlineEdits(prev => ({
                             ...prev,
                             [e.id]: {
@@ -2179,6 +3110,7 @@ function HastaDetayContent() {
                       <td className="px-2 py-1.5">
                         <input
                           value={currentToothNo}
+                          disabled={!canWriteExam}
                           onChange={ev => setExamInlineEdits(prev => ({
                             ...prev,
                             [e.id]: {
@@ -2200,6 +3132,7 @@ function HastaDetayContent() {
                           min="0"
                           step="0.01"
                           value={currentAmount}
+                          disabled={!canWriteExam}
                           onChange={ev => setExamInlineEdits(prev => ({
                             ...prev,
                             [e.id]: {
@@ -2217,6 +3150,7 @@ function HastaDetayContent() {
                       <td className="px-2 py-1.5">
                         <select
                           value={currentDoctorId}
+                          disabled={!canWriteExam}
                           onChange={ev => setExamInlineEdits(prev => ({
                             ...prev,
                             [e.id]: {
@@ -2236,7 +3170,8 @@ function HastaDetayContent() {
                       </td>
                       <td className="px-3 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
-                          {hasEdits && (
+                          {!canWriteExam && <span className="text-xs text-slate-300">—</span>}
+                          {canWriteExam && hasEdits && (
                             <button
                               onClick={() => { void saveExamInlineEdit(e); }}
                               disabled={isSaving}
@@ -2246,7 +3181,9 @@ function HastaDetayContent() {
                               {isSaving ? "⏳" : "💾"}
                             </button>
                           )}
+                          {canWriteExam && (
                           <button onClick={() => { void deleteExamRecord(e.id, true); }} disabled={isSaving} className="rounded bg-red-100 px-2 py-0.5 text-xs text-red-600 hover:bg-red-200 disabled:opacity-50">Sil</button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -2270,53 +3207,9 @@ function HastaDetayContent() {
           </div>
 
           <div className="flex justify-end gap-2">
+            <button onClick={() => setPaymentModalOpen(true)} className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">Ödeme Al</button>
             <button onClick={openTreatmentPrint} className="rounded border border-slate-300 px-3 py-1 text-xs text-slate-600 hover:bg-slate-50">🖨 Tedavi Raporu</button>
             <button onClick={openPaymentPrint} className="rounded border border-slate-300 px-3 py-1 text-xs text-slate-600 hover:bg-slate-50">🖨 Ödeme Geçmişi</button>
-          </div>
-
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5">
-            <h3 className="mb-4 text-sm font-black text-slate-900">Ödeme Ekle</h3>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar (₺) *</label>
-                <input type="number" placeholder="0.00" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-lg font-bold focus:border-emerald-400 focus:outline-none" value={payAmount} onChange={e=>setPayAmount(e.target.value)} />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor <span className="text-red-500">*</span></label>
-                <select className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" value={payDoctorId} onChange={e=>setPayDoctorId(e.target.value)}>
-                  <option value="">— Doktor seçin —</option>
-                  {doctorOptions.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
-                </select>
-              </div>
-              <div className="sm:col-span-2">
-                <label className="mb-2 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
-                <div className="flex flex-wrap gap-2">
-                  {(["NAKIT","KREDI_KARTI","HAVALE_EFT","MAIL_ORDER","DIGER"] as const).map(m => (
-                    <button key={m} type="button" onClick={() => { setPayMethod(m); setPayPosId(""); }}
-                      className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${payMethod === m ? "bg-emerald-600 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
-                      {m === "NAKIT" ? "💵 Nakit" : m === "KREDI_KARTI" ? "💳 Kart" : m === "HAVALE_EFT" ? "🏦 Havale" : m === "MAIL_ORDER" ? "📧 Mail Order" : "📌 Diğer"}
-                    </button>
-                  ))}
-                </div>
-                {(payMethod === "KREDI_KARTI" || payMethod === "MAIL_ORDER") && (
-                  <select className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" value={payPosId} onChange={e=>setPayPosId(e.target.value)}>
-                    <option value="">— POS Cihazı Seçin —</option>
-                    {posDevices.length === 0
-                      ? <option disabled>Kayıtlı POS cihazı yok</option>
-                      : posDevices.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
-                  </select>
-                )}
-              </div>
-              <div className="sm:col-span-2">
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
-                <input placeholder="Tedavi türü, notlar…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" value={payDesc} onChange={e=>setPayDesc(e.target.value)} />
-              </div>
-            </div>
-            <div className="mt-4 flex justify-end">
-              <button onClick={addPayment} disabled={payLoading} className="rounded-xl bg-emerald-600 px-6 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
-                {payLoading ? "Kaydediliyor…" : "Ödeme Kaydet"}
-              </button>
-            </div>
           </div>
 
           <div className="rounded-xl border border-slate-100 bg-white shadow-sm overflow-hidden">
@@ -2337,19 +3230,25 @@ function HastaDetayContent() {
             </div>
             <table className="w-full text-sm">
               <thead className="bg-slate-50 border-b text-xs uppercase text-gray-500">
-                <tr><th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Yöntem</th><th className="px-3 py-2 text-left">Açıklama</th><th className="px-3 py-2 text-right">Tutar</th><th className="px-3 py-2 text-center">Sil</th></tr>
+                <tr><th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Hekim</th><th className="px-3 py-2 text-left">Yöntem</th><th className="px-3 py-2 text-left">Açıklama</th><th className="px-3 py-2 text-right">Tutar</th><th className="px-3 py-2 text-center">İşlem</th></tr>
               </thead>
               <tbody>
-                {data.payments.length === 0 && <tr><td colSpan={5} className="px-3 py-4 text-center text-gray-400">Ödeme yok</td></tr>}
-                {data.payments.map((p: {id:string; createdAt:string; method:string; description?:string|null; amount:string|number}) => {
+                {data.payments.length === 0 && <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">Ödeme yok</td></tr>}
+                {data.payments.map((p: {id:string; createdAt:string; method:string; description?:string|null; amount:string|number; doctorId?:string|null; doctor?:{id:string; fullName:string}|null; posId?:string|null}) => {
                   const ML: Record<string,string> = { NAKIT:"Nakit", KREDI_KARTI:"Kredi Kartı", HAVALE_EFT:"Havale/EFT", MAIL_ORDER:"Mail Order", DIGER:"Diğer" };
                   return (
                     <tr key={p.id} className="border-b hover:bg-slate-50">
                       <td className="px-3 py-2 text-xs">{new Date(p.createdAt).toLocaleDateString("tr-TR")}</td>
+                      <td className="px-3 py-2 text-xs">{p.doctor?.fullName || "—"}</td>
                       <td className="px-3 py-2"><span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">{ML[p.method] || p.method}</span></td>
                       <td className="px-3 py-2 text-xs">{p.description||"—"}</td>
                       <td className="px-3 py-2 text-right font-semibold text-emerald-700">{"₺" + Number(p.amount).toLocaleString("tr-TR",{minimumFractionDigits:2})}</td>
-                      <td className="px-3 py-2 text-center"><button onClick={async()=>{if(!window.confirm("Ödeme silinsin mi?"))return;const res=await fetch("/api/payments/"+p.id,{method:"DELETE"});if(!res.ok){const err=await res.json().catch(()=>({}));showToast("error",err.message||"Ödeme silinemedi");return;}showToast("success","Ödeme silindi");void load();}} className="rounded-lg bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600 hover:bg-red-200">Sil</button></td>
+                      <td className="px-3 py-2 text-center">
+                        <div className="flex items-center justify-center gap-1">
+                          <button onClick={() => startEditPayment(p)} className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-200">Düzenle</button>
+                          <button onClick={async()=>{if(!(await confirmDialog({ message: "Ödeme silinsin mi?", danger: true, confirmText: "Sil" })))return;const res=await fetch("/api/payments/"+p.id,{method:"DELETE"});if(!res.ok){const err=await res.json().catch(()=>({}));showToast("error",err.message||"Ödeme silinemedi");return;}showToast("success","Ödeme silindi");void load();}} className="rounded-lg bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600 hover:bg-red-200">Sil</button>
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}
@@ -2554,7 +3453,7 @@ function HastaDetayContent() {
                           <button onClick={() => printInstallmentPlan(plan)} className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">🖨 Yazdır</button>
                           <button
                             onClick={async () => {
-                              if (!window.confirm("Bu taksit planı ve tüm taksitleri silinsin mi?")) return;
+                              if (!(await confirmDialog({ message: "Bu taksit planı ve tüm taksitleri silinsin mi?", danger: true, confirmText: "Sil" }))) return;
                               const res = await fetch(`/api/taksit-plani/${plan.id}`, { method: "DELETE" });
                               if (res.ok) { showToast("success", "Taksit planı silindi"); void load(); }
                               else showToast("error", "Taksit planı silinemedi");
@@ -2773,31 +3672,13 @@ function HastaDetayContent() {
             </div>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-                <div className="rounded-lg bg-blue-50 border border-blue-100 p-3 text-center">
-                  <p className="text-xs text-blue-500 font-bold uppercase">Toplam Kayıt</p>
-                  <p className="text-2xl font-black text-blue-700">{data.labOrders.length}</p>
-                </div>
-                <div className="rounded-lg bg-red-50 border border-red-100 p-3 text-center">
-                  <p className="text-xs text-red-500 font-bold uppercase">Toplam Lab Maliyeti</p>
-                  <p className="text-2xl font-black text-red-700">₺{data.labOrders.reduce((s,l)=>s+(Number(l.price)||0),0).toLocaleString("tr-TR")}</p>
-                </div>
-                <div className="rounded-lg bg-amber-50 border border-amber-100 p-3 text-center">
-                  <p className="text-xs text-amber-500 font-bold uppercase">Bekleyen</p>
-                  <p className="text-2xl font-black text-amber-700">{data.labOrders.filter(l=>l.status!=="HASTAYA_TAKILDI"&&l.status!=="IPTAL").length}</p>
-                </div>
-                <div className="rounded-lg bg-emerald-50 border border-emerald-100 p-3 text-center">
-                  <p className="text-xs text-emerald-500 font-bold uppercase">Çalışılan Lab</p>
-                  <p className="text-2xl font-black text-emerald-700">{new Set(data.labOrders.map((l) => (l.labName || "").trim()).filter(Boolean)).size}</p>
-                </div>
-                <div className="rounded-lg bg-violet-50 border border-violet-100 p-3 text-center">
-                  <p className="text-xs text-violet-500 font-bold uppercase">İş Türü Çeşidi</p>
-                  <p className="text-2xl font-black text-violet-700">{new Set(data.labOrders.map((l) => (l.labType || "").trim()).filter(Boolean)).size}</p>
-                </div>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">İş Türü Adet Dağılımı</p>
-                <div className="mt-2 flex flex-wrap gap-2">
+              <div className="flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600 shadow-sm">
+                <span className="font-bold text-slate-900">{data.labOrders.length} iş</span>
+                <span className="h-4 w-px bg-slate-200" />
+                <span>Bekleyen: <b className="text-amber-700">{data.labOrders.filter(l=>l.status!=="HASTAYA_TAKILDI"&&l.status!=="IPTAL").length}</b></span>
+                <span>Lab maliyeti: <b className="text-red-700">₺{data.labOrders.reduce((s,l)=>s+(Number(l.price)||0),0).toLocaleString("tr-TR")}</b></span>
+                <span>Çalışılan lab: <b>{new Set(data.labOrders.map((l) => (l.labName || "").trim()).filter(Boolean)).size}</b></span>
+                <div className="flex flex-wrap gap-1.5">
                   {Object.entries(
                     data.labOrders.reduce((acc, order) => {
                       const key = (order.labType || "Belirsiz").trim() || "Belirsiz";
@@ -2807,7 +3688,7 @@ function HastaDetayContent() {
                   )
                     .sort((a, b) => b[1] - a[1])
                     .map(([type, count]) => (
-                      <span key={type} className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                      <span key={type} className="rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 font-semibold text-slate-700">
                         {count} {type}
                       </span>
                     ))}
@@ -2821,6 +3702,7 @@ function HastaDetayContent() {
                       <th className="px-3 py-2 text-left">Laboratuvar Adı</th>
                       <th className="px-3 py-2 text-left">Lab Türü</th>
                       <th className="px-3 py-2 text-left">Doktor</th>
+                      <th className="px-3 py-2 text-left">Entegrasyon</th>
                       <th className="px-3 py-2 text-right">Fiyat</th>
                       <th className="px-3 py-2 text-left">Durum</th>
                       <th className="px-3 py-2 text-right">İşlem</th>
@@ -2828,12 +3710,18 @@ function HastaDetayContent() {
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {data.labOrders.map(l => {
+                      // LabOrderStatus enum'u ile birebir eşleşir (bkz. prisma/schema.prisma) —
+                      // eskiden burada var olmayan enum değerleri (SIPARIS_VERILDI vb.) listeleniyor,
+                      // en sık görülen DEVAM_EDIYOR ise hiç eşleşmediği için ham kod olarak görünüyordu.
                       const statusCls: Record<string,string> = {
-                        SIPARIS_VERILDI: "bg-yellow-100 text-yellow-700",
-                        LABORATUVARDA: "bg-blue-100 text-blue-700",
-                        KLINIGE_GELDI: "bg-cyan-100 text-cyan-700",
+                        DEVAM_EDIYOR: "bg-blue-100 text-blue-700",
                         HASTAYA_TAKILDI: "bg-green-100 text-green-700",
                         IPTAL: "bg-gray-100 text-gray-500",
+                      };
+                      const statusLabel: Record<string,string> = {
+                        DEVAM_EDIYOR: "Laboratuvarda",
+                        HASTAYA_TAKILDI: "Hastaya Takıldı",
+                        IPTAL: "İptal",
                       };
                       return (
                         <tr
@@ -2857,9 +3745,16 @@ function HastaDetayContent() {
                             {l.notes && <p className="line-clamp-1 text-xs font-normal text-slate-500">{l.notes}</p>}
                           </td>
                           <td className="px-3 py-2 text-slate-600">{l.doctor?.fullName || "—"}</td>
+                          <td className="px-3 py-2">
+                            {Number(l.price || 0) > 0 ? (
+                              <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs font-bold text-emerald-700">Firma borcu bağlı</span>
+                            ) : (
+                              <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs font-bold text-amber-700">Fatura bekliyor</span>
+                            )}
+                          </td>
                           <td className="px-3 py-2 text-right font-bold text-red-600">{l.price ? `₺${Number(l.price).toLocaleString("tr-TR")}` : "—"}</td>
                           <td className="px-3 py-2">
-                            <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusCls[l.status] || "bg-gray-100 text-gray-600"}`}>{l.status.replace(/_/g," ")}</span>
+                            <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusCls[l.status] || "bg-gray-100 text-gray-600"}`}>{statusLabel[l.status] || l.status.replace(/_/g," ")}</span>
                           </td>
                           <td className="px-3 py-2 text-right">
                             <button
@@ -2880,6 +3775,101 @@ function HastaDetayContent() {
               </div>
             </>
           )}
+        </div>
+      )}
+
+      {tab === "belgeler" && (
+        <div className="space-y-4">
+          <PatientConsentPanel patientId={data.id} patientName={data.fullName} patientTcNo={data.tcNo} />
+
+          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+              <h3 className="font-semibold text-slate-900">Belge / Röntgen Yükle</h3>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">JPG, PNG, WEBP, PDF · 15MB</span>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[220px_minmax(220px,1fr)_260px]">
+              <div>
+                <label className="mb-1 block text-xs text-gray-600">Kategori</label>
+                <select value={docCategory} onChange={(e) => setDocCategory(e.target.value as typeof docCategory)} className="w-full rounded border px-3 py-2 text-sm">
+                  <option value="BELGE">Belge (kimlik, sigorta, rıza formu…)</option>
+                  <option value="RONTGEN">Röntgen</option>
+                  <option value="FOTOGRAF">Ağız İçi Fotoğraf</option>
+                </select>
+              </div>
+              {docCategory !== "BELGE" && (
+                <div>
+                  <label className="mb-1 block text-xs text-gray-600">Diş No (opsiyonel)</label>
+                  <input value={docToothNo} onChange={(e) => setDocToothNo(e.target.value)} placeholder="örn. 26" className="w-full rounded border px-3 py-2 text-sm" />
+                </div>
+              )}
+              <div className={docCategory === "BELGE" ? "" : ""}>
+                <label className="mb-1 block text-xs text-gray-600">Not (opsiyonel)</label>
+                <input value={docNote} onChange={(e) => setDocNote(e.target.value)} placeholder="Açıklama" className="w-full rounded border px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-gray-600">Dosya (JPG, PNG, WEBP, PDF — en fazla 15MB)</label>
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,application/pdf"
+                  disabled={docUploading}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (file) void uploadDocument(file);
+                  }}
+                  className="w-full rounded border px-3 py-1.5 text-sm disabled:opacity-50"
+                />
+              </div>
+            </div>
+            {docUploading && <p className="mt-2 text-xs font-medium text-blue-600">Dosya yükleniyor, lütfen bekleyin...</p>}
+            {docUploadError && <p className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{docUploadError}</p>}
+          </div>
+
+          <div className="rounded-lg border bg-white p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="font-semibold text-slate-900">Yüklü Belgeler</h3>
+              <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{documents.length} kayıt</span>
+            </div>
+            {documentsLoading && documents.length === 0 ? (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                {[0, 1, 2, 3].map((i) => <div key={i} className="h-32 animate-pulse rounded-lg bg-slate-100" />)}
+              </div>
+            ) : documents.length === 0 ? (
+              <p className="py-6 text-center text-sm text-slate-400">Henüz belge veya röntgen yüklenmemiş.</p>
+            ) : (
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                {documents.map((doc) => (
+                  <div key={doc.id} className="group relative overflow-hidden rounded-lg border border-slate-200">
+                    <a href={`/api/documents/${doc.id}/file`} target="_blank" rel="noopener noreferrer" className="block">
+                      {doc.mimeType.startsWith("image/") ? (
+                        <img src={`/api/documents/${doc.id}/file`} alt={doc.fileName} className="h-32 w-full object-cover" />
+                      ) : (
+                        <div className="flex h-32 w-full flex-col items-center justify-center gap-1 bg-slate-50 text-slate-400">
+                          <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>
+                          <span className="text-[10px] font-semibold uppercase">PDF</span>
+                        </div>
+                      )}
+                    </a>
+                    <div className="p-1.5">
+                      <p className="truncate text-[11px] font-semibold text-slate-700" title={doc.fileName}>{doc.fileName}</p>
+                      <p className="text-[10px] text-slate-400">
+                        {doc.category === "BELGE" ? "Belge" : doc.category === "RONTGEN" ? "Röntgen" : "Fotoğraf"}
+                        {doc.toothNo ? ` · Diş ${doc.toothNo}` : ""}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => void deleteDocument(doc.id)}
+                      title="Sil"
+                      aria-label="Sil"
+                      className="absolute right-1 top-1 rounded-full bg-white/90 p-1 text-red-500 opacity-0 shadow transition group-hover:opacity-100 hover:bg-white"
+                    >
+                      <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -2930,90 +3920,61 @@ function HastaDetayContent() {
               {labCreateError && (
                 <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">{labCreateError}</div>
               )}
-              <div className="grid gap-3 md:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor *</label>
-                  <select
-                    value={labNewForm.doctorId}
-                    onChange={(e) => setLabNewForm((prev) => ({ ...prev, doctorId: e.target.value }))}
-                    className="w-full rounded border px-2.5 py-2 text-sm"
-                  >
-                    <option value="">Seçiniz</option>
-                    {doctorOptions.map((doctor) => (
-                      <option key={doctor.id} value={doctor.id}>{doctor.fullName}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Laboratuvar Adı *</label>
-                  <select
-                    value={labNewForm.labName}
-                    onChange={(e) => setLabNewForm((prev) => ({ ...prev, labName: e.target.value, customLabName: e.target.value === "__new_lab__" ? prev.customLabName : "" }))}
-                    className="w-full rounded border px-2.5 py-2 text-sm"
-                  >
-                    <option value="">Laboratuvar seçiniz</option>
-                    {knownLabs.map((name) => (
-                      <option key={name} value={name}>{name}</option>
-                    ))}
-                    <option value="__new_lab__">+ Yeni laboratuvar ekle</option>
-                  </select>
-                  {labNewForm.labName === "__new_lab__" && (
-                    <input
-                      value={labNewForm.customLabName}
-                      onChange={(e) => setLabNewForm((prev) => ({ ...prev, customLabName: e.target.value }))}
-                      placeholder="Örn. Özel Teknik Laboratuvar"
-                      className="mt-2 w-full rounded border px-2.5 py-2 text-sm"
-                    />
-                  )}
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">İş Türü *</label>
-                  <select
-                    value={labNewForm.labType}
-                    onChange={(e) => {
-                      const selected = e.target.value;
-                      const first = WORKFLOW_FIRST_STEP[selected];
-                      setLabNewForm((prev) => ({
-                        ...prev,
-                        labType: selected,
-                        sentItem: first ? first.send : prev.sentItem,
-                        requestedItem: first ? first.request : prev.requestedItem,
-                      }));
-                    }}
-                    className="w-full rounded border px-2.5 py-2 text-sm"
-                  >
-                    <option value="">Seçiniz</option>
-                    {LAB_CATEGORIES.map((category) => (
-                      <optgroup key={category.group} label={category.group}>
-                        {category.items.map((type) => (
-                          <option key={type} value={type}>{type}</option>
-                        ))}
-                      </optgroup>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Diş (opsiyonel)</label>
+              <LabOrderForm
+                hidePatientField
+                doctorSearch={labNewDoctorSearch}
+                onDoctorSearchChange={(value) => {
+                  setLabNewDoctorSearch(value);
+                  setLabNewForm((prev) => ({ ...prev, doctorId: "" }));
+                }}
+                doctorOptions={labNewDoctorOptions}
+                onDoctorSelect={(option) => {
+                  setLabNewDoctorSearch(option.label);
+                  setLabNewForm((prev) => ({ ...prev, doctorId: option.id }));
+                }}
+                labSearch={labNewLabSearch}
+                onLabSearchChange={(value) => {
+                  setLabNewLabSearch(value);
+                  setLabNewForm((prev) => ({ ...prev, labName: value, customLabName: "" }));
+                }}
+                labOptions={labNewLabOptions}
+                onLabSelect={(option) => {
+                  setLabNewLabSearch(option.label);
+                  setLabNewForm((prev) => ({ ...prev, labName: option.label, customLabName: "" }));
+                }}
+                hasKnownLabs={knownLabs.length > 0}
+                labTypeSearch={labNewTypeSearch}
+                onLabTypeSearchChange={(value) => {
+                  setLabNewTypeSearch(value);
+                  setLabNewForm((prev) => ({ ...prev, labType: "" }));
+                }}
+                labTypeOptions={labNewTypeOptions}
+                onLabTypeSelect={(option) => {
+                  const selected = option.label;
+                  const first = WORKFLOW_FIRST_STEP[selected];
+                  setLabNewTypeSearch(selected);
+                  setLabNewForm((prev) => ({
+                    ...prev,
+                    labType: selected,
+                    sentItem: first ? first.send : prev.sentItem,
+                    requestedItem: first ? first.request : prev.requestedItem,
+                  }));
+                }}
+                teethSelector={
                   <LabDentalChart
                     selected={labNewForm.teeth ? labNewForm.teeth.split(",").map((t) => Number(t.trim())).filter(Boolean) : []}
                     onChange={(nums) => setLabNewForm((prev) => ({ ...prev, teeth: nums.join(", ") }))}
                   />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">İlk Gönderilen (opsiyonel)</label>
-                  <input
-                    value={labNewForm.sentItem}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setLabNewForm((prev) => ({
-                        ...prev,
-                        sentItem: value,
-                        impressionMethod: isMeasurementStep(value) ? prev.impressionMethod : "",
-                      }));
-                    }}
-                    placeholder="Ölçü"
-                    className="w-full rounded border px-2.5 py-2 text-sm"
-                  />
+                }
+                sentItem={labNewForm.sentItem}
+                onSentItemChange={(value) =>
+                  setLabNewForm((prev) => ({
+                    ...prev,
+                    sentItem: value,
+                    impressionMethod: isMeasurementStep(value) ? prev.impressionMethod : "",
+                  }))
+                }
+                sentItemQuickPicks={
                   <div className="mt-2 flex flex-wrap gap-1">
                     {SPOON_REQUEST_OPTIONS.map((opt) => {
                       const isActive = labNewForm.requestedItem === opt;
@@ -3041,45 +4002,20 @@ function HastaDetayContent() {
                       );
                     })}
                   </div>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">İlk İstenen (opsiyonel)</label>
-                  <input
-                    value={labNewForm.requestedItem}
-                    onChange={(e) => setLabNewForm((prev) => ({ ...prev, requestedItem: e.target.value }))}
-                    placeholder="Zirkonyum Alt Yapı"
-                    className="w-full rounded border px-2.5 py-2 text-sm"
-                  />
-                </div>
-                {isMeasurementStep(labNewForm.sentItem) && (
-                  <div className="md:col-span-2">
-                    <label className="mb-1 block text-xs font-semibold text-slate-600">Ölçü Yöntemi</label>
-                    <select
-                      value={labNewForm.impressionMethod}
-                      onChange={(e) => setLabNewForm((prev) => ({ ...prev, impressionMethod: e.target.value as ImpressionMethod }))}
-                      className="w-full rounded border px-2.5 py-2 text-sm"
-                    >
-                      <option value="">Seçiniz</option>
-                      <option value="KLASIK_OLCU">Klasik Ölçü</option>
-                      <option value="DIJITAL_TARAMA">Dijital Tarama</option>
-                    </select>
-                  </div>
-                )}
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Not (opsiyonel)</label>
-                <textarea
-                  value={labNewForm.notes}
-                  onChange={(e) => setLabNewForm((prev) => ({ ...prev, notes: e.target.value }))}
-                  rows={2}
-                  className="w-full rounded border px-2.5 py-2 text-sm"
-                />
-              </div>
+                }
+                requestedItem={labNewForm.requestedItem}
+                onRequestedItemChange={(value) => setLabNewForm((prev) => ({ ...prev, requestedItem: value }))}
+                showImpressionMethod={isMeasurementStep(labNewForm.sentItem)}
+                impressionMethod={labNewForm.impressionMethod}
+                onImpressionMethodChange={(value) => setLabNewForm((prev) => ({ ...prev, impressionMethod: value as ImpressionMethod }))}
+                notes={labNewForm.notes}
+                onNotesChange={(value) => setLabNewForm((prev) => ({ ...prev, notes: value }))}
+              />
               <div className="flex items-center justify-end gap-2 pt-1">
                 <button onClick={closeLabCreateModal} className="rounded border border-slate-300 px-3 py-2 text-sm font-medium text-slate-700">Vazgeç</button>
                 <button
                   onClick={createOrderFromPatientDetail}
-                  disabled={labCreateSaving || !labNewForm.doctorId || !(labNewForm.labName === "__new_lab__" ? labNewForm.customLabName.trim() : labNewForm.labName.trim()) || !labNewForm.labType.trim()}
+                  disabled={labCreateSaving || !labNewForm.doctorId || !labNewForm.labName.trim() || !labNewForm.labType.trim()}
                   className="rounded bg-slate-900 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
                 >
                   {labCreateSaving ? "Oluşturuluyor..." : "Oluştur"}
@@ -3363,9 +4299,197 @@ function HastaDetayContent() {
         </div>
       )}
 
+      {exportModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setExportModalOpen(false))}>
+          <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label="Hasta dışa aktarım seçenekleri">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
+              <div>
+                <h3 className="text-lg font-black text-slate-900">Dışa Aktarım</h3>
+                <p className="mt-1 text-sm text-slate-500">Hasta dosyasından sadece ihtiyacınız olan bölümleri seçin.</p>
+              </div>
+              <button type="button" onClick={() => setExportModalOpen(false)} className="rounded-lg px-2 py-1 text-sm font-bold text-slate-500 hover:bg-slate-100">Kapat</button>
+            </div>
+
+            <div className="space-y-5 px-6 py-5">
+              <div className="grid gap-3 sm:grid-cols-[220px_minmax(0,1fr)]">
+                <div>
+                  <p className="mb-2 text-xs font-bold uppercase text-slate-400">Format</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(["pdf", "excel"] as ExportFormat[]).map((format) => (
+                      <button
+                        key={format}
+                        type="button"
+                        onClick={() => setExportFormat(format)}
+                        className={`rounded-xl border px-3 py-2 text-sm font-black transition ${exportFormat === format ? "border-slate-950 bg-slate-950 text-white" : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"}`}
+                      >
+                        {format === "pdf" ? "PDF" : "Excel"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="mb-2 text-xs font-bold uppercase text-slate-400">Hızlı Seçim</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setExportSelection({ ...DEFAULT_PATIENT_EXPORT_SELECTION, completedTreatments: true, plannedTreatments: true, payments: true })}
+                      className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                    >
+                      Tedavi + Ödeme
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExportSelection({ ...DEFAULT_PATIENT_EXPORT_SELECTION, profile: false, completedTreatments: false, plannedTreatments: false, payments: false, balance: false, appointments: true })}
+                      className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                    >
+                      Sadece Randevular
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExportSelection(Object.fromEntries(PATIENT_EXPORT_SECTIONS.map((section) => [section.key, true])) as Record<PatientExportSection, boolean>)}
+                      className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                    >
+                      Tüm Dosya
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setExportSelection(Object.fromEntries(PATIENT_EXPORT_SECTIONS.map((section) => [section.key, false])) as Record<PatientExportSection, boolean>)}
+                      className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                    >
+                      Temizle
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                <input
+                  type="checkbox"
+                  checked={exportHideDoctor}
+                  onChange={(e) => setExportHideDoctor(e.target.checked)}
+                  className="mt-1 h-4 w-4 rounded border-slate-300"
+                />
+                <span>
+                  <span className="block text-sm font-black text-slate-900">Doktor bilgisini gizle</span>
+                  <span className="mt-0.5 block text-xs text-slate-500">PDF ve Excel çıktılarında hekim adları kolon olarak yer almaz.</span>
+                </span>
+              </label>
+
+              <div>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <p className="text-xs font-bold uppercase text-slate-400">İçerik</p>
+                  <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-600">{exportSelectedKeys.length} bölüm seçili</span>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {PATIENT_EXPORT_SECTIONS.map((section) => {
+                    const selected = exportSelection[section.key];
+                    return (
+                      <label
+                        key={section.key}
+                        className={`flex cursor-pointer gap-3 rounded-xl border p-3 transition ${selected ? "border-blue-200 bg-blue-50" : "border-slate-200 bg-white hover:bg-slate-50"}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={(e) => setExportSelection((prev) => ({ ...prev, [section.key]: e.target.checked }))}
+                          className="mt-1 h-4 w-4 rounded border-slate-300"
+                        />
+                        <span className="min-w-0">
+                          <span className="block text-sm font-black text-slate-900">{section.label}</span>
+                          <span className="mt-0.5 block text-xs leading-relaxed text-slate-500">{section.description}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 px-6 py-4">
+              <p className="text-xs text-slate-500">Dışa aktarım KVKK erişim işlemi olarak denetim günlüğüne işlenir.</p>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setExportModalOpen(false)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">Vazgeç</button>
+                <button
+                  type="button"
+                  onClick={runPatientExport}
+                  disabled={exportBusy || exportSelectedKeys.length === 0}
+                  className="rounded-xl bg-slate-950 px-5 py-2 text-sm font-black text-white hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {exportBusy ? "Hazırlanıyor..." : `${exportFormat === "pdf" ? "PDF" : "Excel"} Oluştur`}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {paymentModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(closePaymentModal)}>
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={editingPaymentId ? "Ödemeyi düzenle" : "Ödeme al"}>
+            <div className="mb-5 flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-xl font-black text-slate-900">{editingPaymentId ? "Ödemeyi Düzenle" : "Ödeme Al"}</h3>
+                <p className="mt-1 text-sm text-slate-500">{data.fullName} adına tahsilat {editingPaymentId ? "güncellenir" : "kaydedilir"}.</p>
+              </div>
+              <button onClick={closePaymentModal} aria-label="Kapat" title="Kapat" className="rounded-lg px-2 py-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">✕</button>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar (₺) *</label>
+                <input type="number" placeholder="0.00" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-lg font-bold focus:border-emerald-400 focus:outline-none" value={payAmount} onChange={e=>setPayAmount(e.target.value)} autoFocus />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor <span className="text-red-500">*</span></label>
+                <select className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" value={payDoctorId} onChange={e=>setPayDoctorId(e.target.value)}>
+                  <option value="">— Doktor seçin —</option>
+                  {doctorOptions.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+                </select>
+              </div>
+              {editingPaymentId && (
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih</label>
+                  <input type="date" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" value={payDate} onChange={e=>setPayDate(e.target.value)} />
+                </div>
+              )}
+              <div className="sm:col-span-2">
+                <label className="mb-2 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
+                <div className="flex flex-wrap gap-2">
+                  {(["NAKIT","KREDI_KARTI","HAVALE_EFT","MAIL_ORDER","DIGER"] as const).map(m => (
+                    <button key={m} type="button" onClick={() => { setPayMethod(m); setPayPosId(""); }}
+                      className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${payMethod === m ? "bg-emerald-600 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
+                      {m === "NAKIT" ? "Nakit" : m === "KREDI_KARTI" ? "Kart" : m === "HAVALE_EFT" ? "Havale" : m === "MAIL_ORDER" ? "Mail Order" : "Diğer"}
+                    </button>
+                  ))}
+                </div>
+                {(payMethod === "KREDI_KARTI" || payMethod === "MAIL_ORDER") && (
+                  <select className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" value={payPosId} onChange={e=>setPayPosId(e.target.value)}>
+                    <option value="">— POS Cihazı Seçin —</option>
+                    {posDevices.length === 0
+                      ? <option disabled>Kayıtlı POS cihazı yok</option>
+                      : posDevices.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                )}
+              </div>
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
+                <input placeholder="Tedavi türü, notlar…" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" value={payDesc} onChange={e=>setPayDesc(e.target.value)} />
+              </div>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <button onClick={closePaymentModal} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">Vazgeç</button>
+              <button onClick={addPayment} disabled={payLoading} className="rounded-xl bg-emerald-600 px-5 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
+                {payLoading ? "Kaydediliyor…" : editingPaymentId ? "Güncelle" : "Ödeme Kaydet"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Tedavi Yazdırma Modalı */}
       {treatmentPrintOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" {...backdropClose(() => setTreatmentPrintOpen(false))}>
           <div className="w-full max-w-lg rounded-xl bg-white shadow-2xl p-6 max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold text-slate-900">Tedavi Raporu Yazdır</h2>
@@ -3422,7 +4546,7 @@ function HastaDetayContent() {
 
       {/* Ödeme Yazdırma Modalı */}
       {paymentPrintOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" {...backdropClose(() => setPaymentPrintOpen(false))}>
           <div className="w-full max-w-lg rounded-xl bg-white shadow-2xl p-6 max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-lg font-bold text-slate-900">Ödeme Geçmişi Yazdır</h2>

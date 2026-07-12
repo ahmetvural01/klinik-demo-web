@@ -10,6 +10,9 @@ import {
   parseAppointmentNote,
 } from "@/lib/appointment-follow-up";
 import { useToast } from "@/components/ui/ToastProvider";
+import { confirmDialog } from "@/lib/confirm-client";
+import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
+import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 
 type Appointment = {
   id: string;
@@ -46,9 +49,12 @@ type ManualFollowUp = {
   } | null;
   assignedDoctor?: { id: string; fullName: string } | null;
   createdBy?: { id: string; fullName: string } | null;
+  labOrderId?: string | null;
+  labTripId?: string | null;
+  labOrder?: { id: string; labName: string; labType: string } | null;
 };
 
-type Staff = { id: string; fullName: string; role: string };
+type Staff = { id: string; fullName: string; role: string; profile?: { hideAsDoctor?: boolean | null } | null };
 type PatientOption = { id: string; fullName: string; phone?: string | null };
 
 type FollowUpEvent = {
@@ -65,22 +71,6 @@ type FollowUpEvent = {
   updatedAt: string;
   createdBy?: { id: string; fullName: string } | null;
   updatedBy?: { id: string; fullName: string } | null;
-};
-
-type ClinicTask = {
-  id: string;
-  title: string;
-  details?: string | null;
-  vendorName?: string | null;
-  type: "PARCA_SIPARIS" | "LAB" | "ARAMA" | "EVRAK" | "DIGER";
-  priority: number;
-  status: "ACIK" | "BEKLEMEDE" | "TAMAMLANDI" | "IPTAL";
-  dueAt?: string | null;
-  assignedToId?: string | null;
-  assignedTo?: { id: string; fullName: string } | null;
-  assignees?: Array<{ userId: string; user: { id: string; fullName: string; role: string } }>;
-  patient?: { id: string; fullName: string; phone?: string | null } | null;
-  createdAt: string;
 };
 
 type FollowItem = {
@@ -104,6 +94,16 @@ type FollowItem = {
   ageDays: number;
   appointmentDateLabel: string;
   followBadgeClass: string;
+  isLabProva?: boolean;
+  labContext?: {
+    orderToken?: string;
+    tripToken?: string;
+    groupKey?: string;
+    labName?: string;
+    labType?: string;
+    receivedStep?: string;
+    title: string;
+  };
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -179,21 +179,6 @@ const EVENT_PRESETS = [
 
 const EVENT_CHANNEL_OPTIONS = ["Telefon", "WhatsApp", "Yüz yüze", "SMS", "E-posta", "Diğer"] as const;
 
-const TASK_TYPE_LABELS: Record<ClinicTask["type"], string> = {
-  PARCA_SIPARIS: "Parça Sipariş",
-  LAB: "Laboratuvar",
-  ARAMA: "Arama",
-  EVRAK: "Evrak",
-  DIGER: "Diğer",
-};
-
-const TASK_STATUS_LABELS: Record<ClinicTask["status"], string> = {
-  ACIK: "Açık",
-  BEKLEMEDE: "Beklemede",
-  TAMAMLANDI: "Tamamlandı",
-  IPTAL: "İptal",
-};
-
 function toIsoInputValue(date: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -217,13 +202,6 @@ function getPriorityBadge(priority: number) {
   return "bg-sky-100 text-sky-700";
 }
 
-function getTaskStatusBadge(status: ClinicTask["status"]) {
-  if (status === "ACIK") return "bg-emerald-100 text-emerald-700";
-  if (status === "BEKLEMEDE") return "bg-amber-100 text-amber-700";
-  if (status === "TAMAMLANDI") return "bg-slate-200 text-slate-700";
-  return "bg-rose-100 text-rose-700";
-}
-
 function shortText(value: string, max = 110) {
   const trimmed = value.trim();
   if (trimmed.length <= max) return trimmed;
@@ -243,12 +221,61 @@ function parseCustomTypeFromNote(note?: string | null) {
   return { customType, cleanNote };
 }
 
+// structured: PatientFollowUp.labOrderId/labTripId (gerçek FK) doluysa oradan
+// gelir ve önceliklidir; not metni yalnızca eski (backfill edilememiş) kayıtlar
+// için yedek kaynaktır (bkz. denetim raporu Tema 3 — legacy uyum: Tema 8).
+function parseLabFollowUpNote(
+  note?: string | null,
+  structured?: { labOrderId?: string | null; labTripId?: string | null; labOrder?: { labName?: string | null; labType?: string | null } | null }
+) {
+  const lines = (note || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const orderToken = lines.find((line) => line.startsWith("LAB_ORDER:"));
+  const tripToken = lines.find((line) => line.startsWith("LAB_PROVA:"));
+  const legacyLabLine = lines.find((line) => line.includes(" - ") && !line.startsWith("Adım #"));
+  const [legacyLabType, legacyLabName] = legacyLabLine ? legacyLabLine.split(" - ").map((part) => part.trim()) : ["", ""];
+  const legacyStepLine = lines.find((line) => line.startsWith("Adım #"));
+  const legacyDescription = legacyStepLine?.split(":").slice(1).join(":").trim() || "";
+  const legacyReceivedStep = legacyDescription.includes(" → ") ? legacyDescription.split(" → ")[1].trim() : "";
+  const labType = structured?.labOrder?.labType || lines.find((line) => line.startsWith("İş:"))?.slice(3).trim() || legacyLabType;
+  const labName = structured?.labOrder?.labName || lines.find((line) => line.startsWith("Laboratuvar:"))?.slice("Laboratuvar:".length).trim() || legacyLabName;
+  const receivedStep = lines.find((line) => line.startsWith("Gelen/Prova:"))?.slice("Gelen/Prova:".length).trim() || legacyReceivedStep;
+  const isLabProva = Boolean(
+    structured?.labOrderId || structured?.labTripId || orderToken || tripToken || receivedStep ||
+    lines.some((line) => line.toLocaleLowerCase("tr-TR").includes("laboratuvardan gelen prova"))
+  );
+
+  if (!isLabProva) return null;
+
+  return {
+    orderToken,
+    tripToken,
+    labName,
+    labType,
+    receivedStep,
+    groupKey: structured?.labOrderId || orderToken || `${labType || "-"}::${labName || "-"}`,
+    title: `${receivedStep || "Laboratuvar provası"} için randevu planlanacak`,
+  };
+}
+
 function buildManualNote(customType: string, note: string) {
   const t = customType.trim();
   const n = note.trim();
   if (t && n) return `${CUSTOM_TYPE_PREFIX} ${t}\n${n}`;
   if (t) return `${CUSTOM_TYPE_PREFIX} ${t}`;
   return n;
+}
+
+function normalizeCustomTypes(values: unknown[]) {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  values.forEach((value) => {
+    const label = String(value || "").trim().replace(/\s+/g, " ").slice(0, 60);
+    const key = label.toLocaleLowerCase("tr-TR");
+    if (!label || seen.has(key)) return;
+    seen.add(key);
+    result.push(label);
+  });
+  return result.slice(0, 80);
 }
 
 function resolveManualType(input: string): { apiType: "GERI_ARA" | "ULASILAMADI" | "DONUS_BEKLENIYOR" | "DIGER"; label: string } {
@@ -278,7 +305,6 @@ function readCachedDashboard(rangeDays: string) {
       appointments: [] as Appointment[],
       manualFollowUps: [] as ManualFollowUp[],
       staff: [] as Staff[],
-      clinicTasks: [] as ClinicTask[],
     };
   }
 
@@ -290,7 +316,6 @@ function readCachedDashboard(rangeDays: string) {
       appointments: [] as Appointment[],
       manualFollowUps: [] as ManualFollowUp[],
       staff: [] as Staff[],
-      clinicTasks: [] as ClinicTask[],
     };
   }
 
@@ -300,7 +325,6 @@ function readCachedDashboard(rangeDays: string) {
       appointments?: Appointment[];
       followUps?: ManualFollowUp[];
       staff?: Staff[];
-      clinicTasks?: ClinicTask[];
     };
 
     return {
@@ -308,7 +332,6 @@ function readCachedDashboard(rangeDays: string) {
       appointments: Array.isArray(cached.appointments) ? cached.appointments : [],
       manualFollowUps: Array.isArray(cached.followUps) ? cached.followUps : [],
       staff: Array.isArray(cached.staff) ? cached.staff : [],
-      clinicTasks: Array.isArray(cached.clinicTasks) ? cached.clinicTasks : [],
     };
   } catch {
     return {
@@ -316,7 +339,6 @@ function readCachedDashboard(rangeDays: string) {
       appointments: [] as Appointment[],
       manualFollowUps: [] as ManualFollowUp[],
       staff: [] as Staff[],
-      clinicTasks: [] as ClinicTask[],
     };
   }
 }
@@ -335,8 +357,7 @@ export default function HastaTakipPage() {
   const [statusFilter, setStatusFilter] = useState<"TUMU" | "ACIK" | "KAPALI">("ACIK");
   const [doctorFilter, setDoctorFilter] = useState("");
   const [showManualCreate, setShowManualCreate] = useState(false);
-  const [showTaskCreate, setShowTaskCreate] = useState(false);
-  const [activeTab, setActiveTab] = useState<"hastalar" | "gorevler">("hastalar");
+  useEscapeClose(() => setShowManualCreate(false), showManualCreate);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [denseView, setDenseView] = useState(true);
   const [selectedDetailKey, setSelectedDetailKey] = useState("");
@@ -381,17 +402,8 @@ export default function HastaTakipPage() {
     patientResponse: "",
     nextStep: "",
   }));
-  const [clinicTasks, setClinicTasks] = useState<ClinicTask[]>(() => cached.clinicTasks);
-  const [taskTitle, setTaskTitle] = useState("");
-  const [taskType, setTaskType] = useState<ClinicTask["type"]>("DIGER");
-  const [taskPriority, setTaskPriority] = useState<1 | 2 | 3>(2);
-  const [taskDueAt, setTaskDueAt] = useState("");
-  const [taskDetails, setTaskDetails] = useState("");
-  const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([]);
-  const [taskBusyId, setTaskBusyId] = useState("");
-  const [taskSaving, setTaskSaving] = useState(false);
 
-  const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
+  const hidePhone = shouldHidePatientPhone(userRole);
 
   const loadData = useCallback(async () => {
     const cacheKey = `hasta-takip:dashboard:${rangeDays}`;
@@ -405,14 +417,12 @@ export default function HastaTakipPage() {
             appointments?: Appointment[];
             followUps?: ManualFollowUp[];
             staff?: Staff[];
-            clinicTasks?: ClinicTask[];
           };
 
           if (Array.isArray(cached?.appointments) && Array.isArray(cached?.followUps)) {
             setAppointments(cached.appointments);
             setManualFollowUps(cached.followUps);
             if (Array.isArray(cached.staff)) setStaff(cached.staff);
-            if (Array.isArray(cached.clinicTasks)) setClinicTasks(cached.clinicTasks);
             if (cached.userRole) setUserRole(cached.userRole);
             hadCached = true;
           }
@@ -428,14 +438,21 @@ export default function HastaTakipPage() {
 
     try {
       const [meRes, apptRes, followRes] = await Promise.all([
-        fetch("/api/auth/me"),
-        fetch(`/api/appointments?from=${from.toISOString()}&to=${to.toISOString()}`),
-        fetch(`/api/patient-follow-ups?from=${from.toISOString()}&to=${to.toISOString()}`),
+        fetch("/api/auth/me", { cache: "no-store" }),
+        fetch(`/api/appointments?from=${from.toISOString()}&to=${to.toISOString()}`, { cache: "no-store" }),
+        fetch(`/api/patient-follow-ups?from=${from.toISOString()}&to=${to.toISOString()}`, { cache: "no-store" }),
       ]);
 
       const meData = await meRes.json();
       const apptData = await apptRes.json();
       const followData = await followRes.json();
+
+      if (!apptRes.ok) {
+        throw new Error(apptData?.message || "Randevu takip verileri yüklenemedi.");
+      }
+      if (!followRes.ok) {
+        throw new Error(followData?.message || "Manuel takip verileri yüklenemedi.");
+      }
 
       const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
       const nextRole = preview || meData?.role || "";
@@ -447,7 +464,7 @@ export default function HastaTakipPage() {
       setManualFollowUps(nextFollowUps);
 
       void Promise.allSettled([
-        fetch("/api/staff")
+        fetch("/api/staff", { cache: "no-store" })
           .then((r) => r.json())
           .then((staffData) => {
             const nextStaff = Array.isArray(staffData) ? staffData : [];
@@ -466,25 +483,6 @@ export default function HastaTakipPage() {
             }
           })
           .catch(() => {}),
-        fetch("/api/clinic-tasks?take=200")
-          .then((r) => r.json())
-          .then((tasksData) => {
-            const nextTasks = Array.isArray(tasksData) ? tasksData : [];
-            setClinicTasks(nextTasks);
-            if (typeof window !== "undefined") {
-              const raw = sessionStorage.getItem(cacheKey);
-              if (raw) {
-                try {
-                  const cached = JSON.parse(raw) as Record<string, unknown>;
-                  sessionStorage.setItem(cacheKey, JSON.stringify({
-                    ...cached,
-                    clinicTasks: nextTasks,
-                  }));
-                } catch {}
-              }
-            }
-          })
-          .catch(() => {}),
       ]);
 
       if (typeof window !== "undefined") {
@@ -494,11 +492,10 @@ export default function HastaTakipPage() {
           followUps: nextFollowUps,
         }));
       }
-    } catch {
-      setError("Takip verileri yuklenemedi.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Takip verileri yuklenemedi.");
       setAppointments([]);
       setManualFollowUps([]);
-      setClinicTasks([]);
     } finally {
       setLoading(false);
     }
@@ -524,6 +521,20 @@ export default function HastaTakipPage() {
     };
   }, [loadData]);
 
+  // Sekmeye geri dönüldüğünde (arka planda kaçırılmış olabilecek olayları) tazele.
+  useEffect(() => {
+    const refreshVisible = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void loadData();
+    };
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => {
+      window.removeEventListener("focus", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
+    };
+  }, [loadData]);
+
   useEffect(() => {
     const onPreview = () => {
       const preview = sessionStorage.getItem("dev-preview-role");
@@ -533,24 +544,54 @@ export default function HastaTakipPage() {
     return () => window.removeEventListener("preview-role-change", onPreview);
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const raw = localStorage.getItem("hasta-takip-custom-types") || "[]";
-    try {
-      const list = JSON.parse(raw);
-      if (Array.isArray(list)) {
-        const cleaned = list.map((x) => String(x || "").trim()).filter(Boolean);
-        setCustomTypeOptions(Array.from(new Set(cleaned)));
-      }
-    } catch {
-      setCustomTypeOptions([]);
+  const persistCustomTypes = useCallback(async (types: string[]) => {
+    const normalized = normalizeCustomTypes(types);
+    setCustomTypeOptions(normalized);
+    const res = await fetch("/api/patient-follow-up-types", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ types: normalized }),
+    }).catch(() => null);
+    if (!res?.ok) {
+      const body = await res?.json().catch(() => ({}));
+      throw new Error(body?.message || "Takip tipleri kurum ayarına kaydedilemedi.");
     }
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    localStorage.setItem("hasta-takip-custom-types", JSON.stringify(customTypeOptions));
-  }, [customTypeOptions]);
+    let cancelled = false;
+    const loadTypes = async () => {
+      try {
+        const res = await fetch("/api/patient-follow-up-types", { cache: "no-store" });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(body?.message || "Takip tipleri yüklenemedi.");
+        const serverTypes = normalizeCustomTypes(Array.isArray(body?.types) ? body.types : []);
+        if (cancelled) return;
+
+        let legacyTypes: string[] = [];
+        if (typeof window !== "undefined") {
+          try {
+            const raw = localStorage.getItem("hasta-takip-custom-types");
+            const parsed = raw ? JSON.parse(raw) : [];
+            legacyTypes = normalizeCustomTypes(Array.isArray(parsed) ? parsed : []);
+          } catch {
+            legacyTypes = [];
+          }
+        }
+
+        const merged = normalizeCustomTypes([...serverTypes, ...legacyTypes]);
+        setCustomTypeOptions(merged);
+        if (legacyTypes.length > 0 && merged.length !== serverTypes.length) {
+          await persistCustomTypes(merged).catch(() => {});
+          localStorage.removeItem("hasta-takip-custom-types");
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : "Takip tipleri yüklenemedi.");
+      }
+    };
+    void loadTypes();
+    return () => { cancelled = true; };
+  }, [persistCustomTypes]);
 
   useEffect(() => {
     if (patientSearch.trim().length < 2) {
@@ -642,6 +683,7 @@ export default function HastaTakipPage() {
     const fromManual: FollowItem[] = manualFollowUps.map((f) => {
       const sourceDate = f.appointment?.startAt || f.createdAt;
       const custom = parseCustomTypeFromNote(f.note);
+      const labContext = parseLabFollowUpNote(f.note, { labOrderId: f.labOrderId, labTripId: f.labTripId, labOrder: f.labOrder });
       const resolvedLabel = custom.customType || FOLLOW_LABELS[f.type] || f.type;
       return {
         key: `manual-${f.id}`,
@@ -654,20 +696,36 @@ export default function HastaTakipPage() {
         doctorId: f.doctorId || f.appointment?.doctor?.id || undefined,
         doctorName: f.assignedDoctor?.fullName || f.appointment?.doctor?.fullName || "Doktor atanmamis",
         type: f.type,
-        followUpLabel: resolvedLabel,
+        followUpLabel: labContext ? "Lab Prova Randevusu" : resolvedLabel,
         statusLabel: f.status === "KAPALI" ? "Kapalı" : "Açık",
-        note: custom.cleanNote || f.resolutionNote || "Takip notu girilmedi.",
+        note: labContext?.title || custom.cleanNote || f.resolutionNote || "Takip notu girilmedi.",
         isOpen: f.status === "ACIK",
         priority: f.priority,
         createdAt: sourceDate,
         nextActionAt: f.nextActionAt || null,
         ageDays: dayDiff(sourceDate),
         appointmentDateLabel: f.appointment?.startAt ? new Date(f.appointment.startAt).toLocaleString("tr-TR") : "Manuel takip",
-        followBadgeClass: followBadgeClassByType(f.type),
+        followBadgeClass: labContext ? "bg-violet-100 text-violet-800" : followBadgeClassByType(f.type),
+        isLabProva: Boolean(labContext),
+        labContext: labContext || undefined,
       };
     });
 
-    const merged = [...fromManual, ...fromAppointments];
+    const mergedRaw = [...fromManual, ...fromAppointments];
+    const newestOpenLabProvaByGroup = new Map<string, FollowItem>();
+    for (const item of mergedRaw) {
+      if (!item.isOpen || !item.isLabProva || !item.labContext?.groupKey) continue;
+      const key = `${item.patientId}::${item.labContext.groupKey}`;
+      const previous = newestOpenLabProvaByGroup.get(key);
+      if (!previous || new Date(item.createdAt).getTime() > new Date(previous.createdAt).getTime()) {
+        newestOpenLabProvaByGroup.set(key, item);
+      }
+    }
+    const merged = mergedRaw.filter((item) => {
+      if (!item.isOpen || !item.isLabProva || !item.labContext?.groupKey) return true;
+      const key = `${item.patientId}::${item.labContext.groupKey}`;
+      return newestOpenLabProvaByGroup.get(key)?.key === item.key;
+    });
     const normalizedQuery = query.trim().toLocaleLowerCase("tr-TR");
 
     return merged
@@ -699,6 +757,7 @@ export default function HastaTakipPage() {
       })
       .sort((a, b) => {
         if (a.isOpen !== b.isOpen) return a.isOpen ? -1 : 1;
+        if (a.isLabProva !== b.isLabProva) return a.isLabProva ? -1 : 1;
         if (a.priority !== b.priority) return b.priority - a.priority;
         return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
       });
@@ -834,6 +893,14 @@ export default function HastaTakipPage() {
         return;
       }
       setManualFollowUps((prev) => [data as ManualFollowUp, ...prev]);
+      if (resolvedType.apiType === "DIGER" && resolvedType.label && resolvedType.label !== "Diğer") {
+        const nextTypes = normalizeCustomTypes([...customTypeOptions, resolvedType.label]);
+        if (nextTypes.length !== customTypeOptions.length) {
+          await persistCustomTypes(nextTypes).catch((e) => {
+            setError(e instanceof Error ? e.message : "Takip tipi kurum ayarına kaydedilemedi.");
+          });
+        }
+      }
       setSuccessWithToast("Manuel takip kaydı oluşturuldu.");
       setSelectedPatient(null);
       setPatientSearch("");
@@ -850,79 +917,6 @@ export default function HastaTakipPage() {
       setError("Manuel takip oluşturma sırasında hata oluştu.");
     } finally {
       setCreatingManual(false);
-    }
-  };
-
-  const createClinicTask = async () => {
-    if (!selectedPatient) {
-      setError("Görev için önce hasta seçin.");
-      return;
-    }
-    if (!taskTitle.trim()) {
-      setError("Görev başlığı boş bırakılamaz.");
-      return;
-    }
-
-    setTaskSaving(true);
-    setError("");
-    setSuccessWithToast("");
-    try {
-      const res = await fetch("/api/clinic-tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          patientId: selectedPatient.id,
-          title: taskTitle.trim(),
-          details: taskDetails.trim() || undefined,
-          type: taskType,
-          priority: taskPriority,
-          dueAt: taskDueAt ? new Date(taskDueAt).toISOString() : undefined,
-          assignedToIds: taskAssigneeIds,
-          status: "ACIK",
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data?.message || "Görev kaydı oluşturulamadı.");
-        return;
-      }
-      setClinicTasks((prev) => [data as ClinicTask, ...prev]);
-      setTaskTitle("");
-      setTaskType("DIGER");
-      setTaskPriority(2);
-      setTaskDueAt("");
-      setTaskDetails("");
-      setTaskAssigneeIds([]);
-      setSuccessWithToast("Görev hasta takip paneline eklendi.");
-      setShowTaskCreate(false);
-    } catch {
-      setError("Görev kaydı sırasında hata oluştu.");
-    } finally {
-      setTaskSaving(false);
-    }
-  };
-
-  const updateClinicTaskStatus = async (taskId: string, status: ClinicTask["status"]) => {
-    setTaskBusyId(taskId);
-    setError("");
-    setSuccessWithToast("");
-    try {
-      const res = await fetch(`/api/clinic-tasks/${taskId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data?.message || "Görev durumu güncellenemedi.");
-        return;
-      }
-      setClinicTasks((prev) => prev.map((t) => (t.id === taskId ? (data as ClinicTask) : t)));
-      setSuccessWithToast("Görev durumu güncellendi.");
-    } catch {
-      setError("Görev durumu değiştirilirken hata oluştu.");
-    } finally {
-      setTaskBusyId("");
     }
   };
 
@@ -962,7 +956,7 @@ export default function HastaTakipPage() {
 <head><meta charset="UTF-8"></head>
 <body>
 <table style="width:100%;border-collapse:collapse;font-family:Calibri,Arial,sans-serif;">
-  <tr><td colspan="9" style="background:#1E3A5F;color:#fff;font-size:18px;font-weight:700;padding:12px 14px;">KlinikModern - Hasta Takip Raporu</td></tr>
+  <tr><td colspan="9" style="background:#1E3A5F;color:#fff;font-size:18px;font-weight:700;padding:12px 14px;">Hasta Takip Raporu</td></tr>
   <tr><td colspan="9" style="background:#F1F5F9;border:1px solid #E2E8F0;padding:8px 14px;color:#475569;">Oluşturma: ${new Date().toLocaleString("tr-TR")} | Kayıt: ${reportRows.length}</td></tr>
   <tr style="background:#1E3A5F;color:#fff;">
     <th style="border:1px solid #2D4F7C;padding:8px;">Hasta</th>
@@ -1020,7 +1014,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
 @media print{thead{display:table-header-group}tr{page-break-inside:avoid}}
 </style></head><body>
 <div class="page">
-  <div class="head"><div><div class="h1">KlinikModern</div><div class="sub">Hasta Takip Raporu</div></div><div class="sub">Oluşturma: ${new Date().toLocaleString("tr-TR")}</div></div>
+  <div class="head"><div><div class="h1">Hasta Takip Raporu</div><div class="sub">Klinik Yönetim Paneli</div></div><div class="sub">Oluşturma: ${new Date().toLocaleString("tr-TR")}</div></div>
   <div class="stats">
     <div class="box"><div class="num">${stats.total}</div><div class="lbl">Toplam</div></div>
     <div class="box"><div class="num">${stats.open}</div><div class="lbl">Açık</div></div>
@@ -1032,7 +1026,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
     <thead><tr><th>Hasta</th><th>Doktor</th><th>Takip</th><th>Durum</th><th>Randevu</th><th>Sonraki Adim</th><th>Yas</th><th>Kaynak</th><th>Not</th></tr></thead>
     <tbody>${rowsHtml}</tbody>
   </table>
-  <div class="foot"><span>Bu çıktı KlinikModern takip panelinden oluşturuldu.</span><span>${new Date().toLocaleString("tr-TR")}</span></div>
+  <div class="foot"><span>Bu çıktı klinik takip panelinden oluşturuldu.</span><span>${new Date().toLocaleString("tr-TR")}</span></div>
 </div>
 <script>window.onload=function(){window.print();}<\/script>
 </body></html>`);
@@ -1040,13 +1034,9 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
     win.focus();
   };
 
-  const doctors = useMemo(() => staff.filter((s) => s.role === "DOKTOR"), [staff]);
-  const openClinicTasks = useMemo(
-    () => clinicTasks.filter((t) => t.status === "ACIK" || t.status === "BEKLEMEDE").sort((a, b) => {
-      if (a.priority !== b.priority) return b.priority - a.priority;
-      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-    }),
-    [clinicTasks],
+  const doctors = useMemo(
+    () => staff.filter((s) => s.role === "DOKTOR" || (s.role === "YONETICI" && s.profile?.hideAsDoctor === false)),
+    [staff],
   );
   const manualSubmitDisabledReason = creatingManual
     ? "Kayıt oluşturuluyor..."
@@ -1082,6 +1072,8 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
     setFollowUpEvents([]);
     resetEventForm();
   };
+
+  useEscapeClose(closeDetailModal, Boolean(detailItem));
 
   const resetEventForm = () => {
     setEditingEventId("");
@@ -1200,7 +1192,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
 
   const deleteFollowUpEvent = async (eventId: string) => {
     if (!activeHistoryFollowUpId) return;
-    if (!window.confirm("Bu süreç notu silinsin mi? Bu işlem geri alınamaz.")) return;
+    if (!(await confirmDialog({ message: "Bu süreç notu silinsin mi? Bu işlem geri alınamaz.", danger: true, confirmText: "Sil" }))) return;
     setEventBusy(true);
     setError("");
     setSuccessWithToast("");
@@ -1267,7 +1259,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
 </style></head><body>
 <div class="page">
   <div class="head">
-    <div><div class="h1">Hasta Süreç Takip Özeti</div><div class="sub">KlinikModern</div></div>
+    <div><div class="h1">Hasta Süreç Takip Özeti</div><div class="sub">Klinik Yönetim Paneli</div></div>
     <div class="sub">Oluşturma: ${new Date().toLocaleString("tr-TR")}</div>
   </div>
   <p><strong>Hasta:</strong> ${esc(item.patientName)} | <strong>Takip:</strong> ${esc(item.followUpLabel)} | <strong>Durum:</strong> ${esc(item.statusLabel)}</p>
@@ -1286,17 +1278,16 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
   };
 
   return (
-    <section className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+    <section className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-2 py-2 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-black tracking-tight text-slate-900">Hasta Takip</h1>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{items.length} açık kayıt</span>
-          <span className="rounded-full bg-blue-50 px-3 py-1 text-sm font-semibold text-blue-700">{openClinicTasks.length} görev</span>
+          <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{items.length} açık kayıt</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button onClick={printReport} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">PDF Al</button>
-          <button onClick={downloadExcelReport} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Excel Al</button>
-          <Link href="/randevu" className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700">Randevulara Git</Link>
+          <button onClick={printReport} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">PDF</button>
+          <button onClick={downloadExcelReport} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">Excel</button>
+          <Link href="/gorevler" className="h-8 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">Görev Merkezi</Link>
+          <Link href="/randevu" className="h-8 rounded-lg bg-primary px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-700">Randevular</Link>
         </div>
       </div>
 
@@ -1306,15 +1297,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
         </div>
       )}
 
-      <div className="rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
-        <div className="grid grid-cols-2 gap-2">
-          <button type="button" onClick={() => setActiveTab("hastalar")} className={"rounded-xl px-3 py-2.5 text-sm font-bold " + (activeTab === "hastalar" ? "bg-primary text-white" : "bg-slate-100 text-slate-700")}>Aksiyon Gerektiren Hastalar</button>
-          <button type="button" onClick={() => setActiveTab("gorevler")} className={"rounded-xl px-3 py-2.5 text-sm font-bold " + (activeTab === "gorevler" ? "bg-primary text-white" : "bg-slate-100 text-slate-700")}>Görevler</button>
-        </div>
-      </div>
-
-      {activeTab === "hastalar" && (
-        <>
+      <>
           <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
             <div className="flex flex-wrap items-center gap-2">
               <input
@@ -1375,7 +1358,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
             ) : (
               <div className="space-y-2 p-3" aria-busy={loading}>
                 {items.map((item) => (
-                  <div key={item.key} className="rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm transition hover:border-slate-300">
+                  <div key={item.key} className={`rounded-xl border p-2.5 shadow-sm transition hover:border-slate-300 ${item.isLabProva ? "border-violet-200 bg-violet-50/45" : "border-slate-200 bg-white"}`}>
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
@@ -1384,7 +1367,16 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                           <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + (item.isOpen ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600")}>{item.statusLabel}</span>
                         </div>
                         <p className="mt-0.5 text-xs text-slate-500">{item.doctorName} · {item.ageDays} gün · Öncelik {item.priority}</p>
-                        {!denseView && <p className="mt-1 text-xs text-slate-700">{shortText(item.note || "Not bulunmuyor.", 65)}</p>}
+                        {item.isLabProva && item.labContext && (
+                          <p className="mt-1 text-xs font-semibold text-violet-800">
+                            {item.labContext.receivedStep || "Prova"} için randevu verilecek
+                            {item.labContext.labType ? ` · ${item.labContext.labType}` : ""}
+                            {item.labContext.labName ? ` · ${item.labContext.labName}` : ""}
+                          </p>
+                        )}
+                        {/* "Bu hasta neden burada?" cevabı sade görünümde de görünür kalmalı
+                            (bkz. denetim raporu Tema 6) — sade modda kısa, detaylı modda uzun. */}
+                        <p className="mt-1 text-xs text-slate-700">{shortText(item.note || "Not bulunmuyor.", denseView ? 40 : 65)}</p>
                         {item.nextActionAt && <p className="mt-0.5 text-xs text-amber-700">Sonraki adım: {new Date(item.nextActionAt).toLocaleString("tr-TR")}</p>}
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -1398,62 +1390,9 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
             )}
           </div>
         </>
-      )}
-
-      {activeTab === "gorevler" && (
-        <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-base font-bold text-slate-900">Görevler</h2>
-            <div className="flex items-center gap-2">
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{openClinicTasks.length} açık/beklemede</span>
-              <button type="button" onClick={() => { setSelectedPatient(null); setPatientSearch(""); setPatientResults([]); setPatientSearchError(""); setShowTaskCreate(true); }} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700">Görev Ekle</button>
-            </div>
-          </div>
-
-          <div className="mt-3 space-y-2">
-            {openClinicTasks.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">Açık veya beklemede görev yok.</p>
-            ) : (
-              openClinicTasks.slice(0, 30).map((task) => (
-                <div key={task.id} className="rounded-lg border border-slate-200 bg-white px-3 py-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-semibold text-slate-900">{task.title}</p>
-                        <span className={"rounded-full px-2 py-0.5 text-[11px] font-semibold " + getTaskStatusBadge(task.status)}>{TASK_STATUS_LABELS[task.status]}</span>
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">{TASK_TYPE_LABELS[task.type]}</span>
-                        <span className={"rounded-full px-2 py-0.5 text-[11px] font-semibold " + getPriorityBadge(task.priority)}>Öncelik {task.priority}</span>
-                      </div>
-                      <p className="mt-0.5 text-[11px] text-slate-500">
-                        {task.patient?.fullName || "Hasta baglanmamis"}
-                        {(task.assignees && task.assignees.length > 0)
-                          ? ` · Atanan: ${task.assignees.map((a) => a.user.fullName).join(", ")}`
-                          : (task.assignedTo?.fullName ? ` · Atanan: ${task.assignedTo.fullName}` : "")}
-                        {task.dueAt ? ` · Termin: ${new Date(task.dueAt).toLocaleString("tr-TR")}` : ""}
-                      </p>
-                      {task.details ? <p className="mt-1 text-xs text-slate-700">{shortText(task.details, 90)}</p> : null}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {task.patient?.id ? (
-                        <Link href={`/hasta-detay?id=${task.patient.id}`} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Hasta</Link>
-                      ) : null}
-                      {task.status !== "BEKLEMEDE" && (
-                        <button type="button" disabled={taskBusyId === task.id} onClick={() => void updateClinicTaskStatus(task.id, "BEKLEMEDE")} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60">Beklet</button>
-                      )}
-                      {task.status !== "TAMAMLANDI" && (
-                        <button type="button" disabled={taskBusyId === task.id} onClick={() => void updateClinicTaskStatus(task.id, "TAMAMLANDI")} className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-60">Tamamla</button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      )}
 
       {showManualCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" {...backdropClose(() => setShowManualCreate(false))}>
           <div className="w-full max-w-4xl rounded-2xl bg-white p-4 shadow-2xl">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-lg font-bold text-slate-900">Manuel Takip Ekle</h3>
@@ -1516,79 +1455,8 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
         </div>
       )}
 
-      {showTaskCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
-          <div className="w-full max-w-4xl rounded-2xl bg-white p-4 shadow-2xl">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-lg font-bold text-slate-900">Görev Ekle</h3>
-              <button type="button" onClick={() => setShowTaskCreate(false)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Kapat</button>
-            </div>
-
-            <div className="grid gap-3 lg:grid-cols-2">
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Hasta</label>
-                <input value={patientSearch} onChange={(e) => { setPatientSearch(e.target.value); setSelectedPatient(null); setPatientSearchError(""); }} placeholder="Ad, telefon veya TC ile ara" className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
-                {patientSearchLoading && <p className="mt-2 text-xs text-slate-600">Hasta aranıyor...</p>}
-                {selectedPatient ? (
-                  <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Seçili hasta: <span className="font-semibold">{selectedPatient.fullName}</span>{!hidePhone && selectedPatient.phone ? ` - ${selectedPatient.phone}` : ""}</div>
-                ) : patientResults.length > 0 ? (
-                  <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white">
-                    {patientResults.map((p) => (
-                      <button key={p.id} type="button" onClick={() => { setSelectedPatient(p); setPatientSearch(p.fullName); setPatientResults([]); }} className="flex w-full items-center justify-between border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
-                        <span>{p.fullName}</span>
-                        {!hidePhone && <span className="text-xs text-slate-400">{p.phone || "-"}</span>}
-                      </button>
-                    ))}
-                  </div>
-                ) : patientSearch.trim().length >= 2 && patientSearchError ? (
-                  <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{patientSearchError}</div>
-                ) : null}
-              </div>
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Görev Başlığı</label>
-                <input value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} placeholder="Görev başlığı" className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
-              </div>
-            </div>
-
-            <div className="mt-3 grid gap-3 lg:grid-cols-[0.9fr_0.6fr_1fr_1fr]">
-              <select value={taskType} onChange={(e) => setTaskType(e.target.value as ClinicTask["type"])} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                <option value="PARCA_SIPARIS">Parça Sipariş</option>
-                <option value="LAB">Laboratuvar</option>
-                <option value="ARAMA">Arama</option>
-                <option value="EVRAK">Evrak</option>
-                <option value="DIGER">Diğer</option>
-              </select>
-              <select value={taskPriority} onChange={(e) => setTaskPriority(Number(e.target.value) as 1 | 2 | 3)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                <option value={1}>Düşük</option>
-                <option value={2}>Orta</option>
-                <option value={3}>Yüksek</option>
-              </select>
-              <div className="max-h-[92px] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-sm">
-                {staff.length === 0 ? <p className="text-xs text-slate-400">Personel bulunamadı</p> : staff.map((s) => {
-                  const checked = taskAssigneeIds.includes(s.id);
-                  return (
-                    <label key={s.id} className="flex items-center gap-2 py-1 text-xs text-slate-700">
-                      <input type="checkbox" checked={checked} onChange={(e) => setTaskAssigneeIds((prev) => e.target.checked ? Array.from(new Set([...prev, s.id])) : prev.filter((id) => id !== s.id))} />
-                      <span>{s.fullName}</span>
-                    </label>
-                  );
-                })}
-              </div>
-              <input type="datetime-local" value={taskDueAt} onChange={(e) => setTaskDueAt(e.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
-            </div>
-
-            <textarea value={taskDetails} onChange={(e) => setTaskDetails(e.target.value)} rows={2} placeholder="Görev detayı (opsiyonel)" className="mt-3 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
-
-            <div className="mt-3 flex justify-end gap-2">
-              <button type="button" onClick={() => setShowTaskCreate(false)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">İptal</button>
-              <button type="button" onClick={() => void createClinicTask()} disabled={taskSaving || !selectedPatient || !taskTitle.trim()} className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">{taskSaving ? "Ekleniyor..." : "Görevi Kaydet"}</button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {detailItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" {...backdropClose(closeDetailModal)}>
           <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-3xl bg-white shadow-2xl">
             <div className="sticky top-0 flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4">
               <div>
@@ -1609,6 +1477,17 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{detailItem.source === "MANUAL" ? "Manuel" : "Randevu"}</span>
                   </div>
                   <p className="mt-1 text-xs text-slate-500">{detailItem.appointmentDateLabel} · {detailItem.doctorName}</p>
+                  {detailItem.isLabProva && detailItem.labContext && (
+                    <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 px-3 py-3">
+                      <p className="text-[11px] font-black uppercase tracking-wide text-violet-600">Laboratuvar Prova Takibi</p>
+                      <p className="mt-1 text-sm font-bold text-violet-950">{detailItem.labContext.title}</p>
+                      <div className="mt-2 grid gap-2 text-xs text-violet-800 sm:grid-cols-3">
+                        <p><span className="font-bold">İş:</span> {detailItem.labContext.labType || "-"}</p>
+                        <p><span className="font-bold">Laboratuvar:</span> {detailItem.labContext.labName || "-"}</p>
+                        <p><span className="font-bold">Prova:</span> {detailItem.labContext.receivedStep || "-"}</p>
+                      </div>
+                    </div>
+                  )}
                   <div className="mt-3 rounded-xl bg-slate-50 px-3 py-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Not</p>
                     <p className="mt-1 text-sm text-slate-700">{detailItem.note}</p>

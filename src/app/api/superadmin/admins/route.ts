@@ -58,7 +58,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Ad soyad, TC ve en az 6 haneli şifre zorunlu" }, { status: 400 });
   }
 
-  const exists = await prisma.user.findUnique({ where: { identityNo } });
+  // Superadmin hesapları kuruma bağlı değildir (institutionId=null), bu yüzden
+  // benzersizlik kontrolü sadece diğer superadmin'lere karşı yapılır — bir klinik
+  // personelinin TC'si tesadüfen aynıysa bu, superadmin oluşturmayı engellememeli.
+  const exists = await prisma.user.findFirst({ where: { identityNo, role: "SUPERADMIN" } });
   if (exists) {
     return NextResponse.json({ message: "Bu TC kimlik numarası zaten kayıtlı" }, { status: 409 });
   }

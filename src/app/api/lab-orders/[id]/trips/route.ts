@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth("appointments:write");
@@ -22,7 +24,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   for (let attempt = 1; attempt <= 4; attempt += 1) {
     try {
-      const trip = await (prisma as any).$transaction(async (tx: any) => {
+      const updatedOrder = await (prisma as any).$transaction(async (tx: any) => {
         const last = await tx.labTrip.findFirst({
           where: { labOrderId: params.id },
           orderBy: { order: "desc" },
@@ -30,7 +32,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         });
         const nextOrder = (last?.order ?? 0) + 1;
 
-        return tx.labTrip.create({
+        await tx.labTrip.create({
           data: {
             labOrderId: params.id,
             order: nextOrder,
@@ -39,10 +41,21 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             sentNote: sentNote || null,
           },
         });
+
+        return tx.labOrder.findUnique({
+          where: { id: params.id },
+          include: {
+            invoices: { orderBy: { issuedAt: "asc" } },
+            patient: { select: { id: true, fullName: true, phone: true } },
+            doctor: { select: { id: true, fullName: true } },
+            trips: { orderBy: { order: "asc" } },
+          },
+        });
       });
 
       await writeAudit(auth.user.id, "LAB_TRIP_CREATE", `Laboratuvar gidiş adımı eklendi (${params.id})`);
-      return NextResponse.json(trip, { status: 201 });
+      await bumpRealtimeInstitution(auth.user.institutionId || null);
+      return NextResponse.json(updatedOrder, { status: 201 });
     } catch (error: any) {
       // Unique(labOrderId, order) çakışırsa yeniden sıra hesaplayıp tekrar dene.
       if (error?.code === "P2002" && attempt < 4) continue;

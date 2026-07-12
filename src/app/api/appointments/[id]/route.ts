@@ -2,6 +2,7 @@
 import { prisma } from "@/lib/prisma";
 import { appointmentSchema } from "@/lib/validators";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
 
 const APPT_REMINDER_PREFIX = "[APPT_REMINDER]";
 
@@ -202,6 +203,13 @@ export async function PUT(request: NextRequest, { params }: Params) {
       return NextResponse.json({
         message: `Bu doktorun ${cs}–${ce} arası randevusu mevcut (${conflict.patient?.fullName ?? "—"})`,
         conflictId: conflict.id,
+      }, { status: 409 });
+    }
+
+    const blockConflict = await findDoctorBlockConflict(parsed.data.doctorId, newStart, newEnd);
+    if (blockConflict) {
+      return NextResponse.json({
+        message: `Doktor bu saatte bloke edilmiş (${blockConflict.startTime}–${blockConflict.endTime}${blockConflict.reason ? `: ${blockConflict.reason}` : ""})`,
       }, { status: 409 });
     }
   }

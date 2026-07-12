@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 type RouteContext = { params: { id: string } };
 
@@ -42,6 +42,7 @@ export async function PATCH(req: Request, { params }: RouteContext) {
     include: { user: { select: { fullName: true, role: true } } },
   });
 
+  await writeAudit(auth.user.id, "MESSAGE_UPDATE", id);
   return NextResponse.json(updated);
 }
 
@@ -67,5 +68,6 @@ export async function DELETE(_: Request, { params }: RouteContext) {
   if (!canDelete) return NextResponse.json({ error: "Bu mesajı silme yetkiniz yok" }, { status: 403 });
 
   await prisma.message.delete({ where: { id } });
+  await writeAudit(auth.user.id, "MESSAGE_DELETE", id);
   return NextResponse.json({ ok: true });
 }

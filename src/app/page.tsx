@@ -10,10 +10,14 @@ function isVideoUrl(url: string) {
   return l.endsWith(".mp4") || l.endsWith(".webm") || l.endsWith(".ogg");
 }
 
+function cleanMarketingText(value?: string) {
+  return String(value || "").replace(/klinik\s*modern|klinikmodern/gi, "Klinik Yönetim Platformu");
+}
+
 const TESTIMONIALS = [
-  { name: "Dr. Ayşe Kaya", role: "Diş Hekimi, İstanbul", text: "Randevu yönetimi artık çok daha hızlı. Hastalarım SMS hatırlatmalarına bayılıyor, gelmeyen hasta sayısı yarıya düştü.", avatar: "AK" },
-  { name: "Dr. Mehmet Demir", role: "Klinik Sahibi, Ankara", text: "Ödeme takibi ve cari raporlama ile ayın sonunda saat süren işlemler artık 5 dakika. Muhteşem bir sistem.", avatar: "MD" },
-  { name: "Dr. Zeynep Arslan", role: "Genel Diş Kliniği, İzmir", text: "Çok sube yönetiminde merkezi kontrol harika. Her şube için ayrı kullanıcı ve yetki kurulumu mükemmel çalışıyor.", avatar: "ZA" },
+  { name: "Dr. Ayşe Kaya", role: "Diş Hekimi, İstanbul", text: "Randevu, hatırlatma ve hasta takip süreçlerini tek panelden yönetmek günlük operasyonu belirgin şekilde sadeleştirdi.", avatar: "AK" },
+  { name: "Dr. Mehmet Demir", role: "Klinik Sahibi, Ankara", text: "Finans ve tahsilat kayıtları düzenli ilerlediği için ay sonu mutabakatını çok daha kontrollü yapıyoruz.", avatar: "MD" },
+  { name: "Dr. Zeynep Arslan", role: "Genel Diş Kliniği, İzmir", text: "Yetkilendirme, randevu akışı ve raporlama yapısı ekip içi iş bölümünü daha net hale getirdi.", avatar: "ZA" },
 ];
 
 const PROCESS_STEPS = [
@@ -23,19 +27,15 @@ const PROCESS_STEPS = [
 ];
 
 const MODULE_ICONS: Record<string, string> = {
-  cyan: "🦷",
-  emerald: "💳",
-  indigo: "📣",
-  slate: "📊",
+  cyan: "KL",
+  emerald: "FN",
+  indigo: "IL",
+  slate: "RP",
 };
 
 export default async function RootPage() {
   const site = await getSiteContent();
-  const allMedia = site.galleryImages.filter(Boolean);
-  const heroVideo = allMedia.find(isVideoUrl) ?? null;
-  const galleryVideos = allMedia.filter(isVideoUrl).slice(0, 6);
-  const galleryImages = allMedia.filter((x) => !isVideoUrl(x)).slice(0, 6);
-  const mediaItems = allMedia.slice(0, 6);
+  const heroVideo = site.promoVideoUrl && isVideoUrl(site.promoVideoUrl) ? site.promoVideoUrl : null;
   const anim = site.showAnimations;
 
   return (
@@ -45,10 +45,7 @@ export default async function RootPage() {
       <nav className="sticky top-0 z-50 border-b border-slate-200/80 bg-white">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-3.5">
           <div className="flex items-center gap-2">
-            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-600">
-              <span className="text-xs font-black text-white">K</span>
-            </div>
-            <span className="text-base font-black tracking-tight text-slate-900">KlinikModern</span>
+            <span className="text-base font-black tracking-tight text-slate-900">Klinik Yönetim Platformu</span>
           </div>
           <div className="hidden items-center gap-6 text-sm font-medium text-slate-600 md:flex">
             <a href="#ozellikler" className="hover:text-cyan-600 transition-colors">Özellikler</a>
@@ -60,7 +57,7 @@ export default async function RootPage() {
             href="/klinik/giris"
             className="rounded-xl bg-cyan-600 px-5 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-cyan-700"
           >
-            Klinik Girişi →
+            Klinik Girişi
           </Link>
         </div>
       </nav>
@@ -78,7 +75,7 @@ export default async function RootPage() {
             playsInline
           />
         ) : site.heroImageUrl ? (
-          <Image src={site.heroImageUrl} alt="KlinikModern" fill className="absolute inset-0 h-full w-full object-cover" />
+          <Image src={site.heroImageUrl} alt="Diş kliniği yönetim paneli" fill className="absolute inset-0 h-full w-full object-cover" />
         ) : (
           <Image
             src="https://images.unsplash.com/photo-1629904853716-f0bc54eea481?auto=format&fit=crop&w=1920&q=80"
@@ -91,9 +88,6 @@ export default async function RootPage() {
         {/* Overlays */}
         <div className="absolute inset-0 bg-gradient-to-r from-slate-950/95 via-slate-900/80 to-slate-900/40" />
         <div className="absolute inset-0 bg-gradient-to-t from-slate-950/60 via-transparent to-transparent" />
-        {/* Glow blobs */}
-        <div className={`absolute -left-20 top-1/3 h-[600px] w-[600px] rounded-full bg-cyan-600/20 blur-[150px] ${anim ? "animate-pulse" : ""}`} />
-        <div className={`absolute bottom-0 right-0 h-[400px] w-[400px] rounded-full bg-emerald-500/15 blur-[120px] ${anim ? "animate-pulse" : ""}`} />
 
         <div className="relative z-10 mx-auto w-full max-w-7xl px-5 py-20 md:py-28">
           <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2">
@@ -101,15 +95,15 @@ export default async function RootPage() {
             <div className="pb-16 pt-4 md:pb-20">
               <span className="inline-flex items-center gap-2 rounded-full border border-cyan-400/40 bg-cyan-400/10 px-4 py-1.5 text-xs font-semibold text-cyan-300">
                 <span className="h-1.5 w-1.5 rounded-full bg-cyan-400" />
-                {site.heroBadge}
+                {cleanMarketingText(site.heroBadge)}
               </span>
 
               <h2 className="mt-6 text-4xl font-black leading-[1.1] tracking-tight md:text-5xl lg:text-6xl">
-                {site.heroTitle}
+                {cleanMarketingText(site.heroTitle)}
               </h2>
 
               <p className="mt-6 max-w-lg text-base leading-relaxed text-slate-300 md:text-lg">
-                {site.heroDescription}
+                {cleanMarketingText(site.heroDescription)}
               </p>
 
               <div className="mt-8 flex flex-wrap gap-3">
@@ -117,22 +111,22 @@ export default async function RootPage() {
                   href={site.primaryCtaUrl || "/klinik/giris"}
                   className="inline-flex items-center gap-2 rounded-xl bg-cyan-500 px-7 py-3.5 text-sm font-bold text-white shadow-lg shadow-cyan-500/25 transition hover:bg-cyan-400"
                 >
-                  {site.primaryCtaLabel}
+                  {cleanMarketingText(site.primaryCtaLabel)}
                   <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
                 </Link>
                 <a
                   href={site.secondaryCtaUrl || "#fiyatlar"}
                   className="inline-flex items-center gap-2 rounded-xl border border-white/25 px-7 py-3.5 text-sm font-bold text-white transition hover:bg-white/10"
                 >
-                  {site.secondaryCtaLabel}
+                  {cleanMarketingText(site.secondaryCtaLabel)}
                 </a>
               </div>
 
               {/* Trust badges */}
               <div className="mt-10 flex items-center gap-4 text-xs text-slate-400">
-                <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Ücretsiz kurulum desteği</span>
+                <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Kurulum desteği</span>
                 <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> 14 gün demo</span>
-                <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Sözleşmesiz başla</span>
+                <span className="flex items-center gap-1.5"><span className="text-emerald-400">✓</span> Yetkili kullanıcı erişimi</span>
               </div>
             </div>
 
@@ -145,7 +139,7 @@ export default async function RootPage() {
                   <span className="h-2.5 w-2.5 rounded-full bg-yellow-400/70" />
                   <span className="h-2.5 w-2.5 rounded-full bg-emerald-400/70" />
                   <div className="ml-4 flex-1 rounded-full bg-slate-700/60 px-3 py-0.5 text-[10px] text-slate-400">
-                    app.klinikmodern.com
+                    panel.klinik.local
                   </div>
                 </div>
                 {/* Mock dashboard */}
@@ -191,15 +185,6 @@ export default async function RootPage() {
                   </div>
                 </div>
               </div>
-              {/* Floating badges around the mockup */}
-              <div className="absolute -left-8 top-1/3 rounded-2xl border border-white/15 bg-slate-800/80 p-3 text-center shadow-xl backdrop-blur">
-                <p className="text-lg font-black text-white">%99.9</p>
-                <p className="text-[10px] text-slate-400">Uptime</p>
-              </div>
-              <div className="absolute -right-6 bottom-1/4 rounded-2xl border border-white/15 bg-slate-800/80 p-3 text-center shadow-xl backdrop-blur">
-                <p className="text-lg font-black text-emerald-400">7/24</p>
-                <p className="text-[10px] text-slate-400">Bulut Erişim</p>
-              </div>
             </div>
           </div>
         </div>
@@ -219,19 +204,19 @@ export default async function RootPage() {
             {site.statsCards.map((card, idx) => (
               <div key={`stat-${idx}`} className="flex items-center gap-3">
                 <div className="h-10 w-10 flex-none rounded-xl bg-cyan-50 flex items-center justify-center">
-                  <span className="text-lg">
-                    {idx === 0 ? "🔒" : idx === 1 ? "☁️" : idx === 2 ? "🧩" : "⚡"}
+                  <span className="text-xs font-black text-cyan-700">
+                    {idx === 0 ? "GV" : idx === 1 ? "BT" : idx === 2 ? "MD" : "OP"}
                   </span>
                 </div>
                 <div>
-                  <p className="text-lg font-black text-slate-900">{card.title}</p>
-                  <p className="text-xs text-slate-500">{card.description}</p>
+                  <p className="text-lg font-black text-slate-900">{cleanMarketingText(card.title)}</p>
+                  <p className="text-xs text-slate-500">{cleanMarketingText(card.description)}</p>
                 </div>
               </div>
             ))}
             <div className="flex items-center gap-3">
               <div className="h-10 w-10 flex-none rounded-xl bg-emerald-50 flex items-center justify-center">
-                <span className="text-lg">🏆</span>
+                <span className="text-xs font-black text-emerald-700">500</span>
               </div>
               <div>
                 <p className="text-lg font-black text-slate-900">500+</p>
@@ -246,7 +231,7 @@ export default async function RootPage() {
       <section id="ozellikler" className="py-20 md:py-28">
         <div className="mx-auto max-w-7xl px-5">
           <div className="mx-auto mb-14 max-w-2xl text-center">
-            <span className="inline-block rounded-full bg-cyan-50 px-4 py-1 text-xs font-bold text-cyan-700 mb-3">NEDEN KLINIKMODERN</span>
+            <span className="inline-block rounded-full bg-cyan-50 px-4 py-1 text-xs font-bold text-cyan-700 mb-3">NEDEN BU PLATFORM</span>
             <h3 className="text-3xl font-black md:text-4xl">Kliniklerin tercih ettiği platform</h3>
             <p className="mt-4 text-slate-500">Kurulumdan eğitime, tüm süreç tek ekip tarafından yönetilir. Siz hastayla ilgilenin, gerisini biz halledelim.</p>
           </div>
@@ -257,11 +242,11 @@ export default async function RootPage() {
                 key={`feat-${idx}`}
                 className={`group relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-6 shadow-sm ${anim ? "transition-all duration-300 hover:-translate-y-1 hover:border-cyan-200 hover:shadow-md" : ""}`}
               >
-                <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-gradient-to-br from-cyan-50 to-cyan-100 text-2xl">
-                  {item.icon || "⭐"}
+                <div className="mb-4 inline-flex h-12 w-12 items-center justify-center rounded-xl bg-cyan-50 text-sm font-black text-cyan-700">
+                  {item.icon && item.icon.length <= 3 ? item.icon : `0${idx + 1}`}
                 </div>
-                <h4 className="text-lg font-black text-slate-900">{item.title}</h4>
-                <p className="mt-2 text-sm leading-relaxed text-slate-500">{item.description}</p>
+                <h4 className="text-lg font-black text-slate-900">{cleanMarketingText(item.title)}</h4>
+                <p className="mt-2 text-sm leading-relaxed text-slate-500">{cleanMarketingText(item.description)}</p>
                 <div className="absolute bottom-0 left-0 h-0.5 w-0 bg-gradient-to-r from-cyan-500 to-emerald-500 transition-all duration-300 group-hover:w-full" />
               </div>
             ))}
@@ -307,7 +292,7 @@ export default async function RootPage() {
               ))}
               <div className="mt-4 flex items-center justify-between border-t border-white/10 pt-3">
                 <span className="text-[11px] text-slate-500">Günlük görünüm</span>
-                <span className="text-[11px] font-bold text-cyan-400">Haftalık takvim →</span>
+                <span className="text-[11px] font-bold text-cyan-400">Haftalık takvim</span>
               </div>
             </div>
 
@@ -382,21 +367,6 @@ export default async function RootPage() {
             </div>
           </div>
 
-          {/* Galeri videoları varsa onları da göster */}
-          {galleryVideos.length > 0 && (
-            <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {galleryVideos.map((v, idx) => (
-                <div key={`vid-${idx}`} className={`group relative overflow-hidden rounded-2xl border border-white/10 bg-slate-900 ${anim ? "transition-transform duration-300 hover:-translate-y-1 hover:border-cyan-500/40" : ""}`}>
-                  <video className="h-56 w-full object-cover opacity-90 transition-opacity duration-300 group-hover:opacity-100" src={v} autoPlay muted loop playsInline />
-                  <div className="absolute inset-0 bg-gradient-to-t from-slate-950/60 to-transparent" />
-                  <div className="absolute bottom-3 left-3 flex items-center gap-1.5">
-                    <span className={`h-1.5 w-1.5 rounded-full bg-red-500 ${anim ? "animate-pulse" : ""}`} />
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-white/80">Sistem Önizlemesi</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
       </section>
 
@@ -415,9 +385,9 @@ export default async function RootPage() {
                 key={`mod-${idx}`}
                 className={`group rounded-2xl border border-white/10 bg-white/5 p-6 ${anim ? "transition-all duration-300 hover:bg-white/10 hover:border-cyan-500/40" : ""}`}
               >
-                <div className="mb-4 text-3xl">{MODULE_ICONS[card.color || ""] || "🔧"}</div>
-                <h4 className="text-lg font-black text-white">{card.title}</h4>
-                <p className="mt-2 text-sm leading-relaxed text-slate-400">{card.description}</p>
+                <div className="mb-4 inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/10 text-xs font-black text-cyan-200">{MODULE_ICONS[card.color || ""] || "MD"}</div>
+                <h4 className="text-lg font-black text-white">{cleanMarketingText(card.title)}</h4>
+                <p className="mt-2 text-sm leading-relaxed text-slate-400">{cleanMarketingText(card.description)}</p>
                 <div className="mt-4 flex items-center gap-1 text-xs font-semibold text-cyan-400 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
                   Daha fazla bilgi <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
                 </div>
@@ -453,32 +423,6 @@ export default async function RootPage() {
         </div>
       </section>
 
-      {/* ─── MEDIA GALLERY ─── */}
-      {mediaItems.length > 0 && (
-        <section className="bg-slate-50 py-20">
-          <div className="mx-auto max-w-7xl px-5">
-            <div className="mx-auto mb-10 max-w-2xl text-center">
-              <span className="inline-block rounded-full bg-cyan-50 px-4 py-1 text-xs font-bold text-cyan-700 mb-3">ÜRÜN GALERİSİ</span>
-              <h3 className="text-3xl font-black">Yazılımdan ekran görüntüleri</h3>
-              <p className="mt-3 text-slate-500">KlinikModern arayüzünden gerçek kullanım akışı görüntüleri.</p>
-            </div>
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {mediaItems.map((item, idx) => (
-                <div key={`media-${idx}`} className={`overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm ${anim ? "transition-transform duration-300 hover:-translate-y-1 hover:shadow-lg" : ""}`}>
-                  {isVideoUrl(item) ? (
-                    <video className="h-56 w-full object-cover" src={item} autoPlay muted loop playsInline controls />
-                  ) : (
-                    <div className="relative h-56 w-full">
-                      <Image src={item} alt={`KlinikModern ekran ${idx + 1}`} fill className="object-cover" />
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
-
       {/* ─── PRICING ─── */}
       <section id="fiyatlar" className="py-20 md:py-28">
         <div className="mx-auto max-w-7xl px-5">
@@ -502,11 +446,11 @@ export default async function RootPage() {
                 >
                   {card.badge && (
                     <span className="absolute -top-4 left-1/2 -translate-x-1/2 rounded-full bg-slate-900 px-4 py-1.5 text-xs font-bold text-white whitespace-nowrap shadow-md">
-                      ⭐ {card.badge}
+                      {card.badge}
                     </span>
                   )}
 
-                  <p className={`text-sm font-bold tracking-wider uppercase ${isHighlighted ? "text-cyan-100" : "text-slate-500"}`}>{card.title}</p>
+                  <p className={`text-sm font-bold tracking-wider uppercase ${isHighlighted ? "text-cyan-100" : "text-slate-500"}`}>{cleanMarketingText(card.title)}</p>
 
                   <div className="mt-4 flex items-end gap-1">
                     <span className={`text-5xl font-black leading-none ${isHighlighted ? "text-white" : "text-slate-900"}`}>{card.price}</span>
@@ -521,7 +465,7 @@ export default async function RootPage() {
                         <svg className={`mt-0.5 h-4 w-4 flex-none ${isHighlighted ? "text-cyan-200" : "text-cyan-500"}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}>
                           <polyline points="20 6 9 17 4 12" />
                         </svg>
-                        {item}
+                        {cleanMarketingText(item)}
                       </li>
                     ))}
                   </ul>
@@ -554,7 +498,7 @@ export default async function RootPage() {
           <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
             {TESTIMONIALS.map((t) => (
               <div key={t.name} className={`rounded-2xl border border-white/10 bg-white/5 p-6 ${anim ? "transition-all hover:bg-white/10 duration-300" : ""}`}>
-                <div className="flex gap-1 text-amber-400 text-sm mb-4">{"★★★★★"}</div>
+                <div className="mb-4 h-1 w-10 rounded-full bg-cyan-400" />
                 <p className="text-sm leading-relaxed text-slate-300">&ldquo;{t.text}&rdquo;</p>
                 <div className="mt-5 flex items-center gap-3">
                   <div className="flex h-9 w-9 items-center justify-center rounded-full bg-gradient-to-br from-cyan-500 to-cyan-700 text-xs font-bold text-white">
@@ -578,21 +522,21 @@ export default async function RootPage() {
             <div className="grid grid-cols-1 items-center gap-8 lg:grid-cols-2">
               <div>
                 <span className="inline-block rounded-full bg-white/15 px-4 py-1 text-xs font-bold text-cyan-100 mb-4">CANLI DEMO</span>
-                <h3 className="text-3xl font-black md:text-4xl">{site.promoTitle}</h3>
-                <p className="mt-4 max-w-lg text-base leading-relaxed text-cyan-100">{site.promoDescription}</p>
+                <h3 className="text-3xl font-black md:text-4xl">{cleanMarketingText(site.promoTitle)}</h3>
+                <p className="mt-4 max-w-lg text-base leading-relaxed text-cyan-100">{cleanMarketingText(site.promoDescription)}</p>
                 <div className="mt-8 flex flex-wrap gap-3">
                   <Link
                     href={site.primaryCtaUrl || "/klinik/giris"}
                     className="inline-flex items-center gap-2 rounded-xl bg-white px-6 py-3 text-sm font-bold text-cyan-700 shadow-lg transition hover:bg-cyan-50"
                   >
-                    {site.primaryCtaLabel}
+                    {cleanMarketingText(site.primaryCtaLabel)}
                     <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M13 7l5 5m0 0l-5 5m5-5H6" /></svg>
                   </Link>
                   <a
                     href={site.secondaryCtaUrl || "#fiyatlar"}
                     className="inline-flex items-center gap-2 rounded-xl border border-white/30 px-6 py-3 text-sm font-bold text-white transition hover:bg-white/15"
                   >
-                    {site.secondaryCtaLabel}
+                    {cleanMarketingText(site.secondaryCtaLabel)}
                   </a>
                 </div>
               </div>
@@ -600,19 +544,6 @@ export default async function RootPage() {
               <DemoRequestForm />
             </div>
 
-            {site.galleryImages.length > 0 && (
-              <div className="mt-8 grid grid-cols-1 gap-3 md:grid-cols-3">
-                {site.galleryImages.slice(0, 3).map((img, idx) => (
-                  isVideoUrl(img) ? (
-                    <video key={`gv-${idx}`} src={img} className="h-44 w-full rounded-xl border border-white/20 object-cover" autoPlay muted loop playsInline controls />
-                  ) : (
-                    <div key={`gi-${idx}`} className="relative h-44 w-full rounded-xl border border-white/20 overflow-hidden">
-                      <Image src={img} alt={`Ekran ${idx + 1}`} fill className="object-cover" />
-                    </div>
-                  )
-                ))}
-              </div>
-            )}
           </div>
         </div>
       </section>
@@ -623,10 +554,7 @@ export default async function RootPage() {
           <div className="grid grid-cols-1 gap-8 md:grid-cols-4">
             <div className="md:col-span-1">
               <div className="flex items-center gap-2 mb-3">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-cyan-600">
-                  <span className="text-xs font-black text-white">K</span>
-                </div>
-                <span className="text-base font-black text-white">KlinikModern</span>
+                <span className="text-base font-black text-white">Klinik Yönetim Platformu</span>
               </div>
               <p className="text-sm leading-relaxed text-slate-400">Diş hekimliği klinikleri için geliştirilmiş, bulut tabanlı yönetim platformu.</p>
             </div>
@@ -656,13 +584,13 @@ export default async function RootPage() {
               </ul>
               <div className="mt-5">
                 <Link href="/klinik/giris" className="inline-flex items-center gap-1.5 rounded-xl bg-cyan-600 px-4 py-2 text-xs font-bold text-white hover:bg-cyan-500 transition">
-                  Klinik Girişi →
+                  Klinik Girişi
                 </Link>
               </div>
             </div>
           </div>
           <div className="mt-10 border-t border-slate-800 pt-6 flex flex-wrap items-center justify-between gap-3 text-xs text-slate-600">
-            <span>© 2026 KlinikModern. Tüm hakları saklıdır.</span>
+            <span>© 2026 Klinik Yönetim Platformu. Tüm hakları saklıdır.</span>
             <span className="text-slate-700">Güvenli · Hızlı · Güvenilir</span>
           </div>
         </div>

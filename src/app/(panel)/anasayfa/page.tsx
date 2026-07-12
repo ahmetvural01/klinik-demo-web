@@ -4,6 +4,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { confirmDialog } from "@/lib/confirm-client";
 
 type ApptStatus = "BEKLIYOR" | "GELDI" | "IPTAL" | "TAMAMLANDI" | string;
 type Appt = { id: string; startAt: string; endAt: string; status: ApptStatus; patient: { fullName: string }; doctor: { fullName: string }; type: string };
@@ -341,7 +342,10 @@ export default function AnasayfaPage() {
 
   const targetDate = new Date();
   targetDate.setDate(targetDate.getDate() + dateOffset);
-  const dateStr = targetDate.toISOString().split("T")[0];
+  // Yerel (tarayıcı/Türkiye) tarih bileşenlerinden üretilir — toISOString() (UTC) kullanılırsa
+  // gece 00:00-03:00 arası dateStr "dün" olurken dateLabel "bugün" yazmaya devam eder ve
+  // randevu listesi yanlış günü gösterir.
+  const dateStr = `${targetDate.getFullYear()}-${String(targetDate.getMonth() + 1).padStart(2, "0")}-${String(targetDate.getDate()).padStart(2, "0")}`;
   const dateLabel = `${DAY_FULL[targetDate.getDay()]}, ${targetDate.getDate()} ${MONTHS[targetDate.getMonth()]} ${targetDate.getFullYear()}`;
 
   useEffect(() => {
@@ -472,7 +476,7 @@ export default function AnasayfaPage() {
   };
 
   const deleteMessage = async (id: string) => {
-    const ok = window.confirm("Mesaj silinsin mi?");
+    const ok = await confirmDialog({ message: "Mesaj silinsin mi?", danger: true, confirmText: "Sil" });
     if (!ok) return;
     const res = await fetch(`/api/messages/${id}`, { method: "DELETE" });
     if (!res.ok) return;

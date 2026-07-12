@@ -43,11 +43,7 @@ export async function applyStockMovement({
     type === "GIRIS"
       ? await tx.stockItem.update({
           where: { id: stockItemId },
-          data: {
-            quantity: { increment: quantity },
-            ...(supplier !== undefined ? { supplier: supplier || null } : {}),
-            ...(unitPrice !== undefined ? { unitPrice } : {}),
-          },
+          data: { quantity: { increment: quantity } },
         })
       : await (async () => {
           const result = await tx.stockItem.updateMany({
@@ -68,6 +64,8 @@ export async function applyStockMovement({
       quantity,
       note: note || null,
       userId,
+      supplier: supplier || null,
+      unitPrice: unitPrice ?? null,
     },
   });
 

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { patientFollowUpCreateSchema } from "@/lib/validators";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
+import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 
 export async function GET(request: NextRequest) {
   try {
@@ -10,7 +12,7 @@ export async function GET(request: NextRequest) {
 
     const institutionDoctors = auth.user.institutionId
       ? await prisma.user.findMany({
-          where: { institutionId: auth.user.institutionId, role: "DOKTOR", isActive: true },
+          where: effectiveDoctorWhere(auth.user.institutionId),
           select: { id: true },
         })
       : [];
@@ -71,12 +73,13 @@ export async function GET(request: NextRequest) {
         },
         assignedDoctor: { select: { id: true, fullName: true } },
         createdBy: { select: { id: true, fullName: true } },
+        labOrder: { select: { id: true, labName: true, labType: true } },
       },
       orderBy: [{ status: "asc" }, { nextActionAt: "asc" }, { createdAt: "desc" }],
       take: 500,
     });
 
-    const hidePhone = auth.user.role === "DOKTOR" || auth.user.role === "ASISTAN";
+    const hidePhone = shouldHidePatientPhone(auth.user.role);
     const result = hidePhone
       ? items.map((item) => ({
           ...item,
@@ -87,7 +90,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(result);
   } catch (error) {
     console.error("[patient-follow-ups GET] fallback:", error);
-    return NextResponse.json([]);
+    return NextResponse.json({ message: "Hasta takip verileri yüklenemedi. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });
   }
 }
 
@@ -97,7 +100,7 @@ export async function POST(request: NextRequest) {
 
   const institutionDoctors = auth.user.institutionId
     ? await prisma.user.findMany({
-        where: { institutionId: auth.user.institutionId, role: "DOKTOR", isActive: true },
+        where: effectiveDoctorWhere(auth.user.institutionId),
         select: { id: true },
       })
     : [];

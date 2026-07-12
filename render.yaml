@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: klinik-demo-web
+    runtime: node
+    buildCommand: npm ci && npm run build:render
+    startCommand: npm run start:render
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NODE_ENV
+        value: production
+      - key: APP_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: FIELD_ENCRYPTION_KEY
+        sync: false
+      - key: SMTP_MASTER_PASSWORD
+        sync: false
+      - key: SUPERADMIN_MASTER_SECRET
+        sync: false
+      - key: SMS_PROVIDER
+        value: NETGSM
+      - key: NETGSM_USERCODE
+        sync: false
+      - key: NETGSM_PASSWORD
+        sync: false
+      - key: NETGSM_HEADER
+        sync: false
+      - key: REDIS_URL
+        sync: false

@@ -2,7 +2,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-type Price = { id: string; code: string; treatment: string; amount: number; isCustom: boolean };
+type Price = { id: string; code: string; treatment: string; amount: number; isCustom: boolean; isTemplate?: boolean; catalogYear?: number };
+type PriceMeta = { activeCatalogYear: number; latestPublishedYear: number; updateAvailable: boolean; officialPdfUrl: string };
 
 const ACTIVE_PRICE_LIST_STORAGE_KEY = "klinikmodern-active-price-list";
 
@@ -81,7 +82,7 @@ function PriceTable({ title, prices, isCustom, favorites, toggleFav, onEdit, onD
 									<td className="px-4 py-3">
 										<div className="flex justify-center gap-1.5">
 											<button onClick={() => onEdit && onEdit(p)} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-700 hover:bg-blue-100">Düzenle</button>
-											<button onClick={() => onDelete && onDelete(p.id)} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100">Sil</button>
+											{!p.isTemplate && <button onClick={() => onDelete && onDelete(p.id)} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-100">Sil</button>}
 										</div>
 									</td>
 								)}
@@ -120,6 +121,7 @@ export default function FiyatPage() {
 	const [favorites, setFavorites] = useState<Set<string>>(new Set());
 	const [editItem, setEditItem] = useState<Price | null>(null);
 	const [editAmount, setEditAmount] = useState("");
+	const [priceMeta, setPriceMeta] = useState<PriceMeta | null>(null);
 	const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
 	const showToast = (type: "success" | "error", text: string) => {
@@ -130,20 +132,45 @@ export default function FiyatPage() {
 	useEffect(() => {
 		const stored = window.localStorage.getItem(ACTIVE_PRICE_LIST_STORAGE_KEY);
 		if (stored === "standard" || stored === "custom") setActiveList(stored);
+		void loadSettings();
 		void loadAll();
 	}, []);
 
-	useEffect(() => {
-		window.localStorage.setItem(ACTIVE_PRICE_LIST_STORAGE_KEY, activeList);
-	}, [activeList]);
+	const loadSettings = async () => {
+		try {
+			const res = await fetch("/api/settings", { cache: "no-store" });
+			const settings = res.ok ? await res.json() : null;
+			if (settings?.activePriceList === "standard" || settings?.activePriceList === "custom") {
+				setActiveList(settings.activePriceList);
+				window.localStorage.setItem(ACTIVE_PRICE_LIST_STORAGE_KEY, settings.activePriceList);
+			}
+		} catch {}
+	};
+
+	const changeActiveList = async (next: "standard" | "custom") => {
+		setActiveList(next);
+		window.localStorage.setItem(ACTIVE_PRICE_LIST_STORAGE_KEY, next);
+		try {
+			const res = await fetch("/api/settings", {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ activePriceList: next }),
+			});
+			if (!res.ok) throw new Error("settings");
+			showToast("success", next === "custom" ? "Özel fiyat listesi aktif edildi" : "TDB 2026 tarifesi aktif edildi");
+		} catch {
+			showToast("error", "Fiyat kaynağı kaydedilemedi");
+		}
+	};
 
 	const loadAll = async () => {
 		setLoading(true);
 		try {
-			const [stdRes, custRes] = await Promise.all([fetch("/api/prices?type=standard"), fetch("/api/prices?type=custom")]);
+			const [stdRes, custRes, metaRes] = await Promise.all([fetch("/api/prices?type=standard"), fetch("/api/prices?type=custom"), fetch("/api/prices?meta=1")]);
 			const [std, cust] = await Promise.all([readJsonArray(stdRes), readJsonArray(custRes)]);
 			setStandardPrices(std as Price[]);
 			setCustomPrices(cust as Price[]);
+			if (metaRes.ok) setPriceMeta(await metaRes.json());
 		} catch {
 			setStandardPrices([]);
 			setCustomPrices([]);
@@ -169,7 +196,14 @@ export default function FiyatPage() {
 
 	const saveEdit = async () => {
 		if (!editItem || !editAmount) return;
-		const res = await fetch("/api/prices/" + editItem.id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount: parseFloat(editAmount) }) });
+		const isTemplate = editItem.isTemplate || editItem.id.startsWith("custom-template-") || editItem.id.startsWith("tdb-");
+		const res = isTemplate
+			? await fetch("/api/prices", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ code: editItem.code, treatment: editItem.treatment, amount: parseFloat(editAmount), isCustom: true }),
+				})
+			: await fetch("/api/prices/" + editItem.id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount: parseFloat(editAmount) }) });
 		if (res.ok) {
 			setEditItem(null);
 			setEditAmount("");
@@ -201,12 +235,13 @@ export default function FiyatPage() {
 					</span>
 				</div>
 				<div className="flex rounded-xl border border-slate-200 bg-slate-50 p-1">
-					<button onClick={() => setActiveList("standard")} className={`rounded-lg px-4 py-2 text-sm font-bold ${activeList === "standard" ? "bg-white text-blue-700 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>TDB Tarifesi</button>
-					<button onClick={() => setActiveList("custom")} className={`rounded-lg px-4 py-2 text-sm font-bold ${activeList === "custom" ? "bg-white text-orange-700 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>Özel Liste</button>
+					<button onClick={() => void changeActiveList("standard")} className={`rounded-lg px-4 py-2 text-sm font-bold ${activeList === "standard" ? "bg-white text-blue-700 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>TDB Tarifesi</button>
+					<button onClick={() => void changeActiveList("custom")} className={`rounded-lg px-4 py-2 text-sm font-bold ${activeList === "custom" ? "bg-white text-orange-700 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>Özel Liste</button>
 				</div>
 			</div>
 			<div className="rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
-				Seçili fiyat listesi bu cihazda hatırlanır. Personel hasta kartında tedavi seçerken bu aktif listeyi görür.
+				TDB Tarifesi, Türk Dişhekimleri Birliği {priceMeta?.activeCatalogYear ?? 2026} rehber tarife değerleriyle gösterilir. Bu seçim kurum ayarıdır; hasta kartında tedavi ekleyen tüm personel aynı aktif listeyi görür.
+				{priceMeta?.updateAvailable && <span className="ml-1 font-bold">Yeni TDB {priceMeta.latestPublishedYear} listesi yayımlanmış görünüyor; katalog güncellemesi gerekli.</span>}
 			</div>
 			<div aria-busy={loading} />
 			{editItem && (

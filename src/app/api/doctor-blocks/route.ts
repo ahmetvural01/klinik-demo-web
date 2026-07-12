@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 // GET /api/doctor-blocks?doctorId=xxx&date=2026-05-06
 // GET /api/doctor-blocks?from=2026-05-01&to=2026-05-31  (tüm doktorlar için)
 export async function GET(request: NextRequest) {
   try {
-    const auth = await requireAuth("*");
+    const auth = await requireAuth("appointments:read");
     if (auth.error) return auth.error;
 
     const { searchParams } = new URL(request.url);
@@ -35,14 +35,14 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(blocks);
   } catch (error) {
     console.error("[doctor-blocks GET] fallback:", error);
-    return NextResponse.json([]);
+    return NextResponse.json({ message: "Doktor blokajları yüklenemedi. Lütfen sayfayı yenileyin." }, { status: 503 });
   }
 }
 
 // POST /api/doctor-blocks
 // { doctorId, date, startTime, endTime, reason? }
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth("*");
+  const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
 
   const allowedRoles = ["SUPERADMIN", "YONETICI", "ADMIN"];
@@ -77,6 +77,7 @@ export async function POST(request: NextRequest) {
       include: { doctor: { select: { id: true, fullName: true } } },
     });
 
+    await writeAudit(auth.user.id, "DOCTOR_BLOCK_CREATE", `${date} ${startTime}-${endTime}`);
     return NextResponse.json(block, { status: 201 });
   } catch (error) {
     console.error("[doctor-blocks POST] fallback:", error);
@@ -86,7 +87,7 @@ export async function POST(request: NextRequest) {
 
 // DELETE /api/doctor-blocks?id=xxx
 export async function DELETE(request: NextRequest) {
-  const auth = await requireAuth("*");
+  const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
 
   const allowedRoles = ["SUPERADMIN", "YONETICI", "ADMIN"];
@@ -111,6 +112,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ message: "Blok bulunamadı" }, { status: 404 });
     }
     await prisma.doctorBlock.delete({ where: { id } });
+    await writeAudit(auth.user.id, "DOCTOR_BLOCK_DELETE", id);
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("[doctor-blocks DELETE] fallback:", error);

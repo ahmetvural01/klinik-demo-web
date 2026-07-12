@@ -12,7 +12,7 @@ export const ROLE_META: Record<string, { label: string; color: string; descripti
   YONETICI:  { label: "Yönetici",  color: "violet", description: "Klinik yöneticisi — finans dahil tüm modüllere tam erişim." },
   DOKTOR:    { label: "Doktor",    color: "blue",   description: "Muayene, tedavi ve hasta yönetiminde tam yetki; finans kısıtlı." },
   ASISTAN:   { label: "Asistan",   color: "teal",   description: "Randevu ve hasta kaydı odaklı; klinik not girebilir, finans göremez." },
-  BANKO:     { label: "Banko",     color: "amber",  description: "Ön büro personeli — randevu ve tahsilat, klinik kayıtlara erişim yok." },
+  BANKO:     { label: "Banko",     color: "amber",  description: "Ön büro personeli — randevu, hasta iletişimi, takip ve tahsilat odaklı erişim." },
   MUHASEBE:  { label: "Muhasebe",  color: "emerald","description": "Finans, muhasebe ve raporlar; hasta klinik verilerine erişim yok." },
 };
 
@@ -203,7 +203,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
     "lab:read", "lab:write", "lab:complete",
     "xray:read", "xray:write",
     "payments:read", "payments:write",
-    "hastatracking:read",
+    "hastatracking:read", "hastatracking:write",
     "documents:read", "documents:write",
     "insurance:read",
     "announcements:read",

@@ -1,9 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { usePanelAlerts } from "@/components/layout/use-panel-alerts";
+import { useEscapeClose } from "@/lib/use-modal-dismiss";
 
 const I = (d: string, extra?: string) => (
   <svg aria-hidden="true" className={`h-[18px] w-[18px] shrink-0 ${extra ?? ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: d }} />
@@ -76,7 +77,7 @@ function buildNavGroups(role: string): NavGroup[] {
         { href: "/randevu",     label: "Randevular",  icon: "calendar" },
         { href: "/hasta",       label: "Hastalar",    icon: "users" },
         ...(isYonetici || isDoktor || isAsistan || isBanko ? [{ href: "/gorevler", label: "Görev Merkezi", icon: "clipboard" }] : []),
-        ...(isYonetici || isDoktor || isAsistan ? [{ href: "/hasta-takip", label: "Hasta Takip", icon: "follow" }] : []),
+        ...(isYonetici || isDoktor || isAsistan || isBanko ? [{ href: "/hasta-takip", label: "Hasta Takip", icon: "follow" }] : []),
       ],
     });
   }
@@ -94,7 +95,7 @@ function buildNavGroups(role: string): NavGroup[] {
   // ── FİNANS ──
   if (isYonetici || isBanko || isMuhasebe) {
     groups.push({
-      label: "Finans",
+      label: "Muhasebe",
       items: [
         { href: "/muhasebe", label: "Muhasebe Merkezi", icon: "finance" },
         ...(isYonetici || isMuhasebe
@@ -120,7 +121,7 @@ function buildNavGroups(role: string): NavGroup[] {
       label: "Stok & Tedarik",
       items: [
         { href: "/stok",  label: "Stok", icon: "box" },
-        { href: "/firma", label: "Tedarikçiler",   icon: "firma" },
+        { href: "/firma", label: "Satın Alma & Tedarikçiler", icon: "firma" },
       ],
     });
   }
@@ -160,12 +161,14 @@ const PREVIEW_ROLES = [
   { key: "MUHASEBE",  label: "Muhasebe",  color: "bg-rose-600" },
 ];
 
-export function Sidebar({ user }: { user: { fullName: string; role: string } }) {
+export function Sidebar({ user }: { user: { fullName: string; role: string; photoUrl?: string | null } }) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const [messageUnread, setMessageUnread] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  useEscapeClose(() => setMobileOpen(false), mobileOpen);
   const [previewRole, setPreviewRole] = useState<string | null>(null);
   const [rolePickerOpen, setRolePickerOpen] = useState(false);
 
@@ -247,14 +250,20 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
     };
   }, []);
 
-  const isActive = (href: string) =>
-    href === "/anasayfa"
-      ? pathname === "/anasayfa"
-      : pathname === href || pathname.startsWith(href + "/");
+  const isActive = (href: string) => {
+    const [path, query] = href.split("?");
+    if (path === "/anasayfa") return pathname === "/anasayfa";
+    if (query) {
+      const params = new URLSearchParams(query);
+      const tab = params.get("tab");
+      return pathname === path && (!tab || searchParams.get("tab") === tab);
+    }
+    return pathname === path || pathname.startsWith(path + "/");
+  };
 
   const dynamicBadge = (href: string): number => {
     if (href === "/anasayfa") return messageUnread;
-    if (href === "/muhasebe") return alerts.taksit; // gecikmiş taksit sayısı
+    if (href.startsWith("/muhasebe")) return alerts.taksit; // muhasebe merkezinde gecikmiş taksit uyarısı
     if (href === "/stok") return alerts.stok;
     if (href === "/lab") return alerts.lab;
     return 0;
@@ -295,7 +304,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
                   <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-blue-700">
                     <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 2C8 2 5 5 5 8c0 2 .5 3.5 1 5l1 4.5C7.5 19 8.5 22 10 22h4c1.5 0 2.5-3 3-4.5l1-4.5c.5-1.5 1-3 1-5 0-3-3-6-7-6z"/></svg>
                   </div>
-                  <p className="text-sm font-black text-white">KlinikModern</p>
+                  <p className="text-sm font-black text-white">Klinik Paneli</p>
                 </div>
                 <button onClick={() => setMobileOpen(false)} aria-label="Kapat" className="text-slate-300">✕</button>
               </div>
@@ -341,7 +350,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
                 <path d="M12 2C8 2 5 5 5 8c0 2 .5 3.5 1 5l1 4.5C7.5 19 8.5 22 10 22h4c1.5 0 2.5-3 3-4.5l1-4.5c.5-1.5 1-3 1-5 0-3-3-6-7-6z"/>
               </svg>
             </div>
-            <p className="text-[13px] font-black text-white">KlinikModern</p>
+            <p className="text-[13px] font-black text-white">Klinik Paneli</p>
           </div>
         )}
         <button
@@ -362,9 +371,14 @@ export function Sidebar({ user }: { user: { fullName: string; role: string } }) 
       {/* Kullanıcı kartı */}
       {userName && (
         <div className={`mx-2 mb-3 flex items-center rounded-xl bg-white/5 py-2.5 ${collapsed ? "justify-center px-0" : "gap-3 px-3"}`}>
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white">
-            {userName.charAt(0).toUpperCase()}
-          </div>
+          {user.photoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={user.photoUrl} alt={userName} className="h-9 w-9 shrink-0 rounded-full object-cover" />
+          ) : (
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white">
+              {userName.charAt(0).toUpperCase()}
+            </div>
+          )}
           {!collapsed && (
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-white">{userName}</p>

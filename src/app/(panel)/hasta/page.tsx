@@ -1,8 +1,31 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import {
+  AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  BadgeCheck,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardList,
+  Eye,
+  Filter,
+  Pencil,
+  Phone,
+  Search,
+  ShieldAlert,
+  Trash2,
+  UserPlus,
+  X,
+} from "lucide-react";
+import { confirmDialog } from "@/lib/confirm-client";
+import { useSlashFocus } from "@/lib/use-slash-focus";
+import { ListRowSkeleton, TableRowsSkeleton } from "@/components/ui/ListSkeleton";
 
 type Patient = {
   id: string;
@@ -12,9 +35,41 @@ type Patient = {
   gender: string;
   birthDate?: string | null;
   insurance?: string | null;
+  discountRate?: number | null;
+  address?: string | null;
+  bloodType?: string | null;
+  hasAllergy?: boolean;
+  hasHepatitis?: boolean;
+  hasKidney?: boolean;
+  hasDiabetes?: boolean;
+  hasHeart?: boolean;
+  hasBloodIssue?: boolean;
+  surgeries?: string | null;
+  medications?: string | null;
+  otherDiseases?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+type PatientResponse = {
+  patients: Patient[];
+  total: number;
+  page: number;
+  pageCount: number;
+  take: number;
+  summary?: {
+    total: number;
+    medicalRisk: number;
+    missingInfo: number;
+    newThisMonth: number;
+  };
+  message?: string;
 };
 
 type AuthCache = { id?: string; fullName?: string; role?: string };
+type SortKey = "fullName" | "tcNo" | "phone" | "gender" | "birthDate" | "insurance" | "createdAt" | "updatedAt";
+
+const PAGE_SIZES = [15, 25, 50, 100];
 
 function readCachedAuthRole() {
   if (typeof window === "undefined") return "";
@@ -30,37 +85,89 @@ function readCachedAuthRole() {
   }
 }
 
-function readCachedPatients(query: string) {
-  if (typeof window === "undefined") return [] as Patient[];
-  const cacheKey = `patients:list:v2:${query.trim().toLocaleLowerCase("tr-TR")}`;
-  const raw = sessionStorage.getItem(cacheKey);
-  if (!raw) return [] as Patient[];
-  try {
-    const cached = JSON.parse(raw);
-    return Array.isArray(cached) ? cached : [];
-  } catch {
-    return [] as Patient[];
-  }
+function formatDate(value?: string | null) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("tr-TR");
+}
+
+function calculateAge(value?: string | null) {
+  if (!value) return null;
+  const birth = new Date(value);
+  if (Number.isNaN(birth.getTime())) return null;
+  const today = new Date();
+  let age = today.getFullYear() - birth.getFullYear();
+  const monthDiff = today.getMonth() - birth.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) age -= 1;
+  return age >= 0 && age < 130 ? age : null;
+}
+
+function hasMedicalRisk(patient: Patient) {
+  return Boolean(
+    patient.hasAllergy ||
+      patient.hasHepatitis ||
+      patient.hasKidney ||
+      patient.hasDiabetes ||
+      patient.hasHeart ||
+      patient.hasBloodIssue ||
+      patient.surgeries ||
+      patient.medications ||
+      patient.otherDiseases,
+  );
+}
+
+function hasMissingInfo(patient: Patient) {
+  const phoneMissing = patient.phone !== "***" && !patient.phone;
+  return !patient.tcNo || phoneMissing || !patient.gender || !patient.birthDate || !patient.address;
+}
+
+function patientInitials(name: string) {
+  return name
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toLocaleUpperCase("tr-TR");
 }
 
 function HastaContent() {
   const searchParams = useSearchParams();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  useSlashFocus(searchInputRef);
+
   const [query, setQuery] = useState(searchParams.get("q") || "");
+  const [debouncedQuery, setDebouncedQuery] = useState(searchParams.get("q") || "");
   const [patients, setPatients] = useState<Patient[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<PatientResponse["summary"]>();
+  const [total, setTotal] = useState(0);
+  const [pageCount, setPageCount] = useState(1);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
-  const [sortKey, setSortKey] = useState<keyof Patient | "">("fullName");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [pageSize, setPageSize] = useState(25);
+  const [sortKey, setSortKey] = useState<SortKey>("createdAt");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [gender, setGender] = useState("");
+  const [risk, setRisk] = useState("");
+  const [missing, setMissing] = useState(false);
+  const [insurance, setInsurance] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [userRole, setUserRole] = useState(() => readCachedAuthRole());
-  const [hydrated, setHydrated] = useState(false);
 
   const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
+  const canDeletePatients = userRole === "SUPERADMIN" || userRole === "YONETICI";
+  const activeFilterCount = [gender, risk, missing ? "missing" : "", insurance].filter(Boolean).length;
 
   useEffect(() => {
-    setHydrated(true);
+    const timer = setTimeout(() => {
+      setDebouncedQuery(query.trim());
+      setPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
 
+  useEffect(() => {
     const applyRole = async () => {
       const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
       if (preview) {
@@ -89,60 +196,52 @@ function HastaContent() {
   }, []);
 
   const load = useCallback(async () => {
-    const cacheKey = `patients:list:v2:${query.trim().toLocaleLowerCase("tr-TR")}`;
-    let hadCached = false;
-    if (typeof window !== "undefined") {
-      const raw = sessionStorage.getItem(cacheKey);
-      if (raw) {
-        try {
-          const cached = JSON.parse(raw);
-          if (Array.isArray(cached)) {
-            setPatients(cached);
-            hadCached = true;
-          }
-        } catch {}
-      }
-    }
-
-    setError(null);
     setLoading(true);
+    setError(null);
+    const params = new URLSearchParams({
+      q: debouncedQuery,
+      page: String(page),
+      take: String(pageSize),
+      sortBy: sortKey,
+      sortDir,
+    });
+    if (gender) params.set("gender", gender);
+    if (risk) params.set("risk", risk);
+    if (missing) params.set("missing", "true");
+    if (insurance.trim()) params.set("insurance", insurance.trim());
+
     try {
-      const res = await fetch(`/api/patients?q=${encodeURIComponent(query)}`);
-      const json = await res.json();
+      const res = await fetch(`/api/patients?${params.toString()}`, { cache: "no-store" });
+      const json = (await res.json().catch(() => ({}))) as PatientResponse;
       if (!res.ok) {
         if (res.status === 401) {
           window.location.href = "/giris";
           return;
         }
-        throw new Error(json?.message || "Hastalar alınamadı");
+        throw new Error(json.message || "Hasta listesi yüklenemedi");
       }
-      const rows = Array.isArray(json) ? json : (json?.patients || []);
-      setPatients(rows);
-      if (typeof window !== "undefined") {
-        sessionStorage.setItem(cacheKey, JSON.stringify(rows));
-      }
-      setPage(1);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Bilinmeyen hata");
+      setPatients(Array.isArray(json.patients) ? json.patients : []);
+      setTotal(Number(json.total || 0));
+      setPageCount(Math.max(1, Number(json.pageCount || 1)));
+      setSummary(json.summary);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Hasta listesi yüklenemedi");
+      setPatients([]);
     } finally {
       setLoading(false);
     }
-  }, [query]);
+  }, [debouncedQuery, gender, insurance, missing, page, pageSize, risk, sortDir, sortKey]);
 
   useEffect(() => {
-    if (!hydrated) return;
     void load();
-  }, [load, hydrated]);
+  }, [load]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const onRealtime = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        void load();
-      }, 300);
+      timer = setTimeout(() => void load(), 300);
     };
-
     window.addEventListener("ks:realtime-sync", onRealtime);
     return () => {
       if (timer) clearTimeout(timer);
@@ -150,230 +249,377 @@ function HastaContent() {
     };
   }, [load]);
 
-  const sorted = useMemo(() => {
-    if (!sortKey) return patients;
-    return [...patients].sort((a, b) => {
-      const av = a[sortKey] ?? "";
-      const bv = b[sortKey] ?? "";
-      const cmp = String(av).localeCompare(String(bv), "tr");
-      return sortDir === "asc" ? cmp : -cmp;
-    });
-  }, [patients, sortKey, sortDir]);
-
-  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
-  const viewRows = useMemo(() => sorted.slice((page - 1) * pageSize, page * pageSize), [sorted, page, pageSize]);
-
-  const toggleSort = (key: keyof Patient) => {
-    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
-    else { setSortKey(key); setSortDir("asc"); }
-  };
-
   const remove = async (id: string) => {
-    const patient = patients.find(p => p.id === id);
-    if (!window.confirm(`"${patient?.fullName || "Hasta"}" kaydı kalıcı olarak silinecek.\n\nBu işlemle birlikte aşağıdaki kayıtlar da silinecektir:\n• Randevular\n• Muayeneler\n• Ödemeler\n• Taksit planları\n• Reçeteler\n• Lab siparişleri\n\nBu işlem geri alınamaz. Devam etmek istiyor musunuz?`)) return;
+    const patient = patients.find((p) => p.id === id);
+    if (
+      !(await confirmDialog({
+        title: `"${patient?.fullName || "Hasta"}" kalıcı olarak silinecek`,
+        message:
+          "Bu işlemle birlikte randevu, muayene, ödeme, taksit, reçete ve laboratuvar kayıtları da silinir.\n\nKurumsal kullanımda arşivleme tercih edilmelidir. Yine de devam etmek istiyor musunuz?",
+        danger: true,
+        confirmText: "Kalıcı Olarak Sil",
+      }))
+    ) {
+      return;
+    }
     const res = await fetch(`/api/patients/${id}`, { method: "DELETE" });
     if (!res.ok) {
       setError("Silme işlemi başarısız");
       return;
     }
-    await load();
+    void load();
   };
 
-  const pageNumbers = () => {
-    const pages: (number | "...")[] = [];
-    if (totalPages <= 7) { for (let i = 1; i <= totalPages; i++) pages.push(i); }
-    else {
-      pages.push(1);
-      if (page > 4) pages.push("...");
-      for (let i = Math.max(2, page - 2); i <= Math.min(totalPages - 1, page + 2); i++) pages.push(i);
-      if (page < totalPages - 3) pages.push("...");
-      pages.push(totalPages);
+  const toggleSort = (key: SortKey) => {
+    setPage(1);
+    if (sortKey === key) {
+      setSortDir((current) => (current === "asc" ? "desc" : "asc"));
+      return;
     }
-    return pages;
+    setSortKey(key);
+    setSortDir(key === "createdAt" || key === "updatedAt" ? "desc" : "asc");
   };
 
-  const SortTh = ({ col, label }: { col: keyof Patient; label: string }) => (
-    <th
-      className="cursor-pointer select-none whitespace-nowrap px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500 hover:text-slate-800 transition"
-      onClick={() => toggleSort(col)}
-    >
-      <span className="flex items-center gap-1">
-        {label}
-        <span className="text-slate-300">
-          {sortKey === col ? (sortDir === "asc" ? "↑" : "↓") : "↕"}
-        </span>
-      </span>
-    </th>
+  const resetFilters = () => {
+    setQuery("");
+    setDebouncedQuery("");
+    setGender("");
+    setRisk("");
+    setMissing(false);
+    setInsurance("");
+    setPage(1);
+  };
+
+  const SortButton = ({ col, label }: { col: SortKey; label: string }) => (
+    <button type="button" onClick={() => toggleSort(col)} className="inline-flex items-center gap-1 text-left">
+      {label}
+      {sortKey === col ? (
+        sortDir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+      ) : (
+        <ArrowUpDown className="h-3 w-3 text-slate-300" />
+      )}
+    </button>
+  );
+
+  const startRow = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const endRow = Math.min(page * pageSize, total);
+
+  const visibleSummary = useMemo(
+    () => [
+      { label: "Toplam Hasta", value: summary?.total ?? total, icon: ClipboardList, color: "text-slate-700" },
+      { label: "Medikal Uyarı", value: summary?.medicalRisk ?? 0, icon: ShieldAlert, color: "text-red-700" },
+      { label: "Eksik Bilgi", value: summary?.missingInfo ?? 0, icon: AlertTriangle, color: "text-amber-700" },
+      { label: "Bu Ay Yeni", value: summary?.newThisMonth ?? 0, icon: BadgeCheck, color: "text-emerald-700" },
+    ],
+    [summary, total],
   );
 
   return (
     <section className="space-y-4">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-black text-slate-900">Hastalar</h1>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700" suppressHydrationWarning>{sorted.length} kayıt</span>
+      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h1 className="text-lg font-black text-slate-900">Hastalar</h1>
+            <p className="mt-1 text-sm text-slate-500">Hasta kartları, iletişim bilgileri, medikal uyarılar ve hızlı erişim.</p>
+          </div>
+          <Link
+            href="/hasta-ekle"
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90"
+          >
+            <UserPlus className="h-4 w-4" />
+            Yeni Hasta
+          </Link>
         </div>
-        <Link
-          href="/hasta-ekle"
-          className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90"
-        >
-          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-          Yeni Hasta
-        </Link>
-      </div>
 
-      {/* Toolbar */}
-      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
-        <div className="relative flex-1 min-w-52">
-          <svg className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-          </svg>
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Ad, TC kimlik veya telefon ile ara…"
-            className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20"
-          />
-        </div>
-        <div className="flex items-center gap-2 text-xs text-slate-500">
-          <span>Sayfa başına:</span>
-          <select value={pageSize} onChange={e => { setPageSize(Number(e.target.value)); setPage(1); }} className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs focus:border-primary focus:outline-none">
-            {[10, 25, 50, 100].map(n => <option key={n} value={n}>{n}</option>)}
-          </select>
+        <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          {visibleSummary.map((item) => {
+            const Icon = item.icon;
+            return (
+              <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-xs font-semibold text-slate-500">{item.label}</span>
+                  <Icon className={`h-4 w-4 ${item.color}`} />
+                </div>
+                <p className={`mt-2 text-2xl font-black ${item.color}`}>{Number(item.value || 0).toLocaleString("tr-TR")}</p>
+              </div>
+            );
+          })}
         </div>
       </div>
 
-      {error && <p className="mb-3 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">{error}</p>}
-
-      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm" aria-busy={loading}>
-          <div className="divide-y divide-slate-100 md:hidden">
-            {viewRows.length === 0 ? (
-              <div className="flex flex-col items-center gap-2 px-4 py-12 text-slate-400">
-                <svg className="h-10 w-10 text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
-                </svg>
-                <p className="text-sm">Hasta bulunamadı</p>
-              </div>
-            ) : viewRows.map((p) => (
-              <div key={p.id} className="p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <Link href={`/hasta-detay?id=${p.id}`} className="text-base font-bold text-slate-900">
-                      {p.fullName}
-                    </Link>
-                    <p className="mt-1 font-mono text-xs text-slate-500">TC: {p.tcNo || "-"}</p>
-                    {!hidePhone && <p className="mt-1 text-sm text-slate-600">{p.phone || "Telefon yok"}</p>}
-                  </div>
-                  {p.insurance && <span className="shrink-0 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700">{p.insurance}</span>}
-                </div>
-                <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-500">
-                  <span>{p.gender || "Cinsiyet yok"}</span>
-                  <span>{p.birthDate ? new Date(p.birthDate).toLocaleDateString("tr-TR") : "Doğum tarihi yok"}</span>
-                  <span>{p.insurance || "Sigorta yok"}</span>
-                </div>
-                <div className="mt-4 grid grid-cols-3 gap-2">
-                  <Link href={`/hasta-detay?id=${p.id}`} className="rounded-lg bg-primary px-3 py-2 text-center text-sm font-bold text-white">Kartı Aç</Link>
-                  <Link href={`/hasta-ekle?id=${p.id}`} className="rounded-lg border border-slate-200 px-3 py-2 text-center text-sm font-semibold text-slate-700">Düzenle</Link>
-                  <button onClick={() => remove(p.id)} className="rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-600">Sil</button>
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="hidden overflow-auto md:block">
-            <table className="min-w-full text-sm">
-              <thead className="bg-slate-50">
-                <tr className="border-b border-slate-100">
-                  <th className="w-10 px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-400">#</th>
-                  <SortTh col="fullName" label="Adı Soyadı" />
-                  <SortTh col="tcNo" label="TC Kimlik" />
-                  {!hidePhone && <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">Telefon</th>}
-                  <SortTh col="gender" label="Cinsiyet" />
-                  <SortTh col="birthDate" label="Doğum Tarihi" />
-                  <SortTh col="insurance" label="Sigorta" />
-                  <th className="px-4 py-3 text-center text-[11px] font-bold uppercase tracking-wide text-slate-500">İşlemler</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {viewRows.length === 0 && (
-                  <tr>
-                    <td colSpan={hidePhone ? 7 : 8} className="py-12 text-center">
-                      <div className="flex flex-col items-center gap-2 text-slate-400">
-                        <svg className="h-10 w-10 text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/>
-                        </svg>
-                        <p className="text-sm">Hasta bulunamadı</p>
-                      </div>
-                    </td>
-                  </tr>
-                )}
-                {viewRows.map((p, idx) => (
-                  <tr key={p.id} className="group hover:bg-slate-50/80 transition">
-                    <td className="px-4 py-3 text-xs text-slate-400 font-mono">{(page - 1) * pageSize + idx + 1}</td>
-                    <td className="px-4 py-3">
-                      <Link href={`/hasta-detay?id=${p.id}`} className="font-semibold text-slate-900 hover:text-primary transition">
-                        {p.fullName}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-500">{p.tcNo}</td>
-                    {!hidePhone && <td className="px-4 py-3 text-slate-600">{p.phone || "—"}</td>}
-                    <td className="px-4 py-3">
-                      {p.gender ? (
-                        <span className={`rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${
-                          p.gender.toUpperCase() === "ERKEK" ? "bg-blue-100 text-blue-700" : "bg-pink-100 text-pink-700"
-                        }`}>
-                          {p.gender.toUpperCase() === "ERKEK" ? "Erkek" : "Kadın"}
-                        </span>
-                      ) : <span className="text-slate-300">—</span>}
-                    </td>
-                    <td className="px-4 py-3 text-slate-600 text-xs">
-                      {p.birthDate ? new Date(p.birthDate).toLocaleDateString("tr-TR") : "—"}
-                    </td>
-                    <td className="px-4 py-3">
-                      {p.insurance ? (
-                        <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700">{p.insurance}</span>
-                      ) : <span className="text-slate-300">—</span>}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-center gap-1.5">
-                        <Link href={`/hasta-detay?id=${p.id}`} title="Hasta kartını aç" className="rounded-lg bg-primary/10 px-2.5 py-1.5 text-xs font-semibold text-primary transition hover:bg-primary hover:text-white">
-                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-                        </Link>
-                        <Link href={`/hasta-ekle?id=${p.id}`} title="Düzenle" className="rounded-lg bg-slate-100 px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-200">
-                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                        </Link>
-                        <button onClick={() => remove(p.id)} title="Sil" className="rounded-lg bg-red-50 px-2.5 py-1.5 text-xs font-semibold text-red-500 transition hover:bg-red-100">
-                          <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4h6v2"/></svg>
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+        <div className="grid gap-2 xl:grid-cols-[1fr_auto] xl:items-center">
+          <div className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_160px_160px_160px]">
+            <label className="relative block">
+              <span className="sr-only">Hasta ara</span>
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <input
+                ref={searchInputRef}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Ad, TC veya telefon ile ara... ( / )"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/20"
+              />
+            </label>
+            <select
+              value={gender}
+              onChange={(event) => {
+                setGender(event.target.value);
+                setPage(1);
+              }}
+              aria-label="Cinsiyet filtresi"
+              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            >
+              <option value="">Tüm cinsiyetler</option>
+              <option value="ERKEK">Erkek</option>
+              <option value="KADIN">Kadın</option>
+            </select>
+            <select
+              value={risk}
+              onChange={(event) => {
+                setRisk(event.target.value);
+                setPage(1);
+              }}
+              aria-label="Medikal risk filtresi"
+              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            >
+              <option value="">Tüm riskler</option>
+              <option value="medical">Medikal uyarılı</option>
+            </select>
+            <input
+              value={insurance}
+              onChange={(event) => {
+                setInsurance(event.target.value);
+                setPage(1);
+              }}
+              placeholder="Kurum / sigorta"
+              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            />
           </div>
 
-          {/* Pagination */}
-          <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3">
-            <span className="text-xs text-slate-500">
-              {sorted.length > 0 ? `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, sorted.length)} / ${sorted.length} kayıt gösteriliyor` : "0 kayıt"}
-            </span>
-            <div className="flex items-center gap-1">
-              <button disabled={page <= 1} onClick={() => setPage(p => Math.max(1, p - 1))} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40">
-                ‹ Önceki
-              </button>
-              {pageNumbers().map((n, i) =>
-                n === "..." ? <span key={`d-${i}`} className="px-1.5 text-slate-400">…</span> : (
-                  <button key={n} onClick={() => setPage(n as number)} className={`rounded-lg border px-2.5 py-1.5 text-xs font-medium transition ${page === n ? "border-primary bg-primary text-white" : "border-slate-200 text-slate-600 hover:bg-slate-50"}`}>{n}</button>
-                )
-              )}
-              <button disabled={page >= totalPages} onClick={() => setPage(p => Math.min(totalPages, p + 1))} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40">
-                Sonraki ›
-              </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-600">
+              <input
+                type="checkbox"
+                checked={missing}
+                onChange={(event) => {
+                  setMissing(event.target.checked);
+                  setPage(1);
+                }}
+                className="accent-primary"
+              />
+              Eksik bilgi
+            </label>
+            <div className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm text-slate-500">
+              <Filter className="h-4 w-4" />
+              {activeFilterCount} filtre
             </div>
+            {(query || activeFilterCount > 0) && (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="inline-flex h-10 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+              >
+                <X className="h-4 w-4" />
+                Temizle
+              </button>
+            )}
           </div>
+        </div>
+      </div>
+
+      {error && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</p>}
+
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" aria-busy={loading}>
+        <div className="divide-y divide-slate-100 md:hidden">
+          {loading && patients.length === 0 ? (
+            <ListRowSkeleton rows={6} />
+          ) : patients.length === 0 ? (
+            <div className="px-4 py-14 text-center text-sm text-slate-400">Hasta bulunamadı</div>
+          ) : (
+            patients.map((patient) => {
+              const age = calculateAge(patient.birthDate);
+              const riskFlag = hasMedicalRisk(patient);
+              const missingFlag = hasMissingInfo(patient);
+              return (
+                <div key={patient.id} className="p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-black text-primary">
+                      {patientInitials(patient.fullName)}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <Link href={`/hasta-detay?id=${patient.id}`} className="font-black text-slate-900">
+                        {patient.fullName}
+                      </Link>
+                      <p className="mt-1 font-mono text-xs text-slate-500">TC: {patient.tcNo || "-"}</p>
+                      {!hidePhone && (
+                        <p className="mt-1 inline-flex items-center gap-1 text-sm text-slate-600">
+                          <Phone className="h-3.5 w-3.5" />
+                          {patient.phone || "-"}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="mt-3 flex flex-wrap gap-1.5">
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{patient.gender || "Cinsiyet yok"}</span>
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{age !== null ? `${age} yaş` : "Yaş yok"}</span>
+                    {patient.insurance && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">{patient.insurance}</span>}
+                    {riskFlag && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Medikal uyarı</span>}
+                    {missingFlag && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Eksik bilgi</span>}
+                  </div>
+                  <div className={`mt-4 grid gap-2 ${canDeletePatients ? "grid-cols-3" : "grid-cols-2"}`}>
+                    <Link href={`/hasta-detay?id=${patient.id}`} className="rounded-lg bg-primary px-3 py-2 text-center text-sm font-bold text-white">Kart</Link>
+                    <Link href={`/hasta-ekle?id=${patient.id}`} className="rounded-lg border border-slate-200 px-3 py-2 text-center text-sm font-semibold text-slate-700">Düzenle</Link>
+                    {canDeletePatients && <button type="button" onClick={() => remove(patient.id)} className="rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-600">Sil</button>}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <div className="hidden overflow-x-auto md:block">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50">
+              <tr className="border-b border-slate-100">
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">
+                  <SortButton col="fullName" label="Hasta" />
+                </th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">
+                  <SortButton col="tcNo" label="TC Kimlik" />
+                </th>
+                {!hidePhone && (
+                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">
+                    <SortButton col="phone" label="Telefon" />
+                  </th>
+                )}
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">
+                  <SortButton col="birthDate" label="Yaş" />
+                </th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">
+                  <SortButton col="insurance" label="Kurum" />
+                </th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">Durum</th>
+                <th className="px-4 py-3 text-right text-[11px] font-bold uppercase text-slate-500">İşlem</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {loading && patients.length === 0 && <TableRowsSkeleton rows={7} columns={hidePhone ? 6 : 7} />}
+              {!loading && patients.length === 0 && (
+                <tr>
+                  <td colSpan={hidePhone ? 6 : 7} className="px-4 py-14 text-center text-sm text-slate-400">
+                    Hasta bulunamadı
+                  </td>
+                </tr>
+              )}
+              {patients.map((patient) => {
+                const age = calculateAge(patient.birthDate);
+                const riskFlag = hasMedicalRisk(patient);
+                const missingFlag = hasMissingInfo(patient);
+                return (
+                  <tr key={patient.id} className="transition hover:bg-slate-50/80">
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-black text-primary">
+                          {patientInitials(patient.fullName)}
+                        </div>
+                        <div className="min-w-0">
+                          <Link href={`/hasta-detay?id=${patient.id}`} className="font-black text-slate-900 hover:text-primary">
+                            {patient.fullName}
+                          </Link>
+                          <p className="mt-0.5 text-xs text-slate-400">{patient.gender === "ERKEK" ? "Erkek" : patient.gender === "KADIN" ? "Kadın" : "Cinsiyet yok"}</p>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-slate-600">{patient.tcNo || "-"}</td>
+                    {!hidePhone && <td className="px-4 py-3 text-slate-600">{patient.phone || "-"}</td>}
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col">
+                        <span className="font-semibold text-slate-700">{age !== null ? `${age} yaş` : "-"}</span>
+                        <span className="text-xs text-slate-400">{formatDate(patient.birthDate)}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      {patient.insurance ? (
+                        <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">{patient.insurance}</span>
+                      ) : (
+                        <span className="text-slate-300">-</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap gap-1.5">
+                        {riskFlag && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">Medikal uyarı</span>}
+                        {missingFlag && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">Eksik bilgi</span>}
+                        {patient.discountRate ? <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-bold text-orange-700">%{patient.discountRate} indirim</span> : null}
+                        {!riskFlag && !missingFlag && !patient.discountRate && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">Normal</span>}
+                      </div>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Link href={`/hasta-detay?id=${patient.id}`} title="Hasta kartını aç" className="rounded-lg bg-primary/10 p-2 text-primary transition hover:bg-primary hover:text-white">
+                          <Eye className="h-4 w-4" />
+                        </Link>
+                        <Link href={`/hasta-ekle?id=${patient.id}`} title="Düzenle" className="rounded-lg bg-slate-100 p-2 text-slate-600 transition hover:bg-slate-200">
+                          <Pencil className="h-4 w-4" />
+                        </Link>
+                        {canDeletePatients && (
+                          <button type="button" onClick={() => remove(patient.id)} title="Sil" className="rounded-lg bg-red-50 p-2 text-red-600 transition hover:bg-red-100">
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
+            <span>{startRow}-{endRow} / {total.toLocaleString("tr-TR")} kayıt</span>
+            <span className="inline-flex items-center gap-1">
+              <CalendarDays className="h-3.5 w-3.5" />
+              Sayfa {page} / {pageCount}
+            </span>
+            <label className="inline-flex items-center gap-2">
+              Sayfa başına
+              <select
+                value={pageSize}
+                onChange={(event) => {
+                  setPageSize(Number(event.target.value));
+                  setPage(1);
+                }}
+                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs outline-none"
+              >
+                {PAGE_SIZES.map((size) => (
+                  <option key={size} value={size}>{size}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              disabled={page <= 1 || loading}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+            >
+              <ChevronLeft className="h-4 w-4" />
+              Önceki
+            </button>
+            <button
+              type="button"
+              disabled={page >= pageCount || loading}
+              onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+            >
+              Sonraki
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
       </div>
     </section>
   );

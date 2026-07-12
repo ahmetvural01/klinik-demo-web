@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useEscapeClose } from "@/lib/use-modal-dismiss";
 
 type DoctorReport = {
   id: string; fullName: string;
@@ -57,6 +58,8 @@ export default function RaporPage() {
   const [loading,  setLoading]  = useState(false);
   const [tab,      setTab]      = useState<Tab>("genel");
   const [printDr,  setPrintDr]  = useState<DoctorReport | null>(null);
+
+  useEscapeClose(() => setPrintDr(null), Boolean(printDr));
 
   const setQuickRange = (period: "bugun" | "hafta" | "ay" | "yil") => {
     const now = new Date();

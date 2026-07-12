@@ -18,30 +18,57 @@ const SETTING_LABELS: Record<string, string> = {
   reminderLeadHours: "Hatırlatma Süresi (saat)",
   logoUrl: "Logo URL",
   primaryColor: "Ana Renk",
+  activePriceList: "Tedavi Fiyat Kaynağı",
 };
+
+function normalizeSettingsPayload(body: Record<string, unknown>) {
+  const data = { ...body };
+  if ("activePriceList" in data && data.activePriceList !== "standard" && data.activePriceList !== "custom") {
+    data.activePriceList = "standard";
+  }
+  delete data.id;
+  delete data.institutionId;
+  delete data.updatedAt;
+  return data;
+}
 
 export async function GET() {
   try {
-    const auth = await requireAuth("*");
+    const auth = await requireAuth("dashboard:read");
     if (auth.error) return auth.error;
 
     if (!auth.user.institutionId) {
       return NextResponse.json({ message: "Sadece klinik kullanicilari ayarlara erisebilir" }, { status: 403 });
     }
 
-    const settings = await prisma.setting.findUnique({
-      where: { institutionId: auth.user.institutionId },
+    const [settings, institution] = await Promise.all([
+      prisma.setting.findUnique({ where: { institutionId: auth.user.institutionId } }),
+      prisma.institution.findUnique({
+        where: { id: auth.user.institutionId },
+        select: { name: true, email: true, phone: true, address: true, taxNo: true, registryNo: true, website: true, logo: true },
+      }),
+    ]);
+    return NextResponse.json({
+      ...settings,
+      institutionSlug: institution?.name || "",
+      institutionName: settings?.institutionName || institution?.name || "",
+      institutionPhone: settings?.institutionPhone || institution?.phone || "",
+      institutionEmail: institution?.email || "",
+      institutionAddress: institution?.address || "",
+      institutionTaxNo: institution?.taxNo || "",
+      institutionRegistryNo: institution?.registryNo || "",
+      institutionWebsite: institution?.website || "",
+      logoUrl: institution?.logo || "",
     });
-    return NextResponse.json(settings);
   } catch (error) {
     console.error("[settings GET] fallback:", error);
-    return NextResponse.json(null);
+    return NextResponse.json({ message: "Ayarlar yüklenemedi. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });
   }
 }
 
 export async function PUT(request: NextRequest) {
   try {
-    const auth = await requireAuth("*");
+    const auth = await requireAuth("settings:write");
     if (auth.error) return auth.error;
 
     if (!auth.user.institutionId) {
@@ -49,6 +76,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const body = await request.json();
+    const data = normalizeSettingsPayload(body && typeof body === "object" ? body : {});
 
     const institution = await prisma.institution.findUnique({
       where: { id: auth.user.institutionId },
@@ -63,13 +91,13 @@ export async function PUT(request: NextRequest) {
     });
 
     const updated = current
-      ? await prisma.setting.update({ where: { institutionId: auth.user.institutionId }, data: body })
+      ? await prisma.setting.update({ where: { institutionId: auth.user.institutionId }, data })
       : await prisma.setting.create({
           data: {
             institutionId: auth.user.institutionId,
-            institutionName: body.institutionName || institution.name,
-            institutionPhone: body.institutionPhone || institution.phone,
-            ...body,
+            institutionName: typeof data.institutionName === "string" ? data.institutionName : institution.name,
+            institutionPhone: typeof data.institutionPhone === "string" ? data.institutionPhone : institution.phone,
+            ...data,
           },
         });
 

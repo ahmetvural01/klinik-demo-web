@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 const prisma = new PrismaClient();
 
 const MARKER = "[DEMO_PAKET_20260506]";
-const DEMO_PASSWORD = "10711453";
+const DEMO_PASSWORD = process.env.DEMO_PASSWORD || "demo-password-change-me";
 
 async function cleanupVisibleMarkerText() {
   const targets: Array<{ table: string; column: string }> = [
@@ -80,7 +80,7 @@ async function main() {
 
   for (const u of demoUsers) {
     const user = await prisma.user.upsert({
-      where: { identityNo: u.identityNo },
+      where: { institutionId_identityNo: { institutionId: institution.id, identityNo: u.identityNo } },
       update: {
         fullName: u.fullName,
         role: u.role,
@@ -347,6 +347,16 @@ async function main() {
     institutionId: institution.id,
     createdById: managerId,
     marker: `${MARKER}-ANN-1`,
+  });
+
+  await upsertWorkflowScenarioPack({
+    institutionId: institution.id,
+    doctorId,
+    managerId,
+    assistantId: createdUsers[Role.ASISTAN].id,
+    bankoId: createdUsers[Role.BANKO].id,
+    posId: pos.id,
+    patients: createdPatients,
   });
 
   const ad = await upsertAdvertisementByMarker(`${MARKER}-AD-1`);
@@ -1066,6 +1076,272 @@ async function upsertAnnouncementByMarker(args: { institutionId: string; created
       createdById: args.createdById,
       endsAt: new Date(Date.now() + 14 * 24 * 60 * 60_000),
     },
+  });
+}
+
+async function upsertWorkflowScenarioPack(args: {
+  institutionId: string;
+  doctorId: string;
+  managerId: string;
+  assistantId: string;
+  bankoId: string;
+  posId: string;
+  patients: Array<{ id: string; fullName: string; phone: string }>;
+}) {
+  const [p0, p1, p2, p3, p4, p5, p6, p7, p8] = args.patients;
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  const nextWeek = new Date(today);
+  nextWeek.setDate(today.getDate() + 7);
+
+  await upsertAppointmentByMarker({
+    patientId: p0.id,
+    doctorId: args.doctorId,
+    marker: `${MARKER}-SCN-ACIL-RANDEVU`,
+    startAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 14, 0),
+    endAt: new Date(today.getFullYear(), today.getMonth(), today.getDate(), 14, 30),
+    status: "BEKLIYOR",
+    type: "ACIL",
+  });
+
+  const missed = await upsertAppointmentByMarker({
+    patientId: p1.id,
+    doctorId: args.doctorId,
+    marker: `${MARKER}-SCN-GELMEDI`,
+    startAt: new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 11, 0),
+    endAt: new Date(yesterday.getFullYear(), yesterday.getMonth(), yesterday.getDate(), 11, 30),
+    status: "GELMEDI",
+    type: "KONTROL",
+  });
+
+  await upsertFollowUpByMarker({
+    patientId: p1.id,
+    appointmentId: missed.id,
+    doctorId: args.doctorId,
+    createdById: args.managerId,
+    marker: `${MARKER}-SCN-GELMEDI-TAKIP`,
+  });
+
+  await upsertClinicTaskByMarker({
+    institutionId: args.institutionId,
+    patientId: p1.id,
+    createdById: args.managerId,
+    assignedToId: args.assistantId,
+    marker: `${MARKER}-SCN-ASISTAN-ARAMA`,
+  });
+
+  const completedPlan = await upsertTreatmentPlanByMarker({
+    patientId: p2.id,
+    doctorId: args.doctorId,
+    marker: `${MARKER}-SCN-TAMAMLANAN-TEDAVI`,
+  });
+  await prisma.treatmentPlan.update({
+    where: { id: completedPlan.id },
+    data: { status: "TAMAMLANDI", totalCost: new Prisma.Decimal(6200), notes: `${MARKER}-SCN-TAMAMLANAN-TEDAVI Onayli ve tamamlanmis tedavi` },
+  });
+
+  await upsertPaymentByMarker({
+    patientId: p2.id,
+    posId: args.posId,
+    marker: `${MARKER}-SCN-ODEME-KART`,
+  });
+
+  const installmentPlan = await upsertTaksitPlanByMarker({
+    patientId: p3.id,
+    doctorId: args.doctorId,
+    marker: `${MARKER}-SCN-TAKSITLI-HASTA`,
+  });
+  await upsertTaksitRows(installmentPlan.id, `${MARKER}-SCN-TAKSIT-ODEME`, args.posId);
+
+  const delayedLab = await upsertLabOrderByMarker({
+    patientId: p4.id,
+    doctorId: args.doctorId,
+    marker: `${MARKER}-SCN-GECIKEN-LAB`,
+  });
+  await prisma.labOrder.update({
+    where: { id: delayedLab.id },
+    data: { labName: "Demo Geciken Lab", labType: "E-max", price: new Prisma.Decimal(5200), notes: `${MARKER}-SCN-GECIKEN-LAB 4 gundur laboratuvarda bekliyor` },
+  });
+  await upsertLabTripScenario(delayedLab.id, `${MARKER}-SCN-GECIKEN-LAB-TRIP`, -5, null);
+
+  const returnedLab = await upsertLabOrderByMarker({
+    patientId: p5.id,
+    doctorId: args.doctorId,
+    marker: `${MARKER}-SCN-KLINIGE-DONEN-LAB`,
+  });
+  await prisma.labOrder.update({
+    where: { id: returnedLab.id },
+    data: { labName: "Demo Hizli Lab", labType: "Gece Plagi", price: new Prisma.Decimal(1800), notes: `${MARKER}-SCN-KLINIGE-DONEN-LAB Klinikte prova bekliyor` },
+  });
+  await upsertLabTripScenario(returnedLab.id, `${MARKER}-SCN-KLINIGE-DONEN-LAB-TRIP`, -3, -1);
+
+  await upsertStockScenario({
+    institutionId: args.institutionId,
+    userId: args.managerId,
+    marker: `${MARKER}-SCN-KRITIK-STOK`,
+    name: "Demo Kritik Anestezi",
+    category: "MEDIKAL",
+    quantity: 2,
+    minQuantity: 8,
+    unitPrice: 145,
+  });
+
+  await upsertStockScenario({
+    institutionId: args.institutionId,
+    userId: args.managerId,
+    marker: `${MARKER}-SCN-YETERLI-STOK`,
+    name: "Demo Eldiven Stogu",
+    category: "SARF",
+    quantity: 40,
+    minQuantity: 10,
+    unitPrice: 320,
+  });
+
+  await upsertSupplierScenario(args.institutionId, `${MARKER}-SCN-TEDARIK-SIPARIS`, args.managerId);
+
+  await upsertClinicTaskByMarker({
+    institutionId: args.institutionId,
+    patientId: p6.id,
+    createdById: args.managerId,
+    assignedToId: args.bankoId,
+    marker: `${MARKER}-SCN-BANKO-TAHSILAT`,
+  });
+
+  await upsertAppointmentByMarker({
+    patientId: p7.id,
+    doctorId: args.doctorId,
+    marker: `${MARKER}-SCN-KONTROL-RANDEVU`,
+    startAt: new Date(nextWeek.getFullYear(), nextWeek.getMonth(), nextWeek.getDate(), 10, 0),
+    endAt: new Date(nextWeek.getFullYear(), nextWeek.getMonth(), nextWeek.getDate(), 10, 30),
+    status: "BEKLIYOR",
+    type: "KONTROL",
+  });
+
+  if (p8) {
+    await upsertPaymentByMarker({
+      patientId: p8.id,
+      posId: args.posId,
+      marker: `${MARKER}-SCN-NAKIT-TAHSILAT`,
+    });
+  }
+}
+
+async function upsertLabTripScenario(labOrderId: string, marker: string, sentOffsetDays: number, receivedOffsetDays: number | null) {
+  const existing = await prisma.labTrip.findFirst({ where: { labOrderId, description: { contains: marker } } });
+  const sentAt = new Date();
+  sentAt.setDate(sentAt.getDate() + sentOffsetDays);
+  const receivedAt = receivedOffsetDays === null ? null : new Date();
+  if (receivedAt && receivedOffsetDays !== null) receivedAt.setDate(receivedAt.getDate() + receivedOffsetDays);
+
+  if (existing) {
+    await prisma.labTrip.update({
+      where: { id: existing.id },
+      data: { sentAt, receivedAt, description: `${marker} Olcu gonderildi`, sentNote: `${marker} Demo lab senaryosu`, receivedNote: receivedAt ? "Klinige teslim alindi" : null },
+    });
+    return;
+  }
+
+  await prisma.labTrip.create({
+    data: {
+      labOrderId,
+      order: 9,
+      sentAt,
+      receivedAt,
+      description: `${marker} Olcu gonderildi`,
+      sentNote: `${marker} Demo lab senaryosu`,
+      receivedNote: receivedAt ? "Klinige teslim alindi" : null,
+    },
+  });
+}
+
+async function upsertStockScenario(args: {
+  institutionId: string;
+  userId: string;
+  marker: string;
+  name: string;
+  category: string;
+  quantity: number;
+  minQuantity: number;
+  unitPrice: number;
+}) {
+  const existing = await prisma.stockItem.findFirst({
+    where: { institutionId: args.institutionId, name: `${args.name} ${args.marker}` },
+  });
+
+  const item = existing
+    ? await prisma.stockItem.update({
+        where: { id: existing.id },
+        data: {
+          quantity: args.quantity,
+          minQuantity: args.minQuantity,
+          unitPrice: new Prisma.Decimal(args.unitPrice),
+          isActive: true,
+        },
+      })
+    : await prisma.stockItem.create({
+        data: {
+      institutionId: args.institutionId,
+      name: `${args.name} ${args.marker}`,
+      category: args.category,
+      unit: "adet",
+      quantity: args.quantity,
+      minQuantity: args.minQuantity,
+      unitPrice: new Prisma.Decimal(args.unitPrice),
+      supplier: "Demo Tedarikci",
+      isActive: true,
+    },
+      });
+
+  const existingMove = await prisma.stockMovement.findFirst({ where: { stockItemId: item.id, note: { contains: args.marker } } });
+  if (!existingMove) {
+    await prisma.stockMovement.create({
+      data: { stockItemId: item.id, type: "GIRIS", quantity: args.quantity, note: `${args.marker} Senaryo stok hareketi`, userId: args.userId },
+    });
+  }
+}
+
+async function upsertSupplierScenario(institutionId: string, marker: string, userId: string) {
+  const firma = await prisma.firma.upsert({
+    where: { institutionId_name: { institutionId, name: `Demo Sarf Deposu ${marker}` } },
+    update: { isActive: true, phone: "02120000002", vendorScore: 72 },
+    create: {
+      institutionId,
+      name: `Demo Sarf Deposu ${marker}`,
+      phone: "02120000002",
+      kategori: "TEDARICI",
+      notes: `${marker} Siparis ve stok senaryosu`,
+      vendorScore: 72,
+      isActive: true,
+    },
+  });
+
+  const existing = await prisma.firmaIslem.findFirst({ where: { firmaId: firma.id, aciklama: { contains: marker } } });
+  if (!existing) {
+    await prisma.firmaIslem.create({
+      data: {
+        firmaId: firma.id,
+        tarih: new Date(),
+        islemTipi: "ALIM",
+        urunHizmet: "Anestezi ve sarf siparisi",
+        aciklama: `${marker} Firma siparisi stokla eslesmeli`,
+        tutar: new Prisma.Decimal(6850),
+        faturaNo: "DEMO-SIP-001",
+        yontem: "HAVALE_EFT",
+        kdvOrani: 20,
+      },
+    });
+  }
+
+  await upsertStockScenario({
+    institutionId,
+    userId,
+    marker: `${marker}-STOK`,
+    name: "Demo Siparisle Gelen Sarf",
+    category: "SARF",
+    quantity: 24,
+    minQuantity: 6,
+    unitPrice: 210,
   });
 }
 

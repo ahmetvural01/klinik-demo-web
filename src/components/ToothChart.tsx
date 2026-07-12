@@ -1,5 +1,6 @@
-﻿"use client";
+"use client";
 
+import Image from "next/image";
 import React from "react";
 
 export type ToothStatus =
@@ -12,11 +13,11 @@ export type ToothStatus =
   | "eksik";
 
 export const TOOTH_STATUS_LABELS: Record<ToothStatus, string> = {
-  saglikli: "Saglikli",
-  cukur: "Curuk",
+  saglikli: "Sağlıklı",
+  cukur: "Çürük",
   dolgu: "Dolgu",
-  cekilen: "Cekilen",
-  kaplik: "Kaplik",
+  cekilen: "Çekilen",
+  kaplik: "Kaplama",
   kanal: "Kanal",
   eksik: "Eksik",
 };
@@ -24,131 +25,160 @@ export const TOOTH_STATUS_LABELS: Record<ToothStatus, string> = {
 export const TOOTH_STATUS_BADGE: Record<ToothStatus, string> = {
   saglikli: "bg-white border-gray-300 text-gray-700",
   cukur: "bg-red-100 border-red-400 text-red-700",
-  dolgu: "bg-yellow-100 border-yellow-400 text-yellow-700",
+  dolgu: "bg-blue-100 border-blue-400 text-blue-700",
   cekilen: "bg-gray-200 border-gray-400 text-gray-600",
-  kaplik: "bg-blue-100 border-blue-400 text-blue-700",
-  kanal: "bg-purple-100 border-purple-400 text-purple-700",
+  kaplik: "bg-amber-100 border-amber-400 text-amber-700",
+  kanal: "bg-fuchsia-100 border-fuchsia-400 text-fuchsia-700",
   eksik: "bg-slate-100 border-slate-300 text-slate-500",
 };
 
-const STATUS_FILL: Record<string, string> = {
-  saglikli: "#fef9ee",
-  cukur: "#fee2e2",
-  dolgu: "#fef9c3",
-  cekilen: "#f3f4f6",
-  kaplik: "#dbeafe",
-  kanal: "#f3e8ff",
-  eksik: "#f1f5f9",
+const STATUS_STYLE: Record<ToothStatus, { ring: string; dot: string; overlay: string }> = {
+  saglikli: { ring: "border-transparent", dot: "bg-slate-300", overlay: "" },
+  cukur: { ring: "border-red-500 bg-red-50/50", dot: "bg-red-600", overlay: "bg-red-100/60" },
+  dolgu: { ring: "border-blue-500 bg-blue-50/50", dot: "bg-blue-600", overlay: "bg-blue-100/60" },
+  cekilen: { ring: "border-gray-500 bg-gray-100/70", dot: "bg-gray-600", overlay: "bg-gray-200/70" },
+  kaplik: { ring: "border-amber-500 bg-amber-50/60", dot: "bg-amber-600", overlay: "bg-amber-100/70" },
+  kanal: { ring: "border-fuchsia-500 bg-fuchsia-50/60", dot: "bg-fuchsia-600", overlay: "bg-fuchsia-100/60" },
+  eksik: { ring: "border-slate-400 bg-slate-100/80", dot: "bg-slate-500", overlay: "bg-white/60" },
 };
 
-const STATUS_STROKE: Record<string, string> = {
-  saglikli: "#b48a53",
-  cukur: "#dc2626",
-  dolgu: "#ca8a04",
-  cekilen: "#6b7280",
-  kaplik: "#2563eb",
-  kanal: "#9333ea",
-  eksik: "#64748b",
+type Dentition = "adult" | "child";
+
+type OdontogramSelectorProps = {
+  selected?: string[];
+  onToggle?: (num: string) => void;
+  toothMap?: Record<string, ToothStatus>;
+  dentition?: Dentition;
+  editable?: boolean;
+  heightClassName?: string;
+  className?: string;
 };
 
-function SimpleToothIcon({
-  status,
-  sel,
-  upper,
-}: {
-  status?: string;
-  sel?: boolean;
-  upper?: boolean;
-}) {
-  const fill = sel ? "#1e40af" : (STATUS_FILL[status ?? "saglikli"] ?? "#fef9ee");
-  const stroke = sel ? "#1e3a8a" : (STATUS_STROKE[status ?? "saglikli"] ?? "#b48a53");
+const ADULT_UPPER = ["18", "17", "16", "15", "14", "13", "12", "11", "21", "22", "23", "24", "25", "26", "27", "28"];
+const ADULT_LOWER = ["48", "47", "46", "45", "44", "43", "42", "41", "31", "32", "33", "34", "35", "36", "37", "38"];
+const CHILD_UPPER = ["55", "54", "53", "52", "51", "61", "62", "63", "64", "65"];
+const CHILD_LOWER = ["85", "84", "83", "82", "81", "71", "72", "73", "74", "75"];
 
-  if (upper) {
-    return (
-      <svg viewBox="0 0 32 56" fill="none" width="100%" height="100%">
-        <rect x="2" y="2" width="28" height="36" rx="7" fill={fill} stroke={stroke} strokeWidth="1.5" />
-        <rect x="9" y="36" width="4" height="16" rx="2" fill={fill} stroke={stroke} strokeWidth="1" />
-        <rect x="19" y="36" width="4" height="14" rx="2" fill={fill} stroke={stroke} strokeWidth="1" />
-      </svg>
-    );
-  }
-
-  return (
-    <svg viewBox="0 0 32 56" fill="none" width="100%" height="100%">
-      <rect x="9" y="2" width="4" height="16" rx="2" fill={fill} stroke={stroke} strokeWidth="1" />
-      <rect x="19" y="2" width="4" height="14" rx="2" fill={fill} stroke={stroke} strokeWidth="1" />
-      <rect x="2" y="16" width="28" height="36" rx="7" fill={fill} stroke={stroke} strokeWidth="1.5" />
-    </svg>
-  );
+function assetPath(num: string) {
+  return `/tooth-assets/${num}.png`;
 }
 
-function isUpper(num: string): boolean {
-  const q = Math.floor(parseInt(num, 10) / 10);
-  return q === 1 || q === 2 || q === 5 || q === 6;
+function isSelected(num: string, selected: string[], toothMap: Record<string, ToothStatus>) {
+  return selected.includes(num) || Boolean(toothMap[num] && toothMap[num] !== "saglikli");
 }
 
-export function ToothButton({
+function ToothAssetButton({
   num,
   selected,
+  status,
+  editable,
+  numberPosition,
   onClick,
 }: {
   num: string;
   selected: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={"Dis " + num}
-      className={
-        "flex flex-col items-center gap-0.5 rounded px-1 py-0.5 transition-all " +
-        (selected
-          ? "bg-blue-100 ring-2 ring-blue-500"
-          : "hover:bg-slate-100")
-      }
-    >
-      <div style={{ width: 28, height: 44 }}>
-        <SimpleToothIcon upper={isUpper(num)} sel={selected} />
-      </div>
-      <span
-        className={
-          "text-[10px] font-semibold " +
-          (selected ? "text-blue-700" : "text-slate-500")
-        }
-      >
-        {num}
-      </span>
-    </button>
-  );
-}
-
-function StatusToothButton({
-  num,
-  status,
-  onClick,
-}: {
-  num: string;
   status: ToothStatus;
+  editable: boolean;
+  numberPosition: "top" | "bottom";
   onClick: () => void;
 }) {
+  const style = STATUS_STYLE[status] || STATUS_STYLE.saglikli;
+  const activeClass = selected ? style.ring : "border-transparent hover:border-slate-200 hover:bg-slate-50/80";
+  const number = (
+    <span className={`text-sm leading-none ${selected ? "font-black text-slate-950" : "font-semibold text-slate-500 group-hover:text-slate-900"}`}>
+      {num}
+    </span>
+  );
+
   return (
     <button
+      type="button"
       onClick={onClick}
-      title={"Dis " + num + " - " + TOOTH_STATUS_LABELS[status]}
-      className="flex flex-col items-center gap-0.5 rounded px-1 py-0.5 transition-all hover:ring-2 hover:ring-blue-400/40 hover:bg-slate-50"
+      disabled={!editable}
+      title={`Diş ${num}${status !== "saglikli" ? ` - ${TOOTH_STATUS_LABELS[status]}` : ""}`}
+      className={`group relative flex min-w-0 flex-col items-center justify-center rounded-md border px-0.5 py-1 transition focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:cursor-default ${activeClass}`}
     >
-      <div style={{ width: 28, height: 44 }}>
-        <SimpleToothIcon upper={isUpper(num)} status={status} />
-      </div>
-      <span className="text-[10px] font-semibold text-slate-500">{num}</span>
+      {numberPosition === "top" && <span className="mb-1">{number}</span>}
+      <span className="relative flex aspect-[7/10] w-full max-w-[72px] items-center justify-center">
+        <Image
+          src={assetPath(num)}
+          alt={`Diş ${num}`}
+          width={70}
+          height={100}
+          className={`h-full max-h-[96px] w-auto object-contain transition ${selected ? "scale-105" : "group-hover:scale-105"} ${status === "eksik" ? "opacity-40 grayscale" : ""}`}
+          draggable={false}
+          priority={false}
+        />
+        {selected && <span className={`pointer-events-none absolute inset-1 rounded-md ${style.overlay}`} />}
+        {status === "cekilen" && <span className="pointer-events-none absolute left-2 right-2 top-1/2 h-0.5 -rotate-12 rounded bg-gray-700/70" />}
+        {selected && <span className={`absolute right-1 top-1 h-2.5 w-2.5 rounded-full ring-2 ring-white ${style.dot}`} />}
+      </span>
+      {numberPosition === "bottom" && <span className="mt-1">{number}</span>}
     </button>
   );
 }
 
-const UPPER_ADULT = ["18","17","16","15","14","13","12","11","21","22","23","24","25","26","27","28"];
-const LOWER_ADULT = ["48","47","46","45","44","43","42","41","31","32","33","34","35","36","37","38"];
-const UPPER_CHILD = ["55","54","53","52","51","61","62","63","64","65"];
-const LOWER_CHILD = ["85","84","83","82","81","71","72","73","74","75"];
+function ToothRow({
+  teeth,
+  selected,
+  toothMap,
+  editable,
+  onToggle,
+  numberPosition,
+}: {
+  teeth: string[];
+  selected: string[];
+  toothMap: Record<string, ToothStatus>;
+  editable: boolean;
+  onToggle?: (num: string) => void;
+  numberPosition: "top" | "bottom";
+}) {
+  return (
+    <div
+      className="grid w-full min-w-0 items-center justify-center gap-1 sm:gap-2"
+      style={{ gridTemplateColumns: `repeat(${teeth.length}, minmax(0, 1fr))` }}
+    >
+      {teeth.map((num) => {
+        const status = toothMap[num] || "saglikli";
+        return (
+          <ToothAssetButton
+            key={num}
+            num={num}
+            selected={isSelected(num, selected, toothMap)}
+            status={status}
+            editable={editable}
+            numberPosition={numberPosition}
+            onClick={() => onToggle?.(num)}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+export function OdontogramSelector({
+  selected = [],
+  onToggle,
+  toothMap = {},
+  dentition = "adult",
+  editable = true,
+  heightClassName = "",
+  className = "",
+}: OdontogramSelectorProps) {
+  const upper = dentition === "adult" ? ADULT_UPPER : CHILD_UPPER;
+  const lower = dentition === "adult" ? ADULT_LOWER : CHILD_LOWER;
+
+  return (
+    <div className={`min-w-0 rounded-lg border border-slate-200 bg-white p-3 ${className}`}>
+      <div className={`min-w-0 overflow-hidden rounded-sm border border-slate-300 bg-white px-3 py-4 sm:px-5 ${heightClassName}`}>
+        <div className="mx-auto flex w-full min-w-0 flex-col gap-4">
+          <ToothRow teeth={upper} selected={selected} toothMap={toothMap} editable={editable} onToggle={onToggle} numberPosition="top" />
+          <ToothRow teeth={lower} selected={selected} toothMap={toothMap} editable={editable} onToggle={onToggle} numberPosition="bottom" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 type TeethMapProps = {
   toothMap: Record<string, ToothStatus>;
@@ -157,71 +187,47 @@ type TeethMapProps = {
 };
 
 export function TeethMap({ toothMap, onToggle, editable = true }: TeethMapProps) {
-  const [tabType, setTabType] = React.useState<"adult" | "child">("adult");
-
-  const upper = tabType === "adult" ? UPPER_ADULT : UPPER_CHILD;
-  const lower = tabType === "adult" ? LOWER_ADULT : LOWER_CHILD;
-
-  const handleClick = (num: string) => {
-    if (editable && onToggle) onToggle(num);
-  };
+  const [tabType, setTabType] = React.useState<Dentition>("adult");
 
   return (
-    <div className="bg-white rounded-lg border border-slate-200 p-4 overflow-x-auto">
-      <div className="flex gap-2 mb-4 border-b border-slate-200 pb-2">
+    <div className="rounded-lg border border-slate-200 bg-white p-4">
+      <div className="mb-4 flex gap-2 border-b border-slate-200 pb-2">
         <button
+          type="button"
           onClick={() => setTabType("adult")}
-          className={`px-3 py-1.5 text-sm font-semibold rounded-md transition ${
-            tabType === "adult"
-              ? "bg-blue-600 text-white"
-              : "text-slate-500 hover:bg-slate-100"
+          className={`rounded-md px-3 py-1.5 text-sm font-semibold transition ${
+            tabType === "adult" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-100"
           }`}
         >
-          Yetiskin Disleri
+          Yetişkin Dişleri
         </button>
         <button
+          type="button"
           onClick={() => setTabType("child")}
-          className={`px-3 py-1.5 text-sm font-semibold rounded-md transition ${
-            tabType === "child"
-              ? "bg-blue-600 text-white"
-              : "text-slate-500 hover:bg-slate-100"
+          className={`rounded-md px-3 py-1.5 text-sm font-semibold transition ${
+            tabType === "child" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-100"
           }`}
         >
-          Cocuk Disleri
+          Çocuk Dişleri
         </button>
       </div>
 
-      <div className="flex justify-center gap-0.5 mb-1">
-        {upper.map((n) => (
-          <StatusToothButton
-            key={n}
-            num={n}
-            status={toothMap[n] ?? "saglikli"}
-            onClick={() => handleClick(n)}
-          />
-        ))}
-      </div>
-
-      <div className="border-t-2 border-dashed border-slate-200 my-2" />
-
-      <div className="flex justify-center gap-0.5 mt-1">
-        {lower.map((n) => (
-          <StatusToothButton
-            key={n}
-            num={n}
-            status={toothMap[n] ?? "saglikli"}
-            onClick={() => handleClick(n)}
-          />
-        ))}
-      </div>
+      <OdontogramSelector
+        toothMap={toothMap}
+        onToggle={onToggle}
+        dentition={tabType}
+        editable={editable}
+        className="border-0 p-0"
+      />
 
       <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-        {(Object.keys(TOOTH_STATUS_LABELS) as ToothStatus[]).map((s) => (
+        {(Object.keys(TOOTH_STATUS_LABELS) as ToothStatus[]).map((status) => (
           <span
-            key={s}
-            className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded border ${TOOTH_STATUS_BADGE[s]}`}
+            key={status}
+            className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs font-medium ${TOOTH_STATUS_BADGE[status]}`}
           >
-            {TOOTH_STATUS_LABELS[s]}
+            <span className={`h-2 w-2 rounded-full ${STATUS_STYLE[status].dot}`} />
+            {TOOTH_STATUS_LABELS[status]}
           </span>
         ))}
       </div>

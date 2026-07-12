@@ -2,25 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { createIntegratedPayment } from "@/lib/payment-ledger";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 export async function GET(req: NextRequest) {
   try {
     const auth = await requireAuth("payments:read");
     if (auth.error) return auth.error;
 
-    const institutionDoctors = auth.user.institutionId
-      ? await prisma.user.findMany({
-          where: { institutionId: auth.user.institutionId, role: "DOKTOR", isActive: true },
-          select: { id: true },
-        })
-      : [];
-    const doctorIds = institutionDoctors.map((doctor) => doctor.id);
+    // Not: doctorId eşleşmesi kasıtlı olarak filtreye DAHİL EDİLMEDİ — Payment.doctorId
+    // sadece kurumun doktora yaptığı hakediş ödemesini (bir çıkış/gider) işaretler,
+    // gelir değildir. Önceden buraya dahil edildiği için doktor hakediş ödemesi
+    // yapıldığında "Bugün Gelir" rakamı yanlışlıkla şişiyordu.
     const institutionFilter = auth.user.institutionId
       ? {
-          OR: [
-            { doctorId: { in: doctorIds } },
-            { patient: { examinations: { some: { doctorId: { in: doctorIds } } } } },
-          ],
+          patientId: { not: null },
+          patient: { institutionId: auth.user.institutionId },
         }
       : {};
 
@@ -49,8 +45,9 @@ export async function GET(req: NextRequest) {
     }
 
     return NextResponse.json({ date: start.toISOString(), total, byMethod, payments });
-  } catch {
-    return NextResponse.json({ date: new Date().toISOString(), total: 0, byMethod: { NAKIT: 0, KREDI_KARTI: 0, HAVALE_EFT: 0 }, payments: [] });
+  } catch (error) {
+    console.error("[kasa GET]", error);
+    return NextResponse.json({ message: "Kasa verileri yüklenemedi. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });
   }
 }
 
@@ -60,7 +57,7 @@ export async function POST(req: NextRequest) {
 
   const institutionDoctors = auth.user.institutionId
     ? await prisma.user.findMany({
-        where: { institutionId: auth.user.institutionId, role: "DOKTOR", isActive: true },
+        where: effectiveDoctorWhere(auth.user.institutionId),
         select: { id: true },
       })
     : [];
@@ -74,18 +71,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "amount ve method zorunlu" }, { status: 400 });
   }
 
+  if (patientId && !doctorId) {
+    return NextResponse.json({ error: "Hasta tahsilatı için doktor seçimi zorunlu" }, { status: 400 });
+  }
+
+  if ((method === "KREDI_KARTI" || method === "MAIL_ORDER") && !posId) {
+    return NextResponse.json({ error: "Kart / mail order tahsilatı için POS seçimi zorunlu" }, { status: 400 });
+  }
+
   if (auth.user.institutionId && doctorId && !doctorIds.includes(doctorId)) {
     return NextResponse.json({ error: "Bu doktor kurum kapsamı disinda" }, { status: 403 });
   }
 
-  if (auth.user.institutionId && patientId && doctorIds.length > 0) {
+  if (auth.user.institutionId && patientId) {
     const relatedPatient = await prisma.patient.findFirst({
       where: {
         id: patientId,
-        OR: [
-          { examinations: { some: { doctorId: { in: doctorIds } } } },
-          { appointments: { some: { doctorId: { in: doctorIds } } } },
-        ],
+        institutionId: auth.user.institutionId,
       },
       select: { id: true },
     });
@@ -95,18 +97,31 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const { payment, taksitInfo } = await prisma.$transaction((tx) =>
-    createIntegratedPayment({
-      tx,
-      patientId,
-      doctorId,
-      method,
-      amount: numericAmount,
-      description,
-      posId,
-    })
-  );
+  try {
+    const { payment, taksitInfo } = await prisma.$transaction(
+      (tx) =>
+        createIntegratedPayment({
+          tx,
+          patientId,
+          doctorId,
+          method,
+          amount: numericAmount,
+          description,
+          posId,
+        }),
+      { isolationLevel: "Serializable" }
+    );
 
-  await writeAudit(auth.user.id, "KASA_PAYMENT_CREATE", `${numericAmount} TL kasa tahsilatı eklendi`);
-  return NextResponse.json({ ...payment, taksitInfo }, { status: 201 });
+    await writeAudit(auth.user.id, "KASA_PAYMENT_CREATE", `${numericAmount} TL kasa tahsilatı eklendi`);
+    return NextResponse.json({ ...payment, taksitInfo }, { status: 201 });
+  } catch (e) {
+    if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2034") {
+      return NextResponse.json(
+        { error: "Bu hasta için aynı anda başka bir ödeme işlendi. Lütfen tekrar deneyin." },
+        { status: 409 }
+      );
+    }
+    console.error("[kasa POST]", e);
+    return NextResponse.json({ error: "Ödeme kaydedilemedi" }, { status: 503 });
+  }
 }

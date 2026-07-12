@@ -22,6 +22,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
     },
   });
   if (!existing) return NextResponse.json({ message: "POS cihazı bulunamadı" }, { status: 404 });
+  if (body.name !== undefined && !String(body.name).trim()) {
+    return NextResponse.json({ message: "POS cihaz adı boş olamaz" }, { status: 400 });
+  }
 
   const updated = await (prisma as any).posDevice.update({
     where: { id: existing.id },

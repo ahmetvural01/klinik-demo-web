@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+
+const PLAN_STATUSES = ["PLANLANDI", "DEVAM_EDIYOR", "TAMAMLANDI", "IPTAL"];
+const CLOSED_PLAN_STATUSES = new Set(["TAMAMLANDI", "IPTAL"]);
 
 function treatmentPlanTenantWhere(id: string, institutionId: string | null | undefined, role: string) {
   return {
@@ -28,7 +32,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
   if (!plan) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
-  const hidePhone = user.role === "DOKTOR" || user.role === "ASISTAN";
+  const hidePhone = shouldHidePatientPhone(user.role);
   const result = hidePhone
     ? {
         ...plan,
@@ -49,11 +53,26 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const body = await req.json();
   const { status, stepUpdates } = body;
 
+  if (status !== undefined && !PLAN_STATUSES.includes(status)) {
+    return NextResponse.json({ error: "Geçersiz plan durumu" }, { status: 400 });
+  }
+
   const existing = await (prisma as any).treatmentPlan.findFirst({
     where: treatmentPlanTenantWhere(params.id, user.institutionId, user.role),
-    select: { id: true },
+    select: { id: true, status: true },
   });
   if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
+
+  // Tamamlanmış/iptal bir planın adımları, plan aynı istekte yeniden
+  // açılmadıkça değiştirilemez (bkz. denetim raporu Tema 5 — önceden sunucu
+  // tarafında hiçbir geçiş doğrulaması yoktu).
+  const planStaysClosedOrClosing = CLOSED_PLAN_STATUSES.has(status ?? existing.status);
+  if (stepUpdates && Array.isArray(stepUpdates) && stepUpdates.length > 0 && planStaysClosedOrClosing) {
+    return NextResponse.json(
+      { error: "Tamamlanmış/iptal edilmiş planın adımları değiştirilemez. Önce planı yeniden açın." },
+      { status: 400 }
+    );
+  }
 
   if (stepUpdates && Array.isArray(stepUpdates)) {
     for (const su of stepUpdates) {

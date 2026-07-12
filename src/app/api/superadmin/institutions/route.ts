@@ -72,10 +72,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Owner sifresi en az 6 karakter olmali" }, { status: 400 });
   }
 
-  const [existingInstitutionByName, existingInstitutionByEmail, existingOwner] = await Promise.all([
+  const [existingInstitutionByName, existingInstitutionByEmail] = await Promise.all([
     prisma.institution.findUnique({ where: { name } }),
     prisma.institution.findUnique({ where: { email } }),
-    prisma.user.findUnique({ where: { identityNo: ownerIdentityNo } }),
   ]);
 
   if (existingInstitutionByName) {
@@ -86,9 +85,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Bu e-posta zaten kullaniliyor" }, { status: 409 });
   }
 
-  if (existingOwner) {
-    return NextResponse.json({ message: "Bu owner TC kimlik zaten kayitli" }, { status: 409 });
-  }
+  // Owner TC kimlik burada kasıtlı olarak global kontrol edilmiyor: aynı kişi
+  // (aynı TC) birden fazla kliniğin owner'ı/personeli olabilir — kurumlar TC
+  // bazında birbirini engellememeli (bkz. User.identityNo şema notu). Yeni
+  // institution'ın kendi içinde zaten çakışma olamaz çünkü henüz hiç kullanıcısı yok.
 
   const passwordHash = await bcrypt.hash(ownerPassword, 10);
 

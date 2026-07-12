@@ -1,5 +1,7 @@
 "use client";
 
+/* eslint-disable @next/next/no-img-element */
+
 import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useState } from "react";
@@ -12,11 +14,15 @@ type Staff = {
   institution: string;
   role: string;
   isActive: boolean;
-  kkYuzde?:    number | null;
-  genelYuzde?: number | null;
-  maasYuzde?:  number | null;
-  profile?: { workStart?: string; workEnd?: string; photoUrl?: string | null } | null;
+  profile?: { workStart?: string; workEnd?: string; photoUrl?: string | null; hideAsDoctor?: boolean } | null;
 };
+
+// "Doktor olarak göster" işaretli bir yönetici, randevu/hakediş ekranlarında
+// zaten tam bir doktor gibi işlem görüyordu — personel listesindeki sayım ve
+// gruplama bununla tutarsızdı (yönetici grubunda görünüp diş hekimi sayısına
+// hiç yansımıyordu). Buradaki grup/sayım da aynı kuralı kullanır.
+const effectiveGroupRole = (p: Staff) =>
+  p.role === "DOKTOR" || (p.role === "YONETICI" && p.profile?.hideAsDoctor === false) ? "DOKTOR" : p.role;
 
 const ROLE_COLORS: Record<string, string> = {
   YONETICI: "bg-indigo-100 text-indigo-700",
@@ -61,10 +67,6 @@ export default function PersonelPage() {
   const [filterRole, setFilterRole] = useState("");
   const [filterStatus, setFilterStatus] = useState<"" | "aktif" | "pasif">("");
 
-  // Doktor ödeme oranı düzenleyici
-  const [editYuzde, setEditYuzde] = useState<{ id: string; kk: string; genel: string; maas: string } | null>(null);
-  const [savingYuzde, setSavingYuzde] = useState(false);
-
   const load = async () => {
     setLoading(true);
     setError(null);
@@ -85,95 +87,8 @@ export default function PersonelPage() {
     void load();
   }, []);
 
-  const setActive = async (id: string, isActive: boolean) => {
-    const target = staff.find((x) => x.id === id);
-    if (!target) return;
-
-    const res = await fetch(`/api/staff/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        institution: target.institution,
-        identityNo: target.identityNo,
-        fullName: target.fullName,
-        role: target.role,
-        isActive,
-        workStart: target.profile?.workStart || "08:30",
-        workEnd: target.profile?.workEnd || "18:00"
-      })
-    });
-
-    if (!res.ok) {
-      const msg = "Durum güncellenemedi";
-      setError(msg);
-      try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {}
-      return;
-    }
-
-    await load();
-  };
-
-  const saveHakedisYuzde = async () => {
-    if (!editYuzde) return;
-    const target = staff.find(x => x.id === editYuzde.id);
-    if (!target) return;
-    setSavingYuzde(true);
-    const res = await fetch(`/api/staff/${editYuzde.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        institution: target.institution,
-        identityNo: target.identityNo,
-        fullName: target.fullName,
-        role: target.role,
-        isActive: target.isActive,
-        workStart: target.profile?.workStart || "08:30",
-        workEnd: target.profile?.workEnd || "18:00",
-        kkYuzde:    parseFloat(editYuzde.kk)    || 3,
-        genelYuzde: parseFloat(editYuzde.genel)  || 15,
-        maasYuzde:  parseFloat(editYuzde.maas)   || 40,
-      })
-    });
-    setSavingYuzde(false);
-    if (res.ok) { setEditYuzde(null); await load(); }
-    else { const msg = "Yüzdeler kaydedilemedi"; setError(msg); try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {} }
-  };
-
   return (
     <section className="space-y-5">
-      {/* Doktor ödeme oranı düzenleyici */}
-      {editYuzde && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-          <div className="w-full max-w-sm rounded-2xl border border-slate-100 bg-white p-6 shadow-2xl">
-            <h2 className="mb-1 text-lg font-black text-slate-900">Doktor Ödeme Oranları</h2>
-            <p className="mb-5 text-sm text-slate-500">Bu oranlar doktor raporlarında ve ödeme hesabında kullanılır. Emin değilseniz varsayılan değerleri koruyun.</p>
-            <div className="space-y-4">
-              {[
-                { label: "KK Masraf %", key: "kk" as const, help: "Kredi kartı gelirinden düşülecek % (banka komisyonu)" },
-                { label: "Genel Masraf %", key: "genel" as const, help: "Toplam cirodan düşülecek genel gider payı %" },
-                { label: "Maaş %", key: "maas" as const, help: "Brütten doktora ödenecek %" },
-              ].map(f => (
-                <div key={f.key}>
-                  <label className="block text-xs font-bold text-slate-700 mb-1">{f.label}</label>
-                  <input type="number" min={0} max={100} step={0.1}
-                    value={editYuzde[f.key]}
-                    onChange={e => setEditYuzde(prev => prev ? { ...prev, [f.key]: e.target.value } : null)}
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                  <p className="mt-1 text-xs text-slate-400">{f.help}</p>
-                </div>
-              ))}
-            </div>
-            <div className="mt-5 flex gap-2">
-              <button onClick={() => setEditYuzde(null)} className="flex-1 rounded-lg border border-slate-200 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">İptal</button>
-              <button onClick={saveHakedisYuzde} disabled={savingYuzde}
-                className="flex-1 rounded-lg bg-primary py-2 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50">
-                {savingYuzde ? "Kaydediliyor…" : "Oranları Kaydet"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
@@ -191,7 +106,7 @@ export default function PersonelPage() {
         {[
           { label: "Toplam Personel", value: staff.length },
           { label: "Aktif Çalışan", value: staff.filter(s => s.isActive).length },
-          { label: "Diş Hekimi", value: staff.filter(s => s.role === "DOKTOR").length },
+          { label: "Diş Hekimi", value: staff.filter(s => effectiveGroupRole(s) === "DOKTOR").length },
           { label: "Pasif Kayıt", value: staff.filter(s => !s.isActive).length },
         ].map(card => (
           <div key={card.label} className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
@@ -229,18 +144,18 @@ export default function PersonelPage() {
 
       {(() => {
         const filtered = staff.filter(s =>
-          (!filterRole || s.role === filterRole) &&
+          (!filterRole || effectiveGroupRole(s) === filterRole) &&
           (!filterStatus || (filterStatus === "aktif" ? s.isActive : !s.isActive)) &&
           (!search || s.fullName.toLowerCase().includes(search.toLowerCase()) || s.identityNo.includes(search))
         );
         const roleOrder = ["YONETICI", "DOKTOR", "ASISTAN", "BANKO", "MUHASEBE"];
         const roleLabel: Record<string, string> = { YONETICI: "Yöneticiler", DOKTOR: "Diş Hekimleri", ASISTAN: "Asistanlar", BANKO: "Banko Personeli", MUHASEBE: "Muhasebe" };
         const grouped = roleOrder.reduce<Record<string, Staff[]>>((acc, r) => {
-          const members = filtered.filter(s => s.role === r);
+          const members = filtered.filter(s => effectiveGroupRole(s) === r);
           if (members.length) acc[r] = members;
           return acc;
         }, {});
-        const otherRoles = filtered.filter(s => !roleOrder.includes(s.role));
+        const otherRoles = filtered.filter(s => !roleOrder.includes(effectiveGroupRole(s)));
         if (otherRoles.length) grouped["DİĞER"] = otherRoles;
 
         if (filtered.length === 0 && !loading) {
@@ -258,59 +173,27 @@ export default function PersonelPage() {
               <span>{roleLabel[role] || role}</span>
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-500">{members.length}</span>
             </h3>
-            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
               {members.map((p) => (
-                <article key={p.id} className={`group relative rounded-xl border border-slate-100 bg-white p-4 shadow-sm transition hover:shadow-md ${!p.isActive ? "opacity-60" : ""}`}>
-                  <div className="flex items-start gap-3">
-                    {p.profile?.photoUrl ? (
-                      <Image src={p.profile.photoUrl || ''} alt={p.fullName} width={48} height={48} className="h-12 w-12 flex-shrink-0 rounded-full border-2 border-slate-100 object-cover" />
-                    ) : (
-                        <Image src={avatarDataUrl(p.fullName, p.role)} alt={p.fullName} width={48} height={48} className="h-12 w-12 flex-shrink-0 rounded-full border-2 border-slate-100 object-cover" />
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <h4 className="truncate text-sm font-bold text-slate-900">{p.fullName}</h4>
-                        <span className={`flex-shrink-0 rounded-full px-2.5 py-1 text-xs font-bold ${p.isActive ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
-                          {p.isActive ? "Aktif" : "Pasif"}
-                        </span>
-                      </div>
-                      <p className="mt-0.5 font-mono text-xs text-slate-400">TC: {p.identityNo}</p>
-                      <p className="mt-0.5 text-xs text-slate-400">
-                        {p.profile?.workStart || "08:30"} — {p.profile?.workEnd || "18:00"}
-                      </p>
-                      <span className={`mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${ROLE_COLORS[p.role] || "bg-slate-100 text-slate-600"}`}>
-                        {roleLabel[p.role] || p.role}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="mt-3.5 flex flex-wrap items-center gap-2 border-t border-slate-50 pt-3">
-                    <Link href={`/personel-ekle?id=${p.id}`} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50">
-                      Personeli Düzenle
-                    </Link>
-                    <button
-                      onClick={() => setActive(p.id, !p.isActive)}
-                      className={`rounded-lg border px-3 py-2 text-xs font-bold transition ${p.isActive ? "border-red-100 text-red-600 hover:bg-red-50" : "border-emerald-100 text-emerald-600 hover:bg-emerald-50"}`}
-                    >
-                      {p.isActive ? "Pasif Yap" : "Aktif Yap"}
-                    </button>
-                    {p.role === "DOKTOR" && (
-                      <button
-                        onClick={() => setEditYuzde({ id: p.id, kk: String(p.kkYuzde ?? 3), genel: String(p.genelYuzde ?? 15), maas: String(p.maasYuzde ?? 40) })}
-                        className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs font-bold text-primary transition hover:bg-primary/10 sm:ml-auto"
-                        title="Doktor ödeme oranlarını ayarla"
-                      >
-                        Ödeme Oranları
-                      </button>
-                    )}
-                  </div>
-                  {p.role === "DOKTOR" && (
-                    <div className="mt-2 flex flex-wrap gap-3 border-t border-slate-50 pt-2 text-xs text-slate-500">
-                      <span>KK: <b className="text-slate-600">%{p.kkYuzde ?? 3}</b></span>
-                      <span>Genel: <b className="text-slate-600">%{p.genelYuzde ?? 15}</b></span>
-                      <span>Maaş: <b className="text-slate-600">%{p.maasYuzde ?? 40}</b></span>
-                    </div>
+                <Link
+                  key={p.id}
+                  href={`/personel-ekle?id=${p.id}`}
+                  className={`group relative flex flex-col items-center rounded-xl border border-slate-100 bg-white p-5 text-center shadow-sm transition hover:border-primary/30 hover:shadow-md ${!p.isActive ? "opacity-60" : ""}`}
+                >
+                  {!p.isActive && (
+                    <span className="absolute right-3 top-3 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">Pasif</span>
                   )}
-                </article>
+                  {p.profile?.photoUrl ? (
+                    <img src={p.profile.photoUrl || ''} alt={p.fullName} className="h-20 w-20 flex-shrink-0 rounded-full border-2 border-slate-100 object-cover" />
+                  ) : (
+                      <Image src={avatarDataUrl(p.fullName, p.role)} alt={p.fullName} width={80} height={80} className="h-20 w-20 flex-shrink-0 rounded-full border-2 border-slate-100 object-cover" />
+                  )}
+                  <h4 className="mt-3 truncate text-sm font-bold text-slate-900">{p.fullName}</h4>
+                  <span className={`mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${ROLE_COLORS[effectiveGroupRole(p)] || "bg-slate-100 text-slate-600"}`}>
+                    {roleLabel[effectiveGroupRole(p)] || p.role}
+                  </span>
+                  <span className="mt-2 block text-xs font-bold text-primary opacity-0 transition group-hover:opacity-100">Düzenle →</span>
+                </Link>
               ))}
             </div>
           </div>

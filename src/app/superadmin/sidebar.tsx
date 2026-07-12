@@ -19,6 +19,8 @@ const NAV_ITEMS = [
   { href: "/superadmin/announcements", icon: "📢", label: "Duyurular", module: "announcements" },
   { href: "/superadmin/support", icon: "🎧", label: "Destek", module: "support" },
   { href: "/superadmin/smtp", icon: "📧", label: "SMTP", module: "smtp" },
+  { href: "/superadmin/onam", icon: "📝", label: "Onam Paketi", module: "settings" },
+  { href: "/superadmin/tema", icon: "🎨", label: "Tema", module: "settings" },
   { href: "/superadmin/settings", icon: "⚙️", label: "Sistem Ayarları", module: "settings" },
   { href: "/superadmin/audit", icon: "🔍", label: "Denetim Günlüğü", module: "audit" },
   { href: "/superadmin/admins", icon: "🛡️", label: "Admin Yetkileri", module: "admins" },
@@ -46,8 +48,8 @@ export default function Sidebar() {
   return (
     <aside className="w-64 bg-gradient-to-b from-slate-900 to-slate-800 text-white flex flex-col h-full overflow-hidden">
       <div className="p-5 border-b border-slate-700">
-        <h1 className="text-lg font-black tracking-tight">🛡️ KlinikModern</h1>
-        <p className="text-xs text-slate-400 mt-0.5">Superadmin Paneli</p>
+        <h1 className="text-lg font-black tracking-tight">Sistem Yönetimi</h1>
+        <p className="text-xs text-slate-400 mt-0.5">Yetkili yönetim paneli</p>
       </div>
 
       <nav className="flex-1 overflow-y-auto p-3 space-y-0.5">

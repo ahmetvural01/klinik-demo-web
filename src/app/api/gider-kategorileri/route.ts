@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function GET(req: NextRequest) {
   try {
@@ -22,11 +22,12 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
-    const { name } = await req.json();
+    const { name, isDoctorPayout } = await req.json();
     if (!name) return NextResponse.json({ error: "İsim zorunlu" }, { status: 400 });
     const cat = await (prisma as any).expenseCategory.create({
-      data: { name, institutionId: auth.user.institutionId },
+      data: { name, institutionId: auth.user.institutionId, isDoctorPayout: Boolean(isDoctorPayout) },
     });
+    await writeAudit(auth.user.id, "EXPENSE_CATEGORY_CREATE", name);
     return NextResponse.json(cat, { status: 201 });
   } catch (e: unknown) {
     const err = e as { code?: string };

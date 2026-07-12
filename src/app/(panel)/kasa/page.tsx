@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
 
 /**
- * /kasa → /muhasebe?tab=gelir
- * Tahsilat/Kasa artık Muhasebe Merkezi > Gelir/Tahsilat sekmesinde yönetilmektedir.
+ * /kasa → /muhasebe?islem=gelir
+ * Tahsilat/Kasa artık Muhasebe Merkezi'ndeki tek işlem formundan yönetilmektedir.
  */
 export default function KasaRedirectPage() {
-  redirect("/muhasebe?tab=gelir");
+  redirect("/muhasebe?islem=gelir");
 }

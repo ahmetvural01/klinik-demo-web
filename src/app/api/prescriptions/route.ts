@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { prescriptionSchema } from "@/lib/validators";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 
-export async function GET(request: NextRequest) {
+export const GET = withApiTiming("prescriptions", async function GET(request: NextRequest) {
   const auth = await requireAuth("patients:read");
   if (auth.error) return auth.error;
 
@@ -14,11 +14,14 @@ export async function GET(request: NextRequest) {
       ...(patientId ? { patientId } : {}),
       ...(auth.user.role !== "SUPERADMIN" ? { patient: { institutionId: auth.user.institutionId } } : {}),
     },
-    orderBy: { createdAt: "desc" }
+    orderBy: { createdAt: "desc" },
+    // patientId verilmeden (kurum geneli) çağrılırsa tek istek tüm reçete
+    // geçmişini döndürmesin diye güvenlik sınırı.
+    take: patientId ? undefined : 500,
   });
 
   return NextResponse.json(prescriptions);
-}
+});
 
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("patients:write");
@@ -41,10 +44,21 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  const resolvedDoctorId = parsed.data.doctorId || auth.user.id;
+  if (auth.user.role !== "SUPERADMIN") {
+    const doctor = await prisma.user.findFirst({
+      where: { id: resolvedDoctorId, institutionId: auth.user.institutionId },
+      select: { id: true },
+    });
+    if (!doctor) {
+      return NextResponse.json({ message: "Doktor kurum kapsamı dışında" }, { status: 403 });
+    }
+  }
+
   const prescription = await prisma.prescription.create({
     data: {
       ...parsed.data,
-      doctorId: parsed.data.doctorId || auth.user.id
+      doctorId: resolvedDoctorId
     }
   });
 

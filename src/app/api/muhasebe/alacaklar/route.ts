@@ -1,25 +1,18 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, withApiTiming } from "@/lib/api";
 
 /**
  * GET /api/muhasebe/alacaklar
  * Her hasta için: tedavi toplam, ödenen, bakiye (alacak)
  * Sadece pozitif bakiyeli (borçlu) hastaları döner.
  */
-export async function GET() {
+export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
 
     const institutionId = auth.user.institutionId;
-    const institutionDoctors = institutionId
-      ? await prisma.user.findMany({
-          where: { institutionId, role: "DOKTOR", isActive: true },
-          select: { id: true },
-        })
-      : [];
-    const doctorIds = institutionDoctors.map((doctor) => doctor.id);
 
     const treatmentOnlyWhere = {
       NOT: [
@@ -32,8 +25,8 @@ export async function GET() {
     // Sadece ücretlendirmeye dahil tedaviler (diagnoz/muayene hariç)
     const examGroups = await prisma.examination.groupBy({
       by: ["patientId"],
-      where: doctorIds.length > 0
-        ? { ...treatmentOnlyWhere, doctorId: { in: doctorIds } }
+      where: institutionId
+        ? { ...treatmentOnlyWhere, patient: { institutionId } }
         : treatmentOnlyWhere,
       _sum: { amount: true },
     });
@@ -93,7 +86,8 @@ export async function GET() {
 
     const toplamAlacak = rows.reduce((s, r) => s + r.bakiye, 0);
     return NextResponse.json({ rows, toplamAlacak });
-  } catch {
-    return NextResponse.json({ rows: [], toplamAlacak: 0 });
+  } catch (error) {
+    console.error("[muhasebe alacaklar GET]", error);
+    return NextResponse.json({ message: "Hasta alacakları hesaplanamadı. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });
   }
-}
+});

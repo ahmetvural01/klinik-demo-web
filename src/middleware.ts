@@ -16,25 +16,27 @@ const PUBLIC_PREFIXES = [
   "/api/auth/superadmin/impersonate",
   "/api/auth/logout",
   "/api/system/health",
+  "/randevu-al",
+  "/api/public/booking",
 ];
 
 // Rol bazlı sayfa erişim haritası
 // Her rol için erişilemeyen sayfa prefix'leri
 const ROLE_DENIED_PAGES: Record<string, string[]> = {
   DOKTOR: [
-    "/muhasebe", "/kasa", "/gider", "/firma", "/stok",
+    "/muhasebe", "/kasa", "/gider", "/firma", "/firma-detay", "/stok",
     "/rapor", "/personel", "/personel-ekle", "/ayar", "/log",
     "/fiyat", "/sms", "/taksit", "/dashboard",
   ],
   ASISTAN: [
-    "/muhasebe", "/kasa", "/gider", "/firma", "/stok",
+    "/muhasebe", "/kasa", "/gider", "/firma", "/firma-detay", "/stok",
     "/rapor", "/personel", "/personel-ekle", "/ayar", "/log",
     "/fiyat", "/finans", "/muayene", "/taksit", "/dashboard",
   ],
   BANKO: [
-    "/gider", "/firma", "/stok", "/rapor",
+    "/gider", "/firma", "/firma-detay", "/stok", "/rapor",
     "/personel", "/personel-ekle", "/ayar", "/log",
-    "/fiyat", "/finans", "/hasta-takip", "/tedavi-plani",
+    "/fiyat", "/finans", "/tedavi-plani",
     "/lab", "/muayene", "/recete", "/dashboard",
   ],
   MUHASEBE: [
@@ -47,10 +49,10 @@ const ROLE_DENIED_PAGES: Record<string, string[]> = {
 
 // API rol kısıtlamaları: hangi API prefix'leri hangi roller için yasak
 const API_ROLE_DENIED: Record<string, string[]> = {
-  DOKTOR:   ["/api/gider", "/api/firma", "/api/kasa", "/api/stock", "/api/muhasebe", "/api/reports", "/api/settings", "/api/logs", "/api/sms", "/api/prices", "/api/taksit-plani"],
-  ASISTAN:  ["/api/gider", "/api/firma", "/api/kasa", "/api/stock", "/api/muhasebe", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/sms", "/api/taksit-plani"],
+  DOKTOR:   ["/api/gider", "/api/firma", "/api/purchases", "/api/kasa", "/api/stock", "/api/muhasebe", "/api/reports", "/api/settings", "/api/logs", "/api/sms", "/api/prices", "/api/taksit-plani"],
+  ASISTAN:  ["/api/gider", "/api/firma", "/api/purchases", "/api/kasa", "/api/stock", "/api/muhasebe", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/sms", "/api/taksit-plani"],
   // NOT: /api/examinations ASISTAN için izinli — requireAuth("examinations:read") ile GET, requireAuth("examinations:write") ile POST kontrolü yapılır
-  BANKO:    ["/api/gider", "/api/firma", "/api/stock", "/api/muhasebe/trend", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/prices", "/api/lab-orders", "/api/treatment-plans", "/api/examinations", "/api/prescriptions"],
+  BANKO:    ["/api/gider", "/api/firma", "/api/purchases", "/api/stock", "/api/muhasebe/trend", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/prices", "/api/lab-orders", "/api/treatment-plans", "/api/examinations", "/api/prescriptions"],
   MUHASEBE: ["/api/settings", "/api/logs", "/api/appointments", "/api/patients", "/api/examinations", "/api/treatment-plans", "/api/lab-orders", "/api/prescriptions"],
 };
 

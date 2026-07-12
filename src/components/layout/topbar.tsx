@@ -7,7 +7,7 @@ import Link from "next/link";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { getAlertPermissions, usePanelAlerts } from "@/components/layout/use-panel-alerts";
 
-type Props = { user: { fullName: string; role: string } };
+type Props = { user: { fullName: string; role: string; photoUrl?: string | null } };
 
 const roleLabel: Record<string, string> = {
   YONETICI:   "Yönetici",
@@ -45,7 +45,8 @@ const PAGE_TITLES: Record<string, string> = {
   "/taksit":        "Taksit Takibi",
   "/gider":         "Giderler",
   "/rapor":         "Raporlar",
-  "/firma":         "Tedarikçiler",
+  "/firma":         "Satın Alma",
+  "/firma-detay":   "Tedarikçi Detayı",
   "/stok":          "Stok Yönetimi",
   "/personel":      "Personeller",
   "/personel-ekle": "Yeni Personel",
@@ -154,7 +155,7 @@ function Clock() {
 export function Topbar({ user }: Props) {
   const router = useRouter();
   const pathname = usePathname();
-  const baseTitleRef = useRef<string>("KlinikModern");
+  const baseTitleRef = useRef<string>("Klinik Yönetim Paneli");
   const [q, setQ] = useState("");
   const [searchResults, setSearchResults] = useState<{id: string; fullName: string; tcNo: string; phone: string}[]>([]);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
@@ -187,7 +188,7 @@ export function Topbar({ user }: Props) {
 
   useEffect(() => {
     if (typeof document !== "undefined") {
-      baseTitleRef.current = document.title || "KlinikModern";
+      baseTitleRef.current = document.title || "Klinik Yönetim Paneli";
     }
   }, []);
 
@@ -247,7 +248,7 @@ export function Topbar({ user }: Props) {
 
   useEffect(() => {
     if (typeof document === "undefined") return;
-    const base = baseTitleRef.current || "KlinikModern";
+    const base = baseTitleRef.current || "Klinik Yönetim Paneli";
     document.title = messageUnread > 0 ? `(${messageUnread}) ${base}` : base;
   }, [messageUnread]);
 
@@ -563,8 +564,13 @@ export function Topbar({ user }: Props) {
               {displayRole}
             </span>
           </div>
-          <a href="/profil" className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs font-bold text-white ring-2 ring-blue-200 transition hover:bg-blue-700" title="Profilim">
-            {initials}
+          <a href="/profil" className="block h-8 w-8 shrink-0 overflow-hidden rounded-full ring-2 ring-blue-200 transition hover:ring-blue-400" title="Profilim">
+            {user.photoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={user.photoUrl} alt={displayName} className="h-full w-full object-cover" />
+            ) : (
+              <span className="flex h-full w-full items-center justify-center bg-primary text-xs font-bold text-white">{initials}</span>
+            )}
           </a>
           <span className="relative flex h-2.5 w-2.5">
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />

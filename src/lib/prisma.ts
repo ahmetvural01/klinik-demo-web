@@ -1,4 +1,76 @@
 import { PrismaClient } from "@prisma/client";
+import { encryptField, decryptField } from "@/lib/field-crypto";
+
+// KVKK m.6 özel nitelikli hasta verisi — bkz. src/lib/field-crypto.ts
+const ENCRYPTED_PATIENT_FIELDS = ["surgeries", "medications", "otherDiseases", "notes"] as const;
+
+function encryptPatientWriteData(data: unknown) {
+  if (!data || typeof data !== "object") return;
+  const record = data as Record<string, unknown>;
+  for (const field of ENCRYPTED_PATIENT_FIELDS) {
+    if (typeof record[field] === "string") {
+      record[field] = encryptField(record[field] as string);
+    }
+  }
+}
+
+function decryptPatientResult<T>(result: T): T {
+  if (!result) return result;
+  if (Array.isArray(result)) {
+    result.forEach((item) => decryptPatientResult(item));
+    return result;
+  }
+  if (typeof result !== "object") return result;
+  const record = result as Record<string, unknown>;
+  for (const field of ENCRYPTED_PATIENT_FIELDS) {
+    if (typeof record[field] === "string") {
+      record[field] = decryptField(record[field] as string);
+    }
+  }
+  return result;
+}
+
+function withPatientFieldEncryption(client: PrismaClient) {
+  return client.$extends({
+    name: "patient-field-encryption",
+    query: {
+      patient: {
+        async create({ args, query }) {
+          encryptPatientWriteData(args.data);
+          return decryptPatientResult(await query(args));
+        },
+        async update({ args, query }) {
+          encryptPatientWriteData(args.data);
+          return decryptPatientResult(await query(args));
+        },
+        async updateMany({ args, query }) {
+          encryptPatientWriteData(args.data);
+          return query(args);
+        },
+        async upsert({ args, query }) {
+          encryptPatientWriteData(args.create);
+          encryptPatientWriteData(args.update);
+          return decryptPatientResult(await query(args));
+        },
+        async findUnique({ args, query }) {
+          return decryptPatientResult(await query(args));
+        },
+        async findUniqueOrThrow({ args, query }) {
+          return decryptPatientResult(await query(args));
+        },
+        async findFirst({ args, query }) {
+          return decryptPatientResult(await query(args));
+        },
+        async findFirstOrThrow({ args, query }) {
+          return decryptPatientResult(await query(args));
+        },
+        async findMany({ args, query }) {
+          return decryptPatientResult(await query(args));
+        },
+      },
+    },
+  }) as unknown as PrismaClient;
+}
 
 declare global {
   // eslint-disable-next-line no-var
@@ -15,6 +87,16 @@ function buildDatabaseUrl() {
     const url = new URL(raw);
     // Bağlantı kopuksa isteklerin saniyelerce asılı kalmasını önle.
     url.searchParams.set("connect_timeout", "1");
+    // Güvenlik ağı: beklenmedik bir sorgu (ör. gelecekte eklenecek limitsiz bir
+    // findMany) veritabanı bağlantısını sonsuza kadar meşgul edip havuzu
+    // tıkamasın diye sunucu tarafında sert bir üst sınır. Sadece uygulama
+    // çalışma zamanı client'ına uygulanır — `prisma db push`/`migrate` gibi CLI
+    // komutları .env'deki ham DATABASE_URL'i kullanır, bu limitten etkilenmez.
+    // Not: Postgres'in `statement_timeout` query-string parametresi Prisma
+    // tarafından tanınmıyor (doğrulandı) — libpq'nun `options=-c ...` biçimi kullanılmalı.
+    if (!url.searchParams.has("options")) {
+      url.searchParams.set("options", "-c statement_timeout=15000");
+    }
     return url.toString();
   } catch {
     return raw;
@@ -22,7 +104,7 @@ function buildDatabaseUrl() {
 }
 
 function createPrismaClient() {
-  return new PrismaClient({
+  const client = new PrismaClient({
     log:
       process.env.NODE_ENV === "development"
         ? [{ level: "warn", emit: "stdout" }]
@@ -33,6 +115,7 @@ function createPrismaClient() {
       },
     },
   });
+  return withPatientFieldEncryption(client);
 }
 
 function getPrismaClient(): PrismaClient {

@@ -1,19 +1,20 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 
-export async function GET() {
+export const GET = withApiTiming("support", async function GET() {
   const auth = await requireAuth("support:read");
   if (auth.error) return auth.error;
 
   const tickets = await prisma.supportTicket.findMany({
     where: auth.user.role !== "SUPERADMIN" ? { user: { institutionId: auth.user.institutionId } } : {},
     orderBy: { createdAt: "desc" },
-    include: { user: { select: { id: true, fullName: true, role: true, institutionId: true } } }
+    include: { user: { select: { id: true, fullName: true, role: true, institutionId: true } } },
+    take: 500,
   });
 
   return NextResponse.json(tickets);
-}
+});
 
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("support:write");

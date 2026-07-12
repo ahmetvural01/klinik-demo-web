@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { decodeTokenUser, setAuthCookie, signToken, verifyPassword } from "@/lib/auth";
+import { writeAudit } from "@/lib/api";
 
 /**
  * Superadmin → Klinik paneline gizli giriş (ghost mode)
  * POST { institutionId, password }
  * - Superadmin kendi şifresiyle doğrulanır
  * - O kliniğin YONETICI rolüyle ghost token üretilir
- * - Hiçbir log kaydı tutulmaz
+ * - Oturumun başlangıcı ve oturum sırasında yapılan tüm işlemler audit log'a
+ *   actorId/isGhost alanlarıyla işaretlenerek kaydedilir (bkz. src/lib/api.ts writeAudit)
  */
 export async function POST(request: NextRequest) {
   // Mevcut oturum superadmin mi?
@@ -74,6 +76,12 @@ export async function POST(request: NextRequest) {
   });
 
   setAuthCookie(token);
+
+  await writeAudit(
+    targetUser.id,
+    "IMPERSONATE_START",
+    `${institution.name} kliniğine "${currentUser.fullName}" (superadmin) tarafından ${targetUser.fullName} kimliğiyle gizli giriş yapıldı`
+  );
 
   return NextResponse.json({
     ok: true,

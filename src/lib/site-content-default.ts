@@ -33,7 +33,7 @@ export const DEFAULT_SITE_CONTENT: SiteContentPayload = {
   heroBadge: "Dis Hekimi Klinikleri Icin Uretildi",
   heroTitle: "Randevudan tahsilata, tum klinik operasyonu tek merkezden yonetin.",
   heroDescription:
-    "KlinikModern; hasta kayit, randevu planlama, tedavi takibi, odeme yonetimi, SMS/e-posta hatirlatma ve raporlama modullerini tek bir profesyonel vitrinde toplar.",
+    "Hasta kayit, randevu planlama, tedavi takibi, odeme yonetimi, SMS/e-posta hatirlatma ve raporlama modullerini tek bir profesyonel panelde toplayin.",
   primaryCtaLabel: "Klinik Girisi",
   primaryCtaUrl: "/klinik/giris",
   secondaryCtaLabel: "Paketleri Incele",
@@ -41,13 +41,13 @@ export const DEFAULT_SITE_CONTENT: SiteContentPayload = {
   promoTitle: "Program Demo ve Tanitim Talebi",
   promoDescription:
     "Kliniginize ozel senaryo uzerinden canli tanitim alarak modulleri gercek kullanim akisinda gorebilir, ekibinizle hizli gecis planlayabilirsiniz.",
-  promoVideoUrl: "https://www.youtube.com/embed/aqz-KE-bpKQ",
+  promoVideoUrl: "",
   heroImageUrl: "https://images.unsplash.com/photo-1666214280557-f1b5022eb634?auto=format&fit=crop&w=1400&q=80",
-  showAnimations: true,
+  showAnimations: false,
   statsCards: [
-    { title: "%99.9", description: "Sureklilik", color: "cyan" },
-    { title: "7/24", description: "Bulut Erisim", color: "emerald" },
-    { title: "Moduler", description: "Buyuyen Yapi", color: "indigo" },
+    { title: "Tek Panel", description: "Operasyon Yonetimi", color: "cyan" },
+    { title: "Yetkili", description: "Rol Bazli Erisim", color: "emerald" },
+    { title: "Moduler", description: "Klinige Gore Yapi", color: "indigo" },
   ],
   moduleCards: [
     { title: "Hasta ve Randevu Yonetimi", description: "Ajanda, doktor takvimi, renkli randevu akışı ve otomatik hatırlatma.", color: "cyan" },
@@ -55,10 +55,10 @@ export const DEFAULT_SITE_CONTENT: SiteContentPayload = {
     { title: "Iletisim Otomasyonu", description: "SMS/e-posta şablonları, toplu bilgilendirme, fatura hatırlatma.", color: "indigo" },
   ],
   featureCards: [
-    { title: "Hizli Kurulum", description: "Dakikalar içinde aktif kullanım", icon: "⚡" },
-    { title: "Guvenli Altyapi", description: "JWT + HttpOnly cookie + audit kayıtları", icon: "🔒" },
-    { title: "Esnek Moduller", description: "Kliniğinize göre aç/kapa modül yaklaşımı", icon: "🧩" },
-    { title: "Destek ve Egitim", description: "Canlı destek, onboarding ve eğitim", icon: "🎯" },
+    { title: "Kurulum ve Geçiş", description: "Klinik yapısına uygun başlangıç planı", icon: "01" },
+    { title: "Yetkili Erişim", description: "Rol bazlı panel kullanımı ve denetim izi", icon: "02" },
+    { title: "Esnek Modüller", description: "İhtiyaca göre açılıp kapanabilen yapı", icon: "03" },
+    { title: "Destek ve Eğitim", description: "Ekip kullanımına yönelik süreç desteği", icon: "04" },
   ],
   pricingCards: [
     {
@@ -84,9 +84,5 @@ export const DEFAULT_SITE_CONTENT: SiteContentPayload = {
       color: "emerald",
     },
   ],
-  galleryImages: [
-    "https://www.w3schools.com/html/mov_bbb.mp4",
-    "https://www.w3schools.com/html/movie.mp4",
-    "https://images.unsplash.com/photo-1584982751601-97dcc096659c?auto=format&fit=crop&w=1400&q=80",
-  ],
+  galleryImages: [],
 };

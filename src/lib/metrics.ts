@@ -7,7 +7,10 @@ type CounterName =
   | "realtime_events_total"
   | "sms_jobs_total";
 
-type TimerName = "api_request_ms" | "sms_dispatch_ms";
+// api_request_ms:<route-adi> bicimindeki dinamik anahtarlar da kabul edilir —
+// bkz. withApiTiming (src/lib/api.ts). (string & {}) hilesi literal öneri
+// desteğini korurken herhangi bir string'e izin verir.
+type TimerName = "api_request_ms" | "sms_dispatch_ms" | (string & {});
 
 type TimerStat = { count: number; totalMs: number; minMs: number; maxMs: number };
 

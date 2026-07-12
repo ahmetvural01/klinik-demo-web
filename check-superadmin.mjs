@@ -1,10 +1,15 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
+if (!process.env.DATABASE_URL) {
+  console.error("DATABASE_URL tanımlı değil. Bu yardımcı script yalnızca açıkça verilen bağlantı ile çalışır.");
+  process.exit(1);
+}
+
 const prisma = new PrismaClient({
   datasources: {
     db: {
-      url: "postgresql://postgres:2653@localhost:5432/klinik_modern?schema=public"
+      url: process.env.DATABASE_URL
     }
   }
 });
@@ -31,10 +36,14 @@ async function checkSuperadmin() {
       console.log(`    Hash: ${u.passwordHash?.substring(0, 20)}...`);
       
       // Test password verification
-      const testPassword = '10711453';
+      const testPassword = process.env.TEST_SUPERADMIN_PASSWORD || "";
+      if (!testPassword) {
+        console.log("    Password check skipped: TEST_SUPERADMIN_PASSWORD is not set.");
+        continue;
+      }
       try {
         const isValid = await bcrypt.compare(testPassword, u.passwordHash);
-        console.log(`    Password '${testPassword}' matches: ${isValid}`);
+        console.log(`    Password matches: ${isValid}`);
       } catch (err) {
         console.log(`    Password verification error: ${err.message}`);
       }

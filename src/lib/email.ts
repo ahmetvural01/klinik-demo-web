@@ -79,7 +79,7 @@ export function buildInvoiceReminderHtml(params: {
   <div style="max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
     <div style="background: linear-gradient(135deg, #1e40af, #3b82f6); padding: 24px; color: white;">
       <h1 style="margin: 0; font-size: 22px;">💳 Fatura Hatırlatması</h1>
-      <p style="margin: 8px 0 0; opacity: 0.85; font-size: 14px;">Klinik Modern Platform</p>
+      <p style="margin: 8px 0 0; opacity: 0.85; font-size: 14px;">Klinik Yönetim Paneli</p>
     </div>
     <div style="padding: 28px;">
       <p style="font-size: 16px; color: #374151;">Sayın <strong>${institutionName}</strong>,</p>
@@ -132,7 +132,7 @@ export function buildInvoiceReminderSms(params: {
   const amountStr = `₺${Number(amount).toLocaleString("tr-TR")}`;
 
   if (isOverdue) {
-    return `Klinik Modern: ${invoiceNo} no'lu faturanız (${amountStr}) ${Math.abs(daysLeft)} gün gecikti. Lütfen en kısa sürede ödeme yapınız.`;
+    return `Klinik Yönetim Paneli: ${invoiceNo} no'lu faturanız (${amountStr}) ${Math.abs(daysLeft)} gün gecikti. Lütfen en kısa sürede ödeme yapınız.`;
   }
-  return `Klinik Modern: ${invoiceNo} no'lu faturanizin (${amountStr}) son odeme tarihi ${daysLeft} gun icinde dolmaktadir.`;
+  return `Klinik Yönetim Paneli: ${invoiceNo} no'lu faturanizin (${amountStr}) son odeme tarihi ${daysLeft} gun icinde dolmaktadir.`;
 }

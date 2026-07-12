@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { showToastSafe } from "@/lib/toast-client";
+import { confirmDialog } from "@/lib/confirm-client";
 
 type FieldConfig = {
   name: string;
@@ -216,7 +217,7 @@ export function ModulePage({
     const rowId = String(row[idKey] ?? "");
     if (!rowId) return;
 
-    const okay = window.confirm("Bu kaydı silmek istediğinize emin misiniz?");
+    const okay = await confirmDialog({ message: "Bu kaydı silmek istediğinize emin misiniz?", danger: true, confirmText: "Sil" });
     if (!okay) return;
 
     setDeletingId(rowId);

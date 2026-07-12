@@ -1,10 +1,12 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { paymentSchema } from "@/lib/validators";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { createIntegratedPayment } from "@/lib/payment-ledger";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
+import { stripSystemTags } from "@/lib/format-text";
 
-export async function GET(request: NextRequest) {
+export const GET = withApiTiming("finance", async function GET(request: NextRequest) {
   const auth = await requireAuth("finance:read");
   if (auth.error) return auth.error;
 
@@ -14,7 +16,9 @@ export async function GET(request: NextRequest) {
   const rawDoctorId = request.nextUrl.searchParams.get("doctorId") || undefined;
   const fromRaw = request.nextUrl.searchParams.get("from");
   const toRaw = request.nextUrl.searchParams.get("to");
-  const fromDate = fromRaw ? new Date(fromRaw + "T00:00:00.000Z") : undefined;
+  // from/to hiç verilmezse tüm geçmiş taranmasın diye içinde bulunulan yıl varsayılır.
+  const currentYearStart = new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1));
+  const fromDate = fromRaw ? new Date(fromRaw + "T00:00:00.000Z") : (toRaw ? undefined : currentYearStart);
   const toDate = toRaw ? new Date(toRaw + "T23:59:59.999Z") : undefined;
 
   const dateFilter = fromDate || toDate ? {
@@ -34,7 +38,7 @@ export async function GET(request: NextRequest) {
 
   const institutionDoctors = institutionId
     ? await prisma.user.findMany({
-        where: { institutionId, role: "DOKTOR", isActive: true },
+        where: effectiveDoctorWhere(institutionId),
         select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
       })
     : [];
@@ -60,17 +64,34 @@ export async function GET(request: NextRequest) {
   const hasScopedDoctors = scopedDoctorIds.length > 0;
   const doctorIdFilter = hasScopedDoctors ? { in: scopedDoctorIds } : undefined;
 
-  const [examinations, doctorPayments, allPatientPayments, labInvoices] = await Promise.all([
+  const expenseDateFilter = fromDate || toDate ? {
+    tarih: { ...(fromDate ? { gte: fromDate } : {}), ...(toDate ? { lte: toDate } : {}) }
+  } : {};
+
+  const [examinations, doctorPayments, doctorPayoutExpenses, allPatientPayments, labInvoices] = await Promise.all([
     // Bu doktorun yaptığı ücretlendirilebilir tedaviler
     prisma.examination.findMany({
       where: hasScopedDoctors ? { doctorId: doctorIdFilter, ...dateFilter, ...treatmentOnlyWhere } : { ...dateFilter, ...treatmentOnlyWhere },
-      include: { patient: true },
+      select: { patientId: true, doctorId: true, treatmentName: true, toothNo: true, amount: true },
       orderBy: { diagnosedAt: "desc" }
     }),
-    // Kurumun bu doktora yaptığı ödemeler (doctorId set olanlar)
+    // Kurumun bu doktora yaptığı ödemeler — eski (Payment.doctorId) akış
     prisma.payment.findMany({
       where: hasScopedDoctors ? { doctorId: doctorIdFilter, ...payDateFilter } : { ...payDateFilter },
       orderBy: { createdAt: "desc" }
+    }),
+    // Kurumun bu doktora yaptığı ödemeler — güncel (muhasebe > Hakediş sekmesi,
+    // Expense.doctorId) akış. hakedis.ts'teki computeDoctorMonthlyOdenen ile aynı
+    // kaynağı kullanıyor; burada eksik olması "earned" rakamının finans ekranında
+    // muhasebe ekranındakinden düşük görünmesine yol açıyordu.
+    prisma.expense.findMany({
+      where: {
+        status: "AKTIF",
+        doctorId: hasScopedDoctors ? doctorIdFilter : { not: null },
+        ...expenseDateFilter,
+      },
+      select: { id: true, tarih: true, tutar: true, description: true },
+      orderBy: { tarih: "desc" },
     }),
     // Tüm hasta ödemeleri (patientId üzerinden)
     prisma.payment.findMany({
@@ -89,7 +110,7 @@ export async function GET(request: NextRequest) {
             }
           : {}),
       },
-      include: { patient: true },
+      include: { patient: { select: { fullName: true } } },
       orderBy: { createdAt: "desc" }
     }),
     prisma.labOrderInvoice.findMany({
@@ -121,7 +142,9 @@ export async function GET(request: NextRequest) {
   const totalTreatments = examinations.reduce((sum, e) => sum + Number(e.amount), 0);
   const labCost = labInvoices.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
   const received = patientPayments.reduce((sum, p) => sum + Number(p.amount), 0);
-  const earned = doctorPayments.reduce((sum, p) => sum + Number(p.amount), 0);
+  const earned =
+    doctorPayments.reduce((sum, p) => sum + Number(p.amount), 0) +
+    doctorPayoutExpenses.reduce((sum, e) => sum + Number(e.tutar), 0);
   const toReceive = Math.max(0, totalTreatments - received);
   const receivable = Math.max(0, totalTreatments - labCost - earned);
 
@@ -149,6 +172,21 @@ export async function GET(request: NextRequest) {
     .slice(0, 5)
     .map(([tooth, count]) => ({ tooth, count }));
 
+  const mergedDoctorPayments = [
+    ...doctorPayments.map((p) => ({
+      id: p.id,
+      createdAt: p.createdAt,
+      description: p.description,
+      amount: Number(p.amount),
+    })),
+    ...doctorPayoutExpenses.map((e) => ({
+      id: e.id,
+      createdAt: e.tarih,
+      description: stripSystemTags(e.description) || "Hakediş ödemesi",
+      amount: Number(e.tutar),
+    })),
+  ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
   return NextResponse.json({
     receivable,
     received,
@@ -158,13 +196,13 @@ export async function GET(request: NextRequest) {
     earned,
     topExaminations,
     topTeeth,
-    payments: doctorPayments,
+    payments: mergedDoctorPayments,
     patientPayments: patientPayments.map(p => ({
       ...p,
       patientName: p.patient?.fullName || "-"
     }))
   });
-}
+});
 
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("finance:write");
@@ -179,7 +217,7 @@ export async function POST(request: NextRequest) {
 
   if (auth.user.institutionId) {
     const institutionDoctors = await prisma.user.findMany({
-      where: { institutionId: auth.user.institutionId, role: "DOKTOR", isActive: true },
+      where: effectiveDoctorWhere(auth.user.institutionId),
       select: { id: true },
     });
     const doctorIds = institutionDoctors.map((doctor) => doctor.id);
@@ -203,18 +241,30 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const { payment } = await prisma.$transaction((tx) =>
-    createIntegratedPayment({
-      tx,
-      patientId: parsed.data.patientId,
-      doctorId: parsed.data.doctorId,
-      method: parsed.data.method,
-      amount: Number(parsed.data.amount),
-      description: parsed.data.description,
-      posId: parsed.data.posId,
-    })
-  );
+  try {
+    const { payment } = await prisma.$transaction(
+      (tx) =>
+        createIntegratedPayment({
+          tx,
+          patientId: parsed.data.patientId,
+          doctorId: parsed.data.doctorId,
+          method: parsed.data.method,
+          amount: Number(parsed.data.amount),
+          description: parsed.data.description,
+          posId: parsed.data.posId,
+        }),
+      { isolationLevel: "Serializable" }
+    );
 
-  await writeAudit(auth.user.id, "PAYMENT_CREATE", `${payment.amount.toString()} ödeme alindi`);
-  return NextResponse.json(payment, { status: 201 });
+    await writeAudit(auth.user.id, "PAYMENT_CREATE", `${payment.amount.toString()} ödeme alindi`);
+    return NextResponse.json(payment, { status: 201 });
+  } catch (e) {
+    if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2034") {
+      return NextResponse.json(
+        { message: "Bu hasta için aynı anda başka bir ödeme işlendi. Lütfen tekrar deneyin." },
+        { status: 409 }
+      );
+    }
+    return NextResponse.json({ message: "Ödeme kaydedilemedi" }, { status: 503 });
+  }
 }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { sendSms } from "@/lib/sms";
 
 const APPT_REMINDER_PREFIX = "[APPT_REMINDER]";
@@ -15,8 +15,8 @@ function parseAppointmentId(note: string): string | null {
   return id || null;
 }
 
-export async function POST(request: NextRequest) {
-  const auth = await requireAuth("*");
+export const POST = withApiTiming("reminder-dispatch", async function POST(request: NextRequest) {
+  const auth = await requireAuth("sms:write");
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
@@ -59,6 +59,20 @@ export async function POST(request: NextRequest) {
   let failed = 0;
   let balanceLeft = institution.smsBalance;
 
+  // Döngü içinde tek tek findUnique yerine tüm randevuları tek sorguda çekip
+  // id'ye göre eşleştiriyoruz (N+1 önlemi).
+  const appointmentIds = [...new Set(dueReminders.map((r) => parseAppointmentId(r.note)).filter((id): id is string => Boolean(id)))];
+  const appointmentsList = appointmentIds.length > 0
+    ? await prisma.appointment.findMany({
+        where: { id: { in: appointmentIds } },
+        include: {
+          patient: { select: { id: true, fullName: true, phone: true } },
+          doctor: { select: { fullName: true, institutionId: true } },
+        },
+      })
+    : [];
+  const appointmentsById = new Map(appointmentsList.map((a) => [a.id, a]));
+
   for (const reminder of dueReminders) {
     const appointmentId = parseAppointmentId(reminder.note);
     if (!appointmentId) {
@@ -67,13 +81,7 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    const appointment = await prisma.appointment.findUnique({
-      where: { id: appointmentId },
-      include: {
-        patient: { select: { id: true, fullName: true, phone: true } },
-        doctor: { select: { fullName: true, institutionId: true } },
-      },
-    });
+    const appointment = appointmentsById.get(appointmentId);
 
     if (!appointment || appointment.doctor.institutionId !== auth.user.institutionId) {
       skipped += 1;
@@ -87,7 +95,12 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    if (balanceLeft <= 0) {
+    const reservation = await prisma.institution.updateMany({
+      where: { id: institution.id, smsBalance: { gte: 1 } },
+      data: { smsBalance: { decrement: 1 } },
+    });
+
+    if (reservation.count === 0) {
       // Bakiye bitince kalanları ileride tekrar denemek için AKTIF bırak.
       break;
     }
@@ -116,6 +129,10 @@ export async function POST(request: NextRequest) {
       );
     } else {
       failed += 1;
+      await prisma.institution.update({
+        where: { id: institution.id },
+        data: { smsBalance: { increment: 1 } },
+      });
       // Sürekli hata döngüsü olmaması için bu kaydı tamamlandıya alıyoruz.
       await prisma.reminder.update({ where: { id: reminder.id }, data: { status: "TAMAMLANDI" } });
       await writeAudit(
@@ -126,13 +143,6 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  if (sent > 0) {
-    await prisma.institution.update({
-      where: { id: institution.id },
-      data: { smsBalance: { decrement: sent } },
-    });
-  }
-
   return NextResponse.json({
     processed: dueReminders.length,
     sent,
@@ -140,4 +150,4 @@ export async function POST(request: NextRequest) {
     failed,
     remainingBalance: Math.max(0, balanceLeft),
   });
-}
+});

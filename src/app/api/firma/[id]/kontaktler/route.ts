@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json(kontaktler);
   } catch (e) {
     console.error(e);
-    return NextResponse.json([], { status: 200 });
+    return NextResponse.json({ error: "Kontaktlar yüklenemedi." }, { status: 503 });
   }
 }
 
@@ -63,6 +63,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
     });
 
+    await writeAudit(auth.user.id, "FIRMA_KONTAKT_CREATE", ad);
     return NextResponse.json(kontakt, { status: 201 });
   } catch (e) {
     console.error(e);

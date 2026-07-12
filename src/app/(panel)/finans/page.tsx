@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
-type Doctor = { id: string; fullName: string; role?: string; institutionId?: string };
+type Doctor = { id: string; fullName: string; role?: string; institutionId?: string; profile?: { hideAsDoctor?: boolean | null } | null };
 type FinanceData = { receivable: number; received: number; toReceive: number; totalTreatments: number; labCost: number; earned: number; topExaminations: any[]; topTeeth: any[]; payments: any[]; patientPayments: any[] };
 const EMPTY_FINANCE: FinanceData = { receivable: 0, received: 0, toReceive: 0, totalTreatments: 0, labCost: 0, earned: 0, topExaminations: [], topTeeth: [], payments: [], patientPayments: [] };
 
@@ -14,17 +15,12 @@ export default function FinansPage() {
   const [data, setData] = useState<FinanceData>(EMPTY_FINANCE);
   const [loading, setLoading] = useState(false);
   const [userRole, setUserRole] = useState("");
-  const [paymentModal, setPaymentModal] = useState(false);
-  const [paymentAmount, setPaymentAmount] = useState("");
-  const [paymentDesc, setPaymentDesc] = useState("");
-  const [paymentLoading, setPaymentLoading] = useState(false);
-  const [payError, setPayError] = useState("");
 
   useEffect(() => {
     fetch("/api/staff")
       .then((r) => r.json())
       .then((s) => {
-        const doctors = s.filter((x: Doctor) => x.role === "DOKTOR" || x.role === "YONETICI");
+        const doctors = s.filter((x: Doctor) => x.role === "DOKTOR" || (x.role === "YONETICI" && x.profile?.hideAsDoctor === false));
         setStaff(doctors);
       });
     fetch("/api/auth/me").then(r=>r.json()).then(d=>{
@@ -46,16 +42,6 @@ export default function FinansPage() {
       .then((d) => setData(d))
       .catch(() => setData({ receivable: 0, received: 0, toReceive: 0, totalTreatments: 0, labCost: 0, earned: 0, topExaminations: [], topTeeth: [], payments: [], patientPayments: [] }))
       .finally(() => setLoading(false));
-  };
-
-  const handlePayment = async () => {
-    if (!selectedDoctor || !paymentAmount) return;
-    setPaymentLoading(true);
-    setPayError("");
-    const res = await fetch("/api/payments", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ doctorId: selectedDoctor, amount: Number(paymentAmount), description: paymentDesc }) });
-    setPaymentLoading(false);
-    if (res.ok) { setPaymentModal(false); setPaymentAmount(""); setPaymentDesc(""); loadFinance(); }
-    else { const d = await res.json(); setPayError(d.error || "Ödeme kaydedilemedi"); }
   };
 
   return (
@@ -81,15 +67,21 @@ export default function FinansPage() {
               {staff.map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
             </select>
           )}
-          <input type="date" className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" value={fromDate} onChange={e => setFromDate(e.target.value)} title="Başlangıç tarihi" />
+          <input type="date" className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" value={fromDate} onChange={e => setFromDate(e.target.value)} title="Başlangıç tarihi (boş bırakılırsa içinde bulunulan yıl esas alınır)" />
           <input type="date" className="rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" value={toDate} onChange={e => setToDate(e.target.value)} title="Bitiş tarihi" />
+          {!fromDate && !toDate && (
+            <span className="text-[11px] text-slate-400">Tarih seçilmezse içinde bulunulan yıl gösterilir</span>
+          )}
           <button onClick={loadFinance} disabled={!selectedDoctor || loading} className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90 disabled:opacity-50">
             Getir
           </button>
           {userRole === "YONETICI" && selectedDoctor && (
-            <button onClick={() => setPaymentModal(true)} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700">
-              + Ödeme Yap
-            </button>
+            // Ödeme kaydı artık burada değil, tek kaynak olan muhasebe > Hakediş
+            // akışından yapılıyor — kategori/dönem bilgisiz, ayrı bir tabloya
+            // yazan ikinci bir yol kalmasın diye (bkz. denetim raporu Tema 2).
+            <Link href={`/muhasebe?tab=hakedis&doctorId=${selectedDoctor}`} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700">
+              Hakediş Öde
+            </Link>
           )}
         </div>
       </div>
@@ -199,32 +191,6 @@ export default function FinansPage() {
             </div>
           </div>
       </div>
-
-      {paymentModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="w-full max-w-sm rounded-xl bg-white p-6 shadow-2xl">
-            <h3 className="mb-1 text-lg font-black text-slate-900">Ödeme Yap</h3>
-            <p className="mb-5 text-xs text-slate-500">Seçili doktora ödeme kaydı oluşturun</p>
-            <div className="space-y-4">
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-slate-700">Tutar (₺)</label>
-                <input type="number" value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="0.00" />
-              </div>
-              <div>
-                <label className="mb-1.5 block text-xs font-semibold text-slate-700">Açıklama</label>
-                <input value={paymentDesc} onChange={e => setPaymentDesc(e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="Ödeme açıklaması" />
-              </div>
-            </div>
-            <div className="mt-5 flex gap-2">
-              <button onClick={handlePayment} disabled={paymentLoading || !paymentAmount} className="flex-1 rounded-lg bg-emerald-600 py-2.5 text-sm font-bold text-white transition hover:bg-emerald-700 disabled:opacity-50">
-                {paymentLoading ? "Kaydediliyor…" : "Kaydet"}
-              </button>
-              <button onClick={() => { setPaymentModal(false); setPayError(""); }} className="flex-1 rounded-lg border border-slate-200 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50">İptal</button>
-            </div>
-            {payError && <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{payError}</p>}
-          </div>
-        </div>
-      )}
     </section>
   );
 }

@@ -1,10 +1,22 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { appointmentSchema } from "@/lib/validators";
+import { appointmentSchema, formatZodError } from "@/lib/validators";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { sendSms } from "@/lib/sms";
+import { turkeyDayRangeUtc } from "@/lib/tz";
+import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
+import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 
 const APPT_REMINDER_PREFIX = "[APPT_REMINDER]";
+
+type AppointmentSmsStatus = {
+  info: "sent" | "skipped" | "failed";
+  infoMessage: string;
+  reminder: "scheduled" | "skipped";
+  reminderMessage: string;
+  survey: "enabled" | "skipped";
+  surveyMessage: string;
+};
 
 function renderTemplate(template: string, vars: Record<string, string>) {
   return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
@@ -14,7 +26,7 @@ async function sendAppointmentInfoSms(params: {
   appointmentId: string;
   institutionId: string;
   createdByUserId: string;
-}) {
+}): Promise<{ status: AppointmentSmsStatus["info"]; message: string }> {
   const appointment = await prisma.appointment.findUnique({
     where: { id: params.appointmentId },
     include: {
@@ -22,7 +34,7 @@ async function sendAppointmentInfoSms(params: {
       doctor: { select: { fullName: true } },
     },
   });
-  if (!appointment || !appointment.smsInfo) return;
+  if (!appointment || !appointment.smsInfo) return { status: "skipped", message: "Bilgilendirme SMS'i seçilmedi." };
 
   const [settings, institution, smsTemplate] = await Promise.all([
     prisma.setting.findUnique({ where: { institutionId: params.institutionId } }),
@@ -30,7 +42,17 @@ async function sendAppointmentInfoSms(params: {
     prisma.smsTemplate.findFirst({ where: { code: "BILGI", isActive: true } }),
   ]);
 
-  if (!settings?.smsEnabled || !institution || institution.smsBalance <= 0) return;
+  if (!settings?.smsEnabled) return { status: "skipped", message: "Kurum SMS gönderimi kapalı." };
+  if (!institution) return { status: "failed", message: "Kurum bilgisi bulunamadı." };
+  if (!appointment.patient.phone) return { status: "failed", message: "Hastanın telefon numarası yok." };
+
+  // Bakiyeyi atomik olarak rezerve et — düz "smsBalance <= 0" kontrolü ile ayrı bir
+  // decrement arasında yarış durumu olursa bakiye eksiye düşebilir.
+  const reservation = await prisma.institution.updateMany({
+    where: { id: institution.id, smsBalance: { gte: 1 } },
+    data: { smsBalance: { decrement: 1 } },
+  });
+  if (reservation.count === 0) return { status: "failed", message: "SMS bakiyesi yetersiz." };
 
   const dateText = new Date(appointment.startAt).toLocaleString("tr-TR");
   const institutionName = settings.institutionName || institution.name;
@@ -46,22 +68,26 @@ async function sendAppointmentInfoSms(params: {
 
   const sendResult = await sendSms(appointment.patient.phone, message);
   if (sendResult.success) {
-    await prisma.institution.update({
-      where: { id: institution.id },
-      data: { smsBalance: { decrement: 1 } },
-    });
     await writeAudit(
       params.createdByUserId,
       "SMS_BILGI_AUTO",
       `${appointment.patient.fullName} (${appointment.patient.phone}) - ProviderMsgId: ${sendResult.providerMessageId || "-"}`
     );
-  } else {
-    await writeAudit(
+    return { status: "sent", message: "Bilgilendirme SMS'i gönderildi." };
+  }
+
+  // Gönderim başarısız oldu — rezerve edilen krediyi iade et, aksi halde kullanılmayan
+  // bir SMS için kurum bakiyesi haksız yere düşmüş olur.
+  await prisma.institution.update({
+    where: { id: institution.id },
+    data: { smsBalance: { increment: 1 } },
+  });
+  await writeAudit(
       params.createdByUserId,
       "SMS_BILGI_AUTO_FAILED",
       `${appointment.patient.fullName} (${appointment.patient.phone}) - ${sendResult.error || sendResult.providerRaw}`
-    );
-  }
+  );
+  return { status: "failed", message: sendResult.error || "Bilgilendirme SMS'i gönderilemedi." };
 }
 
 async function scheduleAppointmentReminder(appointment: { id: string; patientId: string; startAt: Date; smsReminder: boolean }) {
@@ -122,8 +148,9 @@ export async function GET(request: NextRequest) {
   const type = request.nextUrl.searchParams.get("type");
 
   const date = request.nextUrl.searchParams.get("date");
-  const dateFrom = date ? new Date(date + "T00:00:00.000Z") : (from ? new Date(from) : undefined);
-  const dateTo = date ? new Date(date + "T23:59:59.999Z") : (to ? new Date(to) : undefined);
+  const dateRange = date ? turkeyDayRangeUtc(date) : undefined;
+  const dateFrom = dateRange ? dateRange.start : (from ? new Date(from) : undefined);
+  const dateTo = dateRange ? dateRange.end : (to ? new Date(to) : undefined);
 
   let appointments: Array<{
     patient: { id: string; fullName: string; phone: string | null; tcNo: string } | null;
@@ -159,10 +186,10 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error("[appointments GET] fallback:", error);
-    appointments = [];
+    return NextResponse.json({ message: "Randevular yüklenemedi. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });
   }
 
-  const hidePhone = auth.user.role === "DOKTOR" || auth.user.role === "ASISTAN";
+  const hidePhone = shouldHidePatientPhone(auth.user.role);
   const result = hidePhone
     ? appointments.map(a => ({
         ...a,
@@ -185,7 +212,7 @@ export async function POST(request: NextRequest) {
   const parsed = appointmentSchema.safeParse(body);
 
   if (!parsed.success) {
-    return NextResponse.json({ message: "Geçersiz randevu verisi" }, { status: 400 });
+    return NextResponse.json({ message: "Geçersiz randevu verisi", errors: formatZodError(parsed.error) }, { status: 400 });
   }
 
   const eligibleDoctor = await isEligibleAppointmentDoctor(parsed.data.doctorId, auth.user.institutionId);
@@ -237,6 +264,14 @@ export async function POST(request: NextRequest) {
     }, { status: 409 });
   }
 
+  // ── Doktor bloke saati kontrolü ─────────────────────────────────────────
+  const blockConflict = await findDoctorBlockConflict(parsed.data.doctorId, startAt, endAt);
+  if (blockConflict) {
+    return NextResponse.json({
+      message: `Doktor bu saatte bloke edilmiş (${blockConflict.startTime}–${blockConflict.endTime}${blockConflict.reason ? `: ${blockConflict.reason}` : ""})`,
+    }, { status: 409 });
+  }
+
   // ── Aynı hasta, aynı gün çakışma kontrolü ──────────────────────────────
   const patientConflict = await prisma.appointment.findFirst({
     where: {
@@ -285,20 +320,32 @@ export async function POST(request: NextRequest) {
     return appt;
   });
 
+    let infoSms = { status: "skipped" as AppointmentSmsStatus["info"], message: "Bilgilendirme SMS'i seçilmedi." };
     if (auth.user.institutionId) {
       try {
-        await sendAppointmentInfoSms({
+        infoSms = await sendAppointmentInfoSms({
           appointmentId: appointment.id,
           institutionId: auth.user.institutionId,
           createdByUserId: auth.user.id,
         });
-      } catch {
+      } catch (error) {
+        infoSms = { status: "failed", message: error instanceof Error ? error.message : "Bilgilendirme SMS'i gönderilemedi." };
         // SMS hatası randevu oluşturmayı kırmamalı.
       }
     }
 
     await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${appointment.patient.fullName} icin randevu`);
-    return NextResponse.json(appointment, { status: 201 });
+    return NextResponse.json({
+      ...appointment,
+      smsStatus: {
+        info: infoSms.status,
+        infoMessage: infoSms.message,
+        reminder: parsed.data.smsReminder ? "scheduled" : "skipped",
+        reminderMessage: parsed.data.smsReminder ? "Hatırlatma kaydı oluşturuldu." : "Hatırlatma SMS'i seçilmedi.",
+        survey: parsed.data.smsSurvey ? "enabled" : "skipped",
+        surveyMessage: parsed.data.smsSurvey ? "Değerlendirme SMS tercihi randevuya işlendi." : "Değerlendirme SMS'i seçilmedi.",
+      } satisfies AppointmentSmsStatus,
+    }, { status: 201 });
   } catch (error) {
     console.error("[appointments POST] fallback:", error);
     return NextResponse.json({ message: "Randevu oluşturulamadı" }, { status: 503 });

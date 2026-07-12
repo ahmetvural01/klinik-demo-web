@@ -16,7 +16,22 @@ export async function GET() {
 
     const profile = await prisma.user.findUnique({
       where: { id: auth.user.id },
-      include: { profile: true }
+      select: {
+        id: true,
+        identityNo: true,
+        fullName: true,
+        email: true,
+        role: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+        institutionId: true,
+        genelYuzde: true,
+        kkYuzde: true,
+        maasYuzde: true,
+        twoFactorEnabled: true,
+        profile: true,
+      },
     });
 
     return NextResponse.json(profile);
@@ -66,14 +81,16 @@ export async function PUT(request: NextRequest) {
         workStart: body.workStart,
         workEnd: body.workEnd,
         hideAsDoctor: typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : (currentProfile?.hideAsDoctor ?? false),
-        educationMode: typeof body.educationMode === "boolean" ? body.educationMode : (currentProfile?.educationMode ?? false)
+        educationMode: typeof body.educationMode === "boolean" ? body.educationMode : (currentProfile?.educationMode ?? false),
+        ...(body.photoUrl !== undefined && { photoUrl: body.photoUrl || null }),
       },
       create: {
         userId: auth.user.id,
         workStart: body.workStart ?? "08:30",
         workEnd: body.workEnd ?? "18:00",
         hideAsDoctor: typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : false,
-        educationMode: typeof body.educationMode === "boolean" ? body.educationMode : false
+        educationMode: typeof body.educationMode === "boolean" ? body.educationMode : false,
+        photoUrl: body.photoUrl || null,
       }
     });
   } catch (error) {

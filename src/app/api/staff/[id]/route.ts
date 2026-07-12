@@ -62,32 +62,47 @@ export async function PUT(request: NextRequest, { params }: Params) {
     return NextResponse.json({ message: "Bu rol atanamaz" }, { status: 403 });
   }
 
-  const updated = await prisma.user.update({
+  let updated;
+  try {
+    updated = await prisma.user.update({
     where: { id: params.id },
     data: {
-      institution: body.institution,
       identityNo: body.identityNo,
       fullName: body.fullName,
       role: (body.role || "ASISTAN") as Role,
-      isActive: typeof body.isActive === "boolean" ? body.isActive : true,
+      // Form bu alanı göndermiyorsa mevcut değeri korur — önceden eksik
+      // gönderilen istek durumu sessizce "aktif"e, mesaiyi 08:30–18:00'e
+      // sıfırlıyordu (bkz. Personel ekranı sadeleştirmesi).
+      isActive: typeof body.isActive === "boolean" ? body.isActive : existing.isActive,
       ...(body.kkYuzde    !== undefined && { kkYuzde:    body.kkYuzde    }),
       ...(body.genelYuzde !== undefined && { genelYuzde: body.genelYuzde }),
       ...(body.maasYuzde  !== undefined && { maasYuzde:  body.maasYuzde  }),
       profile: {
         upsert: {
           update: {
-            workStart: body.workStart || "08:30",
-            workEnd: body.workEnd || "18:00"
+            workStart: body.workStart !== undefined ? body.workStart : (existing.profile?.workStart || "08:30"),
+            workEnd: body.workEnd !== undefined ? body.workEnd : (existing.profile?.workEnd || "18:00"),
+            ...(body.photoUrl !== undefined && { photoUrl: body.photoUrl || null }),
+            ...(typeof body.hideAsDoctor === "boolean" && { hideAsDoctor: body.hideAsDoctor }),
           },
           create: {
             workStart: body.workStart || "08:30",
-            workEnd: body.workEnd || "18:00"
+            workEnd: body.workEnd || "18:00",
+            photoUrl: body.photoUrl || null,
+            hideAsDoctor: typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : false,
           }
         }
       }
     },
     include: { profile: true }
-  });
+    });
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
+      return NextResponse.json({ message: "Bu TC kimlik no bu kurumda zaten kayıtlı" }, { status: 409 });
+    }
+    console.error("[staff PUT] fallback:", error);
+    return NextResponse.json({ message: "Personel güncellenemedi" }, { status: 503 });
+  }
 
   const beforeParts: string[] = [];
   const afterParts: string[] = [];
@@ -110,6 +125,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
   pushDiff("Maaş Yüzde", existing.maasYuzde, updated.maasYuzde);
   pushDiff("Mesai Başlangıç", existing.profile?.workStart, updated.profile?.workStart);
   pushDiff("Mesai Bitiş", existing.profile?.workEnd, updated.profile?.workEnd);
+  pushDiff("Profil Fotoğrafı", existing.profile?.photoUrl, updated.profile?.photoUrl);
+  pushDiff("Doktor Olarak Gizle", existing.profile?.hideAsDoctor, updated.profile?.hideAsDoctor);
 
   const detail = [
     `${auth.user.fullName || "Personel"} tarafından ${updated.fullName} personel kaydı güncellendi.`,

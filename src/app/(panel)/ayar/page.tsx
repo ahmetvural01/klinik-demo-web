@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { confirmDialog } from "@/lib/confirm-client";
 
 type PosDevice = { id: string; name: string; isActive: boolean; createdAt: string };
+type TreatmentType = { id: string; value: string; label: string; color: string; order: number; isActive: boolean };
 
 type DaySchedule = {
   day: string;
@@ -25,7 +27,7 @@ const DEFAULT_SCHEDULES: DaySchedule[] = DAYS.map(day => ({
 }));
 
 export default function AyarPage() {
-  const [activeTab, setActiveTab] = useState<"genel" | "calisma" | "sms" | "pos">("genel");
+  const [activeTab, setActiveTab] = useState<"genel" | "calisma" | "sms" | "pos" | "tedavi">("genel");
   const [settings, setSettings] = useState({
     institutionName: "Adana White Dental Clinic",
     institutionAddress: "Çukurova/Adana",
@@ -42,6 +44,7 @@ export default function AyarPage() {
     smsDefaultReminder: false,
     smsDefaultSurvey: false
   });
+  const [institutionSlug, setInstitutionSlug] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
@@ -54,14 +57,26 @@ export default function AyarPage() {
   const [posLoading, setPosLoading] = useState(false);
   const [newPosName, setNewPosName] = useState("");
   const [addingPos, setAddingPos] = useState(false);
+  const [editingPos, setEditingPos] = useState<{ id: string; name: string } | null>(null);
+  const [savingPos, setSavingPos] = useState(false);
 
-  useEffect(() => { void fetchSettings(); void fetchPos(); }, []);
+  // Tedavi türleri
+  const [treatmentTypes, setTreatmentTypes] = useState<TreatmentType[]>([]);
+  const [treatmentLoading, setTreatmentLoading] = useState(false);
+  const [newTreatmentLabel, setNewTreatmentLabel] = useState("");
+  const [newTreatmentColor, setNewTreatmentColor] = useState("#2563eb");
+  const [addingTreatment, setAddingTreatment] = useState(false);
+  const [editingTreatment, setEditingTreatment] = useState<{ id: string; label: string; color: string } | null>(null);
+  const [savingTreatment, setSavingTreatment] = useState(false);
+
+  useEffect(() => { void fetchSettings(); void fetchPos(); void fetchTreatmentTypes(); }, []);
 
   const fetchSettings = async () => {
     try {
       const res = await fetch("/api/settings");
       const data = await res.json();
       if (data) {
+      setInstitutionSlug(data.institutionSlug || "");
       setSettings({
           institutionName:      data.institutionName      || "Adana White Dental Clinic",
           institutionAddress:   data.institutionAddress   || "",
@@ -133,10 +148,101 @@ export default function AyarPage() {
     void fetchPos();
   };
 
+  const savePosName = async () => {
+    if (!editingPos?.name.trim()) return;
+    setSavingPos(true);
+    const res = await fetch(`/api/pos-devices/${editingPos.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: editingPos.name.trim() }),
+    });
+    setSavingPos(false);
+    if (res.ok) {
+      setEditingPos(null);
+      showToast("success", "POS cihazı güncellendi");
+      void fetchPos();
+    } else {
+      showToast("error", "POS cihazı güncellenemedi");
+    }
+  };
+
   const deletePos = async (id: string, name: string) => {
-    if (!confirm(`"${name}" POS cihazı silinecek. Bu işlem mevcut ödeme kayıtlarını silmez, sadece yeni kayıtlarda bu cihazın seçilmesini engeller. Devam etmek istiyor musunuz?`)) return;
+    if (!(await confirmDialog({
+      title: `"${name}" silinsin mi?`,
+      message: "Bu işlem mevcut ödeme kayıtlarını silmez, sadece yeni kayıtlarda bu cihazın seçilmesini engeller. Devam etmek istiyor musunuz?",
+      danger: true,
+      confirmText: "Sil",
+    }))) return;
     await fetch(`/api/pos-devices/${id}`, { method: "DELETE" });
     void fetchPos();
+  };
+
+  const fetchTreatmentTypes = async () => {
+    setTreatmentLoading(true);
+    try {
+      const res = await fetch("/api/treatment-types");
+      if (res.ok) setTreatmentTypes(await res.json());
+    } catch { /* ignore */ }
+    finally { setTreatmentLoading(false); }
+  };
+
+  const addTreatmentType = async () => {
+    if (!newTreatmentLabel.trim()) return;
+    setAddingTreatment(true);
+    const res = await fetch("/api/treatment-types", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: newTreatmentLabel.trim(), color: newTreatmentColor }),
+    });
+    setAddingTreatment(false);
+    if (res.ok) {
+      setNewTreatmentLabel("");
+      setNewTreatmentColor("#2563eb");
+      void fetchTreatmentTypes();
+      showToast("success", "Tedavi türü eklendi");
+    } else {
+      const data = await res.json().catch(() => null);
+      showToast("error", data?.message || "Tedavi türü eklenemedi");
+    }
+  };
+
+  const saveTreatmentType = async () => {
+    if (!editingTreatment?.label.trim()) return;
+    setSavingTreatment(true);
+    const res = await fetch(`/api/treatment-types/${editingTreatment.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ label: editingTreatment.label.trim(), color: editingTreatment.color }),
+    });
+    setSavingTreatment(false);
+    if (res.ok) {
+      setEditingTreatment(null);
+      showToast("success", "Tedavi türü güncellendi");
+      void fetchTreatmentTypes();
+    } else {
+      const data = await res.json().catch(() => null);
+      showToast("error", data?.message || "Tedavi türü güncellenemedi");
+    }
+  };
+
+  const toggleTreatmentType = async (id: string, isActive: boolean) => {
+    await fetch(`/api/treatment-types/${id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isActive }),
+    });
+    void fetchTreatmentTypes();
+  };
+
+  const deleteTreatmentType = async (id: string, label: string) => {
+    if (!(await confirmDialog({
+      title: `"${label}" silinsin mi?`,
+      message: "Bu tedavi türü randevu ekleme ekranındaki listeden kaldırılır. Bu tedaviyle oluşturulmuş mevcut randevular etkilenmez.",
+      danger: true,
+      confirmText: "Sil",
+    }))) return;
+    await fetch(`/api/treatment-types/${id}`, { method: "DELETE" });
+    void fetchTreatmentTypes();
   };
 
   const TABS = [
@@ -144,6 +250,7 @@ export default function AyarPage() {
     { id: "calisma" as const, label: "Çalışma Saatleri" },
     { id: "sms"     as const, label: "SMS Ayarları" },
     { id: "pos"     as const, label: "POS Cihazları" },
+    { id: "tedavi"  as const, label: "Tedavi Türleri" },
   ];
 
   return (
@@ -195,6 +302,25 @@ export default function AyarPage() {
               ))}
             </div>
           </div>
+
+          {institutionSlug && (
+            <div className="rounded-xl border border-cyan-100 bg-cyan-50/50 p-4">
+              <h3 className="mb-1 text-sm font-black text-slate-900">Online Randevu Talep Bağlantısı</h3>
+              <p className="mb-2 text-xs text-slate-500">Bu bağlantıyı hastalarınızla (web sitesi, WhatsApp, SMS) paylaşın; gönderdikleri randevu talepleri Randevu sayfasındaki &quot;Online Talepler&quot; bölümünde görünür.</p>
+              <div className="flex items-center gap-2">
+                <input readOnly value={typeof window !== "undefined" ? `${window.location.origin}/randevu-al/${encodeURIComponent(institutionSlug)}` : ""} className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600" />
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/randevu-al/${encodeURIComponent(institutionSlug)}`);
+                    showToast("success", "Bağlantı kopyalandı");
+                  }}
+                  className="shrink-0 rounded-lg bg-cyan-600 px-3 py-2 text-xs font-bold text-white hover:bg-cyan-700"
+                >
+                  Kopyala
+                </button>
+              </div>
+            </div>
+          )}
 
           <div>
             <h3 className="mb-1 text-base font-black text-slate-900">Randevu Ayarı</h3>
@@ -427,15 +553,130 @@ export default function AyarPage() {
                 {posDevices.map(dev => (
                   <div key={dev.id} className="flex items-center gap-3 px-5 py-3.5">
                     <div className={`h-2.5 w-2.5 rounded-full shrink-0 ${dev.isActive ? "bg-emerald-500" : "bg-slate-300"}`} />
-                    <div className="flex-1">
-                      <p className="text-sm font-semibold text-slate-800">{dev.name}</p>
+                    <div className="min-w-0 flex-1">
+                      {editingPos?.id === dev.id ? (
+                        <input
+                          value={editingPos.name}
+                          onChange={(e) => setEditingPos({ id: dev.id, name: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void savePosName();
+                            if (e.key === "Escape") setEditingPos(null);
+                          }}
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                          autoFocus
+                        />
+                      ) : (
+                        <p className="truncate text-sm font-semibold text-slate-800">{dev.name}</p>
+                      )}
                       <p className="text-[11px] text-slate-400">{dev.isActive ? "Aktif" : "Pasif"}</p>
                     </div>
+                    {editingPos?.id === dev.id ? (
+                      <>
+                        <button onClick={() => void savePosName()} disabled={savingPos || !editingPos.name.trim()} className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50">
+                          Kaydet
+                        </button>
+                        <button onClick={() => setEditingPos(null)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50">
+                          Vazgeç
+                        </button>
+                      </>
+                    ) : (
+                      <button onClick={() => setEditingPos({ id: dev.id, name: dev.name })} className="rounded-lg border border-blue-100 px-3 py-1.5 text-[11px] font-semibold text-blue-700 transition hover:bg-blue-50">
+                        Düzenle
+                      </button>
+                    )}
                     <button onClick={() => togglePos(dev.id, !dev.isActive)}
                       className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold transition ${dev.isActive ? "border-amber-100 text-amber-700 hover:bg-amber-50" : "border-emerald-100 text-emerald-700 hover:bg-emerald-50"}`}>
                       {dev.isActive ? "Pasif Yap" : "Aktif Yap"}
                     </button>
                     <button onClick={() => deletePos(dev.id, dev.name)}
+                      className="rounded-lg border border-red-100 px-3 py-1.5 text-[11px] font-semibold text-red-600 hover:bg-red-50 transition">
+                      Sil
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── TEDAVİ TÜRLERİ ─────────────────────────────────────────────── */}
+      {activeTab === "tedavi" && (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
+            <h3 className="mb-1 text-base font-black text-slate-900">Yeni Tedavi Türü Ekle</h3>
+            <p className="mb-4 text-xs text-slate-500">Randevu ekleme ekranında seçilebilecek tedavi türlerini ve takvimde görünecek renklerini burada yönetin.</p>
+            <div className="flex flex-wrap gap-2">
+              <input value={newTreatmentLabel} onChange={e => setNewTreatmentLabel(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && void addTreatmentType()}
+                placeholder="Tedavi adı (örn: Diş Beyazlatma)"
+                className="flex-1 min-w-[200px] rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
+              <input type="color" value={newTreatmentColor} onChange={e => setNewTreatmentColor(e.target.value)}
+                title="Renk seç"
+                className="h-[38px] w-14 cursor-pointer rounded-lg border border-slate-200 p-1" />
+              <button onClick={addTreatmentType} disabled={addingTreatment || !newTreatmentLabel.trim()}
+                className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50">
+                {addingTreatment ? "Ekleniyor…" : "Tedavi Ekle"}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-slate-100 bg-white shadow-sm overflow-hidden">
+            <div className="border-b border-slate-100 px-5 py-3 flex items-center justify-between">
+              <h3 className="text-sm font-bold text-slate-800">Kayıtlı Tedavi Türleri</h3>
+              <span className="text-xs text-slate-500">{treatmentTypes.length} tedavi</span>
+            </div>
+            {treatmentLoading ? (
+              <p className="py-10 text-center text-sm text-slate-400">Yükleniyor…</p>
+            ) : treatmentTypes.length === 0 ? (
+              <p className="py-10 text-center text-sm text-slate-400">Henüz tedavi türü eklenmedi</p>
+            ) : (
+              <div className="divide-y divide-slate-50">
+                {treatmentTypes.map(t => (
+                  <div key={t.id} className="flex items-center gap-3 px-5 py-3.5">
+                    {editingTreatment?.id === t.id ? (
+                      <input type="color" value={editingTreatment.color}
+                        onChange={e => setEditingTreatment({ ...editingTreatment, color: e.target.value })}
+                        className="h-8 w-8 shrink-0 cursor-pointer rounded-full border border-slate-200 p-0" />
+                    ) : (
+                      <span className="h-4 w-4 shrink-0 rounded-full border border-black/10" style={{ backgroundColor: t.color }} />
+                    )}
+                    <div className="min-w-0 flex-1">
+                      {editingTreatment?.id === t.id ? (
+                        <input
+                          value={editingTreatment.label}
+                          onChange={(e) => setEditingTreatment({ ...editingTreatment, label: e.target.value })}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") void saveTreatmentType();
+                            if (e.key === "Escape") setEditingTreatment(null);
+                          }}
+                          className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-800 outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                          autoFocus
+                        />
+                      ) : (
+                        <p className="truncate text-sm font-semibold text-slate-800">{t.label}</p>
+                      )}
+                      <p className="text-[11px] text-slate-400">{t.isActive ? "Aktif" : "Pasif"}</p>
+                    </div>
+                    {editingTreatment?.id === t.id ? (
+                      <>
+                        <button onClick={() => void saveTreatmentType()} disabled={savingTreatment || !editingTreatment.label.trim()} className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50">
+                          Kaydet
+                        </button>
+                        <button onClick={() => setEditingTreatment(null)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50">
+                          Vazgeç
+                        </button>
+                      </>
+                    ) : (
+                      <button onClick={() => setEditingTreatment({ id: t.id, label: t.label, color: t.color })} className="rounded-lg border border-blue-100 px-3 py-1.5 text-[11px] font-semibold text-blue-700 transition hover:bg-blue-50">
+                        Düzenle
+                      </button>
+                    )}
+                    <button onClick={() => toggleTreatmentType(t.id, !t.isActive)}
+                      className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold transition ${t.isActive ? "border-amber-100 text-amber-700 hover:bg-amber-50" : "border-emerald-100 text-emerald-700 hover:bg-emerald-50"}`}>
+                      {t.isActive ? "Pasif Yap" : "Aktif Yap"}
+                    </button>
+                    <button onClick={() => deleteTreatmentType(t.id, t.label)}
                       className="rounded-lg border border-red-100 px-3 py-1.5 text-[11px] font-semibold text-red-600 hover:bg-red-50 transition">
                       Sil
                     </button>

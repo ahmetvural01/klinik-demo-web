@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 export type PanelAlertCounts = { taksit: number; stok: number; lab: number };
 
 const EMPTY_ALERTS: PanelAlertCounts = { taksit: 0, stok: 0, lab: 0 };
-const CACHE_TTL_MS = 120_000;
+const CACHE_TTL_MS = 15_000;
 
 let memoryCache: Record<string, { at: number; data: PanelAlertCounts }> = {};
 let inFlight: Record<string, Promise<PanelAlertCounts> | undefined> = {};
@@ -59,9 +59,9 @@ async function loadAlerts(role: string): Promise<PanelAlertCounts> {
   const { canSeeTaksit, canSeeStok, canSeeLab } = getAlertPermissions(role);
 
   inFlight[role] = Promise.allSettled([
-    canSeeTaksit ? fetch("/api/taksit-plani?status=GECIKTI") : Promise.resolve(null),
-    canSeeStok ? fetch("/api/stock") : Promise.resolve(null),
-    canSeeLab ? fetch("/api/lab-orders?status=BEKLIYOR") : Promise.resolve(null),
+    canSeeTaksit ? fetch("/api/taksit-plani?status=GECIKTI", { cache: "no-store" }) : Promise.resolve(null),
+    canSeeStok ? fetch("/api/stock", { cache: "no-store" }) : Promise.resolve(null),
+    canSeeLab ? fetch("/api/lab-orders?status=BEKLIYOR", { cache: "no-store" }) : Promise.resolve(null),
   ])
     .then(async ([tRes, sRes, lRes]) => {
       const tData =

@@ -7,6 +7,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, bumpRealtimeInstitution } from "@/lib/api";
+import { turkeyTodayStartUtc } from "@/lib/tz";
 
 export async function POST() {
   try {
@@ -16,7 +17,9 @@ export async function POST() {
       return NextResponse.json({ updated: 0 }, { status: 403 });
     }
 
-    const now = new Date();
+    // Vade günü Türkiye takvimiyle henüz "bugün" ise gecikmiş sayılmaz — sadece
+    // Türkiye takviminde vade gününden sonraki gün başlayınca gecikti işaretlenir.
+    const cutoff = turkeyTodayStartUtc();
     const tenantWhere = auth.user.role !== "SUPERADMIN"
       ? { plan: { patient: { institutionId: auth.user.institutionId } } }
       : {};
@@ -26,7 +29,7 @@ export async function POST() {
       where: {
         ...tenantWhere,
         status:   "BEKLIYOR",
-        vadeDate: { lt: now },
+        vadeDate: { lt: cutoff },
       },
       data: { status: "GECIKTI" },
     });
@@ -63,14 +66,13 @@ export async function GET() {
     return NextResponse.json({ pending: 0 }, { status: 403 });
   }
 
-  const now = new Date();
   const count = await (prisma as any).taksit.count({
     where: {
       ...(auth.user.role !== "SUPERADMIN"
         ? { plan: { patient: { institutionId: auth.user.institutionId } } }
         : {}),
       status: "BEKLIYOR",
-      vadeDate: { lt: now },
+      vadeDate: { lt: turkeyTodayStartUtc() },
     },
   });
 

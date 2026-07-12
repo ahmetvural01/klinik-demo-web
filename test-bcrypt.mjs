@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 
 async function testPassword() {
-  const plainPassword = '10711453';
+  const plainPassword = process.env.TEST_PASSWORD || 'change-me';
   
   // Create hash like seed does
   const hashedPassword = await bcrypt.hash(plainPassword, 10);

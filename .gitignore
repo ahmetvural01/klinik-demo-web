@@ -12,25 +12,42 @@ node_modules/
 
 # Local PostgreSQL data & DB backups (contains real patient data - never commit)
 /.pgdata/
-/backups/db/
+/backups/
+*.dump
+*.backup
+*.sql
+*.sqlite
+*.db
+
+# Uploaded patient documents / röntgen (contains real patient data - never commit)
+/data/uploads/
+/public/uploads/
+/uploads/
+/storage/
+/tmp/
 
 # Environment files
 .env
 .env.local
+.env.production
 .env.development.local
 .env.test.local
 .env.production.local
+*.pem
+*.key
+*.p12
+*.pfx
+*service-account*.json
+*credentials*.json
 
 # Prisma generated
 prisma/generated/
 
 # Logs
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-postgres-direct.out.log
-postgres-direct.err.log
-dev-server.log
 
 # TypeScript incremental build cache
 tsconfig.tsbuildinfo
@@ -42,6 +59,7 @@ Thumbs.db
 # Editor
 .vscode/settings.json
 .idea/
+.claude/
 
 # Vercel
 .vercel

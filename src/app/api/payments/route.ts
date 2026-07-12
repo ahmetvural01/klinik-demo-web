@@ -2,29 +2,40 @@
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { createIntegratedPayment } from "@/lib/payment-ledger";
+import { formatZodError, paymentSchema } from "@/lib/validators";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth("payments:write");
     if (auth.error) return auth.error;
 
-    const body = await request.json();
-    const { patientId, method, amount, description, doctorId, posId } = body;
-    const numericAmount = Number(amount);
+    const parsed = paymentSchema.safeParse(await request.json());
 
-    if (!method || !Number.isFinite(numericAmount) || numericAmount <= 0) {
-      return NextResponse.json({ message: "Eksik alan" }, { status: 400 });
+    if (!parsed.success) {
+      return NextResponse.json({ message: "Ödeme bilgileri geçersiz", errors: formatZodError(parsed.error) }, { status: 400 });
     }
 
-    const institutionUsers = auth.user.institutionId
+    const { patientId, method, amount, description, doctorId, posId, createdAt } = parsed.data;
+    const posRequiredMethods = new Set(["KREDI_KARTI", "MAIL_ORDER"]);
+
+    if (patientId && !doctorId) {
+      return NextResponse.json({ message: "Hasta tahsilatı için doktor seçimi zorunlu" }, { status: 400 });
+    }
+
+    if (posRequiredMethods.has(method) && !posId) {
+      return NextResponse.json({ message: "Kart / mail order tahsilatı için POS seçimi zorunlu" }, { status: 400 });
+    }
+
+    const institutionDoctors = auth.user.institutionId
       ? await prisma.user.findMany({
-          where: { institutionId: auth.user.institutionId, isActive: true },
+          where: effectiveDoctorWhere(auth.user.institutionId),
           select: { id: true },
         })
       : [];
-    const userIds = institutionUsers.map((user) => user.id);
+    const doctorIds = institutionDoctors.map((user) => user.id);
 
-    if (auth.user.institutionId && doctorId && !userIds.includes(doctorId)) {
+    if (auth.user.institutionId && doctorId && !doctorIds.includes(doctorId)) {
       return NextResponse.json({ message: "Bu doktor kurum kapsamı disinda" }, { status: 403 });
     }
 
@@ -42,24 +53,33 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const { payment, taksitInfo } = await prisma.$transaction((tx) =>
-      createIntegratedPayment({
-        tx,
-        patientId,
-        doctorId,
-        method,
-        amount: numericAmount,
-        description,
-        posId,
-      })
+    const { payment, taksitInfo } = await prisma.$transaction(
+      (tx) =>
+        createIntegratedPayment({
+          tx,
+          patientId,
+          doctorId,
+          method,
+          amount,
+          description,
+          posId,
+          createdAt,
+        }),
+      { isolationLevel: "Serializable" }
     );
 
     const auditNote = taksitInfo?.updatedCount
-      ? `${numericAmount} TL ödeme — ${taksitInfo.updatedCount} taksit otomatik güncellendi`
-      : `${numericAmount} TL ödeme eklendi`;
+      ? `${amount} TL ödeme — ${taksitInfo.updatedCount} taksit otomatik güncellendi`
+      : `${amount} TL ödeme eklendi`;
     await writeAudit(auth.user.id, "PAYMENT_CREATE", auditNote);
     return NextResponse.json({ ...payment, taksitInfo }, { status: 201 });
-  } catch {
+  } catch (e) {
+    if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2034") {
+      return NextResponse.json(
+        { message: "Bu hasta için aynı anda başka bir ödeme işlendi. Lütfen tekrar deneyin." },
+        { status: 409 }
+      );
+    }
     return NextResponse.json({ message: "Ödeme kaydedilemedi" }, { status: 503 });
   }
 }
@@ -92,13 +112,17 @@ export async function GET(request: NextRequest) {
         ...(patientId ? { patientId } : {}),
         ...institutionFilter,
       },
-      include: { patient: { select: { id: true, fullName: true } } },
+      include: {
+        patient: { select: { id: true, fullName: true } },
+        doctor: { select: { id: true, fullName: true } },
+      },
       orderBy: { createdAt: "desc" },
       take: 500,
     });
 
     return NextResponse.json(payments);
-  } catch {
-    return NextResponse.json([]);
+  } catch (error) {
+    console.error("[payments GET]", error);
+    return NextResponse.json({ message: "Ödeme kayıtları yüklenemedi. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });
   }
 }

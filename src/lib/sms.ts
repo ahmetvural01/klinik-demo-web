@@ -241,7 +241,7 @@ async function sendWithMockProvider(provider: ProviderConfig, phone: string, mes
     provider: provider.code,
     phone,
     message,
-    sender: provider.sender || "KlinikModern",
+    sender: provider.sender || "KlinikPanel",
     queuedAt: new Date().toISOString(),
   };
 
@@ -249,7 +249,7 @@ async function sendWithMockProvider(provider: ProviderConfig, phone: string, mes
     data: {
       phone,
       message,
-      sender: provider.sender || "KlinikModern",
+      sender: provider.sender || "KlinikPanel",
       status: "SENT",
       responseData: JSON.stringify(payload),
     },

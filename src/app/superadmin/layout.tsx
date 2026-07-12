@@ -1,5 +1,6 @@
 import { decodeTokenUser } from "@/lib/auth";
 import Sidebar from "./sidebar";
+import ConfirmProvider from "@/components/ui/ConfirmProvider";
 
 export default function SuperadminLayout({ children }: { children: React.ReactNode }) {
   const user = decodeTokenUser();
@@ -15,7 +16,7 @@ export default function SuperadminLayout({ children }: { children: React.ReactNo
 
       <div className="flex-1 flex flex-col overflow-hidden">
         <header className="h-14 border-b bg-white px-6 flex items-center justify-between shadow-sm flex-shrink-0">
-          <h2 className="text-sm font-semibold text-gray-700">Klinik Modern — Sistem Yönetimi</h2>
+          <h2 className="text-sm font-semibold text-gray-700">Sistem Yönetimi</h2>
           <div className="flex items-center gap-3">
             <span className="text-sm text-gray-600">{user.fullName}</span>
             <div className="h-8 w-8 rounded-full bg-slate-700 flex items-center justify-center text-white font-bold text-xs">
@@ -25,7 +26,7 @@ export default function SuperadminLayout({ children }: { children: React.ReactNo
         </header>
 
         <main className="flex-1 overflow-y-auto p-6">
-          {children}
+          <ConfirmProvider>{children}</ConfirmProvider>
         </main>
       </div>
     </div>

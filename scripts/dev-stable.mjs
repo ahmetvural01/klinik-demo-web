@@ -87,6 +87,7 @@ function run() {
     ? spawn("cmd.exe", ["/d", "/s", "/c", `npm run dev:next -- -p ${PORT}`], {
         stdio: ["inherit", "pipe", "pipe"],
         env: process.env,
+        windowsHide: true,
       })
     : spawn("npm", ["run", "dev:next", "--", "-p", PORT], {
         stdio: ["inherit", "pipe", "pipe"],

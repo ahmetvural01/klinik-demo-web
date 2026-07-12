@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { loginSchema } from "@/lib/validators";
-import { setAuthCookie, signToken, verifyPassword } from "@/lib/auth";
+import { setAuthCookie, signToken, signPendingTwoFactorToken, verifyPassword } from "@/lib/auth";
 import { writeAudit } from "@/lib/api";
 import { metricIncrement, metricObserve } from "@/lib/metrics";
 import { checkRateLimit } from "@/lib/rate-limit";
@@ -191,6 +191,12 @@ export async function POST(request: NextRequest) {
     }
 
     clearAttempt(attemptKey);
+
+    if (user.twoFactorEnabled) {
+      const pendingToken = signPendingTwoFactorToken(user.id);
+      metricObserve("api_request_ms", Date.now() - started);
+      return NextResponse.json({ requires2FA: true, pendingToken });
+    }
 
     const token = signToken({
       userId: user.id,

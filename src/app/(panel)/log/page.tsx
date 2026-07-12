@@ -3,8 +3,9 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 
 import { useEffect, useState } from "react";
+import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
 
-type Log = { id: string; createdAt: string; user: { fullName: string; role?: string }; action: string; detail: string };
+type Log = { id: string; createdAt: string; user: { fullName: string; role?: string }; action: string; detail: string; isGhost?: boolean };
 
 const ACTION_LABELS: Record<string, string> = {
   LOGIN: "Sisteme Giriş",
@@ -37,6 +38,8 @@ const ACTION_LABELS: Record<string, string> = {
   SUPPORT_UPDATE: "Destek Talebi Güncelleme",
   SUPERADMIN_UPDATE: "Superadmin Güncelleme",
   SMS_TEMPLATE_UPDATE: "SMS Şablonu Güncelleme",
+  PATIENT_DATA_EXPORT: "Hasta Verisi Dışa Aktarma (KVKK)",
+  IMPERSONATE_START: "Süperadmin Uzaktan Destek Girişi",
 };
 
 function getActionLabel(action: string): string {
@@ -79,6 +82,9 @@ export default function LogPage() {
   const [pageSize, setPageSize] = useState(15);
   const [search, setSearch] = useState("");
   const [detailLog, setDetailLog] = useState<Log | null>(null);
+  const [loadError, setLoadError] = useState(false);
+
+  useEscapeClose(() => setDetailLog(null), Boolean(detailLog));
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -89,11 +95,14 @@ export default function LogPage() {
     try {
       setLoading(true);
       const res = await fetch(`/api/logs?page=${page}&limit=${pageSize}&from=${fromDate}&to=${toDate}&q=${encodeURIComponent(search)}`);
+      if (!res.ok) { setLoadError(true); setLogs([]); setTotal(0); return; }
       const data = await res.json();
+      setLoadError(false);
       setLogs(data.logs || []);
       setTotal(data.total || 0);
     } catch (e) {
       console.error(e);
+      setLoadError(true);
     } finally {
       setLoading(false);
     }
@@ -144,7 +153,14 @@ export default function LogPage() {
                       <td className="px-4 py-3 text-xs whitespace-nowrap text-slate-600">{dt.toLocaleDateString("tr-TR")}</td>
                       <td className="px-4 py-3 text-xs font-mono text-slate-500">{dt.toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}</td>
                       <td className="px-4 py-3">
-                        <p className="text-sm font-medium text-slate-800">{l.user?.fullName || "-"}</p>
+                        <p className="text-sm font-medium text-slate-800">
+                          {l.user?.fullName || "-"}
+                          {l.isGhost && (
+                            <span className="ml-1.5 inline-flex rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700" title="Bu işlem destek ekibi tarafından uzaktan gerçekleştirildi">
+                              Uzaktan destek
+                            </span>
+                          )}
+                        </p>
                         {l.user?.role && <p className="text-xs text-slate-400">{roleLabel[l.user.role]||l.user.role}</p>}
                       </td>
                       <td className="px-4 py-3">
@@ -160,7 +176,8 @@ export default function LogPage() {
               </tbody>
             </table>
             </div>
-            {logs.length === 0 && <p className="py-8 text-center text-slate-400">Kayıt bulunamadı</p>}
+            {logs.length === 0 && loadError && <p className="py-8 text-center text-rose-500">İşlem kayıtları yüklenemedi. Lütfen tekrar deneyin.</p>}
+            {logs.length === 0 && !loadError && !loading && <p className="py-8 text-center text-slate-400">Kayıt bulunamadı</p>}
           </div>
 
           <div className="flex justify-between items-center">
@@ -173,7 +190,7 @@ export default function LogPage() {
           </>
 
       {detailLog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" {...backdropClose(() => setDetailLog(null))}>
           <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl">
             <h3 className="mb-4 text-sm font-bold text-slate-800">İşlem Detayı</h3>
             {(() => {

@@ -11,8 +11,25 @@ type RealtimeListener = (payload: { institutionId: string; version: number; at: 
 
 const CHANNEL_PREFIX = "ks:realtime:";
 const INSTANCE_ID = Math.random().toString(36).slice(2);
-const listenersByInstitution = new Map<string, Set<RealtimeListener>>();
-const versionByInstitution = new Map<string, number>();
+
+type RealtimeBusState = {
+  listenersByInstitution: Map<string, Set<RealtimeListener>>;
+  versionByInstitution: Map<string, number>;
+};
+
+const globalRealtime = globalThis as typeof globalThis & {
+  __ksRealtimeBusState?: RealtimeBusState;
+};
+
+const realtimeState =
+  globalRealtime.__ksRealtimeBusState ||
+  (globalRealtime.__ksRealtimeBusState = {
+    listenersByInstitution: new Map<string, Set<RealtimeListener>>(),
+    versionByInstitution: new Map<string, number>(),
+  });
+
+const listenersByInstitution = realtimeState.listenersByInstitution;
+const versionByInstitution = realtimeState.versionByInstitution;
 
 let publisher: Redis | null = null;
 let subscriber: Redis | null = null;

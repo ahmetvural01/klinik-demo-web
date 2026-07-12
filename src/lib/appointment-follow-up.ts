@@ -1,20 +1,16 @@
 export type FollowUpKey = "YOK" | "GEC_GELDI" | "GERI_ARA" | "ULASILAMADI" | "DONUS_BEKLENIYOR" | "KENDISI_IPTAL";
-export type AppointmentTreatmentKey =
-  | "IMPLANT"
-  | "DETERTRAJ"
-  | "METAL_PROVA"
-  | "DENTIN_PROVA"
-  | "DISLI_PROVA"
-  | "BITIM"
-  | "SIMANTASYON"
-  | "MUAYENE"
-  | "KONTROL"
-  | "DIKIS_ALIM"
-  | "OLCU"
-  | "DIJITAL_TARAMA"
-  | "DOLGU"
-  | "KANAL"
-  | "DIGER";
+
+// Tedavi türleri artık kuruma özel olarak Ayarlar > Tedavi Türleri üzerinden
+// yönetilebilir (bkz. /api/treatment-types). Bu tip artık serbest bir string:
+// veritabanından gelen özel tedavi türlerini de kapsar.
+export type AppointmentTreatmentKey = string;
+
+export type TreatmentOption = {
+  value: AppointmentTreatmentKey;
+  label: string;
+  color: string;
+  badge: string;
+};
 
 export const FOLLOW_UP_OPTIONS: Array<{ value: FollowUpKey; label: string; needsAction: boolean; badge: string }> = [
   { value: "YOK", label: "Takip yok", needsAction: false, badge: "bg-slate-100 text-slate-600" },
@@ -25,12 +21,10 @@ export const FOLLOW_UP_OPTIONS: Array<{ value: FollowUpKey; label: string; needs
   { value: "KENDISI_IPTAL", label: "Kendisi iptal etti", needsAction: false, badge: "bg-gray-200 text-gray-700" },
 ];
 
-export const APPOINTMENT_TREATMENT_OPTIONS: Array<{
-  value: AppointmentTreatmentKey;
-  label: string;
-  color: string;
-  badge: string;
-}> = [
+// Varsayılan tedavi türleri: bir kurumun "Tedavi Türleri" ayarı henüz boşsa
+// bu liste ile tohumlanır (bkz. /api/treatment-types). Buradaki `value`'lar
+// mevcut randevu notlarıyla (Tedavi: XXX) uyumlu kalması için değiştirilmemelidir.
+export const APPOINTMENT_TREATMENT_OPTIONS: TreatmentOption[] = [
   { value: "IMPLANT", label: "Implant", color: "#1d4ed8", badge: "bg-blue-100 text-blue-800" },
   { value: "DETERTRAJ", label: "Detertraj", color: "#0f766e", badge: "bg-teal-100 text-teal-800" },
   { value: "METAL_PROVA", label: "Metal Prova", color: "#475569", badge: "bg-slate-200 text-slate-800" },
@@ -45,28 +39,38 @@ export const APPOINTMENT_TREATMENT_OPTIONS: Array<{
   { value: "DIJITAL_TARAMA", label: "Dijital Tarama", color: "#0284c7", badge: "bg-sky-100 text-sky-800" },
   { value: "DOLGU", label: "Dolgu", color: "#16a34a", badge: "bg-green-100 text-green-800" },
   { value: "KANAL", label: "Kanal", color: "#dc2626", badge: "bg-red-100 text-red-800" },
+  { value: "CEKIM", label: "Diş Çekimi", color: "#b91c1c", badge: "bg-red-100 text-red-800" },
+  { value: "RONTGEN", label: "Röntgen", color: "#64748b", badge: "bg-slate-100 text-slate-800" },
+  { value: "BEYAZLATMA", label: "Beyazlatma", color: "#eab308", badge: "bg-yellow-100 text-yellow-800" },
+  { value: "ORTODONTI_KONTROL", label: "Ortodonti Kontrol", color: "#db2777", badge: "bg-pink-100 text-pink-800" },
+  { value: "KONSULTASYON", label: "Konsültasyon", color: "#0d9488", badge: "bg-teal-100 text-teal-800" },
+  { value: "FISSUR_ORTUCU", label: "Fissür Örtücü", color: "#65a30d", badge: "bg-lime-100 text-lime-800" },
+  { value: "CERRAHI", label: "Cerrahi", color: "#7f1d1d", badge: "bg-red-100 text-red-900" },
   { value: "DIGER", label: "Diger", color: "#334155", badge: "bg-slate-100 text-slate-700" },
 ];
 
-const VALID_TREATMENT_VALUES = new Set(APPOINTMENT_TREATMENT_OPTIONS.map((item) => item.value));
+const DEFAULT_TREATMENT: TreatmentOption = APPOINTMENT_TREATMENT_OPTIONS.find((item) => item.value === "MUAYENE") || APPOINTMENT_TREATMENT_OPTIONS[0];
 
-export function parseAppointmentNote(note?: string | null): { followUp: FollowUpKey; detail: string; treatment: AppointmentTreatmentKey } {
+export function parseAppointmentNote(
+  note?: string | null,
+  options: TreatmentOption[] = APPOINTMENT_TREATMENT_OPTIONS,
+): { followUp: FollowUpKey; detail: string; treatment: AppointmentTreatmentKey } {
   const raw = (note || "").trim();
-  if (!raw) return { followUp: "YOK", detail: "", treatment: "MUAYENE" };
+  if (!raw) return { followUp: "YOK", detail: "", treatment: DEFAULT_TREATMENT.value };
 
   const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   const treatmentLine = lines.find((line) => line.toLowerCase().startsWith("tedavi:"));
   const followLine = lines.find((line) => line.toLowerCase().startsWith("takip durumu:"));
   const noteLine = lines.find((line) => line.toLowerCase().startsWith("not:"));
 
-  const treatmentValue = treatmentLine?.split(":").slice(1).join(":").trim() as AppointmentTreatmentKey;
+  const treatmentValue = (treatmentLine?.split(":").slice(1).join(":").trim() || "") as AppointmentTreatmentKey;
   const followValue = (followLine?.split(":").slice(1).join(":").trim() || "") as FollowUpKey;
   const detail = noteLine
     ? noteLine.split(":").slice(1).join(":").trim()
     : (!followLine && !treatmentLine ? raw : lines.filter((line) => line !== followLine && line !== treatmentLine).join(" "));
 
   const validFollow = FOLLOW_UP_OPTIONS.some((item) => item.value === followValue) ? followValue : "YOK";
-  const validTreatment = VALID_TREATMENT_VALUES.has(treatmentValue) ? treatmentValue : "MUAYENE";
+  const validTreatment = options.some((item) => item.value === treatmentValue) ? treatmentValue : DEFAULT_TREATMENT.value;
   return { followUp: validFollow, detail, treatment: validTreatment };
 }
 
@@ -82,8 +86,8 @@ export function getFollowUpMeta(key: FollowUpKey) {
   return FOLLOW_UP_OPTIONS.find((item) => item.value === key) || FOLLOW_UP_OPTIONS[0];
 }
 
-export function getTreatmentMeta(key: AppointmentTreatmentKey) {
-  return APPOINTMENT_TREATMENT_OPTIONS.find((item) => item.value === key) || APPOINTMENT_TREATMENT_OPTIONS[7];
+export function getTreatmentMeta(key: AppointmentTreatmentKey, options: TreatmentOption[] = APPOINTMENT_TREATMENT_OPTIONS): TreatmentOption {
+  return options.find((item) => item.value === key) || DEFAULT_TREATMENT;
 }
 
 export function appointmentNeedsFollowUp(status: string, note?: string | null): boolean {

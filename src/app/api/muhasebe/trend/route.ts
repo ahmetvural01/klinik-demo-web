@@ -12,14 +12,6 @@ export async function GET() {
     if (auth.error) return auth.error;
 
     const institutionId = auth.user.institutionId;
-    const institutionDoctors = institutionId
-      ? await prisma.user.findMany({
-          where: { institutionId, role: "DOKTOR", isActive: true },
-          select: { id: true },
-        })
-      : [];
-    const doctorIds = institutionDoctors.map((doctor) => doctor.id);
-
     const months: { label: string; gelir: number; gider: number }[] = [];
 
     for (let i = 5; i >= 0; i--) {
@@ -41,10 +33,8 @@ export async function GET() {
           where: institutionId
             ? {
                 createdAt: { gte: start, lte: end },
-                OR: [
-                  { doctorId: { in: doctorIds } },
-                  { patient: { institutionId } },
-                ],
+                patientId: { not: null },
+                patient: { institutionId },
               }
             : { createdAt: { gte: start, lte: end } },
         }),
@@ -66,7 +56,8 @@ export async function GET() {
     }
 
     return NextResponse.json(months);
-  } catch {
-    return NextResponse.json([]);
+  } catch (error) {
+    console.error("[muhasebe/trend GET]", error);
+    return NextResponse.json({ message: "Gelir/gider grafiği yüklenemedi." }, { status: 503 });
   }
 }

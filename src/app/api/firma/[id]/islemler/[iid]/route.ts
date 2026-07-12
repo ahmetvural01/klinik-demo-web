@@ -20,7 +20,7 @@ export async function PATCH(
           ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
         },
       },
-      include: { firma: { select: { name: true, institutionId: true } } },
+      include: { firma: { select: { name: true, institutionId: true } }, purchase: { select: { id: true } } },
     });
 
     if (!existing) {
@@ -29,10 +29,32 @@ export async function PATCH(
 
     const isCancelling = body.status === "IPTAL" && existing.status !== "IPTAL";
 
+    if (isCancelling && existing.purchase) {
+      return NextResponse.json({
+        error: "Bu işlem çok kalemli bir satın alma kaydına bağlı. Lütfen Satın Alımlar sekmesinden düzenleyin veya iptal edin.",
+      }, { status: 400 });
+    }
+
+    // Lab faturasından otomatik oluşmuş işlemler bu uçtan iptal edilirse
+    // FirmaIslem IPTAL olur ama LabOrder/LabOrderInvoice hâlâ "faturalanmış"
+    // görünmeye devam eder — zincir kopar (bkz. denetim raporu Tema 3). Bu
+    // kayıtlar yalnızca ilgili lab siparişi ekranından iptal edilebilir.
+    if (isCancelling && String(existing.aciklama || "").includes("[SISTEM:LAB_FATURA:")) {
+      return NextResponse.json({
+        error: "Bu işlem bir laboratuvar faturasından otomatik oluşturuldu. Lütfen ilgili laboratuvar siparişinin ekranından iptal edin ki sipariş kaydı da güncellensin.",
+      }, { status: 400 });
+    }
+
+    // Bu uç nokta yalnızca durum güncellemesini (şu an sadece iptal) destekliyor —
+    // ham `body`yi olduğu gibi vermek firmaId gibi alanların dışarıdan
+    // değiştirilebilmesine (başka bir cariye/kuruma taşınmasına) yol açardı.
+    const data: Record<string, unknown> = {};
+    if (body.status !== undefined) data.status = body.status;
+
     const islem = await (prisma as any).$transaction(async (tx: any) => {
       const updated = await tx.firmaIslem.update({
         where: { id: params.iid },
-        data: body
+        data
       });
 
       if (isCancelling) {

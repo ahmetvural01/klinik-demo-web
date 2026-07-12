@@ -8,49 +8,56 @@ datasource db {
 }
 
 model Institution {
-  id                String                    @id @default(cuid())
-  name              String                    @unique
-  email             String                    @unique
-  phone             String?
-  address           String?
-  taxNo             String?                   @unique
-  registryNo        String?
-  website           String?
-  logo              String?
-  subscriptionPlan  SubscriptionPlan          @default(TEMEL)
-  smsBalance        Int                       @default(0)
-  isActive          Boolean                   @default(true)
-  ownerId           String?                   @unique
-  createdAt         DateTime                  @default(now())
-  updatedAt         DateTime                  @updatedAt
-  adIntensity       AdIntensity               @default(MEDIUM)
-  adsEnabled        Boolean                   @default(false)
-  maxActiveDoctors  Int?
-  maxActiveUsers    Int?
-  paymentGraceUntil DateTime?
-  serviceMode       ServiceMode               @default(NORMAL)
-  serviceNote       String?
-  suspendedUntil    DateTime?
-  throttleMs        Int                       @default(0)
-  isDemo            Boolean                   @default(false)
-  demoExpiresAt     DateTime?
+  id                  String                    @id @default(cuid())
+  name                String                    @unique
+  email               String                    @unique
+  phone               String?
+  address             String?
+  taxNo               String?                   @unique
+  registryNo          String?
+  website             String?
+  logo                String?
+  subscriptionPlan    SubscriptionPlan          @default(TEMEL)
+  smsBalance          Int                       @default(0)
+  isActive            Boolean                   @default(true)
+  ownerId             String?                   @unique
+  createdAt           DateTime                  @default(now())
+  updatedAt           DateTime                  @updatedAt
+  adIntensity         AdIntensity               @default(MEDIUM)
+  adsEnabled          Boolean                   @default(false)
+  maxActiveDoctors    Int?
+  maxActiveUsers      Int?
+  paymentGraceUntil   DateTime?
+  serviceMode         ServiceMode               @default(NORMAL)
+  serviceNote         String?
+  suspendedUntil      DateTime?
+  throttleMs          Int                       @default(0)
+  isDemo              Boolean                   @default(false)
+  demoExpiresAt       DateTime?
   demoSourceRequestId String?
-  owner             User?                     @relation("InstitutionOwner", fields: [ownerId], references: [id])
-  adAssignments     InstitutionAdAssignment[]
-  announcements     Announcement[]
-  clinicTasks       ClinicTask[]
-  demoRequests      DemoRequest[]             @relation("DemoRequestInstitution")
-  invoices          Invoice[]
-  patients          Patient[]
-  priceItems        PriceItem[]
-  settings          Setting?
-  smsTransactions   SmsTransaction[]
-  stockItems        StockItem[]
-  expenseCategories ExpenseCategory[]
-  expenses          Expense[]
-  firmas            Firma[]
-  posDevices        PosDevice[]
-  users             User[]
+  owner               User?                     @relation("InstitutionOwner", fields: [ownerId], references: [id])
+  adAssignments       InstitutionAdAssignment[]
+  announcements       Announcement[]
+  clinicTasks         ClinicTask[]
+  demoRequests        DemoRequest[]             @relation("DemoRequestInstitution")
+  invoices            Invoice[]
+  patients            Patient[]
+  priceItems          PriceItem[]
+  settings            Setting?
+  smsTransactions     SmsTransaction[]
+  stockItems          StockItem[]
+  expenseCategories   ExpenseCategory[]
+  expenses            Expense[]
+  firmas              Firma[]
+  purchases           Purchase[]
+  posDevices          PosDevice[]
+  users               User[]
+  documents           Document[]
+  waitlistEntries     Waitlist[]
+  bookingRequests     BookingRequest[]
+  treatmentTypes      TreatmentType[]
+  consentTemplates    ConsentTemplate[]
+  patientConsents     PatientConsent[]
 }
 
 model DemoRequest {
@@ -239,17 +246,25 @@ model SmtpConfig {
   secure    Boolean  @default(false)
   username  String   @default("")
   password  String   @default("")
-  fromName  String   @default("Klinik Modern")
-  fromEmail String   @default("noreply@klinikmodern.com")
+  fromName  String   @default("Klinik Yönetim Paneli")
+  fromEmail String   @default("noreply@klinik.local")
   isActive  Boolean  @default(false)
   updatedAt DateTime @updatedAt
+}
+
+// Tüm platform için tek, sistem geneli aktif görsel tema (renk paleti + yazı
+// tipi). Kurum bazlı değil — SiteContent gibi tek satırlık bir singleton.
+model PlatformTheme {
+  id          Int      @id @default(1)
+  activeTheme String   @default("klasik")
+  updatedAt   DateTime @updatedAt
 }
 
 model SiteContent {
   id                Int      @id @default(1)
   heroBadge         String   @default("Dis Hekimi Klinikleri Icin Uretildi")
   heroTitle         String   @default("Randevudan kasaya, tum surecler tek bir profesyonel sistemde.")
-  heroDescription   String   @default("KlinikModern; hasta kayıt, randevu planlama, tedavi takibi, ödeme yönetimi, SMS/e-posta hatırlatma ve raporlama modüllerini bir arada sunar.")
+  heroDescription   String   @default("Hasta kayıt, randevu planlama, tedavi takibi, ödeme yönetimi, SMS/e-posta hatırlatma ve raporlama modüllerini bir arada sunar.")
   primaryCtaLabel   String   @default("Hemen Giris Yap")
   primaryCtaUrl     String   @default("/klinik/giris")
   secondaryCtaLabel String   @default("Fiyatlari Incele")
@@ -268,40 +283,56 @@ model SiteContent {
 }
 
 model User {
-  id                   String                @id @default(cuid())
-  identityNo           String                @unique
-  fullName             String
-  email                String?               @unique
-  passwordHash         String
-  role                 Role                  @default(DOKTOR)
-  isActive             Boolean               @default(true)
-  createdAt            DateTime              @default(now())
-  updatedAt            DateTime              @updatedAt
-  institutionId        String?
-  genelYuzde           Decimal?              @db.Decimal(5, 2)
-  kkYuzde              Decimal?              @db.Decimal(5, 2)
-  maasYuzde            Decimal?              @db.Decimal(5, 2)
-  appointments         Appointment[]
-  logs                 AuditLog[]
-  examinations         Examination[]
-  ownedInstitution     Institution?          @relation("InstitutionOwner")
-  labOrders            LabOrder[]            @relation("LabOrderDoctor")
-  messages             Message[]
-  profile              Profile?
-  assignedFollowUps    PatientFollowUp[]     @relation("FollowUpAssignedDoctor")
-  createdFollowUps     PatientFollowUp[]     @relation("FollowUpCreatedBy")
-  createdFollowEvents  PatientFollowUpEvent[] @relation("FollowUpEventCreatedBy")
-  updatedFollowEvents  PatientFollowUpEvent[] @relation("FollowUpEventUpdatedBy")
-  stockMovements       StockMovement[]       @relation("StockMovementUser")
-  superadminPermission SuperadminPermission?
-  supportTickets       SupportTicket[]
-  taksitPlanlari       TaksitPlan[]          @relation("TaksitPlanDoctor")
-  treatmentPlans       TreatmentPlan[]       @relation("TreatmentPlanDoctor")
-  doctorBlocks         DoctorBlock[]
-  assignedClinicTasks  ClinicTask[]           @relation("ClinicTaskAssignedUser")
-  clinicTaskAssignments ClinicTaskAssignee[]
-  createdClinicTasks   ClinicTask[]           @relation("ClinicTaskCreatedBy")
-  institution          Institution?          @relation(fields: [institutionId], references: [id])
+  id                      String                 @id @default(cuid())
+  // TC kimlik no SADECE kurum içinde benzersizdir (bkz. @@unique([institutionId, identityNo])
+  // aşağıda) — global @unique KASITLI OLARAK kaldırıldı. Aksi halde iki farklı klinik
+  // aynı TC'ye (rastgele çakışma veya test verisi) sahip personel ekleyemez, hatta
+  // birinin kaydı diğerini bulan sorgularla karışabilirdi (kritik çoklu kiracı hatası).
+  identityNo              String
+  fullName                String
+  email                   String?                @unique
+  passwordHash            String
+  role                    Role                   @default(DOKTOR)
+  isActive                Boolean                @default(true)
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+  institutionId           String?
+  genelYuzde              Decimal?               @db.Decimal(5, 2)
+  kkYuzde                 Decimal?               @db.Decimal(5, 2)
+  maasYuzde               Decimal?               @db.Decimal(5, 2)
+  appointments            Appointment[]
+  logs                    AuditLog[]
+  examinations            Examination[]
+  ownedInstitution        Institution?           @relation("InstitutionOwner")
+  labOrders               LabOrder[]             @relation("LabOrderDoctor")
+  paymentsAsDoctor        Payment[]              @relation("PaymentDoctor")
+  prescriptions           Prescription[]         @relation("PrescriptionDoctor")
+  messages                Message[]
+  profile                 Profile?
+  assignedFollowUps       PatientFollowUp[]      @relation("FollowUpAssignedDoctor")
+  createdFollowUps        PatientFollowUp[]      @relation("FollowUpCreatedBy")
+  createdFollowEvents     PatientFollowUpEvent[] @relation("FollowUpEventCreatedBy")
+  updatedFollowEvents     PatientFollowUpEvent[] @relation("FollowUpEventUpdatedBy")
+  stockMovements          StockMovement[]        @relation("StockMovementUser")
+  superadminPermission    SuperadminPermission?
+  supportTickets          SupportTicket[]
+  taksitPlanlari          TaksitPlan[]           @relation("TaksitPlanDoctor")
+  treatmentPlans          TreatmentPlan[]        @relation("TreatmentPlanDoctor")
+  doctorBlocks            DoctorBlock[]
+  assignedClinicTasks     ClinicTask[]           @relation("ClinicTaskAssignedUser")
+  clinicTaskAssignments   ClinicTaskAssignee[]
+  createdClinicTasks      ClinicTask[]           @relation("ClinicTaskCreatedBy")
+  institution             Institution?           @relation(fields: [institutionId], references: [id])
+  uploadedDocuments       Document[]
+  createdConsents         PatientConsent[]       @relation("ConsentCreatedBy")
+  waitlistCreated         Waitlist[]             @relation("WaitlistCreatedBy")
+  waitlistAsDoctor        Waitlist[]             @relation("WaitlistDoctor")
+  bookingRequestsAsDoctor BookingRequest[]
+  doctorPayoutExpenses    Expense[]              @relation("ExpenseDoctor")
+  purchasesCreated        Purchase[]             @relation("PurchaseCreatedBy")
+  twoFactorSecret         String?
+  twoFactorEnabled        Boolean                @default(false)
+  twoFactorBackupCodes    String?
 
   @@unique([institutionId, identityNo])
 }
@@ -329,43 +360,46 @@ model Profile {
 }
 
 model Patient {
-  id             String          @id @default(cuid())
-  institutionId  String?
-  tcNo           String
-  fullName       String
-  phone          String
-  address        String?
-  gender         String
-  birthDate      DateTime?
-  insurance      String?
-  discountRate   Int             @default(0)
-  notes          String?
-  hasAllergy     Boolean         @default(false)
-  hasHepatitis   Boolean         @default(false)
-  hasKidney      Boolean         @default(false)
-  hasDiabetes    Boolean         @default(false)
-  hasHeart       Boolean         @default(false)
-  hasBloodIssue  Boolean         @default(false)
-  surgeries      String?
-  medications    String?
-  otherDiseases  String?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  bloodType      String?
-  toothChart     String?
-  referrer       String?
-  institution    Institution?    @relation(fields: [institutionId], references: [id])
-  appointments   Appointment[]
-  examinations   Examination[]
-  labOrders      LabOrder[]
-  payments       Payment[]
-  prescriptions  Prescription[]
-  reminders      Reminder[]
-  followUps      PatientFollowUp[]
-  followUpEvents PatientFollowUpEvent[]
+  id              String                 @id @default(cuid())
+  institutionId   String?
+  tcNo            String
+  fullName        String
+  phone           String
+  address         String?
+  gender          String
+  birthDate       DateTime?
+  insurance       String?
+  discountRate    Int                    @default(0)
+  notes           String?
+  hasAllergy      Boolean                @default(false)
+  hasHepatitis    Boolean                @default(false)
+  hasKidney       Boolean                @default(false)
+  hasDiabetes     Boolean                @default(false)
+  hasHeart        Boolean                @default(false)
+  hasBloodIssue   Boolean                @default(false)
+  surgeries       String?
+  medications     String?
+  otherDiseases   String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  bloodType       String?
+  toothChart      String?
+  referrer        String?
+  institution     Institution?           @relation(fields: [institutionId], references: [id])
+  appointments    Appointment[]
+  examinations    Examination[]
+  labOrders       LabOrder[]
+  payments        Payment[]
+  prescriptions   Prescription[]
+  reminders       Reminder[]
+  followUps       PatientFollowUp[]
+  followUpEvents  PatientFollowUpEvent[]
   clinicTasks     ClinicTask[]
-  taksitPlanlari TaksitPlan[]
-  treatmentPlans TreatmentPlan[]
+  taksitPlanlari  TaksitPlan[]
+  treatmentPlans  TreatmentPlan[]
+  documents       Document[]
+  consents        PatientConsent[]
+  waitlistEntries Waitlist[]
 
   @@unique([institutionId, tcNo])
   @@index([institutionId])
@@ -374,23 +408,24 @@ model Patient {
 }
 
 model Appointment {
-  id          String          @id @default(cuid())
+  id          String            @id @default(cuid())
   patientId   String
   doctorId    String
   startAt     DateTime
   endAt       DateTime
-  colorCode   String          @default("#2a9d8f")
-  type        AppointmentType @default(STANDART)
+  colorCode   String            @default("#2a9d8f")
+  type        AppointmentType   @default(STANDART)
   note        String?
-  smsInfo     Boolean         @default(true)
-  smsReminder Boolean         @default(false)
-  smsSurvey   Boolean         @default(false)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  status      String          @default("BEKLIYOR")
-  doctor      User            @relation(fields: [doctorId], references: [id])
+  smsInfo     Boolean           @default(true)
+  smsReminder Boolean           @default(false)
+  smsSurvey   Boolean           @default(false)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  status      String            @default("BEKLIYOR")
+  doctor      User              @relation(fields: [doctorId], references: [id])
   followUps   PatientFollowUp[]
-  patient     Patient         @relation(fields: [patientId], references: [id])
+  patient     Patient           @relation(fields: [patientId], references: [id])
+  waitlistEntries Waitlist[]
 
   @@index([doctorId])
   @@index([patientId])
@@ -399,27 +434,27 @@ model Appointment {
 }
 
 model ClinicTask {
-  id            String          @id @default(cuid())
+  id            String               @id @default(cuid())
   institutionId String
   patientId     String?
   title         String
   details       String?
   vendorName    String?
-  type          ClinicTaskType  @default(DIGER)
-  priority      Int             @default(2)
-  status        ClinicTaskStatus @default(ACIK)
+  type          ClinicTaskType       @default(DIGER)
+  priority      Int                  @default(2)
+  status        ClinicTaskStatus     @default(ACIK)
   dueAt         DateTime?
   remindAt      DateTime?
   assignedToId  String?
   createdById   String
   completedAt   DateTime?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  institution   Institution     @relation(fields: [institutionId], references: [id])
-  patient       Patient?        @relation(fields: [patientId], references: [id])
-  assignedTo    User?           @relation("ClinicTaskAssignedUser", fields: [assignedToId], references: [id])
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  institution   Institution          @relation(fields: [institutionId], references: [id])
+  patient       Patient?             @relation(fields: [patientId], references: [id])
+  assignedTo    User?                @relation("ClinicTaskAssignedUser", fields: [assignedToId], references: [id])
   assignees     ClinicTaskAssignee[]
-  createdBy     User            @relation("ClinicTaskCreatedBy", fields: [createdById], references: [id])
+  createdBy     User                 @relation("ClinicTaskCreatedBy", fields: [createdById], references: [id])
 
   @@index([institutionId, status, dueAt])
   @@index([institutionId, patientId])
@@ -427,12 +462,12 @@ model ClinicTask {
 }
 
 model ClinicTaskAssignee {
-  id        String    @id @default(cuid())
+  id        String     @id @default(cuid())
   taskId    String
   userId    String
-  createdAt DateTime  @default(now())
+  createdAt DateTime   @default(now())
   task      ClinicTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([taskId, userId])
   @@index([userId])
@@ -440,25 +475,32 @@ model ClinicTaskAssignee {
 }
 
 model PatientFollowUp {
-  id             String       @id @default(cuid())
+  id             String                 @id @default(cuid())
   patientId      String
   appointmentId  String?
   doctorId       String?
   createdById    String
-  type           FollowUpType @default(GERI_ARA)
-  priority       Int          @default(2)
-  status         String       @default("ACIK")
+  type           FollowUpType           @default(GERI_ARA)
+  priority       Int                    @default(2)
+  status         String                 @default("ACIK")
   note           String?
   resolutionNote String?
   nextActionAt   DateTime?
   lastContactAt  DateTime?
   closedAt       DateTime?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  appointment    Appointment? @relation(fields: [appointmentId], references: [id])
-  assignedDoctor User?        @relation("FollowUpAssignedDoctor", fields: [doctorId], references: [id])
-  createdBy      User         @relation("FollowUpCreatedBy", fields: [createdById], references: [id])
-  patient        Patient      @relation(fields: [patientId], references: [id])
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+  // Lab provası nedeniyle açılan takiplerin kaynağı önceden yalnızca `note`
+  // metnine gömülü "LAB_ORDER:"/"LAB_PROVA:" etiketleriyle bulunuyordu — not
+  // düzenlenirse bağ sessizce kopuyordu (bkz. denetim raporu Tema 3).
+  labOrderId     String?
+  labTripId      String?
+  appointment    Appointment?           @relation(fields: [appointmentId], references: [id])
+  assignedDoctor User?                  @relation("FollowUpAssignedDoctor", fields: [doctorId], references: [id])
+  createdBy      User                   @relation("FollowUpCreatedBy", fields: [createdById], references: [id])
+  patient        Patient                @relation(fields: [patientId], references: [id])
+  labOrder       LabOrder?              @relation(fields: [labOrderId], references: [id])
+  labTrip        LabTrip?               @relation(fields: [labTripId], references: [id])
   events         PatientFollowUpEvent[]
 
   @@index([patientId])
@@ -467,6 +509,8 @@ model PatientFollowUp {
   @@index([createdById])
   @@index([status, nextActionAt])
   @@index([createdAt])
+  @@index([labOrderId])
+  @@index([labTripId])
 }
 
 model PatientFollowUpEvent {
@@ -493,6 +537,51 @@ model PatientFollowUpEvent {
   @@index([createdAt])
 }
 
+model ConsentTemplate {
+  id            String           @id @default(cuid())
+  institutionId String?
+  title         String
+  category      String           @default("TEDAVI_ONAM")
+  body          String
+  isActive      Boolean          @default(true)
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  institution   Institution?     @relation(fields: [institutionId], references: [id])
+  consents      PatientConsent[]
+
+  @@index([institutionId, isActive])
+  @@index([category])
+}
+
+model PatientConsent {
+  id               String           @id @default(cuid())
+  institutionId    String?
+  patientId        String
+  templateId       String?
+  title            String
+  category         String           @default("TEDAVI_ONAM")
+  body             String
+  signerName       String
+  signerIdentityNo String?
+  signatureDataUrl String
+  status           String           @default("AKTIF")
+  voidedAt         DateTime?
+  voidReason       String?
+  voidedById       String?
+  signedAt         DateTime         @default(now())
+  createdById      String
+  createdAt        DateTime         @default(now())
+  patient          Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  template         ConsentTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  createdBy        User             @relation("ConsentCreatedBy", fields: [createdById], references: [id])
+  institution      Institution?     @relation(fields: [institutionId], references: [id])
+
+  @@index([institutionId])
+  @@index([status])
+  @@index([patientId, signedAt])
+  @@index([templateId])
+}
+
 model Examination {
   id            String   @id @default(cuid())
   patientId     String
@@ -512,33 +601,36 @@ model Examination {
 }
 
 model Payment {
-  id          String        @id @default(cuid())
-  patientId   String?
-  doctorId    String?
-  method      PaymentMethod @default(NAKIT)
-  amount      Decimal       @db.Decimal(10, 2)
-  description String?
-  createdAt   DateTime      @default(now())
-  posId       String?
-  patient     Patient?      @relation(fields: [patientId], references: [id])
-  pos         PosDevice?    @relation(fields: [posId], references: [id])
+  id             String        @id @default(cuid())
+  patientId      String?
+  doctorId       String?
+  method         PaymentMethod @default(NAKIT)
+  amount         Decimal       @db.Decimal(10, 2)
+  description    String?
+  createdAt      DateTime      @default(now())
+  posId          String?
+  patient        Patient?      @relation(fields: [patientId], references: [id])
+  doctor         User?         @relation("PaymentDoctor", fields: [doctorId], references: [id])
+  pos            PosDevice?    @relation(fields: [posId], references: [id])
+  taksitOdemeler TaksitOdeme[]
 
   @@index([patientId])
+  @@index([doctorId])
   @@index([posId])
   @@index([createdAt])
 }
 
 model PriceItem {
-  id         String   @id @default(cuid())
+  id            String       @id @default(cuid())
   institutionId String?
-  code       String
-  treatment  String
-  amount     Decimal  @db.Decimal(10, 2)
-  isFavorite Boolean  @default(false)
-  isCustom   Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  institution Institution? @relation(fields: [institutionId], references: [id])
+  code          String
+  treatment     String
+  amount        Decimal      @db.Decimal(10, 2)
+  isFavorite    Boolean      @default(false)
+  isCustom      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  institution   Institution? @relation(fields: [institutionId], references: [id])
 
   @@unique([institutionId, code, treatment])
   @@index([institutionId])
@@ -549,11 +641,17 @@ model AuditLog {
   userId    String
   action    String
   detail    String?
+  /// Gerçek işlemi yapan kullanıcı (ghost/superadmin oturumlarında userId'den farklı olabilir)
+  actorId   String?
+  actorRole String?
+  isGhost   Boolean  @default(false)
+  ip        String?
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([createdAt])
+  @@index([actorId])
 }
 
 model Setting {
@@ -578,19 +676,37 @@ model Setting {
   updatedAt           DateTime    @updatedAt
   institutionId       String      @unique
   activePriceList     String      @default("standard")
+  followUpCustomTypes String      @default("[]")
   institution         Institution @relation(fields: [institutionId], references: [id])
+}
+
+// Kuruma özel randevu tedavi türleri ve renkleri (Ayarlar > Tedavi Türleri)
+model TreatmentType {
+  id            String      @id @default(cuid())
+  institutionId String
+  value         String
+  label         String
+  color         String      @default("#2563eb")
+  order         Int         @default(0)
+  isActive      Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@unique([institutionId, value])
+  @@index([institutionId, order])
 }
 
 // Doktor bazlı zaman blokajı (belirli tarih/saat aralığında randevuya kapalı)
 model DoctorBlock {
-  id          String   @id @default(cuid())
-  doctorId    String
-  date        String   // YYYY-MM-DD
-  startTime   String   // HH:mm
-  endTime     String   // HH:mm
-  reason      String?
-  createdAt   DateTime @default(now())
-  doctor      User     @relation(fields: [doctorId], references: [id])
+  id        String   @id @default(cuid())
+  doctorId  String
+  date      String // YYYY-MM-DD
+  startTime String // HH:mm
+  endTime   String // HH:mm
+  reason    String?
+  createdAt DateTime @default(now())
+  doctor    User     @relation(fields: [doctorId], references: [id])
 
   @@index([doctorId, date])
 }
@@ -603,6 +719,8 @@ model SupportTicket {
   answer    String?
   createdAt DateTime @default(now())
   user      User?    @relation(fields: [userId], references: [id])
+
+  @@index([userId])
 }
 
 model Message {
@@ -611,6 +729,8 @@ model Message {
   text      String
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id])
+
+  @@index([userId])
 }
 
 model Announcement {
@@ -635,6 +755,10 @@ model Prescription {
   note      String?
   createdAt DateTime @default(now())
   patient   Patient  @relation(fields: [patientId], references: [id])
+  doctor    User?    @relation("PrescriptionDoctor", fields: [doctorId], references: [id])
+
+  @@index([patientId])
+  @@index([doctorId])
 }
 
 model TreatmentPlan {
@@ -667,28 +791,37 @@ model TreatmentStep {
   note          String?
   createdAt     DateTime      @default(now())
   plan          TreatmentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@index([planId])
 }
 
 model LabOrder {
-  id        String         @id @default(cuid())
+  id        String            @id @default(cuid())
   patientId String
   doctorId  String
+  // labName tarihsel/gösterim amaçlı serbest metin olarak kalır; asıl ilişki
+  // firmaId ile kurulur (bkz. denetim raporu Tema 3 — önceden yalnızca isim
+  // eşleşmesiyle kuruluyordu, firma adı değişince zincir kopabiliyordu).
   labName   String
+  firmaId   String?
   labType   String
   teeth     String?
   notes     String?
-  status    LabOrderStatus @default(DEVAM_EDIYOR)
-  price     Decimal?       @db.Decimal(10, 2)
+  status    LabOrderStatus    @default(DEVAM_EDIYOR)
+  price     Decimal?          @db.Decimal(10, 2)
   invoiceNo String?
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
-  doctor    User           @relation("LabOrderDoctor", fields: [doctorId], references: [id])
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+  doctor    User              @relation("LabOrderDoctor", fields: [doctorId], references: [id])
+  firma     Firma?            @relation(fields: [firmaId], references: [id])
   invoices  LabOrderInvoice[]
-  patient   Patient        @relation(fields: [patientId], references: [id])
+  patient   Patient           @relation(fields: [patientId], references: [id])
   trips     LabTrip[]
+  followUps PatientFollowUp[]
 
   @@index([patientId])
   @@index([doctorId])
+  @@index([firmaId])
 }
 
 model LabTrip {
@@ -698,6 +831,7 @@ model LabTrip {
   description  String
   sentAt       DateTime  @default(now())
   expectedAt   DateTime?
+  followUps    PatientFollowUp[]
   receivedAt   DateTime?
   sentNote     String?
   receivedNote String?
@@ -709,15 +843,15 @@ model LabTrip {
 }
 
 model LabOrderInvoice {
-  id        String   @id @default(cuid())
+  id         String   @id @default(cuid())
   labOrderId String
-  item      String
-  amount    Decimal  @db.Decimal(10, 2)
-  invoiceNo String?
-  issuedAt  DateTime @default(now())
-  note      String?
-  createdAt DateTime @default(now())
-  labOrder  LabOrder @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
+  item       String
+  amount     Decimal  @db.Decimal(10, 2)
+  invoiceNo  String?
+  issuedAt   DateTime @default(now())
+  note       String?
+  createdAt  DateTime @default(now())
+  labOrder   LabOrder @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
 
   @@unique([labOrderId, invoiceNo])
   @@index([labOrderId])
@@ -725,34 +859,51 @@ model LabOrderInvoice {
 }
 
 model StockItem {
-  id          String          @id @default(cuid())
-  institutionId String?
-  name        String
-  category    String          @default("SARF")
-  unit        String          @default("adet")
-  quantity    Int             @default(0)
-  minQuantity Int             @default(5)
-  unitPrice   Decimal?        @db.Decimal(10, 2)
-  supplier    String?
-  isActive    Boolean         @default(true)
-  createdAt   DateTime        @default(now())
-  updatedAt   DateTime        @updatedAt
-  institution Institution?    @relation(fields: [institutionId], references: [id])
-  movements   StockMovement[]
+  id              String          @id @default(cuid())
+  institutionId   String?
+  name            String
+  category        String          @default("SARF")
+  unit            String          @default("adet")
+  quantity        Int             @default(0)
+  minQuantity     Int             @default(5)
+  unitPrice       Decimal?        @db.Decimal(10, 2)
+  supplier        String?
+  barcode         String?
+  expiresAt       DateTime?
+  storageLocation String?
+  isActive        Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+  institution     Institution?    @relation(fields: [institutionId], references: [id])
+  movements       StockMovement[]
+  purchaseItems   PurchaseItem[]
 
+  // Aynı isimde birden fazla stok kartı açılabiliyordu (satın almadaki
+  // eşleştirme mantığı büyük/küçük harf duyarsızdı ama veritabanında bunu
+  // garanti eden bir kısıt yoktu — eşzamanlı iki "yeni ürün" isteği veya
+  // "Yeni Kart" formundan elle tekrar aynı isim girilmesi mükerrer kart
+  // yaratabiliyordu). Firma modeliyle aynı desen.
+  @@unique([institutionId, name])
   @@index([institutionId])
+  @@index([barcode])
+  @@index([expiresAt])
 }
 
 model StockMovement {
-  id          String    @id @default(cuid())
-  stockItemId String
-  type        String
-  quantity    Int
-  note        String?
-  userId      String
-  createdAt   DateTime  @default(now())
-  stockItem   StockItem @relation(fields: [stockItemId], references: [id])
-  user        User      @relation("StockMovementUser", fields: [userId], references: [id])
+  id           String        @id @default(cuid())
+  stockItemId  String
+  type         String
+  quantity     Int
+  unitPrice    Decimal?      @db.Decimal(10, 2)
+  supplier     String?
+  note         String?
+  userId       String
+  createdAt    DateTime      @default(now())
+  stockItem    StockItem     @relation(fields: [stockItemId], references: [id])
+  user         User          @relation("StockMovementUser", fields: [userId], references: [id])
+  purchaseItem PurchaseItem?
+
+  @@index([stockItemId, createdAt])
 }
 
 model TaksitPlan {
@@ -802,16 +953,19 @@ model Taksit {
 model TaksitOdeme {
   id        String        @id @default(cuid())
   taksitId  String
+  paymentId String?
   tarih     DateTime      @default(now())
   tutar     Decimal       @db.Decimal(10, 2)
   yontem    PaymentMethod @default(NAKIT)
   posId     String?
   note      String?
   createdAt DateTime      @default(now())
+  payment   Payment?      @relation(fields: [paymentId], references: [id], onDelete: SetNull)
   pos       PosDevice?    @relation(fields: [posId], references: [id])
   taksit    Taksit        @relation(fields: [taksitId], references: [id], onDelete: Cascade)
 
   @@index([taksitId])
+  @@index([paymentId])
 }
 
 model PosDevice {
@@ -829,13 +983,16 @@ model PosDevice {
 }
 
 model ExpenseCategory {
-  id        String    @id @default(cuid())
-  institutionId String?
-  name      String
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  institution Institution? @relation(fields: [institutionId], references: [id])
-  expenses  Expense[]
+  id             String       @id @default(cuid())
+  institutionId  String?
+  name           String
+  isActive       Boolean      @default(true)
+  // Bu tür seçildiğinde gider formu doktor + hakediş dönemi (yıl/ay) alanlarını
+  // gösterir ve kayıt o doktorun aylık hakediş bakiyesinden düşülür.
+  isDoctorPayout Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+  institution    Institution? @relation(fields: [institutionId], references: [id])
+  expenses       Expense[]
 
   @@unique([institutionId, name])
   @@index([institutionId])
@@ -853,35 +1010,44 @@ model Expense {
   faturaNo        String?
   kdvOrani        Int              @default(0)
   status          String           @default("AKTIF")
+  // Doktor hakediş ödemesi kayıtları için: hangi doktora, hangi hakediş dönemine
+  // (yıl/ay) ait olduğu. İkisi de null ise normal (doktora bağlı olmayan) gider.
+  doctorId        String?
+  periodYear      Int?
+  periodMonth     Int?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   institution     Institution?     @relation(fields: [institutionId], references: [id])
   expenseCategory ExpenseCategory? @relation(fields: [categoryId], references: [id])
+  doctor          User?            @relation("ExpenseDoctor", fields: [doctorId], references: [id])
 
   @@index([institutionId])
   @@index([tarih])
   @@index([status])
+  @@index([doctorId, periodYear, periodMonth])
 }
 
 model Firma {
-  id                String              @id @default(cuid())
+  id                String           @id @default(cuid())
   institutionId     String?
   name              String
   phone             String?
   iban              String?
   ibanName          String?
   notes             String?
-  kategori          FirmaKategori       @default(TEDARICI)
-  paymentTerms      PaymentTermType?    @default(NET_30)
+  kategori          FirmaKategori    @default(TEDARICI)
+  paymentTerms      PaymentTermType? @default(NET_30)
   customPaymentDays Int?
-  vendorScore       Int                 @default(0)
+  vendorScore       Int              @default(0)
   scoreUpdatedAt    DateTime?
-  isActive          Boolean             @default(true)
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
-  institution       Institution?        @relation(fields: [institutionId], references: [id])
+  isActive          Boolean          @default(true)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  institution       Institution?     @relation(fields: [institutionId], references: [id])
   islemler          FirmaIslem[]
   kontaktler        FirmaKontakt[]
+  purchases         Purchase[]
+  labOrders         LabOrder[]
 
   @@unique([institutionId, name])
   @@index([institutionId])
@@ -899,32 +1065,82 @@ model FirmaIslem {
   tutar      Decimal        @db.Decimal(10, 2)
   faturaNo   String?
   yontem     PaymentMethod?
+  dueDate    DateTime?
   kdvOrani   Int            @default(0)
   status     String         @default("AKTIF")
   createdAt  DateTime       @default(now())
   updatedAt  DateTime       @updatedAt
   firma      Firma          @relation(fields: [firmaId], references: [id])
+  purchase   Purchase?
 
   @@index([firmaId])
   @@index([tarih])
+  @@index([dueDate])
 }
 
 model FirmaKontakt {
-  id        String    @id @default(cuid())
+  id        String   @id @default(cuid())
   firmaId   String
   ad        String
   unvan     String?
   email     String?
   telefon   String?
   rol       String?
-  isPrimary Boolean   @default(false)
-  isActive  Boolean   @default(true)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  firma     Firma     @relation(fields: [firmaId], references: [id], onDelete: Cascade)
+  isPrimary Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  firma     Firma    @relation(fields: [firmaId], references: [id], onDelete: Cascade)
 
   @@index([firmaId])
   @@index([email])
+}
+
+// Çok kalemli satın alma belgesi. Toplam tutar tek bir ALIM tipi FirmaIslem'e
+// bağlanır (firma bakiyesi/ekstre hesabı hiç değişmeden çalışmaya devam eder);
+// satır detayları (hangi üründen kaç adet, hangi fiyattan) burada tutulur.
+model Purchase {
+  id            String         @id @default(cuid())
+  institutionId String?
+  firmaId       String
+  firmaIslemId  String         @unique
+  tarih         DateTime
+  faturaNo      String?
+  aciklama      String?
+  kdvOrani      Int            @default(0)
+  status        String         @default("AKTIF")
+  createdById   String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  institution   Institution?   @relation(fields: [institutionId], references: [id])
+  firma         Firma          @relation(fields: [firmaId], references: [id])
+  firmaIslem    FirmaIslem     @relation(fields: [firmaIslemId], references: [id])
+  createdBy     User?          @relation("PurchaseCreatedBy", fields: [createdById], references: [id])
+  items         PurchaseItem[]
+
+  @@index([institutionId])
+  @@index([firmaId])
+  @@index([tarih])
+}
+
+model PurchaseItem {
+  id              String         @id @default(cuid())
+  purchaseId      String
+  stockItemId     String
+  productName     String
+  quantity        Int
+  unit            String         @default("adet")
+  unitPrice       Decimal        @db.Decimal(10, 2)
+  lineTotal       Decimal        @db.Decimal(10, 2)
+  stockMovementId String?        @unique
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  purchase        Purchase       @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  stockItem       StockItem      @relation(fields: [stockItemId], references: [id])
+  stockMovement   StockMovement? @relation(fields: [stockMovementId], references: [id])
+
+  @@index([purchaseId])
+  @@index([stockItemId])
 }
 
 model Reminder {
@@ -1080,4 +1296,95 @@ enum PaymentTermType {
   NET_120
   EOM
   CUSTOM
+}
+
+model Document {
+  id            String           @id @default(cuid())
+  institutionId String?
+  patientId     String
+  uploadedById  String
+  category      DocumentCategory @default(BELGE)
+  fileName      String
+  storedName    String           @unique
+  mimeType      String
+  fileSize      Int
+  toothNo       String?
+  note          String?
+  createdAt     DateTime         @default(now())
+  patient       Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  uploadedBy    User             @relation(fields: [uploadedById], references: [id])
+  institution   Institution?     @relation(fields: [institutionId], references: [id])
+
+  @@index([patientId])
+  @@index([institutionId])
+  @@index([category])
+}
+
+enum DocumentCategory {
+  BELGE
+  RONTGEN
+  FOTOGRAF
+}
+
+model Waitlist {
+  id            String         @id @default(cuid())
+  institutionId String?
+  patientId     String
+  doctorId      String?
+  createdById   String
+  preferredFrom DateTime?
+  preferredTo   DateTime?
+  note          String?
+  status        WaitlistStatus @default(BEKLIYOR)
+  // YERLESTIRILDI durumuna geçerken hangi randevunun oluşturulduğu — önceden
+  // bu bağ hiç tutulmuyordu, durum elle işaretleniyordu (bkz. denetim raporu
+  // Tema 4).
+  appointmentId String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  patient       Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  doctor        User?          @relation("WaitlistDoctor", fields: [doctorId], references: [id])
+  appointment   Appointment?   @relation(fields: [appointmentId], references: [id])
+  createdBy     User           @relation("WaitlistCreatedBy", fields: [createdById], references: [id])
+  institution   Institution?   @relation(fields: [institutionId], references: [id])
+
+  @@index([institutionId])
+  @@index([status])
+  @@index([patientId])
+  @@index([appointmentId])
+}
+
+enum WaitlistStatus {
+  BEKLIYOR
+  ARANDI
+  YERLESTIRILDI
+  IPTAL
+}
+
+model BookingRequest {
+  id                   String               @id @default(cuid())
+  institutionId        String
+  doctorId             String?
+  fullName             String
+  phone                String
+  tcNo                 String?
+  preferredFrom        DateTime
+  preferredTo          DateTime?
+  note                 String?
+  status               BookingRequestStatus @default(BEKLIYOR)
+  createdAppointmentId String?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  doctor               User?                @relation(fields: [doctorId], references: [id])
+  institution          Institution          @relation(fields: [institutionId], references: [id])
+
+  @@index([institutionId])
+  @@index([status])
+}
+
+enum BookingRequestStatus {
+  BEKLIYOR
+  ONAYLANDI
+  REDDEDILDI
+  IPTAL
 }

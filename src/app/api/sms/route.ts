@@ -11,7 +11,7 @@ function renderTemplate(template: string, vars: Record<string, string>) {
 
 // GET - Randevuları SMS durumuyla birlikte getir + istatistikler
 export async function GET(request: NextRequest) {
-  const auth = await requireAuth("*");
+  const auth = await requireAuth("sms:read");
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
   const started = Date.now();
   metricIncrement("sms_jobs_total");
 
-  const auth = await requireAuth("*");
+  const auth = await requireAuth("sms:write");
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
@@ -115,14 +115,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Randevu bulunamadi" }, { status: 404 });
   }
 
-  if (institution.smsBalance < appointments.length) {
-    metricIncrement("api_errors_total");
-    return NextResponse.json({
-      message: `Yetersiz SMS kredisi. Gerekli: ${appointments.length}, Mevcut: ${institution.smsBalance}`,
-    }, { status: 400 });
-  }
-
   if (dispatchMode === "queue") {
+    if (institution.smsBalance < appointments.length) {
+      metricIncrement("api_errors_total");
+      return NextResponse.json({
+        message: `Yetersiz SMS kredisi. Gerekli: ${appointments.length}, Mevcut: ${institution.smsBalance}`,
+      }, { status: 400 });
+    }
+
     const queued = await enqueueSmsDispatchJob({
       institutionId: auth.user.institutionId,
       userId: auth.user.id,
@@ -141,6 +141,19 @@ export async function POST(request: NextRequest) {
       queueSize: queued.queueSize || 0,
       message: "SMS gonderimi kuyruğa alindi.",
     }, { status: 202 });
+  }
+
+  const reservation = await prisma.institution.updateMany({
+    where: { id: institution.id, smsBalance: { gte: appointments.length } },
+    data: { smsBalance: { decrement: appointments.length } },
+  });
+
+  if (reservation.count === 0) {
+    const fresh = await prisma.institution.findUnique({ where: { id: institution.id }, select: { smsBalance: true } });
+    metricIncrement("api_errors_total");
+    return NextResponse.json({
+      message: `Yetersiz SMS kredisi. Gerekli: ${appointments.length}, Mevcut: ${fresh?.smsBalance ?? institution.smsBalance}`,
+    }, { status: 400 });
   }
 
   const updateData: Record<string, boolean> = {};
@@ -204,10 +217,11 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  if (sent > 0) {
+  const failed = appointments.length - sent;
+  if (failed > 0) {
     await prisma.institution.update({
       where: { id: institution.id },
-      data: { smsBalance: { decrement: sent } },
+      data: { smsBalance: { increment: failed } },
     });
   }
 

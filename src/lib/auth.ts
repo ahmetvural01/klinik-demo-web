@@ -41,6 +41,27 @@ export function signToken(payload: AuthPayload) {
   return jwt.sign(payload, secret, { expiresIn: "7d" });
 }
 
+type PendingTwoFactorPayload = { userId: string; purpose: "2fa-pending" };
+
+/** Şifre doğrulandı ama 2FA kodu henüz girilmedi — kısa ömürlü, oturum açmaya yetmez. */
+export function signPendingTwoFactorToken(userId: string) {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error("JWT_SECRET tanımlı değil");
+  return jwt.sign({ userId, purpose: "2fa-pending" } satisfies PendingTwoFactorPayload, secret, { expiresIn: "5m" });
+}
+
+export function verifyPendingTwoFactorToken(token: string): string | null {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error("JWT_SECRET tanımlı değil");
+  try {
+    const payload = jwt.verify(token, secret) as PendingTwoFactorPayload;
+    if (payload.purpose !== "2fa-pending") return null;
+    return payload.userId;
+  } catch {
+    return null;
+  }
+}
+
 export function verifyToken(token: string) {
   const secret = process.env.JWT_SECRET;
 

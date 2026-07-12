@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, withApiTiming } from "@/lib/api";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 // 2026 gelir vergisi dilimleri
 function gelirVergisiHesapla(matrah: number): number {
@@ -17,7 +18,7 @@ function gelirVergisiHesapla(matrah: number): number {
   return v;
 }
 
-export async function GET(request: NextRequest) {
+export const GET = withApiTiming("reports", async function GET(request: NextRequest) {
   const auth = await requireAuth("reports:read");
   if (auth.error) return auth.error;
 
@@ -26,15 +27,16 @@ export async function GET(request: NextRequest) {
   const from = request.nextUrl.searchParams.get("from") || request.nextUrl.searchParams.get("start");
   const to   = request.nextUrl.searchParams.get("to")   || request.nextUrl.searchParams.get("end");
 
-  const dateFilter = (from || to) ? {
-    gte: from ? new Date(from) : undefined,
-    lte: to   ? new Date(to)   : undefined,
-  } : undefined;
-
   // Yıl bazlı vergi hesabı için yıl başı/sonu
   const pivotYear = from ? new Date(from).getFullYear() : new Date().getFullYear();
   const yearStart = new Date(`${pivotYear}-01-01T00:00:00Z`);
   const yearEnd   = new Date(`${pivotYear}-12-31T23:59:59Z`);
+
+  // from/to hiç verilmezse tüm geçmiş taranmasın diye içinde bulunulan yıl varsayılır.
+  const dateFilter = (from || to) ? {
+    gte: from ? new Date(from) : undefined,
+    lte: to   ? new Date(to)   : undefined,
+  } : { gte: yearStart, lte: yearEnd };
 
   const treatmentOnlyWhere = {
     NOT: [
@@ -46,7 +48,7 @@ export async function GET(request: NextRequest) {
 
   const institutionDoctors = institutionId
     ? await prisma.user.findMany({
-        where: { institutionId, role: "DOKTOR", isActive: true },
+        where: effectiveDoctorWhere(institutionId),
         select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
       })
     : [];
@@ -68,13 +70,10 @@ export async function GET(request: NextRequest) {
         where: institutionId
           ? {
               createdAt: dateFilter,
-              OR: [
-                { doctorId: { in: doctorIds } },
-                { patient: { institutionId } },
-              ],
+              patientId: { not: null },
+              patient: { institutionId },
             }
           : { createdAt: dateFilter },
-        include: { patient: { select: { id: true } } },
       }),
       prisma.examination.findMany({
         where: institutionId
@@ -82,7 +81,6 @@ export async function GET(request: NextRequest) {
           : { diagnosedAt: dateFilter, ...treatmentOnlyWhere },
         include: {
           doctor: { select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true } },
-          patient: { select: { id: true } },
         },
       }),
       (prisma as any).labOrder.findMany({
@@ -124,7 +122,7 @@ export async function GET(request: NextRequest) {
       institutionId
         ? Promise.resolve(institutionDoctors)
         : prisma.user.findMany({
-            where: { role: "DOKTOR", isActive: true },
+            where: effectiveDoctorWhere(null),
             select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
           }),
     ]);
@@ -370,4 +368,4 @@ export async function GET(request: NextRequest) {
     totalLabOrders: labOrders.length,
     overdueInstallments: taksitler.length,
   });
-}
+});

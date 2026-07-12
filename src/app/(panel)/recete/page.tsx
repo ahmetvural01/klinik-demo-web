@@ -176,7 +176,7 @@ export default function PrescriptionPage() {
   };
 
   const printableDrugs = parseDrugs();
-  const clinicName = setting?.institutionName || "Klinik Modern";
+  const clinicName = setting?.institutionName || "Klinik";
   const clinicAddress = setting?.institutionAddress || "Açık adres bilgisi girilmemiş";
   const clinicPhone = setting?.institutionPhone || "Telefon bilgisi girilmemiş";
 

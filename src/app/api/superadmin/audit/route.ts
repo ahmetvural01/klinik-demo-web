@@ -16,8 +16,8 @@ export async function GET(request: NextRequest) {
   const limit     = 50;
   const skip      = (page - 1) * limit;
 
+  // Süperadmin oversight paneli: kendi işlemleri ve ghost oturumları dahil TÜM kayıtlar görünür.
   const where: Record<string, unknown> = {};
-  where.user = { role: { not: "SUPERADMIN" } };
   if (userId) where.userId = userId;
   if (search) {
     where.OR = [
@@ -39,7 +39,17 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: "desc" },
       skip,
       take: limit,
-      include: { user: { select: { fullName: true, role: true, institutionId: true } } },
+      select: {
+        id: true,
+        action: true,
+        detail: true,
+        createdAt: true,
+        actorId: true,
+        actorRole: true,
+        isGhost: true,
+        ip: true,
+        user: { select: { fullName: true, role: true, institutionId: true } },
+      },
     }),
   ]);
 

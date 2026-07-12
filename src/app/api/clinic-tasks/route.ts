@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(tasks);
   } catch (error) {
     console.error("[clinic-tasks GET] fallback:", error);
-    return NextResponse.json([]);
+    return NextResponse.json({ message: "Görevler yüklenemedi. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });
   }
 }
 

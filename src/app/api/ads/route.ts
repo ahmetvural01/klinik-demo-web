@@ -9,7 +9,7 @@ const INTENSITY_LIMIT: Record<string, number> = {
 };
 
 export async function GET() {
-  const auth = await requireAuth("*");
+  const auth = await requireAuth("dashboard:read");
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {

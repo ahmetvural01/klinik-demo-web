@@ -141,7 +141,7 @@ export default function SmtpPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Gönderici Adı</label>
                 <input
                   className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-                  placeholder="KlinikModern"
+                  placeholder="Klinik Yönetim Paneli"
                   value={form.fromName}
                   onChange={(e) => setForm({ ...form, fromName: e.target.value })}
                 />

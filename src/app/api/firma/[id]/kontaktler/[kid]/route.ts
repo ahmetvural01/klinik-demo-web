@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string; kid: string } }) {
   try {
@@ -66,6 +66,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       }
     });
 
+    await writeAudit(auth.user.id, "FIRMA_KONTAKT_UPDATE", params.kid);
     return NextResponse.json(kontakt);
   } catch (e) {
     console.error(e);
@@ -95,6 +96,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
       data: { isActive: false }
     });
 
+    await writeAudit(auth.user.id, "FIRMA_KONTAKT_DELETE", params.kid);
     return NextResponse.json({ message: "Kontakt silindi" });
   } catch (e) {
     console.error(e);

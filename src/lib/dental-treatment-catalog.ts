@@ -7,6 +7,22 @@ export type CatalogPriceItem = {
 
 export const ACTIVE_PRICE_LIST_STORAGE_KEY = "klinikmodern-active-price-list";
 
+export const TDB_ACTIVE_CATALOG_YEAR = 2026;
+
+export function tdbOfficialTariffPdfUrl(year: number) {
+  return `https://www.tdb.org.tr/tdb/v2/ekler/${year}_Yili_Rehber_Tarife_Kitapcigi.pdf`;
+}
+
+export async function detectLatestPublishedTdbTariffYear(maxYear = new Date().getFullYear() + 1) {
+  for (let year = Math.max(maxYear, TDB_ACTIVE_CATALOG_YEAR); year > TDB_ACTIVE_CATALOG_YEAR; year -= 1) {
+    try {
+      const response = await fetch(tdbOfficialTariffPdfUrl(year), { method: "HEAD", cache: "no-store" });
+      if (response.ok) return year;
+    } catch {}
+  }
+  return TDB_ACTIVE_CATALOG_YEAR;
+}
+
 export const TDB_2026_CORE_PRICE_CATALOG: CatalogPriceItem[] = [
   { id: "tdb-1-1", code: "1-1", treatment: "Dişhekimi Muayenesi", amount: 1650 },
   { id: "tdb-1-2", code: "1-2", treatment: "Uzman Dişhekimi Muayenesi", amount: 2035 },

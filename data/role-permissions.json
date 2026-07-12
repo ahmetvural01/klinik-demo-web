@@ -33,6 +33,7 @@
       "payments:read",
       "payments:write",
       "hastatracking:read",
+      "hastatracking:write",
       "documents:read",
       "documents:write",
       "insurance:read",

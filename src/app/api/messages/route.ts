@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 let lastCleanupAt = 0;
 
@@ -41,7 +41,7 @@ export async function GET() {
     return NextResponse.json(messages.reverse());
   } catch (error) {
     console.error("[messages GET] fallback:", error);
-    return NextResponse.json([]);
+    return NextResponse.json({ message: "Mesajlar yüklenemedi." }, { status: 503 });
   }
 }
 
@@ -62,6 +62,7 @@ export async function POST(req: Request) {
       include: { user: { select: { fullName: true, role: true } } },
     });
 
+    await writeAudit(auth.user.id, "MESSAGE_CREATE", normalizedText.slice(0, 120));
     return NextResponse.json(message);
   } catch (error) {
     console.error("[messages POST] fallback:", error);

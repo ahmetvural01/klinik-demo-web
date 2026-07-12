@@ -2,19 +2,26 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { confirmDialog } from "@/lib/confirm-client";
+import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
+import { stripSystemTags } from "@/lib/format-text";
+import { addPdfSection, addPdfTitle, createPdfDoc } from "@/lib/pdf-export";
 import { useRouter, useSearchParams } from "next/navigation";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Payment = {
   id: string; createdAt: string; amount: number; method: string;
-  description?: string | null;
+  description?: string | null; posId?: string | null;
   patient?: { id: string; fullName: string } | null;
+  doctorId?: string | null;
+  doctor?: { id: string; fullName: string } | null;
 };
 type Expense = {
-  id: string; tarih: string; category: string; description?: string | null;
+  id: string; tarih: string; category: string; categoryId?: string | null; description?: string | null;
   tutar: number; yontem?: string | null; faturaNo?: string | null; kdvOrani?: number | null;
+  doctorId?: string | null;
 };
-type GiderKategori = { id: string; name: string; isActive: boolean };
+type GiderKategori = { id: string; name: string; isActive: boolean; isDoctorPayout?: boolean };
 type PatientOption = { id: string; fullName: string };
 type PosDevice = { id: string; name: string; isActive: boolean };
 type FirmaData = { id: string; name: string; borc: number; odenen: number; bakiye: number };
@@ -34,7 +41,10 @@ type Reminder = {
   id: string; note: string; reminderDate: string; status: string;
   patient?: { fullName: string } | null;
 };
-type Doctor = { id: string; fullName: string; role: string };
+type Doctor = { id: string; fullName: string; role: string; profile?: { hideAsDoctor?: boolean } | null };
+// DOKTOR rolü her zaman; YONETICI ise sadece "randevu/hakediş ekranlarında doktor
+// olarak görünsün" işaretlenmişse (profile.hideAsDoctor === false) hakediş süreçlerine dahil olur.
+const isEffectiveDoctor = (u: Doctor) => u.role === "DOKTOR" || (u.role === "YONETICI" && !u.profile?.hideAsDoctor);
 type StockItem = { id: string; quantity: number; minQuantity: number };
 type TrendMonth = { label: string; gelir: number; gider: number };
 type AlacakRow = { id: string; fullName: string; phone: string; brutTedavi: number; indirim: number; netTedavi: number; odenen: number; bakiye: number; discountRate: number; };
@@ -43,11 +53,23 @@ type AlacakRow = { id: string; fullName: string; phone: string; brutTedavi: numb
 const MONEY = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 2 });
 const fmt = (n: number | string | null | undefined) => MONEY.format(Number(n) || 0);
 const fmtDate = (d: string) => { try { return new Date(d).toLocaleDateString("tr-TR"); } catch { return d; } };
+const todayIso = () => new Date().toISOString().split("T")[0];
+const stripFinanceTags = (text?: string | null) => stripSystemTags(text).replace(/\s*\[GELIR_TURU:[^\]]+\]/g, "").trim();
 
 const METHOD_LABELS: Record<string, string> = {
   NAKIT: "Nakit", KREDI_KARTI: "Kredi Kartı", HAVALE_EFT: "Havale/EFT",
   MAIL_ORDER: "Mail Order", DIGER: "Diğer",
 };
+// Doktor hakedişi ödemeleri sadece nakit veya havale/EFT ile yapılabilir.
+const DOCTOR_PAYOUT_METHOD_LABELS: Record<string, string> = {
+  NAKIT: "Nakit", HAVALE_EFT: "Havale/EFT",
+};
+const POS_REQUIRED_METHODS = new Set(["KREDI_KARTI", "MAIL_ORDER"]);
+const requiresPos = (method: string) => POS_REQUIRED_METHODS.has(method);
+const AY_ADLARI = [
+  "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
+  "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık",
+];
 const KDV_OPTIONS = [
   { value: "0",  label: "%0  — KDV Yok" },
   { value: "10", label: "%10" },
@@ -116,15 +138,64 @@ function readMuhasebeCache() {
 }
 
 const TABS = [
-  { id: "genel",    label: "Genel Bakış",      hint: "Tüm finansal özet" },
-  { id: "gelir",    label: "Gelir / Tahsilat", hint: "Hasta ödemeleri ve kasa hareketleri" },
-  { id: "gider",    label: "Gider",            hint: "Klinik giderleri" },
-  { id: "taksit",   label: "Taksit / Alacak",  hint: "Taksitli ödeme planları" },
-  { id: "alacak",   label: "Hasta Alacakları", hint: "Taksit dışı dahil, tüm hasta borç bakiyeleri" },
-  { id: "cari",     label: "Tedarikçi / Cari", hint: "Tedarikçilerle olan cari hesap bakiyeleri" },
-  { id: "hakedis",  label: "Hakedişler",       hint: "Doktorların işlem başına kazanç/komisyon dökümü" },
+  { id: "defter",   label: "Muhasebe Defteri", hint: "Tahsilat ve gider hareketleri" },
+  { id: "alacak",   label: "Alacaklar", hint: "Hasta bakiyeleri ve taksitli ödeme planları" },
+  { id: "hakedis",  label: "Hakediş",   hint: "Doktor kazanç ve ödeme dökümü" },
 ] as const;
-type TabId = (typeof TABS)[number]["id"];
+type VisibleTabId = (typeof TABS)[number]["id"];
+type TabId = VisibleTabId | "genel" | "gelir" | "gider" | "cari";
+type TransactionKind = "gelir" | "gider";
+type ExpenseEntryKind = "normal" | "firma";
+
+// ─── Arama kutusu + özel stilli açılır liste (native <datalist> yerine) ───────
+// Tarayıcının yerli <datalist>'i konumlandırma/stil kontrolü vermiyor ve diğer
+// bileşenlerin üzerine taşarak bozuk görünüyordu — bunun yerine input'un hemen
+// altında, uygulamanın kendi stiliyle render edilen bir liste kullanılıyor.
+function SearchSelect({
+  query, onQueryChange, options, onSelect, placeholder, className, emptyText,
+}: {
+  query: string;
+  onQueryChange: (value: string) => void;
+  options: { id: string; label: string }[];
+  onSelect: (option: { id: string; label: string }) => void;
+  placeholder?: string;
+  className?: string;
+  emptyText?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        value={query}
+        onChange={e => { onQueryChange(e.target.value); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        placeholder={placeholder}
+        autoComplete="off"
+        className={className}
+      />
+      {open && (
+        <div className="absolute left-0 right-0 top-full z-30 mt-1 max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+          {options.length === 0 ? (
+            <p className="px-3 py-2 text-xs text-slate-400">{emptyText || "Sonuç bulunamadı"}</p>
+          ) : (
+            options.map(opt => (
+              <button
+                key={opt.id}
+                type="button"
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => { onSelect(opt); setOpen(false); }}
+                className="block w-full truncate px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50"
+              >
+                {opt.label}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 export default function MuhasebePage() {
@@ -132,9 +203,12 @@ export default function MuhasebePage() {
   const searchParams = useSearchParams();
 
   // URL ?tab= parametresinden başlangıç tab'ı belirle
+  // Not: "taksit" eski bağımsız sekmenin adıydı; artık "alacak" sekmesinin bir alt görünümü.
   const initialTab = (): TabId => {
-    const t = searchParams.get("tab") as TabId | null;
-    return t && TABS.some(x => x.id === t) ? t : "genel";
+    const t = searchParams.get("tab");
+    if (t === "taksit") return "alacak";
+    if (t === "genel" || t === "gelir" || t === "gider" || t === "cari") return "defter";
+    return t && TABS.some(x => x.id === t) ? (t as TabId) : "defter";
   };
 
   const [activeTab, setActiveTab] = useState<TabId>(initialTab);
@@ -157,7 +231,7 @@ export default function MuhasebePage() {
   );
 
   const visibleTabs = useMemo(() => {
-    if (userRole === "BANKO") return TABS.filter(tab => !["gider", "cari", "hakedis"].includes(tab.id));
+    if (userRole === "BANKO") return TABS.filter(tab => tab.id !== "hakedis");
     if (userRole === "DOKTOR" || userRole === "ASISTAN") return TABS.filter(() => false);
     return TABS;
   }, [userRole]);
@@ -176,14 +250,14 @@ export default function MuhasebePage() {
     const ms = new Date(); ms.setDate(1);
     const monthStart = ms.toISOString().split("T")[0];
     const [k, gt, gm, fr, sr, tr] = await Promise.all([
-      fetch(`/api/kasa?date=${today}`).then(r => r.json()).catch(() => ({})),
+      fetch(`/api/kasa?date=${today}`, { cache: "no-store" }).then(r => r.json()).catch(() => ({})),
       // BANKO için /api/gider yasak — çekilmez
-      !isBankoRole ? fetch(`/api/gider?from=${today}&to=${today}`).then(r => r.json()).catch(() => ({})) : Promise.resolve({}),
-      !isBankoRole ? fetch(`/api/gider?from=${monthStart}&to=${today}`).then(r => r.json()).catch(() => ({})) : Promise.resolve({}),
+      !isBankoRole ? fetch(`/api/gider?from=${today}&to=${today}`, { cache: "no-store" }).then(r => r.json()).catch(() => ({})) : Promise.resolve({}),
+      !isBankoRole ? fetch(`/api/gider?from=${monthStart}&to=${today}`, { cache: "no-store" }).then(r => r.json()).catch(() => ({})) : Promise.resolve({}),
       // BANKO için /api/firma ve /api/stock yasak — çekilmez
-      !isBankoRole ? fetch("/api/firma").then(r => r.json()).catch(() => []) : Promise.resolve([]),
-      !isBankoRole ? fetch("/api/stock").then(r => r.json()).catch(() => []) : Promise.resolve([]),
-      fetch("/api/taksit-plani?status=GECIKTI").then(r => r.json()).catch(() => []),
+      !isBankoRole ? fetch("/api/firma", { cache: "no-store" }).then(r => r.json()).catch(() => []) : Promise.resolve([]),
+      !isBankoRole ? fetch("/api/stock", { cache: "no-store" }).then(r => r.json()).catch(() => []) : Promise.resolve([]),
+      fetch("/api/taksit-plani?status=GECIKTI", { cache: "no-store" }).then(r => r.json()).catch(() => []),
     ]);
     setKasaToday({ total: Number(k?.total || 0), byMethod: k?.byMethod || {}, payments: Array.isArray(k?.payments) ? k.payments : [] });
     setExpenseToday({ total: Number(gt?.total || 0) });
@@ -249,7 +323,7 @@ export default function MuhasebePage() {
 
   const loadAlacaklar = useCallback(async () => {
     setAlacakLoading(true);
-    const r = await fetch("/api/muhasebe/alacaklar").catch(() => null);
+    const r = await fetch("/api/muhasebe/alacaklar", { cache: "no-store" }).catch(() => null);
     if (r?.ok) { const d = await r.json(); setAlacaklar(d.rows || []); setAlacakTotal(d.toplamAlacak || 0); }
     setAlacakLoading(false);
   }, []);
@@ -277,37 +351,57 @@ export default function MuhasebePage() {
   useEffect(() => {
     ensurePatients();
     ensurePos();
-    fetch("/api/staff").then(r => r.json()).then(d => setTaksitDoctors((Array.isArray(d) ? d : []).filter((u: Doctor) => u.role === "DOKTOR"))).catch(() => {});
+    fetch("/api/staff").then(r => r.json()).then(d => setTaksitDoctors((Array.isArray(d) ? d : []).filter(isEffectiveDoctor))).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── TAB: Gelir / Tahsilat ─────────────────────────────────────────────────
   const [allPayments,  setAllPayments]  = useState<Payment[]>([]);
   const [showTahForm,  setShowTahForm]  = useState(false);
-  const [tahForm,      setTahForm]      = useState({ patientId: "", doctorId: "", method: "NAKIT", amount: "", description: "", posId: "" });
+  const [tahForm,      setTahForm]      = useState({ tarih: todayIso(), patientId: "", doctorId: "", method: "NAKIT", amount: "", description: "", posId: "" });
+  const [tahFormErrors, setTahFormErrors] = useState<{ tarih?: string; patientId?: string; doctorId?: string; method?: string; posId?: string; amount?: string }>({});
+  const [patientSearch, setPatientSearch] = useState("");
+  const [doctorSearch, setDoctorSearch] = useState("");
   const [tahSaving,    setTahSaving]    = useState(false);
   const [pmtSearch,    setPmtSearch]    = useState("");
   const [pmtFrom,      setPmtFrom]      = useState("");
   const [pmtTo,        setPmtTo]        = useState("");
 
   const loadPayments = useCallback(async () => {
-    const r = await fetch("/api/payments").catch(() => null);
+    const r = await fetch("/api/payments", { cache: "no-store" }).catch(() => null);
     if (r?.ok) { const d = await r.json(); setAllPayments(Array.isArray(d) ? d : []); }
   }, []);
 
   const submitTahsilat = async () => {
-    if (!tahForm.amount || Number(tahForm.amount) <= 0) { showToast("error", "Geçerli bir tutar giriniz"); return; }
-    if (!tahForm.doctorId) { showToast("error", "Lütfen bir doktor seçin"); return; }
+    const errors: { tarih?: string; patientId?: string; doctorId?: string; method?: string; posId?: string; amount?: string } = {};
+    if (!tahForm.tarih) errors.tarih = "Tarih zorunlu";
+    if (!tahForm.patientId) errors.patientId = "Hasta seçimi zorunlu";
+    if (!tahForm.doctorId) errors.doctorId = "Doktor seçimi zorunlu";
+    if (!tahForm.method) errors.method = "Ödeme yöntemi zorunlu";
+    if (requiresPos(tahForm.method) && !tahForm.posId) errors.posId = "Kart / mail order tahsilatı için POS seçimi zorunlu";
+    if (!tahForm.amount || Number(tahForm.amount) <= 0) errors.amount = "Geçerli bir tutar giriniz";
+    setTahFormErrors(errors);
+    if (Object.keys(errors).length > 0) return;
     setTahSaving(true);
-    const payload: Record<string, unknown> = { ...tahForm, amount: Number(tahForm.amount) };
-    if (!payload.patientId) delete payload.patientId;
+    const payload: Record<string, unknown> = {
+      ...tahForm,
+      createdAt: tahForm.tarih,
+      amount: Number(tahForm.amount),
+      description: tahForm.description || null,
+    };
+    delete payload.tarih;
+    if (!requiresPos(String(payload.method || ""))) delete payload.posId;
     if (!payload.posId)     delete payload.posId;
     const r = await fetch("/api/payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).catch(() => null);
     setTahSaving(false);
     if (r?.ok) {
       showToast("success", "Tahsilat kaydedildi");
       setShowTahForm(false);
-      setTahForm({ patientId: "", doctorId: "", method: "NAKIT", amount: "", description: "", posId: "" });
+      setTransactionOpen(false);
+      setTahForm({ tarih: todayIso(), patientId: "", doctorId: "", method: "NAKIT", amount: "", description: "", posId: "" });
+      setPatientSearch("");
+      setDoctorSearch("");
+      setTahFormErrors({});
       loadPayments(); refreshSummary();
     } else {
       const e = await r?.json().catch(() => ({}));
@@ -328,13 +422,18 @@ export default function MuhasebePage() {
   const [giderKats,     setGiderKats]     = useState<GiderKategori[]>([]);
   const [showGiderForm, setShowGiderForm] = useState(false);
   const [showCatMgr,    setShowCatMgr]    = useState(false);
+  useEscapeClose(() => setShowCatMgr(false), showCatMgr);
   const [newCatName,    setNewCatName]    = useState("");
+  const [editingCatNames, setEditingCatNames] = useState<Record<string, string>>({});
   const [giderForm,     setGiderForm]     = useState({
     tarih: new Date().toISOString().split("T")[0],
     categoryId: "", category: "", description: "",
     tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0",
+    // Seçilen kategori "Doktor Hakedişi" türündeyse (isDoctorPayout) doldurulur.
+    doctorId: "", donem: new Date().toISOString().slice(0, 7),
   });
   const [giderSaving, setGiderSaving] = useState(false);
+  const [giderFormErrors, setGiderFormErrors] = useState<{ tarih?: string; tutar?: string; category?: string; doctorId?: string; donem?: string }>({});
   const [expSearch,   setExpSearch]   = useState("");
   const [expFrom,     setExpFrom]     = useState("");
   const [expTo,       setExpTo]       = useState("");
@@ -343,41 +442,106 @@ export default function MuhasebePage() {
     const m3 = new Date(); m3.setMonth(m3.getMonth() - 3);
     const from = m3.toISOString().split("T")[0];
     const to   = new Date().toISOString().split("T")[0];
-    const r = await fetch(`/api/gider?from=${from}&to=${to}`).catch(() => null);
+    const r = await fetch(`/api/gider?from=${from}&to=${to}`, { cache: "no-store" }).catch(() => null);
     if (r?.ok) { const d = await r.json(); setAllExpenses(Array.isArray(d?.expenses) ? d.expenses : []); }
   }, []);
 
   const loadGiderKats = useCallback(async () => {
-    const r = await fetch("/api/gider-kategorileri").catch(() => null);
-    if (r?.ok) { const d = await r.json(); setGiderKats(Array.isArray(d) ? d : []); }
+    const r = await fetch("/api/gider-kategorileri", { cache: "no-store" }).catch(() => null);
+    if (r?.ok) {
+      const d = await r.json();
+      const list: GiderKategori[] = Array.isArray(d) ? d : [];
+      setGiderKats(list);
+      return list;
+    }
+    return [] as GiderKategori[];
   }, []);
+
+  const selectedGiderCategory = giderKats.find(c => c.id === giderForm.categoryId);
+  const isDoctorPayoutCategory = Boolean(selectedGiderCategory?.isDoctorPayout);
+
+  useEffect(() => {
+    if (isDoctorPayoutCategory && !(giderForm.yontem in DOCTOR_PAYOUT_METHOD_LABELS)) {
+      setGiderForm(f => ({ ...f, yontem: "NAKIT" }));
+    }
+  }, [isDoctorPayoutCategory, giderForm.yontem]);
+
+  // Doktor hakedişi ödemesi için: sadece hâlâ borcu olan, tamamlanmış (içinde
+  // bulunulan ay hariç) dönemler seçilebilir — geleceğe dönük veya zaten
+  // hesabı kapanmış bir ay için ödeme kaydedilemez.
+  type PayoutPeriod = { year: number; month: number; kalan: number };
+  const [payoutPeriods, setPayoutPeriods] = useState<PayoutPeriod[]>([]);
+  const [payoutPeriodsLoading, setPayoutPeriodsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isDoctorPayoutCategory || !giderForm.doctorId) { setPayoutPeriods([]); return; }
+    let cancelled = false;
+    setPayoutPeriodsLoading(true);
+    fetch(`/api/hakedis?doctorId=${giderForm.doctorId}&months=12`, { cache: "no-store" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => {
+        if (cancelled || !d?.months) return;
+        const now = new Date();
+        const currentKey = `${now.getFullYear()}-${now.getMonth() + 1}`;
+        const payable = (d.months as { year: number; month: number; kalan: number }[])
+          .filter(m => `${m.year}-${m.month}` !== currentKey && m.kalan > 0.5);
+        setPayoutPeriods(payable);
+      })
+      .catch(() => { if (!cancelled) setPayoutPeriods([]); })
+      .finally(() => { if (!cancelled) setPayoutPeriodsLoading(false); });
+    return () => { cancelled = true; };
+  }, [isDoctorPayoutCategory, giderForm.doctorId]);
+
+  const selectedPayoutPeriod = payoutPeriods.find(p => `${p.year}-${String(p.month).padStart(2, "0")}` === giderForm.donem);
 
   const submitGider = async () => {
     const isManualCat = giderForm.categoryId === "__manual" || giderForm.categoryId === "";
     const catValid    = isManualCat ? giderForm.category.trim() !== "" : true;
-    if (!giderForm.tarih || !giderForm.tutar || Number(giderForm.tutar) <= 0 || !catValid) {
-      showToast("error", "Tarih, geçerli tutar ve kategori zorunlu"); return;
+    const errors: { tarih?: string; tutar?: string; category?: string; doctorId?: string; donem?: string } = {};
+    if (!giderForm.tarih) errors.tarih = "Tarih zorunlu";
+    if (!giderForm.tutar || Number(giderForm.tutar) <= 0) errors.tutar = "Geçerli bir tutar giriniz";
+    if (!catValid) errors.category = "Gider türü zorunlu";
+    if (isDoctorPayoutCategory) {
+      if (!giderForm.doctorId) errors.doctorId = "Doktor seçimi zorunlu";
+      if (!giderForm.donem) errors.donem = "Hakediş dönemi (ay) zorunlu";
+      if (!errors.tutar && selectedPayoutPeriod && Number(giderForm.tutar) > selectedPayoutPeriod.kalan + 0.01) {
+        errors.tutar = `Tutar, kalan hakedişten (${fmt(selectedPayoutPeriod.kalan)}) fazla olamaz`;
+      }
     }
+    setGiderFormErrors(errors);
+    if (Object.keys(errors).length > 0) return;
     setGiderSaving(true);
     const realCatId = (giderForm.categoryId && giderForm.categoryId !== "__manual") ? giderForm.categoryId : null;
     const cat = realCatId
       ? giderKats.find(c => c.id === realCatId)?.name || giderForm.category
       : giderForm.category.trim();
+    const [payoutYear, payoutMonth] = giderForm.donem.split("-");
     const r = await fetch("/api/gider", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         tarih: giderForm.tarih, categoryId: realCatId,
         category: cat, description: giderForm.description || null,
         tutar: Number(giderForm.tutar), yontem: giderForm.yontem,
-        faturaNo: giderForm.faturaNo || null, kdvOrani: Number(giderForm.kdvOrani),
+        faturaNo: isDoctorPayoutCategory ? null : (giderForm.faturaNo || null),
+        kdvOrani: isDoctorPayoutCategory ? 0 : Number(giderForm.kdvOrani),
+        ...(isDoctorPayoutCategory ? {
+          doctorId: giderForm.doctorId,
+          periodYear: Number(payoutYear),
+          periodMonth: Number(payoutMonth),
+        } : {}),
       }),
     }).catch(() => null);
     setGiderSaving(false);
     if (r?.ok) {
-      showToast("success", "Gider kaydedildi");
+      showToast("success", isDoctorPayoutCategory ? "Hakediş ödemesi kaydedildi" : "Gider kaydedildi");
       setShowGiderForm(false);
-      setGiderForm({ tarih: new Date().toISOString().split("T")[0], categoryId: "", category: "", description: "", tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0" });
+      setTransactionOpen(false);
+      const payoutDoctorId = giderForm.doctorId;
+      setGiderForm({ tarih: new Date().toISOString().split("T")[0], categoryId: "", category: "", description: "", tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0", doctorId: "", donem: new Date().toISOString().slice(0, 7) });
+      setGiderTurSearch("");
+      setGiderFormErrors({});
       loadExpenses(); refreshSummary();
+      if (isDoctorPayoutCategory && (payoutDoctorId === selectedDoctor)) { loadDoctorFinance(selectedDoctor); loadHakedis(selectedDoctor); }
     } else {
       const e = await r?.json().catch(() => ({}));
       showToast("error", e?.error || "Gider kaydedilemedi");
@@ -385,7 +549,12 @@ export default function MuhasebePage() {
   };
 
   const deleteGider = async (id: string) => {
-    if (!confirm("Bu gider kaydını silmek istediğinizden emin misiniz?")) return;
+    if (!(await confirmDialog({
+      title: "Gider kaydı silinecek",
+      message: "Bu işlem muhasebe geçmişinden gider kaydını kaldırır. Yanlış kayıt düzeltmelerinde açıklamalı yeni kayıt oluşturmanız önerilir. Devam etmek istiyor musunuz?",
+      danger: true,
+      confirmText: "Gideri Sil",
+    }))) return;
     const r = await fetch(`/api/gider/${id}`, { method: "DELETE" }).catch(() => null);
     if (r?.ok) { showToast("success", "Gider silindi"); loadExpenses(); refreshSummary(); }
     else showToast("error", "Silme işlemi başarısız");
@@ -400,6 +569,22 @@ export default function MuhasebePage() {
     setNewCatName(""); loadGiderKats();
   };
 
+  const updateExpenseTypeName = async (id: string, currentName: string) => {
+    const name = (editingCatNames[id] ?? currentName).trim();
+    if (!name || name === currentName) return;
+    const r = await fetch(`/api/gider-kategorileri/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }).catch(() => null);
+    if (r?.ok) {
+      showToast("success", "Gider türü güncellendi");
+      loadGiderKats();
+    } else {
+      showToast("error", "Gider türü güncellenemedi");
+    }
+  };
+
   const filteredExpenses = useMemo(() => allExpenses.filter(e => {
     if (expSearch && !e.category?.toLowerCase().includes(expSearch.toLowerCase()) && !e.description?.toLowerCase().includes(expSearch.toLowerCase())) return false;
     if (expFrom && e.tarih < expFrom) return false;
@@ -407,12 +592,98 @@ export default function MuhasebePage() {
     return true;
   }), [allExpenses, expSearch, expFrom, expTo]);
 
+  // ── Unified transaction entry ────────────────────────────────────────────
+  const [transactionOpen, setTransactionOpen] = useState(false);
+  const [transactionKind, setTransactionKind] = useState<TransactionKind>("gelir");
+  const [expenseEntryKind, setExpenseEntryKind] = useState<ExpenseEntryKind>("normal");
+  const [firmaPayForm, setFirmaPayForm] = useState({
+    firmaId: "",
+    tarih: todayIso(),
+    tutar: "",
+    yontem: "HAVALE_EFT",
+    faturaNo: "",
+    kdvOrani: "0",
+    aciklama: "",
+  });
+  const [giderTurSearch, setGiderTurSearch] = useState("");
+  const [editGiderTurSearch, setEditGiderTurSearch] = useState("");
+  const [firmaPayErrors, setFirmaPayErrors] = useState<{ firmaId?: string; tutar?: string; tarih?: string }>({});
+  const [firmaPaySaving, setFirmaPaySaving] = useState(false);
+
+  useEscapeClose(() => setTransactionOpen(false), transactionOpen);
+
+  const openTransaction = useCallback((kind: TransactionKind | "firma" = "gelir") => {
+    setTransactionKind(kind === "firma" ? "gider" : kind);
+    setExpenseEntryKind(kind === "firma" ? "firma" : "normal");
+    setTransactionOpen(true);
+    if (kind === "gelir") { ensurePatients(); ensurePos(); }
+    if (kind === "gider") loadGiderKats();
+    if (kind === "firma") refreshSummary();
+  }, [ensurePatients, ensurePos, loadGiderKats, refreshSummary]);
+
+  const submitFirmaPayment = async () => {
+    const errors: { firmaId?: string; tutar?: string; tarih?: string } = {};
+    if (!firmaPayForm.firmaId) errors.firmaId = "Firma seçimi zorunlu";
+    if (!firmaPayForm.tarih) errors.tarih = "Tarih zorunlu";
+    if (!firmaPayForm.tutar || Number(firmaPayForm.tutar) <= 0) errors.tutar = "Geçerli bir ödeme tutarı giriniz";
+    setFirmaPayErrors(errors);
+    if (Object.keys(errors).length > 0) return;
+
+    setFirmaPaySaving(true);
+    const r = await fetch(`/api/firma/${firmaPayForm.firmaId}/islemler`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tarih: firmaPayForm.tarih,
+        islemTipi: "ODEME",
+        tutar: Number(firmaPayForm.tutar),
+        yontem: firmaPayForm.yontem,
+        faturaNo: firmaPayForm.faturaNo || null,
+        kdvOrani: Number(firmaPayForm.kdvOrani || 0),
+        aciklama: firmaPayForm.aciklama || "Muhasebe merkezinden firma ödemesi",
+      }),
+    }).catch(() => null);
+    setFirmaPaySaving(false);
+
+    if (r?.ok) {
+      showToast("success", "Firma ödemesi kaydedildi");
+      setTransactionOpen(false);
+      setFirmaPayForm({ firmaId: "", tarih: todayIso(), tutar: "", yontem: "HAVALE_EFT", faturaNo: "", kdvOrani: "0", aciklama: "" });
+      setFirmaPayErrors({});
+      refreshSummary();
+    } else {
+      const e = await r?.json().catch(() => ({}));
+      showToast("error", e?.error || e?.message || "Firma ödemesi kaydedilemedi");
+    }
+  };
+
   // ── TAB: Taksit / Alacak ──────────────────────────────────────────────────
   const [taksitPlans,   setTaksitPlans]   = useState<TaksitPlan[]>([]);
   const [taksitSubTab,  setTaksitSubTab]  = useState<"liste" | "olustur" | "hatirlatma">("liste");
+  // Alacaklar sekmesi: "Tüm Bakiyeler" (taksit dışı dahil tüm hasta borçları) vs "Taksitli Planlar"
+  const [alacakView, setAlacakView] = useState<"bakiye" | "taksit">(() =>
+    searchParams.get("tab") === "taksit" ? "taksit" : "bakiye"
+  );
   const [taksitLoading, setTaksitLoading] = useState(false);
   const [taksitSearch,  setTaksitSearch]  = useState("");
+  const [debouncedTaksitSearch, setDebouncedTaksitSearch] = useState("");
   const [taksitStatus,  setTaksitStatus]  = useState("HEPSI");
+  const [taksitPage,      setTaksitPage]      = useState(1);
+  const [taksitPageCount, setTaksitPageCount] = useState(1);
+  const [taksitTotal,     setTaksitTotal]     = useState(0);
+  const [taksitStats, setTaksitStats] = useState({
+    geciken: 0, toplamKalan: 0, bekleyen: 0, bugunVade: 0,
+    aging4: [] as { key: string; amount: number; count: number }[],
+    aging5: [] as { amount: number; count: number }[],
+  });
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedTaksitSearch(taksitSearch.trim());
+      setTaksitPage(1);
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [taksitSearch]);
   const [selectedPlan,  setSelectedPlan]  = useState<TaksitPlan | null>(null);
   const [planDetail,    setPlanDetail]    = useState<TaksitPlan | null>(null);
   const [showOdeModal,  setShowOdeModal]  = useState<TaksitItem | null>(null);
@@ -426,17 +697,57 @@ export default function MuhasebePage() {
   const [showRemModal, setShowRemModal] = useState(false);
   const [remForm,      setRemForm]      = useState({ patientId: "", note: "", reminderDate: new Date().toISOString().split("T")[0] });
 
+  useEscapeClose(() => setShowOdeModal(null), Boolean(showOdeModal));
+  useEscapeClose(() => setShowRemModal(false), showRemModal);
+
+  const patientSearchOptions = useMemo(() => {
+    const q = patientSearch.trim().toLowerCase();
+    return patients
+      .filter(p => !q || p.fullName.toLowerCase().includes(q))
+      .slice(0, 40);
+  }, [patientSearch, patients]);
+
+  const doctorSearchOptions = useMemo(() => {
+    const q = doctorSearch.trim().toLowerCase();
+    return taksitDoctors
+      .filter(d => !q || d.fullName.toLowerCase().includes(q))
+      .slice(0, 30);
+  }, [doctorSearch, taksitDoctors]);
+
+  const expenseTypeOptions = useMemo(() => {
+    const q = giderTurSearch.trim().toLowerCase();
+    return giderKats
+      .filter(c => c.isActive && (!q || c.name.toLowerCase().includes(q)))
+      .slice(0, 40);
+  }, [giderKats, giderTurSearch]);
+
+  const editExpenseTypeOptions = useMemo(() => {
+    const q = editGiderTurSearch.trim().toLowerCase();
+    return giderKats
+      .filter(c => c.isActive && (!q || c.name.toLowerCase().includes(q)))
+      .slice(0, 40);
+  }, [editGiderTurSearch, giderKats]);
+
   const loadTaksitPlans = useCallback(async () => {
     setTaksitLoading(true);
     try {
-      const qs = taksitStatus !== "HEPSI" ? `?status=${taksitStatus}` : "";
-      const r = await fetch(`/api/taksit-plani${qs}`); const d = await r.json();
-      setTaksitPlans(Array.isArray(d) ? d : []);
+      const params = new URLSearchParams({ page: String(taksitPage) });
+      if (taksitStatus !== "HEPSI") params.set("status", taksitStatus);
+      if (debouncedTaksitSearch) params.set("q", debouncedTaksitSearch);
+      const r = await fetch(`/api/taksit-plani?${params.toString()}`, { cache: "no-store" });
+      if (!r.ok) { showToast("error", "Taksit planları yüklenemedi."); setTaksitPlans([]); return; }
+      const d = await r.json();
+      setTaksitPlans(Array.isArray(d.items) ? d.items : []);
+      setTaksitTotal(d.total || 0);
+      setTaksitPageCount(d.pageCount || 1);
+      if (d.stats) setTaksitStats(d.stats);
     } finally { setTaksitLoading(false); }
-  }, [taksitStatus]);
+  }, [taksitStatus, debouncedTaksitSearch, taksitPage, showToast]);
+
+  useEffect(() => { setTaksitPage(1); }, [taksitStatus]);
 
   const loadReminders = useCallback(async () => {
-    const r = await fetch("/api/reminder?status=HEPSI"); const d = await r.json();
+    const r = await fetch("/api/reminder?status=HEPSI", { cache: "no-store" }); const d = await r.json();
     setReminders(Array.isArray(d) ? d : []);
   }, []);
 
@@ -521,7 +832,7 @@ export default function MuhasebePage() {
   };
 
   const cancelPlan = async (id: string) => {
-    if (!confirm("Bu planı iptal etmek istediğinizden emin misiniz?")) return;
+    if (!(await confirmDialog({ message: "Bu planı iptal etmek istediğinizden emin misiniz?", danger: true, confirmText: "İptal Et" }))) return;
     const r = await fetch(`/api/taksit-plani/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "IPTAL" }) }).catch(() => null);
     if (r?.ok) {
       showToast("success", "Plan iptal edildi");
@@ -532,22 +843,289 @@ export default function MuhasebePage() {
     }
   };
 
-  const taksitKPIs = useMemo(() => {
-    const geciken     = taksitPlans.filter(p => p.taksitler.some(t => t.status === "GECIKTI")).length;
-    const toplamKalan = taksitPlans.filter(p => p.status !== "TAMAMLANDI" && p.status !== "IPTAL").flatMap(p => p.taksitler).reduce((s, t) => s + Number(t.kalan), 0);
-    const bekleyen    = taksitPlans.flatMap(p => p.taksitler).filter(t => t.status === "BEKLIYOR").length;
-    const bugunVade   = taksitPlans.flatMap(p => p.taksitler).filter(t => {
-      const v = new Date(t.vadeDate); const now = new Date();
-      return t.status === "BEKLIYOR" && v.toDateString() === now.toDateString();
-    }).length;
-    return { geciken, toplamKalan, bekleyen, bugunVade };
-  }, [taksitPlans]);
+  // KPI ve yaşlandırma verileri artık /api/taksit-plani tarafından sunucuda
+  // (tüm eşleşen kayıtlar üzerinden) hesaplanıp `stats` alanında dönüyor —
+  // taksitPlans artık sadece geçerli sayfayı içeriyor, tam liste değil.
+  const taksitKPIs = taksitStats;
 
-  const filteredTaksitPlans = useMemo(() => taksitPlans.filter(p => {
-    if (!taksitSearch) return true;
-    const q = taksitSearch.toLowerCase();
-    return p.patient.fullName.toLowerCase().includes(q) || p.doctor.fullName.toLowerCase().includes(q) || (p.baslik || "").toLowerCase().includes(q);
-  }), [taksitPlans, taksitSearch]);
+  const AGING4_META: Record<string, { label: string; tone: string; bg: string; border: string }> = {
+    current: { label: "Vadesi Gelmemiş", tone: "text-slate-700", bg: "bg-slate-50", border: "border-slate-100" },
+    d0_30: { label: "0-30 Gün", tone: "text-amber-700", bg: "bg-amber-50", border: "border-amber-100" },
+    d31_60: { label: "31-60 Gün", tone: "text-orange-700", bg: "bg-orange-50", border: "border-orange-100" },
+    d60p: { label: "60+ Gün", tone: "text-red-700", bg: "bg-red-50", border: "border-red-100" },
+  };
+  const alacakAging = useMemo(
+    () => (taksitStats.aging4 || []).map((b) => ({ ...AGING4_META[b.key], ...b })),
+    [taksitStats]
+  );
+
+  const recentLedger = useMemo(() => {
+    const gelirRows = kasaToday.payments.map((payment) => ({
+      id: `p-${payment.id}`,
+      date: payment.createdAt,
+      type: "Tahsilat",
+      name: payment.patient?.fullName || payment.description || "Hasta tahsilatı",
+      method: METHOD_LABELS[payment.method] || payment.method,
+      amount: Number(payment.amount || 0),
+      tone: "text-emerald-700",
+      sign: "+",
+    }));
+    const giderRows = expenseMonth.expenses.map((expense) => ({
+      id: `e-${expense.id}`,
+      date: expense.tarih,
+      type: "Gider",
+      name: expense.category || stripSystemTags(expense.description) || "Klinik gideri",
+      method: expense.yontem ? (METHOD_LABELS[expense.yontem] || expense.yontem) : "-",
+      amount: Number(expense.tutar || 0),
+      tone: "text-red-700",
+      sign: "-",
+    }));
+    return [...gelirRows, ...giderRows]
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .slice(0, 10);
+  }, [expenseMonth.expenses, kasaToday.payments]);
+
+  const [ledgerSearch, setLedgerSearch] = useState("");
+  const [ledgerType, setLedgerType] = useState<"HEPSI" | "TAHSILAT" | "GIDER">("HEPSI");
+  const [ledgerMethod, setLedgerMethod] = useState("HEPSI");
+  const [ledgerFrom, setLedgerFrom] = useState("");
+  const [ledgerTo, setLedgerTo] = useState("");
+  const ledgerRows = useMemo(() => {
+    // Eski "Hakediş Öde" akışıyla oluşturulmuş (patientId'siz, doctorId'li) Payment
+    // kayıtları burada hariç tutulur — bunlar gelir değil, kurumun doktora yaptığı
+    // bir ödemedir (artık Gider/doktor hakedişi akışı üzerinden kaydediliyor).
+    const gelirRows = allPayments.filter((payment) => payment.patient || !payment.doctorId).map((payment) => ({
+      id: `p-${payment.id}`,
+      rawId: payment.id,
+      date: payment.createdAt,
+      type: "TAHSILAT" as const,
+      label: "Tahsilat",
+      name: payment.patient?.fullName || "Hasta seçilmemiş",
+      description: stripFinanceTags(payment.description),
+      incomeType: "Hasta Tahsilatı",
+      method: METHOD_LABELS[payment.method] || payment.method,
+      amount: Number(payment.amount || 0),
+      tone: "text-emerald-700",
+      sign: "+",
+      editable: true,
+      deletable: true,
+      methodRaw: payment.method,
+      source: payment,
+    }));
+    const giderRows = allExpenses.map((expense) => ({
+      id: `e-${expense.id}`,
+      rawId: expense.id,
+      date: expense.tarih,
+      type: "GIDER" as const,
+      label: "Gider",
+      name: expense.category || "Klinik gideri",
+      description: stripFinanceTags(expense.description) || expense.faturaNo || "",
+      incomeType: "",
+      method: expense.yontem ? (METHOD_LABELS[expense.yontem] || expense.yontem) : "-",
+      amount: Number(expense.tutar || 0),
+      tone: "text-red-700",
+      sign: "-",
+      editable: true,
+      deletable: true,
+      methodRaw: expense.yontem || "NAKIT",
+      source: expense,
+    }));
+    const q = ledgerSearch.trim().toLowerCase();
+    return [...gelirRows, ...giderRows]
+      .filter((row) => ledgerType === "HEPSI" || row.type === ledgerType)
+      .filter((row) => ledgerMethod === "HEPSI" || row.methodRaw === ledgerMethod)
+      .filter((row) => {
+        const day = row.date.substring(0, 10);
+        if (ledgerFrom && day < ledgerFrom) return false;
+        if (ledgerTo && day > ledgerTo) return false;
+        return true;
+      })
+      .filter((row) => !q || row.name.toLowerCase().includes(q) || row.description.toLowerCase().includes(q) || row.method.toLowerCase().includes(q))
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [allExpenses, allPayments, ledgerFrom, ledgerMethod, ledgerSearch, ledgerTo, ledgerType]);
+
+  const [editingKind, setEditingKind] = useState<"TAHSILAT" | "GIDER" | null>(null);
+  const [editingId, setEditingId] = useState("");
+  const [editPaymentForm, setEditPaymentForm] = useState({ tarih: "", amount: "", method: "NAKIT", description: "", posId: "", doctorId: "" });
+  const [editPaymentDoctorSearch, setEditPaymentDoctorSearch] = useState("");
+  const editPaymentDoctorOptions = useMemo(() => {
+    const q = editPaymentDoctorSearch.trim().toLowerCase();
+    return taksitDoctors
+      .filter(d => !q || d.fullName.toLowerCase().includes(q))
+      .slice(0, 30)
+      .map(d => ({ id: d.id, label: d.fullName }));
+  }, [editPaymentDoctorSearch, taksitDoctors]);
+  const [editExpenseForm, setEditExpenseForm] = useState({
+    tarih: "", categoryId: "", category: "", description: "",
+    tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0", doctorId: "" as string | null,
+  });
+  const [editSaving, setEditSaving] = useState(false);
+  useEscapeClose(() => setEditingKind(null), Boolean(editingKind));
+
+  const startEditPayment = (payment: Payment) => {
+    ensurePos();
+    setEditingKind("TAHSILAT");
+    setEditingId(payment.id);
+    setEditPaymentForm({
+      tarih: payment.createdAt?.substring(0, 10) || todayIso(),
+      amount: String(Number(payment.amount || 0)),
+      method: payment.method || "NAKIT",
+      description: stripFinanceTags(payment.description),
+      posId: payment.posId || "",
+      doctorId: payment.doctorId || "",
+    });
+    setEditPaymentDoctorSearch(payment.doctor?.fullName || "");
+  };
+
+  const startEditExpense = (expense: Expense) => {
+    loadGiderKats();
+    setEditingKind("GIDER");
+    setEditingId(expense.id);
+    setEditExpenseForm({
+      tarih: expense.tarih?.substring(0, 10) || new Date().toISOString().split("T")[0],
+      categoryId: expense.categoryId || "",
+      category: expense.category || "",
+      description: stripSystemTags(expense.description) || "",
+      tutar: String(Number(expense.tutar || 0)),
+      yontem: expense.yontem || "NAKIT",
+      faturaNo: expense.faturaNo || "",
+      kdvOrani: String(expense.kdvOrani ?? 0),
+      doctorId: expense.doctorId || null,
+    });
+    setEditGiderTurSearch(expense.category || "");
+  };
+
+  const savePaymentEdit = async () => {
+    if (!editingId) return;
+    if (!editPaymentForm.tarih || !editPaymentForm.method || !editPaymentForm.amount || Number(editPaymentForm.amount) <= 0) {
+      showToast("error", "Tarih, ödeme yöntemi ve geçerli tahsilat tutarı zorunlu");
+      return;
+    }
+    if (requiresPos(editPaymentForm.method) && !editPaymentForm.posId) {
+      showToast("error", "Kart / mail order tahsilatı için POS seçimi zorunlu");
+      return;
+    }
+    setEditSaving(true);
+    const r = await fetch(`/api/payments/${editingId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        amount: Number(editPaymentForm.amount),
+        createdAt: editPaymentForm.tarih,
+        method: editPaymentForm.method,
+        description: editPaymentForm.description || null,
+        posId: requiresPos(editPaymentForm.method) ? (editPaymentForm.posId || null) : null,
+        doctorId: editPaymentForm.doctorId || null,
+      }),
+    }).catch(() => null);
+    setEditSaving(false);
+    if (r?.ok) {
+      showToast("success", "Tahsilat güncellendi");
+      setEditingKind(null);
+      loadPayments();
+      refreshSummary();
+    } else {
+      const e = await r?.json().catch(() => ({}));
+      showToast("error", e?.message || "Tahsilat güncellenemedi");
+    }
+  };
+
+  const saveExpenseEdit = async () => {
+    if (!editingId) return;
+    if (!editExpenseForm.tarih || !editExpenseForm.tutar || Number(editExpenseForm.tutar) <= 0 || !editExpenseForm.category.trim()) {
+      showToast("error", "Tarih, gider türü ve geçerli tutar zorunlu");
+      return;
+    }
+    setEditSaving(true);
+    const r = await fetch(`/api/gider/${editingId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tarih: editExpenseForm.tarih,
+        categoryId: editExpenseForm.categoryId || null,
+        category: editExpenseForm.category.trim(),
+        description: editExpenseForm.description || null,
+        tutar: Number(editExpenseForm.tutar),
+        yontem: editExpenseForm.yontem,
+        faturaNo: editExpenseForm.doctorId ? null : (editExpenseForm.faturaNo || null),
+        kdvOrani: editExpenseForm.doctorId ? 0 : Number(editExpenseForm.kdvOrani || 0),
+      }),
+    }).catch(() => null);
+    setEditSaving(false);
+    if (r?.ok) {
+      showToast("success", "Gider güncellendi");
+      setEditingKind(null);
+      loadExpenses();
+      refreshSummary();
+    } else {
+      const e = await r?.json().catch(() => ({}));
+      showToast("error", e?.error || "Gider güncellenemedi");
+    }
+  };
+
+  const deletePayment = async (id: string) => {
+    if (!(await confirmDialog({
+      title: "Tahsilat silinecek",
+      message: "Bu tahsilat kaydı ve bağlı taksit etkileri geri alınır. Devam etmek istiyor musunuz?",
+      danger: true,
+      confirmText: "Tahsilatı Sil",
+    }))) return;
+    const r = await fetch(`/api/payments/${id}`, { method: "DELETE" }).catch(() => null);
+    if (r?.ok) { showToast("success", "Tahsilat silindi"); loadPayments(); refreshSummary(); }
+    else showToast("error", "Tahsilat silinemedi");
+  };
+
+  const exportRows = useMemo(() => ledgerRows.map(row => ({
+    tarih: fmtDate(row.date),
+    tip: row.label,
+    ad: row.name,
+    tur: row.type === "TAHSILAT" ? row.incomeType : row.name,
+    aciklama: row.description || "-",
+    yontem: row.method,
+    tutar: `${row.sign}${fmt(row.amount)}`,
+  })), [ledgerRows]);
+
+  const escapeCell = (value: unknown) => String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+
+  const exportLedgerExcel = () => {
+    const headers = ["Tarih", "Tip", "Ad", "Tür", "Açıklama", "Yöntem", "Tutar"];
+    const body = exportRows.map(row => [row.tarih, row.tip, row.ad, row.tur, row.aciklama, row.yontem, row.tutar]);
+    const html = `
+      <html><head><meta charset="UTF-8" />
+      <style>
+        table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:11pt;width:100%}
+        th{background:#111827;color:#fff;text-align:left;padding:8px;border:1px solid #d1d5db}
+        td{padding:7px;border:1px solid #d1d5db;mso-number-format:"\\@";}
+        .amount{text-align:right;font-weight:700}
+        .title{font-size:16pt;font-weight:700;margin-bottom:10px}
+      </style></head><body>
+      <div class="title">Muhasebe Defteri</div>
+      <table><thead><tr>${headers.map(h => `<th>${escapeCell(h)}</th>`).join("")}</tr></thead>
+      <tbody>${body.map(row => `<tr>${row.map((cell, idx) => `<td class="${idx === 6 ? "amount" : ""}">${escapeCell(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>
+      </body></html>`;
+    const blob = new Blob(["\uFEFF" + html], { type: "application/vnd.ms-excel;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `muhasebe-defteri-${todayIso()}.xls`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const exportLedgerPdf = () => {
+    const doc = createPdfDoc("l");
+    addPdfTitle(doc, "Muhasebe Defteri", `Oluşturma tarihi: ${new Date().toLocaleString("tr-TR")} · Kayıt sayısı: ${exportRows.length}`);
+    addPdfSection(doc, 28, "Hareketler", ["Tarih", "Tip", "Ad", "Tür", "Açıklama", "Yöntem", "Tutar"],
+      exportRows.map(row => [row.tarih, row.tip, row.ad, row.tur, row.aciklama, row.yontem, row.tutar]));
+    doc.save(`muhasebe-defteri-${todayIso()}.pdf`);
+  };
+
+  // Arama artık /api/taksit-plani?q= ile sunucuda yapılıyor (bkz. debouncedTaksitSearch),
+  // bu yüzden taksitPlans zaten arama+durum filtresi uygulanmış ilgili sayfayı içeriyor.
+  const filteredTaksitPlans = taksitPlans;
 
   // ── TAB: Tedarikçi / Cari ─────────────────────────────────────────────────
   const [cariSearch, setCariSearch] = useState("");
@@ -556,24 +1134,123 @@ export default function MuhasebePage() {
   // ── TAB: Hakedişler ──────────────────────────────────────────────────────
   const [hakDoctors,     setHakDoctors]     = useState<Doctor[]>([]);
   const [selectedDoctor, setSelectedDoctor] = useState("");
+  const [hakedisDoctorSearch, setHakedisDoctorSearch] = useState("");
+  const [hakFrom, setHakFrom] = useState(() => { const d = new Date(); d.setDate(1); return d.toISOString().split("T")[0]; });
+  const [hakTo, setHakTo] = useState(() => new Date().toISOString().split("T")[0]);
   const [doctorFinance,  setDoctorFinance]  = useState<Record<string, unknown> | null>(null);
   const [hakLoading,     setHakLoading]     = useState(false);
-  const [showHakOdeModal, setShowHakOdeModal] = useState(false);
-  const [hakOdeForm,      setHakOdeForm]      = useState({ tutar: "", aciklama: "" });
-  const [hakOdeSaving,    setHakOdeSaving]    = useState(false);
+  type HakedisMonth = { year: number; month: number; hakedilen: number; odenen: number; kalan: number };
+  const [hakedisMonths, setHakedisMonths] = useState<HakedisMonth[]>([]);
+  const [hakedisLoading, setHakedisLoading] = useState(false);
+
+  type HakedisDetail = {
+    doctor: { id: string; fullName: string };
+    year: number; month: number;
+    rates: { kkYuzde: number; genelYuzde: number; maasYuzde: number };
+    summary: { hakedilen: number; odenen: number; kalan: number };
+    breakdown: { ciro: number; kk: number; kkMasraf: number; genelMasraf: number; labCost: number; toplamGider: number; brut: number; hakedilen: number };
+    examinations: { id: string; tarih: string; hasta: string; tedavi: string; dis: string | null; tutar: number }[];
+    patientPayments: { id: string; tarih: string; hasta: string; yontem: string; tutar: number }[];
+    labInvoices: { id: string; tarih: string; lab: string; kalem: string; tutar: number }[];
+    payoutExpenses: { id: string; tarih: string; tutar: number; aciklama: string | null; yontem: string }[];
+  };
+  const [hakedisDetailOpen, setHakedisDetailOpen] = useState(false);
+  const [hakedisDetail, setHakedisDetail] = useState<HakedisDetail | null>(null);
+  const [hakedisDetailLoading, setHakedisDetailLoading] = useState(false);
+  useEscapeClose(() => setHakedisDetailOpen(false), hakedisDetailOpen);
+
+  const openHakedisDetail = async (doctorId: string, year: number, month: number) => {
+    setHakedisDetailOpen(true);
+    setHakedisDetailLoading(true);
+    setHakedisDetail(null);
+    const r = await fetch(`/api/hakedis/detay?doctorId=${doctorId}&year=${year}&month=${month}`, { cache: "no-store" }).catch(() => null);
+    if (r?.ok) setHakedisDetail(await r.json());
+    else showToast("error", "Hakediş detayı yüklenemedi");
+    setHakedisDetailLoading(false);
+  };
+
+  const hakedisDetailFileName = hakedisDetail
+    ? `hakedis-${hakedisDetail.doctor.fullName.replace(/\s+/g, "-")}-${hakedisDetail.year}-${String(hakedisDetail.month).padStart(2, "0")}`
+    : "hakedis-detay";
+
+  const hakedisBreakdownRows = (d: HakedisDetail): (string | number)[][] => [
+    ["Toplam Ciro (Muayene/Tedavi)", fmt(d.breakdown.ciro)],
+    [`Kredi Kartı Tahsilatı (KK masrafı %${d.rates.kkYuzde} üzerinden hesaplanır)`, fmt(d.breakdown.kk)],
+    [`KK Masrafı (Kredi Kartı Tahsilatı × %${d.rates.kkYuzde})`, "-" + fmt(d.breakdown.kkMasraf)],
+    [`Genel Gider Payı (Ciro × %${d.rates.genelYuzde})`, "-" + fmt(d.breakdown.genelMasraf)],
+    ["Laboratuvar Gideri", "-" + fmt(d.breakdown.labCost)],
+    ["Toplam Gider", "-" + fmt(d.breakdown.toplamGider)],
+    ["Brüt Kâr (Ciro - Toplam Gider)", fmt(d.breakdown.brut)],
+    [`Hakediş (Brüt Kâr × %${d.rates.maasYuzde})`, fmt(d.breakdown.hakedilen)],
+  ];
+
+  const exportHakedisDetailExcel = () => {
+    if (!hakedisDetail) return;
+    const d = hakedisDetail;
+    const section = (title: string, headers: string[], rows: (string | number)[][]) => `
+      <p style="font-weight:700;font-size:13pt;margin:16px 0 6px">${escapeCell(title)}</p>
+      <table><thead><tr>${headers.map(h => `<th>${escapeCell(h)}</th>`).join("")}</tr></thead>
+      <tbody>${rows.length === 0
+        ? `<tr><td colspan="${headers.length}">Kayıt yok</td></tr>`
+        : rows.map(row => `<tr>${row.map((c, i) => `<td class="${i === row.length - 1 ? "amount" : ""}">${escapeCell(c)}</td>`).join("")}</tr>`).join("")
+      }</tbody></table>`;
+    const html = `
+      <html><head><meta charset="UTF-8" />
+      <style>
+        table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:10pt;width:100%;margin-bottom:8px}
+        th{background:#111827;color:#fff;text-align:left;padding:6px;border:1px solid #d1d5db}
+        td{padding:6px;border:1px solid #d1d5db;mso-number-format:"\\@";}
+        .amount{text-align:right;font-weight:700}
+        .title{font-size:16pt;font-weight:700}
+        .meta{color:#475569;margin-bottom:10px}
+      </style></head><body>
+      <div class="title">Hakediş Detayı — ${escapeCell(d.doctor.fullName)}</div>
+      <div class="meta">${AY_ADLARI[d.month - 1]} ${d.year} · Hakedilen: ${fmt(d.summary.hakedilen)} · Ödenen: ${fmt(d.summary.odenen)} · Kalan: ${fmt(d.summary.kalan)}</div>
+      ${section("Hakediş Hesaplama Dökümü", ["Kalem", "Tutar"], hakedisBreakdownRows(d))}
+      ${section("Muayeneler / Tedaviler", ["Tarih", "Hasta", "Tedavi", "Diş", "Tutar"], d.examinations.map(e => [fmtDate(e.tarih), e.hasta, e.tedavi, e.dis || "-", fmt(e.tutar)]))}
+      ${section("Hasta Ödemeleri", ["Tarih", "Hasta", "Yöntem", "Tutar"], d.patientPayments.map(p => [fmtDate(p.tarih), p.hasta, METHOD_LABELS[p.yontem] || p.yontem, fmt(p.tutar)]))}
+      ${section("Laboratuvar Faturaları", ["Tarih", "Lab", "Kalem", "Tutar"], d.labInvoices.map(i => [fmtDate(i.tarih), i.lab, i.kalem, fmt(i.tutar)]))}
+      ${section("Doktora Yapılan Hakediş Ödemeleri", ["Tarih", "Açıklama", "Yöntem", "Tutar"], d.payoutExpenses.map(p => [fmtDate(p.tarih), p.aciklama || "-", METHOD_LABELS[p.yontem] || p.yontem, fmt(p.tutar)]))}
+      </body></html>`;
+    const blob = new Blob(["﻿" + html], { type: "application/vnd.ms-excel;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${hakedisDetailFileName}.xls`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  const exportHakedisDetailPdf = () => {
+    if (!hakedisDetail) return;
+    const d = hakedisDetail;
+    const doc = createPdfDoc("p");
+    addPdfTitle(doc, `Hakediş Detayı — ${d.doctor.fullName}`,
+      `${AY_ADLARI[d.month - 1]} ${d.year} · Hakedilen: ${fmt(d.summary.hakedilen)} · Ödenen: ${fmt(d.summary.odenen)} · Kalan: ${fmt(d.summary.kalan)}`);
+    let y = 28;
+    y = addPdfSection(doc, y, "Hakediş Hesaplama Dökümü", ["Kalem", "Tutar"], hakedisBreakdownRows(d));
+    y = addPdfSection(doc, y, "Muayeneler / Tedaviler", ["Tarih", "Hasta", "Tedavi", "Diş", "Tutar"],
+      d.examinations.map(e => [fmtDate(e.tarih), e.hasta, e.tedavi, e.dis || "-", fmt(e.tutar)]));
+    y = addPdfSection(doc, y, "Hasta Ödemeleri", ["Tarih", "Hasta", "Yöntem", "Tutar"],
+      d.patientPayments.map(p => [fmtDate(p.tarih), p.hasta, METHOD_LABELS[p.yontem] || p.yontem, fmt(p.tutar)]));
+    y = addPdfSection(doc, y, "Laboratuvar Faturaları", ["Tarih", "Lab", "Kalem", "Tutar"],
+      d.labInvoices.map(i => [fmtDate(i.tarih), i.lab, i.kalem, fmt(i.tutar)]));
+    addPdfSection(doc, y, "Doktora Yapılan Hakediş Ödemeleri", ["Tarih", "Açıklama", "Yöntem", "Tutar"],
+      d.payoutExpenses.map(p => [fmtDate(p.tarih), p.aciklama || "-", METHOD_LABELS[p.yontem] || p.yontem, fmt(p.tutar)]));
+    doc.save(`${hakedisDetailFileName}.pdf`);
+  };
 
   const summaryCards = [
-    { label: "Bugün Gelir",     value: fmt(kasaToday.total),       tone: "text-emerald-700", bg: "bg-emerald-50",  border: "border-emerald-100", banko: true  },
-    { label: "Bugün Net",       value: fmt(todayNet),              tone: todayNet >= 0 ? "text-blue-700" : "text-red-700", bg: "bg-blue-50", border: "border-blue-100", banko: true },
-    { label: "Gecikmiş Taksit", value: `${taksitOverdue.count} adet`, tone: "text-violet-700", bg: "bg-violet-50", border: "border-violet-100", banko: true  },
-    { label: "Tedarikçi Borcu", value: fmt(supplierDebt),          tone: "text-amber-700",   bg: "bg-amber-50",    border: "border-amber-100",   banko: false },
-    { label: "Bugün Gider",     value: fmt(expenseToday.total),    tone: "text-red-700",     bg: "bg-red-50",      border: "border-red-100",     banko: false },
-    { label: "Aylık Gider",     value: fmt(expenseMonth.total),    tone: "text-slate-800",   bg: "bg-slate-50",    border: "border-slate-100",   banko: false },
+    { label: "Bugün Gelir",     value: fmt(kasaToday.total),       tone: "text-emerald-700", bg: "bg-emerald-50",  border: "border-emerald-100", banko: true,  tab: "defter" as TabId | undefined },
+    { label: "Bugün Net",       value: fmt(todayNet),              tone: todayNet >= 0 ? "text-blue-700" : "text-red-700", bg: "bg-blue-50", border: "border-blue-100", banko: true, tab: undefined as TabId | undefined },
+    { label: "Gecikmiş Taksit", value: `${taksitOverdue.count} adet`, tone: "text-violet-700", bg: "bg-violet-50", border: "border-violet-100", banko: true,  tab: "alacak" as TabId | undefined, view: "taksit" as typeof alacakView, alert: taksitOverdue.count > 0 },
+    { label: "Firma Borcu",     value: fmt(supplierDebt),          tone: "text-amber-700",   bg: "bg-amber-50",    border: "border-amber-100",   banko: false, tab: undefined as TabId | undefined, alert: supplierDebt > 0 },
+    { label: "Bugün Gider",     value: fmt(expenseToday.total),    tone: "text-red-700",     bg: "bg-red-50",      border: "border-red-100",     banko: false, tab: "defter" as TabId | undefined },
+    { label: "Aylık Gider",     value: fmt(expenseMonth.total),    tone: "text-slate-800",   bg: "bg-slate-50",    border: "border-slate-100",   banko: false, tab: "defter" as TabId | undefined },
+    { label: "Kritik Stok",     value: `${criticalStock.length} kalem`, tone: "text-cyan-700", bg: "bg-cyan-50",  border: "border-cyan-100",    banko: false, tab: undefined as TabId | undefined, alert: criticalStock.length > 0 },
   ].filter(c => userRole !== "BANKO" || c.banko);
 
   const primarySummaryCards = summaryCards.slice(0, 4);
   const secondarySummaryCards = summaryCards.slice(4);
-
   useLayoutEffect(() => {
     const cached = readMuhasebeCache();
     if (!cached) return;
@@ -638,83 +1315,144 @@ export default function MuhasebePage() {
   const loadDoctorFinance = useCallback(async (id: string) => {
     if (!id) { setDoctorFinance(null); return; }
     setHakLoading(true);
-    const ms = new Date(); ms.setDate(1);
-    const from = ms.toISOString().split("T")[0]; const to = new Date().toISOString().split("T")[0];
-    const r = await fetch(`/api/finance?doctorId=${id}&from=${from}&to=${to}`);
+    const r = await fetch(`/api/finance?doctorId=${id}&from=${hakFrom}&to=${hakTo}`, { cache: "no-store" });
     setDoctorFinance(await r.json()); setHakLoading(false);
+  }, [hakFrom, hakTo]);
+
+  const loadHakedis = useCallback(async (id: string) => {
+    if (!id) { setHakedisMonths([]); return; }
+    setHakedisLoading(true);
+    const r = await fetch(`/api/hakedis?doctorId=${id}&months=12`, { cache: "no-store" }).catch(() => null);
+    if (r?.ok) { const d = await r.json(); setHakedisMonths(Array.isArray(d.months) ? d.months : []); }
+    else setHakedisMonths([]);
+    setHakedisLoading(false);
   }, []);
 
-  const handleHakOde = async () => {
-    if (!selectedDoctor) return;
-    if (!hakOdeForm.tutar || Number(hakOdeForm.tutar) <= 0) { showToast("error", "Geçerli bir tutar giriniz"); return; }
-    setHakOdeSaving(true);
-    const r = await fetch("/api/payments", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ doctorId: selectedDoctor, amount: Number(hakOdeForm.tutar), description: hakOdeForm.aciklama || "Hakediş ödemesi" }),
-    }).catch(() => null);
-    setHakOdeSaving(false);
-    if (r?.ok) {
-      showToast("success", "Hakediş ödemesi kaydedildi");
-      setShowHakOdeModal(false);
-      setHakOdeForm({ tutar: "", aciklama: "" });
-      loadDoctorFinance(selectedDoctor);
-    } else {
-      showToast("error", "Ödeme kaydedilemedi");
+  const openDoctorPayoutFor = async (doctorId: string, year: number, month: number, kalan: number) => {
+    openTransaction("gider");
+    setExpenseEntryKind("normal");
+    let kats = await loadGiderKats();
+    let payoutCat = kats.find(c => c.isDoctorPayout);
+    if (!payoutCat) {
+      // İlk hakediş ödemesi için "Doktor Hakedişi" kategorisi henüz yok — burada
+      // oluşturuyoruz ki doktor alanı formda hemen görünsün (gider POST'u da zaten
+      // aynısını kendiliğinden yapardı, ama burada önceden yaparsak kullanıcı
+      // formu açar açmaz doktor seçme alanını görür).
+      await fetch("/api/gider-kategorileri", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: "Doktor Hakedişi", isDoctorPayout: true }),
+      }).catch(() => null);
+      kats = await loadGiderKats();
+      payoutCat = kats.find(c => c.isDoctorPayout);
     }
+    setGiderTurSearch(payoutCat?.name || "Doktor Hakedişi");
+    setGiderForm(f => ({
+      ...f,
+      tarih: todayIso(),
+      categoryId: payoutCat?.id || "",
+      category: payoutCat?.name || "Doktor Hakedişi",
+      tutar: String(kalan),
+      doctorId,
+      donem: `${year}-${String(month).padStart(2, "0")}`,
+    }));
+    setGiderFormErrors({});
   };
 
-  useEffect(() => { if (selectedDoctor) loadDoctorFinance(selectedDoctor); }, [selectedDoctor, loadDoctorFinance]);
+  useEffect(() => {
+    if (selectedDoctor) { loadDoctorFinance(selectedDoctor); loadHakedis(selectedDoctor); }
+  }, [selectedDoctor, loadDoctorFinance, loadHakedis]);
+
+  useEffect(() => {
+    const legacyTab = searchParams.get("tab");
+    const requestedAction = searchParams.get("islem");
+    const action = requestedAction || legacyTab;
+    if (action === "gelir" || action === "gider") {
+      openTransaction(action);
+      router.replace("/muhasebe?tab=defter", { scroll: false });
+    }
+    if (action === "cari" || action === "firma") {
+      openTransaction("firma");
+      router.replace("/muhasebe?tab=defter", { scroll: false });
+    }
+  }, [openTransaction, router, searchParams]);
+
+  // finans sayfasındaki "+ Ödeme Yap" artık kendi (eski Payment tablosuna
+  // yazan) akışını kullanmıyor, doğrudan buraya yönlendiriyor — tek yazma
+  // yolu kalsın diye (bkz. denetim raporu Tema 2).
+  useEffect(() => {
+    const doctorIdParam = searchParams.get("doctorId");
+    if (searchParams.get("tab") === "hakedis" && doctorIdParam) {
+      setSelectedDoctor(doctorIdParam);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // ── Lazy tab data loading ─────────────────────────────────────────────────
   useEffect(() => {
-    if (activeTab === "gelir") {
+    if (activeTab === "genel") {
+      if (taksitPlans.length === 0) loadTaksitPlans();
+    }
+    if (activeTab === "defter" || activeTab === "gelir") {
       if (allPayments.length === 0) loadPayments();
     }
-    if (activeTab === "gider") {
+    if (activeTab === "defter" || activeTab === "gider") {
       if (allExpenses.length === 0) loadExpenses();
       if (giderKats.length === 0) loadGiderKats();
     }
-    if (activeTab === "taksit") {
+    if (activeTab === "alacak") {
       if (taksitPlans.length === 0) loadTaksitPlans();
+      if (alacaklar.length === 0) loadAlacaklar();
       ensurePatients();
     }
-    if (activeTab === "alacak") {
-      if (alacaklar.length === 0) loadAlacaklar();
-    }
     if (activeTab === "hakedis" && hakDoctors.length === 0)
-      fetch("/api/staff").then(r => r.json()).then(d => setHakDoctors((Array.isArray(d) ? d : []).filter((u: Doctor) => u.role === "DOKTOR"))).catch(() => {});
+      fetch("/api/staff").then(r => r.json()).then(d => setHakDoctors((Array.isArray(d) ? d : []).filter(isEffectiveDoctor))).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
   useEffect(() => { if (taksitSubTab === "hatirlatma") loadReminders(); }, [taksitSubTab, loadReminders]);
-  useEffect(() => { if (activeTab === "taksit") loadTaksitPlans(); }, [activeTab, loadTaksitPlans]);
+  useEffect(() => { if (activeTab === "alacak") loadTaksitPlans(); }, [activeTab, loadTaksitPlans]);
 
   // Başka bir personel ödeme/gider/taksit/borç kaydı ekleyince aktif sekmeyi
   // sessizce (sayfa yenilemeden) tazele.
+  const refreshActiveTab = useCallback(() => {
+    refreshSummary();
+    if (activeTab === "defter" || activeTab === "gelir") loadPayments();
+    if (activeTab === "defter" || activeTab === "gider") { loadExpenses(); loadGiderKats(); }
+    if (activeTab === "alacak") { loadTaksitPlans(); loadAlacaklar(); }
+    if (activeTab === "hakedis" && selectedDoctor) { loadDoctorFinance(selectedDoctor); loadHakedis(selectedDoctor); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, selectedDoctor]);
+
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const onRealtime = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        refreshSummary();
-        if (activeTab === "gelir") loadPayments();
-        if (activeTab === "gider") { loadExpenses(); loadGiderKats(); }
-        if (activeTab === "taksit") loadTaksitPlans();
-        if (activeTab === "alacak") loadAlacaklar();
-        if (activeTab === "hakedis" && selectedDoctor) loadDoctorFinance(selectedDoctor);
-      }, 500);
+      timer = setTimeout(refreshActiveTab, 500);
     };
     window.addEventListener("ks:realtime-sync", onRealtime);
     return () => {
       if (timer) clearTimeout(timer);
       window.removeEventListener("ks:realtime-sync", onRealtime);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTab, selectedDoctor]);
+  }, [refreshActiveTab]);
+
+  // Sekmeye geri dönüldüğünde (arka planda kaçırılmış olabilecek olayları) tazele.
+  useEffect(() => {
+    const refreshVisible = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      refreshActiveTab();
+    };
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => {
+      window.removeEventListener("focus", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
+    };
+  }, [refreshActiveTab]);
 
   // ─── RENDER ──────────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-5">
+    <div className="space-y-2">
 
       {/* Toast */}
       {toast && (
@@ -723,87 +1461,488 @@ export default function MuhasebePage() {
         </div>
       )}
 
-      {/* Compact Page Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-black text-slate-900">Muhasebe</h1>
-          <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-700">Bugün {fmt(kasaToday.total)}</span>
-          <span className="rounded-full bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-700">{taksitOverdue.count} gecikmiş taksit</span>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button onClick={() => changeTab("taksit")} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">Taksitler</button>
-          <button onClick={() => changeTab("cari")} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">Cari</button>
-          <button onClick={() => changeTab("gider")} className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">Gider</button>
-          <Link href="/rapor" className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700 shadow-sm hover:bg-blue-100">Raporlar</Link>
-        </div>
+      {/* Tab Navigation */}
+      <div className="sticky top-0 z-30 -mx-1 flex gap-1 overflow-x-auto border-b border-slate-200 bg-slate-50/95 px-1 py-2 backdrop-blur">
+        {visibleTabs.map(tab => (
+          <button key={tab.id} onClick={() => changeTab(tab.id)} title={tab.hint}
+            className={`relative shrink-0 rounded-xl px-4 py-2.5 text-sm font-black transition ${activeTab === tab.id ? "bg-slate-950 text-white shadow-sm" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100 hover:text-slate-900"}`}>
+            {tab.label}
+            {(tab.id === "alacak" && taksitOverdue.count > 0) && (
+              <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ${activeTab === tab.id ? "bg-white" : "bg-red-500"}`} />
+            )}
+          </button>
+        ))}
+        <button onClick={() => openTransaction("gelir")} className="ml-auto h-10 shrink-0 rounded-xl bg-slate-950 px-4 text-sm font-black text-white shadow-sm hover:bg-slate-800">İşlem Ekle</button>
       </div>
 
-      {/* KPI Summary */}
-      {loading
-        ? <div className="h-28 animate-pulse rounded-2xl bg-slate-100" />
-        : (
-          <div className="space-y-3">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              {primarySummaryCards.map(c => (
-                <article key={c.label} className={`${c.bg} ${c.border} rounded-2xl border p-4 shadow-sm`}>
-                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{c.label}</p>
-                  <p className={`mt-1 text-xl font-black ${c.tone}`}>{c.value}</p>
-                </article>
-              ))}
-            </div>
-            <details className="group rounded-2xl border border-slate-100 bg-white shadow-sm" open={userRole === "BANKO"}>
-              <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-semibold text-slate-700">
-                <span>Diğer finans göstergeleri</span>
-                <span className="text-xs font-medium text-slate-400 group-open:hidden">Aç</span>
-                <span className="text-xs font-medium text-slate-400 hidden group-open:inline">Kapat</span>
-              </summary>
-              <div className="grid grid-cols-1 gap-3 border-t border-slate-100 p-4 sm:grid-cols-2 xl:grid-cols-2">
-                {secondarySummaryCards.map(c => (
-                  <article key={c.label} className={`${c.bg} ${c.border} rounded-2xl border p-4`}>
-                    <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{c.label}</p>
-                    <p className={`mt-1 text-xl font-black ${c.tone}`}>{c.value}</p>
-                  </article>
-                ))}
-              </div>
-            </details>
-          </div>
-        )
-      }
+      {/* Page Header */}
 
-      {/* Alerts */}
-      {!loading && (taksitOverdue.count > 0 || supplierDebt > 0 || criticalStock.length > 0) && (
-        <div className="space-y-1.5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-          <p className="mb-2 text-xs font-black uppercase tracking-wide text-amber-800">Dikkat Gerektiren İşler</p>
-          {taksitOverdue.count > 0 && (
-            <div className="flex items-center justify-between rounded-xl bg-red-100 px-3 py-2 text-sm text-red-800">
-              <span><b>{taksitOverdue.count}</b> gecikmiş taksit — {fmt(taksitOverdue.amount)} tahsil edilmeli</span>
-              <button onClick={() => changeTab("taksit")} className="rounded-lg bg-white/70 px-2.5 py-1 text-xs font-bold hover:bg-white">Taksit →</button>
+      {transactionOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" {...backdropClose(() => setTransactionOpen(false))}>
+          <section className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+          <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-base font-black text-slate-900">İşlem Ekle</h2>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {([
+                { id: "gelir", label: "Gelir", disabled: false },
+                { id: "gider", label: "Gider", disabled: userRole === "BANKO" },
+              ] as const).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  disabled={item.disabled}
+                  onClick={() => {
+                    openTransaction(item.id);
+                    if (item.id === "gider") setExpenseEntryKind("normal");
+                  }}
+                  className={`h-8 rounded-lg px-3 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                    transactionKind === item.id
+                      ? "bg-slate-950 text-white"
+                      : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
+                  }`}
+                >
+                  {item.label}
+                </button>
+              ))}
+              <button onClick={() => setTransactionOpen(false)} className="h-8 rounded-lg px-2.5 text-xs font-bold text-slate-500 hover:bg-slate-100">Kapat</button>
+            </div>
+          </div>
+
+          {transactionKind === "gelir" && (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih <span className="text-red-500">*</span></label>
+                <input type="date" value={tahForm.tarih} onChange={e => { setTahForm(f => ({ ...f, tarih: e.target.value })); setTahFormErrors(er => ({ ...er, tarih: undefined })); }} className={INP + (tahFormErrors.tarih ? " border-red-400" : "")} />
+                {tahFormErrors.tarih && <p className="mt-1 text-xs font-medium text-red-600">{tahFormErrors.tarih}</p>}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta <span className="text-red-500">*</span></label>
+                <SearchSelect
+                  query={patientSearch}
+                  onQueryChange={value => {
+                    setPatientSearch(value);
+                    setTahForm(f => ({ ...f, patientId: "" }));
+                    setTahFormErrors(er => ({ ...er, patientId: undefined }));
+                  }}
+                  options={patientSearchOptions.map(p => ({ id: p.id, label: p.fullName }))}
+                  onSelect={opt => { setPatientSearch(opt.label); setTahForm(f => ({ ...f, patientId: opt.id })); }}
+                  placeholder="Hasta adı yazın"
+                  emptyText="Hasta bulunamadı"
+                  className={INP + (tahFormErrors.patientId ? " border-red-400" : "")}
+                />
+                {tahFormErrors.patientId && <p className="mt-1 text-xs font-medium text-red-600">{tahFormErrors.patientId}</p>}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor <span className="text-red-500">*</span></label>
+                <SearchSelect
+                  query={doctorSearch}
+                  onQueryChange={value => {
+                    setDoctorSearch(value);
+                    setTahForm(f => ({ ...f, doctorId: "" }));
+                    setTahFormErrors(er => ({ ...er, doctorId: undefined }));
+                  }}
+                  options={doctorSearchOptions.map(d => ({ id: d.id, label: d.fullName }))}
+                  onSelect={opt => { setDoctorSearch(opt.label); setTahForm(f => ({ ...f, doctorId: opt.id })); }}
+                  placeholder="Doktor adı yazın"
+                  emptyText="Doktor bulunamadı"
+                  className={INP + (tahFormErrors.doctorId ? " border-red-400" : "")}
+                />
+                {tahFormErrors.doctorId && <p className="mt-1 text-xs font-medium text-red-600">{tahFormErrors.doctorId}</p>}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar <span className="text-red-500">*</span></label>
+                <input type="number" value={tahForm.amount} onChange={e => { setTahForm(f => ({ ...f, amount: e.target.value })); setTahFormErrors(er => ({ ...er, amount: undefined })); }} placeholder="0,00" className={INP + (tahFormErrors.amount ? " border-red-400" : "")} />
+                {tahFormErrors.amount && <p className="mt-1 text-xs font-medium text-red-600">{tahFormErrors.amount}</p>}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Ödeme Yöntemi <span className="text-red-500">*</span></label>
+                <select
+                  value={tahForm.method}
+                  onChange={e => {
+                    setTahForm(f => ({ ...f, method: e.target.value, posId: "" }));
+                    setTahFormErrors(er => ({ ...er, method: undefined, posId: undefined }));
+                  }}
+                  className={INP + (tahFormErrors.method ? " border-red-400" : "")}
+                >
+                  {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+                {tahFormErrors.method && <p className="mt-1 text-xs font-medium text-red-600">{tahFormErrors.method}</p>}
+              </div>
+              {requiresPos(tahForm.method) && (
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">POS <span className="text-red-500">*</span></label>
+                  <select value={tahForm.posId} onChange={e => { setTahForm(f => ({ ...f, posId: e.target.value })); setTahFormErrors(er => ({ ...er, posId: undefined })); }} className={INP + (tahFormErrors.posId ? " border-red-400" : "")}>
+                  <option value="">POS seçin</option>
+                  {posDevices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                  {tahFormErrors.posId && <p className="mt-1 text-xs font-medium text-red-600">{tahFormErrors.posId}</p>}
+                </div>
+              )}
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
+                <input value={tahForm.description} onChange={e => setTahForm(f => ({ ...f, description: e.target.value }))} placeholder="Tedavi, protokol veya kasa notu" className={INP} />
+              </div>
+              <div className="flex justify-end gap-2 sm:col-span-2">
+                <button onClick={() => setTransactionOpen(false)} className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">İptal</button>
+                <button onClick={submitTahsilat} disabled={tahSaving} className="h-9 rounded-lg bg-emerald-600 px-5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-60">
+                  {tahSaving ? "Kaydediliyor..." : "Gelir Kaydet"}
+                </button>
+              </div>
             </div>
           )}
-          {supplierDebt > 0 && (
-            <div className="flex items-center justify-between rounded-xl bg-amber-100 px-3 py-2 text-sm text-amber-800">
-              <span>Toplam <b>{fmt(supplierDebt)}</b> tedarikçi borcu bekliyor</span>
-              <button onClick={() => changeTab("cari")} className="rounded-lg bg-white/70 px-2.5 py-1 text-xs font-bold hover:bg-white">Cari →</button>
+
+          {transactionKind === "gider" && expenseEntryKind === "normal" && (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <div className="inline-flex rounded-lg bg-slate-100 p-1">
+                  <button type="button" onClick={() => setExpenseEntryKind("normal")} className="h-8 rounded-md bg-white px-3 text-xs font-bold text-slate-950 shadow-sm">Normal Gider</button>
+                  <button type="button" onClick={() => { setExpenseEntryKind("firma"); refreshSummary(); }} className="h-8 rounded-md px-3 text-xs font-bold text-slate-500 hover:text-slate-800">Firma Ödemesi</button>
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih <span className="text-red-500">*</span></label>
+                <input type="date" value={giderForm.tarih} onChange={e => { setGiderForm(f => ({ ...f, tarih: e.target.value })); setGiderFormErrors(er => ({ ...er, tarih: undefined })); }} className={INP + (giderFormErrors.tarih ? " border-red-400" : "")} />
+              </div>
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <label className="block text-xs font-semibold text-slate-600">Gider Türü <span className="text-red-500">*</span></label>
+                  <button type="button" onClick={() => setShowCatMgr(true)} className="text-xs font-bold text-blue-700 hover:underline">Türleri Yönet</button>
+                </div>
+                <SearchSelect
+                  query={giderTurSearch}
+                  onQueryChange={value => {
+                    setGiderTurSearch(value);
+                    setGiderForm(f => ({ ...f, categoryId: "", category: value, doctorId: "" }));
+                    setGiderFormErrors(er => ({ ...er, category: undefined }));
+                  }}
+                  options={expenseTypeOptions.map(c => ({ id: c.id, label: c.name }))}
+                  onSelect={opt => { setGiderTurSearch(opt.label); setGiderForm(f => ({ ...f, categoryId: opt.id, category: opt.label })); }}
+                  placeholder="Gider türü yazın (örn. Doktor Hakedişi)"
+                  emptyText="Bu isimde tür yok — yeni tür olarak kaydedilecek"
+                  className={INP + (giderFormErrors.category ? " border-red-400" : "")}
+                />
+                {isDoctorPayoutCategory && (
+                  <p className="mt-1 text-[11px] font-semibold text-blue-700">Bu tür bir doktora bağlıdır — aşağıda doktor ve dönem seçin, tutar o doktorun hakedişinden düşülecek.</p>
+                )}
+              </div>
+              {isDoctorPayoutCategory && (
+                <>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor <span className="text-red-500">*</span></label>
+                    <select value={giderForm.doctorId} onChange={e => {
+                      setGiderForm(f => ({ ...f, doctorId: e.target.value, donem: "", tutar: "" }));
+                      setGiderFormErrors(er => ({ ...er, doctorId: undefined, donem: undefined }));
+                    }} className={INP + (giderFormErrors.doctorId ? " border-red-400" : "")}>
+                      <option value="">Doktor seçin</option>
+                      {taksitDoctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+                    </select>
+                    {giderFormErrors.doctorId && <p className="mt-1 text-xs font-medium text-red-600">{giderFormErrors.doctorId}</p>}
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-600">Hakediş Dönemi (Ay) <span className="text-red-500">*</span></label>
+                    <select
+                      value={giderForm.donem}
+                      disabled={!giderForm.doctorId || payoutPeriodsLoading}
+                      onChange={e => {
+                        const donem = e.target.value;
+                        const period = payoutPeriods.find(p => `${p.year}-${String(p.month).padStart(2, "0")}` === donem);
+                        setGiderForm(f => ({ ...f, donem, tutar: period ? String(period.kalan) : f.tutar }));
+                        setGiderFormErrors(er => ({ ...er, donem: undefined, tutar: undefined }));
+                      }}
+                      className={INP + (giderFormErrors.donem ? " border-red-400" : "")}
+                    >
+                      <option value="">{payoutPeriodsLoading ? "Yükleniyor…" : "Dönem seçin"}</option>
+                      {payoutPeriods.map(p => (
+                        <option key={`${p.year}-${p.month}`} value={`${p.year}-${String(p.month).padStart(2, "0")}`}>
+                          {AY_ADLARI[p.month - 1]} {p.year} — Kalan: {fmt(p.kalan)}
+                        </option>
+                      ))}
+                    </select>
+                    {giderForm.doctorId && !payoutPeriodsLoading && payoutPeriods.length === 0 && (
+                      <p className="mt-1 text-xs text-slate-500">Bu doktor için ödenecek hakediş yok.</p>
+                    )}
+                    {giderFormErrors.donem && <p className="mt-1 text-xs font-medium text-red-600">{giderFormErrors.donem}</p>}
+                  </div>
+                </>
+              )}
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar <span className="text-red-500">*</span></label>
+                <input type="number" value={giderForm.tutar} onChange={e => { setGiderForm(f => ({ ...f, tutar: e.target.value })); setGiderFormErrors(er => ({ ...er, tutar: undefined })); }} placeholder="0,00" max={isDoctorPayoutCategory ? selectedPayoutPeriod?.kalan : undefined} className={INP + (giderFormErrors.tutar ? " border-red-400" : "")} />
+                {isDoctorPayoutCategory && selectedPayoutPeriod && (
+                  <p className="mt-1 text-[11px] text-slate-500">En fazla {fmt(selectedPayoutPeriod.kalan)} ödenebilir.</p>
+                )}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Yöntem</label>
+                <select value={giderForm.yontem} onChange={e => setGiderForm(f => ({ ...f, yontem: e.target.value }))} className={INP}>
+                  {Object.entries(isDoctorPayoutCategory ? DOCTOR_PAYOUT_METHOD_LABELS : METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+                {isDoctorPayoutCategory && (
+                  <p className="mt-1 text-[11px] text-slate-500">Doktor hakedişi ödemeleri sadece nakit veya havale/EFT ile yapılabilir.</p>
+                )}
+              </div>
+              {!isDoctorPayoutCategory && (
+                <>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-600">KDV</label>
+                    <select value={giderForm.kdvOrani} onChange={e => setGiderForm(f => ({ ...f, kdvOrani: e.target.value }))} className={INP}>
+                      {KDV_OPTIONS.map(o => <option key={o.value} value={o.value}>%{o.value}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-600">Fatura No</label>
+                    <input value={giderForm.faturaNo} onChange={e => setGiderForm(f => ({ ...f, faturaNo: e.target.value }))} className={INP} />
+                  </div>
+                </>
+              )}
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
+                <input value={giderForm.description} onChange={e => setGiderForm(f => ({ ...f, description: e.target.value }))} placeholder="Gider detayı" className={INP} />
+              </div>
+              <div className="flex justify-end gap-2 sm:col-span-2">
+                <button onClick={() => setTransactionOpen(false)} className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">İptal</button>
+                <button onClick={submitGider} disabled={giderSaving} className="h-9 rounded-lg bg-red-600 px-5 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-60">
+                  {giderSaving ? "Kaydediliyor..." : (isDoctorPayoutCategory ? "Hakediş Ödemesi Kaydet" : "Gider Kaydet")}
+                </button>
+              </div>
+              {(giderFormErrors.tarih || giderFormErrors.category || giderFormErrors.tutar) && (
+                <p className="sm:col-span-2 text-xs font-medium text-red-600">{giderFormErrors.tarih || giderFormErrors.category || giderFormErrors.tutar}</p>
+              )}
             </div>
           )}
-          {criticalStock.length > 0 && (
-            <div className="flex items-center justify-between rounded-xl bg-blue-100 px-3 py-2 text-sm text-blue-800">
-              <span><b>{criticalStock.length}</b> stok kalemi kritik seviyede</span>
-              <Link href="/stok" className="rounded-lg bg-white/70 px-2.5 py-1 text-xs font-bold hover:bg-white">Stok →</Link>
+
+          {transactionKind === "gider" && expenseEntryKind === "firma" && (
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <div className="inline-flex rounded-lg bg-slate-100 p-1">
+                  <button type="button" onClick={() => setExpenseEntryKind("normal")} className="h-8 rounded-md px-3 text-xs font-bold text-slate-500 hover:text-slate-800">Normal Gider</button>
+                  <button type="button" onClick={() => setExpenseEntryKind("firma")} className="h-8 rounded-md bg-white px-3 text-xs font-bold text-slate-950 shadow-sm">Firma Ödemesi</button>
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Firma <span className="text-red-500">*</span></label>
+                <select value={firmaPayForm.firmaId} onChange={e => { setFirmaPayForm(f => ({ ...f, firmaId: e.target.value })); setFirmaPayErrors(er => ({ ...er, firmaId: undefined })); }} className={INP + (firmaPayErrors.firmaId ? " border-red-400" : "")}>
+                  <option value="">Firma seçin</option>
+                  {firmas.map(f => <option key={f.id} value={f.id}>{f.name} - Bakiye: {fmt(f.bakiye)}</option>)}
+                </select>
+                {firmaPayErrors.firmaId && <p className="mt-1 text-xs font-medium text-red-600">{firmaPayErrors.firmaId}</p>}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih <span className="text-red-500">*</span></label>
+                <input type="date" value={firmaPayForm.tarih} onChange={e => { setFirmaPayForm(f => ({ ...f, tarih: e.target.value })); setFirmaPayErrors(er => ({ ...er, tarih: undefined })); }} className={INP + (firmaPayErrors.tarih ? " border-red-400" : "")} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar <span className="text-red-500">*</span></label>
+                <input type="number" value={firmaPayForm.tutar} onChange={e => { setFirmaPayForm(f => ({ ...f, tutar: e.target.value })); setFirmaPayErrors(er => ({ ...er, tutar: undefined })); }} placeholder="0,00" className={INP + (firmaPayErrors.tutar ? " border-red-400" : "")} />
+                {firmaPayErrors.tutar && <p className="mt-1 text-xs font-medium text-red-600">{firmaPayErrors.tutar}</p>}
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Yöntem</label>
+                <select value={firmaPayForm.yontem} onChange={e => setFirmaPayForm(f => ({ ...f, yontem: e.target.value }))} className={INP}>
+                  {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Fatura No</label>
+                <input value={firmaPayForm.faturaNo} onChange={e => setFirmaPayForm(f => ({ ...f, faturaNo: e.target.value }))} className={INP} />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-slate-600">KDV</label>
+                <select value={firmaPayForm.kdvOrani} onChange={e => setFirmaPayForm(f => ({ ...f, kdvOrani: e.target.value }))} className={INP}>
+                  {KDV_OPTIONS.map(o => <option key={o.value} value={o.value}>%{o.value}</option>)}
+                </select>
+              </div>
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
+                <input value={firmaPayForm.aciklama} onChange={e => setFirmaPayForm(f => ({ ...f, aciklama: e.target.value }))} placeholder="Ödeme açıklaması" className={INP} />
+              </div>
+              <div className="flex justify-end gap-2 sm:col-span-2">
+                <button onClick={() => setTransactionOpen(false)} className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">İptal</button>
+                <button onClick={submitFirmaPayment} disabled={firmaPaySaving} className="h-9 rounded-lg bg-amber-600 px-5 text-sm font-bold text-white hover:bg-amber-700 disabled:opacity-60">
+                  {firmaPaySaving ? "Kaydediliyor..." : "Firma Ödemesi Kaydet"}
+                </button>
+              </div>
             </div>
           )}
+
+          </section>
         </div>
       )}
 
-      {/* Tab Navigation */}
-        <div className="sticky top-0 z-20 flex gap-1 overflow-x-auto rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
-        {visibleTabs.map(tab => (
-          <button key={tab.id} onClick={() => changeTab(tab.id)} title={tab.hint}
-            className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition ${activeTab === tab.id ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"}`}>
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      {editingKind && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" {...backdropClose(() => setEditingKind(null))}>
+          <section className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+              <div>
+                <h2 className="text-base font-black text-slate-900">{editingKind === "TAHSILAT" ? "Tahsilatı Düzenle" : "Gideri Düzenle"}</h2>
+                <p className="text-xs text-slate-500">Kayıt değişiklikleri muhasebe geçmişine işlenir.</p>
+              </div>
+              <button onClick={() => setEditingKind(null)} className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-500 hover:bg-slate-100">Kapat</button>
+            </div>
+
+            {editingKind === "TAHSILAT" && (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih</label>
+                  <input type="date" value={editPaymentForm.tarih} onChange={e => setEditPaymentForm(f => ({ ...f, tarih: e.target.value }))} className={INP} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar</label>
+                  <input type="number" value={editPaymentForm.amount} onChange={e => setEditPaymentForm(f => ({ ...f, amount: e.target.value }))} className={INP} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor</label>
+                  <SearchSelect
+                    query={editPaymentDoctorSearch}
+                    onQueryChange={(value) => {
+                      setEditPaymentDoctorSearch(value);
+                      setEditPaymentForm(f => ({ ...f, doctorId: "" }));
+                    }}
+                    options={editPaymentDoctorOptions}
+                    onSelect={(option) => {
+                      setEditPaymentDoctorSearch(option.label);
+                      setEditPaymentForm(f => ({ ...f, doctorId: option.id }));
+                    }}
+                    placeholder="Doktor adı yazın..."
+                    emptyText="Doktor bulunamadı"
+                    className={INP}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
+                  <select value={editPaymentForm.method} onChange={e => setEditPaymentForm(f => ({ ...f, method: e.target.value, posId: "" }))} className={INP}>
+                    {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                </div>
+                {requiresPos(editPaymentForm.method) && (
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-600">POS</label>
+                    <select value={editPaymentForm.posId} onChange={e => setEditPaymentForm(f => ({ ...f, posId: e.target.value }))} className={INP}>
+                    <option value="">Yok</option>
+                    {posDevices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
+                  <input value={editPaymentForm.description} onChange={e => setEditPaymentForm(f => ({ ...f, description: e.target.value }))} className={INP} />
+                </div>
+                <div className="flex justify-end gap-2 sm:col-span-2">
+                  <button onClick={() => setEditingKind(null)} className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">İptal</button>
+                  <button onClick={savePaymentEdit} disabled={editSaving} className="h-9 rounded-lg bg-slate-950 px-4 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60">{editSaving ? "Kaydediliyor..." : "Kaydet"}</button>
+                </div>
+              </div>
+            )}
+
+            {editingKind === "GIDER" && (
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih</label>
+                  <input type="date" value={editExpenseForm.tarih} onChange={e => setEditExpenseForm(f => ({ ...f, tarih: e.target.value }))} className={INP} />
+                </div>
+                <div className="sm:col-span-2">
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <label className="block text-xs font-semibold text-slate-600">Gider Türü</label>
+                    <button type="button" onClick={() => setShowCatMgr(true)} className="text-xs font-bold text-blue-700 hover:underline">Türleri Yönet</button>
+                  </div>
+                  <SearchSelect
+                    query={editGiderTurSearch}
+                    onQueryChange={value => {
+                      setEditGiderTurSearch(value);
+                      setEditExpenseForm(f => ({ ...f, categoryId: "", category: value }));
+                    }}
+                    options={editExpenseTypeOptions.map(c => ({ id: c.id, label: c.name }))}
+                    onSelect={opt => { setEditGiderTurSearch(opt.label); setEditExpenseForm(f => ({ ...f, categoryId: opt.id, category: opt.label })); }}
+                    emptyText="Bu isimde tür yok — yeni tür olarak kaydedilecek"
+                    className={INP}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar</label>
+                  <input type="number" value={editExpenseForm.tutar} onChange={e => setEditExpenseForm(f => ({ ...f, tutar: e.target.value }))} className={INP} />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Yöntem</label>
+                  <select value={editExpenseForm.yontem} onChange={e => setEditExpenseForm(f => ({ ...f, yontem: e.target.value }))} className={INP}>
+                    {Object.entries(editExpenseForm.doctorId ? DOCTOR_PAYOUT_METHOD_LABELS : METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                  {editExpenseForm.doctorId && (
+                    <p className="mt-1 text-[11px] text-slate-500">Doktor hakedişi ödemeleri sadece nakit veya havale/EFT ile yapılabilir.</p>
+                  )}
+                </div>
+                {!editExpenseForm.doctorId && (
+                  <>
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">KDV</label>
+                      <select value={editExpenseForm.kdvOrani} onChange={e => setEditExpenseForm(f => ({ ...f, kdvOrani: e.target.value }))} className={INP}>
+                        {KDV_OPTIONS.map(o => <option key={o.value} value={o.value}>%{o.value}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-600">Fatura No</label>
+                      <input value={editExpenseForm.faturaNo} onChange={e => setEditExpenseForm(f => ({ ...f, faturaNo: e.target.value }))} className={INP} />
+                    </div>
+                  </>
+                )}
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
+                  <input value={editExpenseForm.description} onChange={e => setEditExpenseForm(f => ({ ...f, description: e.target.value }))} className={INP} />
+                </div>
+                <div className="flex justify-end gap-2 sm:col-span-2">
+                  <button onClick={() => setEditingKind(null)} className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">İptal</button>
+                  <button onClick={saveExpenseEdit} disabled={editSaving} className="h-9 rounded-lg bg-slate-950 px-4 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60">{editSaving ? "Kaydediliyor..." : "Kaydet"}</button>
+                </div>
+              </div>
+            )}
+          </section>
+        </div>
+      )}
+
+      {showCatMgr && activeTab !== "gider" && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/45 p-4" {...backdropClose(() => setShowCatMgr(false))}>
+          <section className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
+              <div>
+                <h2 className="text-base font-black text-slate-900">Gider Türleri</h2>
+              </div>
+              <button onClick={() => setShowCatMgr(false)} className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-500 hover:bg-slate-100">Kapat</button>
+            </div>
+            <div className="mt-4 flex gap-2">
+              <input value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddCategory()} placeholder="Yeni gider türü" className={INP} />
+              <button onClick={handleAddCategory} className="h-10 rounded-lg bg-slate-950 px-4 text-sm font-bold text-white hover:bg-slate-800">Ekle</button>
+            </div>
+            <div className="mt-4 max-h-72 space-y-2 overflow-y-auto">
+              {giderKats.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-slate-200 px-3 py-8 text-center text-sm text-slate-400">Henüz gider türü yok</div>
+              ) : giderKats.map((item) => (
+                <div key={item.id} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-lg border border-slate-100 p-2">
+                  <input
+                    value={editingCatNames[item.id] ?? item.name}
+                    onChange={e => setEditingCatNames(prev => ({ ...prev, [item.id]: e.target.value }))}
+                    onBlur={() => updateExpenseTypeName(item.id, item.name)}
+                    onKeyDown={e => e.key === "Enter" && updateExpenseTypeName(item.id, item.name)}
+                    className="h-8 rounded-md border border-slate-200 bg-slate-50 px-2 text-sm outline-none focus:border-blue-400 focus:bg-white"
+                  />
+                  <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${item.isActive ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+                    {item.isActive ? "Aktif" : "Pasif"}
+                  </span>
+                  <button
+                    onClick={async () => {
+                      await fetch(`/api/gider-kategorileri/${item.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: !item.isActive }) });
+                      loadGiderKats();
+                    }}
+                    className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 hover:bg-slate-50"
+                  >
+                    {item.isActive ? "Kaldır" : "Aktif Et"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </section>
+        </div>
+      )}
 
       {/* ════════════════════════════════════════════════════════════════════
           TAB: GENEL BAKIŞ
@@ -814,15 +1953,15 @@ export default function MuhasebePage() {
           {trendData.length > 0 && (() => {
             const maxVal = Math.max(...trendData.map(t => Math.max(t.gelir, t.gider)), 1);
             return (
-              <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-                <div className="mb-4 flex items-center justify-between">
+              <details className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+                <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3">
                   <h2 className="text-sm font-black text-slate-900">6 Aylık Gelir / Gider Trendi</h2>
                   <div className="flex gap-4 text-xs text-slate-500">
                     <span className="flex items-center gap-1.5 text-xs"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400" />Gelir</span>
                     <span className="flex items-center gap-1.5 text-xs"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-red-400" />Gider</span>
                   </div>
-                </div>
-                <div className="flex items-end gap-3">
+                </summary>
+                <div className="flex items-end gap-3 border-t border-slate-100 px-4 py-4">
                   {trendData.map((m, i) => {
                     const gelirH = Math.max(4, Math.round((m.gelir / maxVal) * 120));
                     const giderH = Math.max(4, Math.round((m.gider / maxVal) * 120));
@@ -845,86 +1984,175 @@ export default function MuhasebePage() {
                     );
                   })}
                 </div>
-              </section>
+              </details>
             );
           })()}
 
-          <div className="grid gap-5 xl:grid-cols-[1.2fr,0.8fr]">
-          <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-            <h2 className="mb-4 text-sm font-black text-slate-900">Bugünün Gelir Akışı</h2>
-            <div className="mb-4 grid grid-cols-3 gap-3">
-              {(["NAKIT","KREDI_KARTI","HAVALE_EFT"] as const).map(k => (
-                <div key={k} className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
-                  <p className="text-xs font-bold uppercase text-slate-500">{METHOD_LABELS[k]}</p>
-                  <p className="mt-1 text-base font-black text-slate-800">{fmt(kasaToday.byMethod?.[k] || 0)}</p>
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
+            <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+              <div className="mb-3 flex items-center justify-between">
+                <div>
+                  <h2 className="text-sm font-black text-slate-900">İşlem Defteri</h2>
+                  <p className="text-xs text-slate-500">Son tahsilat ve gider hareketleri tek akışta.</p>
                 </div>
+                <button onClick={() => changeTab("defter")} className="text-xs font-bold text-blue-700 hover:underline">Defteri Aç</button>
+              </div>
+              <div className="overflow-hidden rounded-xl border border-slate-100">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                      <th className="px-3 py-2 text-left">Tarih</th>
+                      <th className="px-3 py-2 text-left">İşlem</th>
+                      <th className="px-3 py-2 text-left">Açıklama</th>
+                      <th className="px-3 py-2 text-left">Yöntem</th>
+                      <th className="px-3 py-2 text-right">Tutar</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recentLedger.length === 0 ? (
+                      <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">Henüz işlem hareketi yok</td></tr>
+                    ) : recentLedger.map((row) => (
+                      <tr key={row.id} className="border-t border-slate-100">
+                        <td className="px-3 py-2 text-slate-500">{fmtDate(row.date)}</td>
+                        <td className="px-3 py-2 font-bold text-slate-700">{row.type}</td>
+                        <td className="px-3 py-2 text-slate-600">{row.name}</td>
+                        <td className="px-3 py-2 text-slate-500">{row.method}</td>
+                        <td className={`px-3 py-2 text-right font-black ${row.tone}`}>{row.sign}{fmt(row.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+
+            <div className="space-y-4">
+              <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-sm font-black text-slate-900">Alacak Yaşlandırma</h2>
+                    <p className="text-xs text-slate-500">Vadesi yaklaşan ve geciken tahsilatlar.</p>
+                  </div>
+                  <button onClick={() => { changeTab("alacak"); setAlacakView("taksit"); }} className="text-xs font-bold text-blue-700 hover:underline">Detay</button>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
+                  {alacakAging.map((bucket) => (
+                    <button key={bucket.key} onClick={() => { changeTab("alacak"); setAlacakView("taksit"); }} className={`${bucket.bg} ${bucket.border} rounded-xl border px-3 py-2 text-left transition hover:shadow-sm`}>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-xs font-bold text-slate-500">{bucket.label}</span>
+                        <span className="text-xs font-semibold text-slate-400">{bucket.count} taksit</span>
+                      </div>
+                      <p className={`mt-1 text-base font-black ${bucket.tone}`}>{fmt(bucket.amount)}</p>
+                    </button>
+                  ))}
+                </div>
+              </section>
+
+              <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+                <div className="mb-3 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-sm font-black text-slate-900">Kasa Kontrolü</h2>
+                    <p className="text-xs text-slate-500">Gün sonu mutabakat için yöntem dağılımı.</p>
+                  </div>
+                  <button onClick={() => changeTab("defter")} className="text-xs font-bold text-blue-700 hover:underline">Defter</button>
+                </div>
+                <div className="space-y-2">
+                  {(["NAKIT","KREDI_KARTI","HAVALE_EFT"] as const).map((method) => (
+                    <div key={method} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5">
+                      <span className="text-sm font-semibold text-slate-700">{METHOD_LABELS[method]}</span>
+                      <span className="text-sm font-black text-slate-900">{fmt(kasaToday.byMethod?.[method] || 0)}</span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === "defter" && (
+        <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+          <div className="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center">
+            <div className="flex w-fit gap-1 rounded-lg bg-slate-100 p-1">
+              {([
+                { id: "HEPSI", label: "Tümü" },
+                { id: "TAHSILAT", label: "Gelir" },
+                { id: "GIDER", label: "Gider" },
+              ] as const).map((item) => (
+                <button key={item.id} onClick={() => setLedgerType(item.id)}
+                  className={`h-7 rounded-md px-3 text-xs font-bold ${ledgerType === item.id ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-800"}`}>
+                  {item.label}
+                </button>
               ))}
             </div>
-            <div className="overflow-hidden rounded-xl border border-slate-100">
-              <table className="w-full text-xs">
-                <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                  <th className="px-3 py-2 text-left">Yöntem</th>
-                  <th className="px-3 py-2 text-left">Hasta</th>
-                  <th className="px-3 py-2 text-right">Tutar</th>
-                </tr></thead>
-                <tbody>
-                  {kasaToday.payments.length === 0
-                    ? <tr><td colSpan={3} className="px-3 py-8 text-center text-slate-400">Bugün tahsilat yok</td></tr>
-                    : kasaToday.payments.slice(0, 8).map(p => (
-                      <tr key={p.id} className="border-t border-slate-100">
-                        <td className="px-3 py-2">{METHOD_LABELS[p.method] || p.method}</td>
-                        <td className="px-3 py-2 text-slate-600">{p.patient?.fullName || p.description || "—"}</td>
-                        <td className="px-3 py-2 text-right font-bold text-emerald-700">{fmt(p.amount)}</td>
-                      </tr>
-                    ))
-                  }
-                </tbody>
-              </table>
-            </div>
-            {kasaToday.payments.length > 8 && (
-              <button onClick={() => changeTab("gelir")} className="mt-3 w-full rounded-xl border border-slate-200 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">
-                Tümünü Gör ({kasaToday.payments.length} kayıt)
-              </button>
+            <input value={ledgerSearch} onChange={e => setLedgerSearch(e.target.value)} placeholder="Hasta, gider türü, açıklama veya yöntem ara..." className="h-8 min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none focus:border-blue-400 focus:bg-white" />
+            <input type="date" value={ledgerFrom} onChange={e => setLedgerFrom(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-blue-400" />
+            <input type="date" value={ledgerTo} onChange={e => setLedgerTo(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-blue-400" />
+            <select value={ledgerMethod} onChange={e => setLedgerMethod(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 outline-none focus:border-blue-400">
+              <option value="HEPSI">Tüm yöntemler</option>
+              {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+            <button onClick={() => {
+              loadPayments();
+              loadExpenses();
+              refreshSummary();
+            }} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 hover:bg-slate-50">Yenile</button>
+            {(ledgerSearch || ledgerFrom || ledgerTo || ledgerMethod !== "HEPSI" || ledgerType !== "HEPSI") && (
+              <button onClick={() => { setLedgerSearch(""); setLedgerFrom(""); setLedgerTo(""); setLedgerMethod("HEPSI"); setLedgerType("HEPSI"); }} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-500 hover:bg-slate-50">Temizle</button>
             )}
-          </section>
-
-          <div className="space-y-4">
-            <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-sm font-black text-slate-900">Bu Ay Giderler</h2>
-                <button onClick={() => changeTab("gider")} className="text-xs font-bold text-blue-700 hover:underline">Tümünü Aç</button>
-              </div>
-              <div className="space-y-2">
-                {expenseMonth.expenses.length === 0
-                  ? <p className="py-4 text-center text-xs text-slate-400">Bu ay gider kaydı yok</p>
-                  : expenseMonth.expenses.slice(0, 5).map(e => (
-                    <div key={e.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-800">{e.category}</p>
-                        <p className="text-xs text-slate-500">{e.description || "—"}</p>
-                      </div>
-                      <span className="text-sm font-black text-red-700">{fmt(e.tutar)}</span>
-                    </div>
-                  ))
-                }
-              </div>
-            </section>
-            <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-sm font-black text-slate-900">Tedarikçi Bakiyeleri</h2>
-                <button onClick={() => changeTab("cari")} className="text-xs font-bold text-blue-700 hover:underline">Tümünü Aç</button>
-              </div>
-              <div className="space-y-2">
-                {firmas.filter(f => f.bakiye > 0).sort((a, b) => b.bakiye - a.bakiye).slice(0, 4).map(f => (
-                  <div key={f.id} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5">
-                    <p className="text-sm font-semibold text-slate-800">{f.name}</p>
-                    <span className="text-sm font-black text-amber-700">{fmt(f.bakiye)}</span>
-                  </div>
-                ))}
-                {firmas.filter(f => f.bakiye > 0).length === 0 && <p className="py-4 text-center text-xs text-slate-400">Açık tedarikçi borcu yok</p>}
-              </div>
-            </section>
+            <button onClick={exportLedgerExcel} className="h-8 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-700 hover:bg-emerald-100">Excel</button>
+            <button onClick={exportLedgerPdf} className="h-8 rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-bold text-blue-700 hover:bg-blue-100">PDF</button>
           </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-white text-[10px] uppercase tracking-wide text-slate-500">
+                  <th className="px-4 py-3 text-left">Tarih</th>
+                  <th className="px-4 py-3 text-left">Tip</th>
+                  <th className="px-4 py-3 text-left">Ad</th>
+                  <th className="px-4 py-3 text-left">Tür</th>
+                  <th className="px-4 py-3 text-left">Açıklama</th>
+                  <th className="px-4 py-3 text-left">Yöntem</th>
+                  <th className="px-4 py-3 text-right">Tutar</th>
+                  <th className="px-4 py-3" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {ledgerRows.length === 0 ? (
+                  <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
+                ) : ledgerRows.slice(0, 250).map((row) => (
+                  <tr key={row.id} className="hover:bg-slate-50">
+                    <td className="whitespace-nowrap px-4 py-3 text-slate-500">{fmtDate(row.date)}</td>
+                    <td className="px-4 py-3">
+                      <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${row.type === "TAHSILAT" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>{row.label}</span>
+                    </td>
+                    <td className="px-4 py-3 font-semibold text-slate-800">{row.name}</td>
+                    <td className="px-4 py-3 text-slate-600">{row.type === "TAHSILAT" ? row.incomeType : row.name}</td>
+                    <td className="max-w-[260px] truncate px-4 py-3 text-slate-500">{row.description || "-"}</td>
+                    <td className="px-4 py-3 text-slate-600">{row.method}</td>
+                    <td className={`px-4 py-3 text-right font-black ${row.tone}`}>{row.sign}{fmt(row.amount)}</td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex justify-end gap-1">
+                        <button
+                          onClick={() => row.type === "TAHSILAT" ? startEditPayment(row.source as Payment) : startEditExpense(row.source as Expense)}
+                          className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100"
+                        >
+                          Düzenle
+                        </button>
+                        {row.deletable && (
+                          <button
+                            onClick={() => row.type === "TAHSILAT" ? deletePayment(row.rawId) : deleteGider(row.rawId)}
+                            className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 hover:text-red-700"
+                          >
+                            Sil
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       )}
@@ -958,14 +2186,16 @@ export default function MuhasebePage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor <span className="text-red-500">*</span></label>
-                  <select value={tahForm.doctorId} onChange={e => setTahForm(f => ({ ...f, doctorId: e.target.value }))} className={INP}>
+                  <select value={tahForm.doctorId} onChange={e => { setTahForm(f => ({ ...f, doctorId: e.target.value })); setTahFormErrors(er => ({ ...er, doctorId: undefined })); }} className={INP + (tahFormErrors.doctorId ? " border-red-400 focus:ring-red-300" : "")}>
                     <option value="">— Doktor seçin —</option>
                     {taksitDoctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
                   </select>
+                  {tahFormErrors.doctorId && <p className="mt-1 text-xs font-medium text-red-600">{tahFormErrors.doctorId}</p>}
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar (₺) *</label>
-                  <input type="number" value={tahForm.amount} onChange={e => setTahForm(f => ({ ...f, amount: e.target.value }))} placeholder="0.00" className={INP + " text-lg font-bold"} />
+                  <input type="number" value={tahForm.amount} onChange={e => { setTahForm(f => ({ ...f, amount: e.target.value })); setTahFormErrors(er => ({ ...er, amount: undefined })); }} placeholder="0.00" className={INP + " text-lg font-bold" + (tahFormErrors.amount ? " border-red-400 focus:ring-red-300" : "")} />
+                  {tahFormErrors.amount && <p className="mt-1 text-xs font-medium text-red-600">{tahFormErrors.amount}</p>}
                 </div>
                 <div>
                   <label className="mb-2 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
@@ -1007,7 +2237,7 @@ export default function MuhasebePage() {
               <input type="date" value={pmtFrom} onChange={e => setPmtFrom(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none" />
               <input type="date" value={pmtTo}   onChange={e => setPmtTo(e.target.value)}   className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none" />
               <button onClick={() => {
-                const rows = [["Tarih","Hasta","Yöntem","Açıklama","Tutar"], ...filteredPayments.map(p => [fmtDate(p.createdAt), p.patient?.fullName || "", METHOD_LABELS[p.method] || p.method, p.description || "", String(p.amount)])];
+                const rows = [["Tarih","Hasta","Yöntem","Açıklama","Tutar"], ...filteredPayments.map(p => [fmtDate(p.createdAt), p.patient?.fullName || "", METHOD_LABELS[p.method] || p.method, stripFinanceTags(p.description), String(p.amount)])];
                 const csv = rows.map(r => r.map(c => `"${c}"`).join(",")).join("\n");
                 const a = document.createElement("a"); a.href = "data:text/csv;charset=utf-8,\uFEFF" + encodeURIComponent(csv); a.download = "tahsilatlar.csv"; a.click();
               }} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">
@@ -1030,22 +2260,31 @@ export default function MuhasebePage() {
                 <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                   <th className="px-4 py-3 text-left">Tarih</th>
                   <th className="px-4 py-3 text-left">Hasta</th>
+                  <th className="px-4 py-3 text-left">Hekim</th>
                   <th className="px-4 py-3 text-left">Yöntem</th>
                   <th className="px-4 py-3 text-left">Açıklama</th>
                   <th className="px-4 py-3 text-right">Tutar</th>
+                  <th className="px-4 py-3 text-center">İşlem</th>
                 </tr></thead>
                 <tbody className="divide-y divide-slate-100">
                   {filteredPayments.length === 0
-                    ? <tr><td colSpan={5} className="px-4 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
+                    ? <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
                     : filteredPayments.slice(0, 150).map(p => (
                       <tr key={p.id} className="hover:bg-slate-50">
                         <td className="whitespace-nowrap px-4 py-3 text-slate-400">{fmtDate(p.createdAt)}</td>
                         <td className="px-4 py-3 font-semibold text-slate-800">{p.patient?.fullName || "—"}</td>
+                        <td className="px-4 py-3 text-slate-600">{p.doctor?.fullName || "—"}</td>
                         <td className="px-4 py-3">
                           <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">{METHOD_LABELS[p.method] || p.method}</span>
                         </td>
-                        <td className="px-4 py-3 text-slate-500">{p.description || "—"}</td>
+                        <td className="px-4 py-3 text-slate-500">{stripFinanceTags(p.description) || "—"}</td>
                         <td className="px-4 py-3 text-right font-black text-emerald-700">{fmt(p.amount)}</td>
+                        <td className="px-4 py-3 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            <button onClick={() => startEditPayment(p)} className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200">Düzenle</button>
+                            <button onClick={() => deletePayment(p.id)} className="rounded-lg bg-red-100 px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-200">Sil</button>
+                          </div>
+                        </td>
                       </tr>
                     ))
                   }
@@ -1089,21 +2328,24 @@ export default function MuhasebePage() {
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih *</label>
-                  <input type="date" value={giderForm.tarih} onChange={e => setGiderForm(f => ({ ...f, tarih: e.target.value }))} className={INP} />
+                  <input type="date" value={giderForm.tarih} onChange={e => { setGiderForm(f => ({ ...f, tarih: e.target.value })); setGiderFormErrors(er => ({ ...er, tarih: undefined })); }} className={INP + (giderFormErrors.tarih ? " border-red-400 focus:ring-red-300" : "")} />
+                  {giderFormErrors.tarih && <p className="mt-1 text-xs font-medium text-red-600">{giderFormErrors.tarih}</p>}
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Kategori *</label>
                   <select value={giderForm.categoryId} onChange={e => {
                     const cat = giderKats.find(c => c.id === e.target.value);
                     setGiderForm(f => ({ ...f, categoryId: e.target.value, category: cat?.name || "" }));
-                  }} className={INP}>
+                    setGiderFormErrors(er => ({ ...er, category: undefined }));
+                  }} className={INP + (giderFormErrors.category ? " border-red-400 focus:ring-red-300" : "")}>
                     <option value="">— Kategori seçin —</option>
                     {giderKats.filter(c => c.isActive).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                     <option value="__manual">Manuel Gir…</option>
                   </select>
                   {giderForm.categoryId === "__manual" && (
-                    <input value={giderForm.category} onChange={e => setGiderForm(f => ({ ...f, category: e.target.value }))} placeholder="Kategori adı" className={INP + " mt-2"} />
+                    <input value={giderForm.category} onChange={e => { setGiderForm(f => ({ ...f, category: e.target.value })); setGiderFormErrors(er => ({ ...er, category: undefined })); }} placeholder="Kategori adı" className={INP + " mt-2"} />
                   )}
+                  {giderFormErrors.category && <p className="mt-1 text-xs font-medium text-red-600">{giderFormErrors.category}</p>}
                 </div>
                 <div className="sm:col-span-2">
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
@@ -1111,7 +2353,8 @@ export default function MuhasebePage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar (₺) *</label>
-                  <input type="number" value={giderForm.tutar} onChange={e => setGiderForm(f => ({ ...f, tutar: e.target.value }))} placeholder="0.00" className={INP + " text-lg font-bold"} />
+                  <input type="number" value={giderForm.tutar} onChange={e => { setGiderForm(f => ({ ...f, tutar: e.target.value })); setGiderFormErrors(er => ({ ...er, tutar: undefined })); }} placeholder="0.00" className={INP + " text-lg font-bold" + (giderFormErrors.tutar ? " border-red-400 focus:ring-red-300" : "")} />
+                  {giderFormErrors.tutar && <p className="mt-1 text-xs font-medium text-red-600">{giderFormErrors.tutar}</p>}
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
@@ -1146,7 +2389,7 @@ export default function MuhasebePage() {
               <input type="date" value={expFrom} onChange={e => setExpFrom(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none" />
               <input type="date" value={expTo}   onChange={e => setExpTo(e.target.value)}   className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none" />
               <button onClick={() => {
-                const rows = [["Tarih","Kategori","Açıklama","Yöntem","KDV","Fatura No","Tutar"], ...filteredExpenses.map(e => [fmtDate(e.tarih), e.category, e.description || "", METHOD_LABELS[e.yontem || ""] || "", e.kdvOrani != null ? `%${e.kdvOrani}` : "", e.faturaNo || "", String(e.tutar)])];
+                const rows = [["Tarih","Kategori","Açıklama","Yöntem","KDV","Fatura No","Tutar"], ...filteredExpenses.map(e => [fmtDate(e.tarih), e.category, stripSystemTags(e.description), METHOD_LABELS[e.yontem || ""] || "", e.kdvOrani != null ? `%${e.kdvOrani}` : "", e.faturaNo || "", String(e.tutar)])];
                 const csv = rows.map(r => r.map(c => `"${c}"`).join(",")).join("\n");
                 const a = document.createElement("a"); a.href = "data:text/csv;charset=utf-8,\uFEFF" + encodeURIComponent(csv); a.download = "giderler.csv"; a.click();
               }} className="rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100">
@@ -1174,7 +2417,7 @@ export default function MuhasebePage() {
                         <td className="px-4 py-3">
                           <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs text-slate-700">{e.category}</span>
                         </td>
-                        <td className="max-w-[160px] truncate px-4 py-3 text-slate-500">{e.description || "—"}</td>
+                        <td className="max-w-[160px] truncate px-4 py-3 text-slate-500">{stripSystemTags(e.description) || "—"}</td>
                         <td className="px-4 py-3">{METHOD_LABELS[e.yontem || ""] || e.yontem || "—"}</td>
                         <td className="px-4 py-3 text-center">{e.kdvOrani != null ? `%${e.kdvOrani}` : "—"}</td>
                         <td className="px-4 py-3 text-slate-500">{e.faturaNo || "—"}</td>
@@ -1196,7 +2439,7 @@ export default function MuhasebePage() {
 
           {/* Kategori Yönetimi Modal */}
           {showCatMgr && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowCatMgr(false))}>
               <div className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
                 <h3 className="text-base font-black text-slate-900">Gider Kategorileri</h3>
                 <div className="flex gap-2">
@@ -1225,9 +2468,26 @@ export default function MuhasebePage() {
       )}
 
       {/* ════════════════════════════════════════════════════════════════════
-          TAB: TAKSİT / ALACAK
+          TAB: ALACAKLAR (Tüm Bakiyeler + Taksitli Planlar)
       ════════════════════════════════════════════════════════════════════ */}
-      {activeTab === "taksit" && (
+      {activeTab === "alacak" && (
+        <div className="space-y-4">
+          {/* Alt sekme: Tüm Bakiyeler / Taksitli Planlar */}
+          <div className="flex w-fit gap-1 rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
+            <button onClick={() => setAlacakView("bakiye")}
+              className={`rounded-xl px-4 py-2 text-sm font-bold transition ${alacakView === "bakiye" ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"}`}>
+              Tüm Bakiyeler
+            </button>
+            <button onClick={() => setAlacakView("taksit")}
+              className={`relative rounded-xl px-4 py-2 text-sm font-bold transition ${alacakView === "taksit" ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"}`}>
+              Taksitli Planlar
+              {taksitOverdue.count > 0 && (
+                <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ${alacakView === "taksit" ? "bg-white" : "bg-red-500"}`} />
+              )}
+            </button>
+          </div>
+
+      {alacakView === "taksit" && (
         <div className="space-y-4">
           {/* KPI */}
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -1244,28 +2504,19 @@ export default function MuhasebePage() {
             ))}
           </div>
 
-          {/* Borç Yaşlandırma */}
+          {/* Borç Yaşlandırma (sunucuda hesaplanır — bkz. /api/taksit-plani stats.aging5) */}
           {(() => {
-            const now = new Date();
-            const allTaksitler = taksitPlans.flatMap(p => p.taksitler.filter(t => t.kalan > 0 && t.status !== "ODENDI" && t.status !== "IPTAL").map(t => ({ ...t, vade: new Date(t.vadeDate) })));
-            const buckets = [
-              { label: "Bugün Vadeli",  count: 0, amount: 0, color: "bg-amber-500" },
-              { label: "1–30 Gün Geç", count: 0, amount: 0, color: "bg-orange-500" },
-              { label: "31–60 Gün",    count: 0, amount: 0, color: "bg-red-500"    },
-              { label: "60+ Gün",      count: 0, amount: 0, color: "bg-red-900"    },
-              { label: "Gelecek",      count: 0, amount: 0, color: "bg-blue-400"   },
+            const labels = [
+              { label: "Bugün Vadeli",  color: "bg-amber-500" },
+              { label: "1–30 Gün Geç", color: "bg-orange-500" },
+              { label: "31–60 Gün",    color: "bg-red-500"    },
+              { label: "60+ Gün",      color: "bg-red-900"    },
+              { label: "Gelecek",      color: "bg-blue-400"   },
             ];
-            for (const t of allTaksitler) {
-              const diffDays = Math.floor((now.getTime() - t.vade.getTime()) / 86400000);
-              const kalan = Number(t.kalan);
-              if (t.vade.toDateString() === now.toDateString())     { buckets[0].count++; buckets[0].amount += kalan; }
-              else if (diffDays > 0 && diffDays <= 30)              { buckets[1].count++; buckets[1].amount += kalan; }
-              else if (diffDays > 30 && diffDays <= 60)             { buckets[2].count++; buckets[2].amount += kalan; }
-              else if (diffDays > 60)                               { buckets[3].count++; buckets[3].amount += kalan; }
-              else                                                   { buckets[4].count++; buckets[4].amount += kalan; }
-            }
+            const buckets = labels.map((meta, i) => ({ ...meta, count: taksitStats.aging5[i]?.count || 0, amount: taksitStats.aging5[i]?.amount || 0 }));
             const totalAmt = buckets.reduce((s, b) => s + b.amount, 0) || 1;
-            if (allTaksitler.length === 0) return null;
+            const totalCount = buckets.reduce((s, b) => s + b.count, 0);
+            if (totalCount === 0) return null;
             return (
               <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
                 <p className="mb-3 text-sm font-black text-slate-800">Alacak Yaşlandırma Tablosu</p>
@@ -1352,6 +2603,15 @@ export default function MuhasebePage() {
                       </div>
                     )
                 }
+                {taksitPageCount > 1 && (
+                  <div className="mt-3 flex items-center justify-between">
+                    <p className="text-xs text-slate-500">Sayfa {taksitPage} / {taksitPageCount} &nbsp;·&nbsp; Toplam {taksitTotal} plan</p>
+                    <div className="flex gap-2">
+                      <button onClick={() => setTaksitPage(p => Math.max(1, p - 1))} disabled={taksitPage === 1} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-40">← Önceki</button>
+                      <button onClick={() => setTaksitPage(p => Math.min(taksitPageCount, p + 1))} disabled={taksitPage === taksitPageCount} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-40">Sonraki →</button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Plan Detay */}
@@ -1496,7 +2756,7 @@ export default function MuhasebePage() {
 
           {/* Modal: Taksit Tahsilat */}
           {showOdeModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowOdeModal(null))}>
               <div className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
                 <h3 className="text-sm font-black text-slate-900">Taksit Tahsilatı — #{showOdeModal.siraNo}</h3>
                 <div className="rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-600 space-y-1">
@@ -1528,7 +2788,7 @@ export default function MuhasebePage() {
 
           {/* Modal: Hatırlatma Ekle */}
           {showRemModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowRemModal(false))}>
               <div className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
                 <h3 className="text-sm font-black text-slate-900">Hatırlatma Ekle</h3>
                 <div>
@@ -1556,10 +2816,7 @@ export default function MuhasebePage() {
         </div>
       )}
 
-      {/* ════════════════════════════════════════════════════════════════════
-          TAB: HASTA ALACAKLARI
-      ════════════════════════════════════════════════════════════════════ */}
-      {activeTab === "alacak" && (
+      {alacakView === "bakiye" && (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -1637,7 +2894,7 @@ export default function MuhasebePage() {
                             </td>
                             <td className="px-4 py-3 text-right font-black text-violet-700">{fmt(a.bakiye)}</td>
                             <td className="px-4 py-3">
-                              <button onClick={() => { setShowTahForm(true); changeTab("gelir"); setTahForm(f => ({ ...f, patientId: a.id })); ensurePatients(); ensurePos(); }}
+                              <button onClick={() => { openTransaction("gelir"); setPatientSearch(a.fullName); setTahForm(f => ({ ...f, patientId: a.id })); ensurePatients(); ensurePos(); }}
                                 className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">
                                 Tahsilat
                               </button>
@@ -1655,6 +2912,8 @@ export default function MuhasebePage() {
               </div>
             )
           }
+        </div>
+      )}
         </div>
       )}
 
@@ -1725,36 +2984,94 @@ export default function MuhasebePage() {
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-3">
             <h2 className="mr-auto text-sm font-black text-slate-900">Doktor Hakedişleri</h2>
-            <select value={selectedDoctor} onChange={e => setSelectedDoctor(e.target.value)}
-              className="w-52 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400">
-              <option value="">— Doktor seçin —</option>
-              {hakDoctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
-            </select>
-            {selectedDoctor && (
-              <button onClick={() => setShowHakOdeModal(true)} className="flex items-center gap-2 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700">
-                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                Hakediş Öde
-              </button>
-            )}
+            <div className="w-64">
+              <SearchSelect
+                query={hakedisDoctorSearch}
+                onQueryChange={value => {
+                  setHakedisDoctorSearch(value);
+                  if (!value) setSelectedDoctor("");
+                }}
+                options={hakDoctors
+                  .filter(d => d.fullName.toLowerCase().includes(hakedisDoctorSearch.toLowerCase()))
+                  .map(d => ({ id: d.id, label: d.fullName }))}
+                onSelect={opt => { setSelectedDoctor(opt.id); setHakedisDoctorSearch(opt.label); }}
+                placeholder="Doktor adı yazın…"
+                emptyText="Doktor bulunamadı"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
           </div>
           {!selectedDoctor
             ? <div className="rounded-2xl bg-slate-50 py-16 text-center text-sm text-slate-400">Görüntülemek için bir doktor seçin</div>
-            : doctorFinance && (
+            : (
                 <div className="space-y-4">
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                    {[
-                      { label: "Toplam Üretim",  value: fmt(Number(doctorFinance.totalTreatments) || 0), tone: "text-blue-700",    bg: "bg-blue-50"    },
-                      { label: "Tahsil Edilen",   value: fmt(Number(doctorFinance.received) || 0),        tone: "text-emerald-700", bg: "bg-emerald-50" },
-                      { label: "Tahsil Bekleyen", value: fmt(Number(doctorFinance.toReceive) || 0),       tone: "text-amber-700",   bg: "bg-amber-50"   },
-                      { label: "Ödenen Hakediş",  value: fmt(Number(doctorFinance.earned) || 0),          tone: "text-slate-900",   bg: "bg-slate-100"  },
-                    ].map(c => (
-                      <div key={c.label} className={`${c.bg} rounded-2xl p-5`}>
-                        <p className="text-xs font-bold uppercase text-slate-500">{c.label}</p>
-                        <p className={`mt-1 text-2xl font-black ${c.tone}`}>{c.value}</p>
-                      </div>
-                    ))}
+                  {doctorFinance && (
+                    <div className="grid gap-4 sm:grid-cols-3">
+                      {[
+                        { label: "Bu Ay Üretim (ay başından bugüne)", value: fmt(Number(doctorFinance.totalTreatments) || 0), tone: "text-blue-700",    bg: "bg-blue-50"    },
+                        { label: "Tahsil Edilen",                     value: fmt(Number(doctorFinance.received) || 0),        tone: "text-emerald-700", bg: "bg-emerald-50" },
+                        { label: "Tahsil Bekleyen",                   value: fmt(Number(doctorFinance.toReceive) || 0),       tone: "text-amber-700",   bg: "bg-amber-50"   },
+                      ].map(c => (
+                        <div key={c.label} className={`${c.bg} rounded-2xl p-5`}>
+                          <p className="text-xs font-bold uppercase text-slate-500">{c.label}</p>
+                          <p className={`mt-1 text-2xl font-black ${c.tone}`}>{c.value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Ay ay hakediş / ödenen / kalan */}
+                  <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+                    <div className="border-b border-slate-100 px-5 py-4">
+                      <h3 className="text-sm font-black text-slate-900">Aylık Hakediş Dökümü (son 12 ay)</h3>
+                      <p className="mt-0.5 text-xs text-slate-500">Hakedilen: o ayki üretimden hesaplanan hakediş tutarı. Ödenen: o aya etiketlenmiş gider kayıtlarının toplamı. Kalan: hakedilen - ödenen.</p>
+                    </div>
+                    {hakedisLoading ? (
+                      <div className="p-8 text-center text-sm text-slate-400">Yükleniyor…</div>
+                    ) : hakedisMonths.length === 0 ? (
+                      <div className="p-8 text-center text-sm text-slate-400">Bu doktor için hakediş verisi yok</div>
+                    ) : (
+                      <table className="w-full text-xs">
+                        <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                          <th className="px-4 py-3 text-left">Ay</th>
+                          <th className="px-4 py-3 text-right">Hakedilen</th>
+                          <th className="px-4 py-3 text-right">Ödenen</th>
+                          <th className="px-4 py-3 text-right">Kalan</th>
+                          <th className="px-4 py-3 text-right">İşlem</th>
+                        </tr></thead>
+                        <tbody className="divide-y divide-slate-100">
+                          {hakedisMonths.map(m => {
+                            const now = new Date();
+                            const isCurrentMonth = m.year === now.getFullYear() && m.month === now.getMonth() + 1;
+                            const isPayable = !isCurrentMonth && m.kalan > 0.5;
+                            return (
+                              <tr key={`${m.year}-${m.month}`} className="hover:bg-slate-50">
+                                <td className="px-4 py-3 font-bold text-slate-800">
+                                  {AY_ADLARI[m.month - 1]} {m.year}
+                                  {isCurrentMonth && <span className="ml-1.5 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600">devam ediyor</span>}
+                                </td>
+                                <td className="px-4 py-3 text-right font-medium text-slate-700">{fmt(m.hakedilen)}</td>
+                                <td className="px-4 py-3 text-right font-medium text-emerald-700">{fmt(m.odenen)}</td>
+                                <td className={`px-4 py-3 text-right font-black ${isPayable ? "text-amber-700" : m.kalan < -0.5 ? "text-red-700" : "text-slate-400"}`}>
+                                  {isCurrentMonth ? "—" : fmt(m.kalan)}
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <button onClick={() => openHakedisDetail(selectedDoctor, m.year, m.month)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-50">Detay</button>
+                                    {isPayable && (
+                                      <button onClick={() => openDoctorPayoutFor(selectedDoctor, m.year, m.month, m.kalan)} className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700 hover:bg-blue-100">Öde</button>
+                                    )}
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    )}
                   </div>
-                  {Array.isArray(doctorFinance.topExaminations) && (doctorFinance.topExaminations as { type: string; count: number }[]).length > 0 && (
+
+                  {doctorFinance && Array.isArray(doctorFinance.topExaminations) && (doctorFinance.topExaminations as { type: string; count: number }[]).length > 0 && (
                     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
                       <div className="border-b border-slate-100 px-5 py-4">
                         <h3 className="text-sm font-black text-slate-900">En Çok Yapılan Tedaviler</h3>
@@ -1778,32 +3095,159 @@ export default function MuhasebePage() {
                 </div>
               )
           }
+        </div>
+      )}
 
-          {/* Modal: Hakediş Öde */}
-          {showHakOdeModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-              <div className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
-                <h3 className="text-sm font-black text-slate-900">Hakediş Ödemesi</h3>
-                <p className="text-xs text-slate-500">
-                  {hakDoctors.find(d => d.id === selectedDoctor)?.fullName} için hakediş ödemesi kaydedilecek.
-                </p>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Ödeme Tutarı (₺) *</label>
-                  <input type="number" value={hakOdeForm.tutar} onChange={e => setHakOdeForm(f => ({ ...f, tutar: e.target.value }))} placeholder="0.00" className={INP + " text-lg font-bold"} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
-                  <input value={hakOdeForm.aciklama} onChange={e => setHakOdeForm(f => ({ ...f, aciklama: e.target.value }))} placeholder="örn: Mayıs 2026 hakediş" className={INP} />
-                </div>
-                <div className="flex gap-2">
-                  <button onClick={() => setShowHakOdeModal(false)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600">Vazgeç</button>
-                  <button onClick={handleHakOde} disabled={hakOdeSaving} className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-60">
-                    {hakOdeSaving ? "Kaydediliyor…" : "Ödemeyi Kaydet"}
-                  </button>
-                </div>
+      {/* Modal: Hakediş Detayı */}
+      {hakedisDetailOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" {...backdropClose(() => setHakedisDetailOpen(false))}>
+          <section className="max-h-[88vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
+              <div>
+                <h2 className="text-base font-black text-slate-900">
+                  Hakediş Detayı{hakedisDetail ? ` — ${hakedisDetail.doctor.fullName}` : ""}
+                </h2>
+                {hakedisDetail && <p className="text-xs text-slate-500">{AY_ADLARI[hakedisDetail.month - 1]} {hakedisDetail.year}</p>}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button onClick={exportHakedisDetailExcel} disabled={!hakedisDetail} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">Excel</button>
+                <button onClick={exportHakedisDetailPdf} disabled={!hakedisDetail} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">PDF</button>
+                <button onClick={() => setHakedisDetailOpen(false)} className="h-8 rounded-lg px-2.5 text-xs font-bold text-slate-500 hover:bg-slate-100">Kapat</button>
               </div>
             </div>
-          )}
+
+            {hakedisDetailLoading ? (
+              <div className="py-16 text-center text-sm text-slate-400">Yükleniyor…</div>
+            ) : !hakedisDetail ? (
+              <div className="py-16 text-center text-sm text-slate-400">Detay yüklenemedi</div>
+            ) : (
+              <div className="mt-4 space-y-5">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl bg-blue-50 p-4">
+                    <p className="text-xs font-bold uppercase text-slate-500">Hakedilen</p>
+                    <p className="mt-1 text-xl font-black text-blue-700">{fmt(hakedisDetail.summary.hakedilen)}</p>
+                  </div>
+                  <div className="rounded-2xl bg-emerald-50 p-4">
+                    <p className="text-xs font-bold uppercase text-slate-500">Ödenen</p>
+                    <p className="mt-1 text-xl font-black text-emerald-700">{fmt(hakedisDetail.summary.odenen)}</p>
+                  </div>
+                  <div className="rounded-2xl bg-amber-50 p-4">
+                    <p className="text-xs font-bold uppercase text-slate-500">Kalan</p>
+                    <p className="mt-1 text-xl font-black text-amber-700">{fmt(hakedisDetail.summary.kalan)}</p>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="mb-2 text-sm font-black text-slate-900">Hakediş Hesaplama Dökümü</h3>
+                  <div className="overflow-hidden rounded-xl border border-slate-100">
+                    <table className="w-full text-xs">
+                      <tbody className="divide-y divide-slate-100">
+                        {hakedisBreakdownRows(hakedisDetail).map(([label, value], i, arr) => (
+                          <tr key={label} className={i === arr.length - 1 ? "bg-blue-50" : ""}>
+                            <td className="px-4 py-2 text-slate-600">{label}</td>
+                            <td className={`px-4 py-2 text-right font-bold ${i === arr.length - 1 ? "text-blue-700" : "text-slate-800"}`}>{value}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="mb-2 text-sm font-black text-slate-900">Muayeneler / Tedaviler ({hakedisDetail.examinations.length})</h3>
+                  <div className="overflow-hidden rounded-xl border border-slate-100">
+                    <table className="w-full text-xs">
+                      <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                        <th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Hasta</th><th className="px-3 py-2 text-left">Tedavi</th><th className="px-3 py-2 text-left">Diş</th><th className="px-3 py-2 text-right">Tutar</th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {hakedisDetail.examinations.length === 0
+                          ? <tr><td colSpan={5} className="px-3 py-4 text-center text-slate-400">Kayıt yok</td></tr>
+                          : hakedisDetail.examinations.map(e => (
+                            <tr key={e.id} className="hover:bg-slate-50">
+                              <td className="whitespace-nowrap px-3 py-2 text-slate-500">{fmtDate(e.tarih)}</td>
+                              <td className="px-3 py-2 font-medium text-slate-700">{e.hasta}</td>
+                              <td className="px-3 py-2 text-slate-600">{e.tedavi}</td>
+                              <td className="px-3 py-2 text-slate-500">{e.dis || "—"}</td>
+                              <td className="px-3 py-2 text-right font-bold text-slate-900">{fmt(e.tutar)}</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="mb-2 text-sm font-black text-slate-900">Hasta Ödemeleri ({hakedisDetail.patientPayments.length})</h3>
+                  <div className="overflow-hidden rounded-xl border border-slate-100">
+                    <table className="w-full text-xs">
+                      <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                        <th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Hasta</th><th className="px-3 py-2 text-left">Yöntem</th><th className="px-3 py-2 text-right">Tutar</th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {hakedisDetail.patientPayments.length === 0
+                          ? <tr><td colSpan={4} className="px-3 py-4 text-center text-slate-400">Kayıt yok</td></tr>
+                          : hakedisDetail.patientPayments.map(p => (
+                            <tr key={p.id} className="hover:bg-slate-50">
+                              <td className="whitespace-nowrap px-3 py-2 text-slate-500">{fmtDate(p.tarih)}</td>
+                              <td className="px-3 py-2 font-medium text-slate-700">{p.hasta}</td>
+                              <td className="px-3 py-2 text-slate-600">{METHOD_LABELS[p.yontem] || p.yontem}</td>
+                              <td className="px-3 py-2 text-right font-bold text-emerald-700">{fmt(p.tutar)}</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="mb-2 text-sm font-black text-slate-900">Laboratuvar Faturaları ({hakedisDetail.labInvoices.length})</h3>
+                  <div className="overflow-hidden rounded-xl border border-slate-100">
+                    <table className="w-full text-xs">
+                      <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                        <th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Lab</th><th className="px-3 py-2 text-left">Kalem</th><th className="px-3 py-2 text-right">Tutar</th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {hakedisDetail.labInvoices.length === 0
+                          ? <tr><td colSpan={4} className="px-3 py-4 text-center text-slate-400">Kayıt yok</td></tr>
+                          : hakedisDetail.labInvoices.map(i => (
+                            <tr key={i.id} className="hover:bg-slate-50">
+                              <td className="whitespace-nowrap px-3 py-2 text-slate-500">{fmtDate(i.tarih)}</td>
+                              <td className="px-3 py-2 font-medium text-slate-700">{i.lab}</td>
+                              <td className="px-3 py-2 text-slate-600">{i.kalem}</td>
+                              <td className="px-3 py-2 text-right font-bold text-red-700">{fmt(i.tutar)}</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="mb-2 text-sm font-black text-slate-900">Doktora Yapılan Hakediş Ödemeleri ({hakedisDetail.payoutExpenses.length})</h3>
+                  <div className="overflow-hidden rounded-xl border border-slate-100">
+                    <table className="w-full text-xs">
+                      <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                        <th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Açıklama</th><th className="px-3 py-2 text-left">Yöntem</th><th className="px-3 py-2 text-right">Tutar</th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {hakedisDetail.payoutExpenses.length === 0
+                          ? <tr><td colSpan={4} className="px-3 py-4 text-center text-slate-400">Kayıt yok</td></tr>
+                          : hakedisDetail.payoutExpenses.map(p => (
+                            <tr key={p.id} className="hover:bg-slate-50">
+                              <td className="whitespace-nowrap px-3 py-2 text-slate-500">{fmtDate(p.tarih)}</td>
+                              <td className="px-3 py-2 text-slate-600">{p.aciklama || "—"}</td>
+                              <td className="px-3 py-2 text-slate-600">{METHOD_LABELS[p.yontem] || p.yontem}</td>
+                              <td className="px-3 py-2 text-right font-bold text-blue-700">{fmt(p.tutar)}</td>
+                            </tr>
+                          ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+          </section>
         </div>
       )}
 

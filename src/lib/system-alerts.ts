@@ -18,8 +18,16 @@ export function evaluateSystemAlerts() {
   const realtimeConnections = m.counters.realtime_connections_open;
   const realtimeEvents = m.counters.realtime_events_total;
 
-  const apiP95 = m.timers.api_request_ms?.maxMs || 0;
   const smsP95 = m.timers.sms_dispatch_ms?.maxMs || 0;
+
+  // Rota bazlı zamanlayıcılar: withApiTiming() ile sarılan her endpoint kendi
+  // "api_request_ms:<route>" anahtarında ölçülür — böylece hangi spesifik
+  // route'un yavaşladığı görülebilir, tek bir genel ortalamada kaybolmaz.
+  const slowRoutes = Object.entries(m.timers)
+    .filter(([key]) => key.startsWith("api_request_ms:"))
+    .map(([key, stat]) => ({ route: key.slice("api_request_ms:".length), ...stat }))
+    .filter((r) => r.maxMs > 1500)
+    .sort((a, b) => b.maxMs - a.maxMs);
 
   if (apiErrors > 100) {
     alerts.push({
@@ -41,12 +49,12 @@ export function evaluateSystemAlerts() {
     });
   }
 
-  if (apiP95 > 1500) {
+  for (const r of slowRoutes) {
     alerts.push({
-      id: "api-latency-high",
-      level: "warning",
-      title: "API gecikmesi yuksek",
-      detail: `Maks API sure: ${apiP95} ms`,
+      id: `api-latency-high:${r.route}`,
+      level: r.maxMs > 5000 ? "critical" : "warning",
+      title: `API gecikmesi yuksek: ${r.route}`,
+      detail: `Maks sure: ${r.maxMs} ms (ort: ${r.avgMs} ms, ${r.count} istek)`,
       at: now,
     });
   }

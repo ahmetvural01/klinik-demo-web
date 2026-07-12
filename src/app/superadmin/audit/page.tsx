@@ -6,8 +6,10 @@ type AuditEntry = {
   id: string;
   action: string;
   detail?: string;
-  ipAddress?: string;
-  user?: { fullName: string; identityNo: string };
+  ip?: string;
+  actorRole?: string;
+  isGhost?: boolean;
+  user?: { fullName: string; identityNo: string; role?: string };
   institution?: { name: string };
   createdAt: string;
 };
@@ -78,7 +80,19 @@ export default function AuditPage() {
                       <td className="px-4 py-3 text-gray-500 whitespace-nowrap text-xs">
                         {new Date(log.createdAt).toLocaleString("tr-TR")}
                       </td>
-                      <td className="px-4 py-3 text-gray-800">{log.user?.fullName ?? "—"}</td>
+                      <td className="px-4 py-3 text-gray-800">
+                        {log.user?.fullName ?? "—"}
+                        {log.isGhost && (
+                          <span className="ml-1.5 inline-flex rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+                            Ghost
+                          </span>
+                        )}
+                        {!log.isGhost && log.actorRole === "SUPERADMIN" && (
+                          <span className="ml-1.5 inline-flex rounded bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-700">
+                            Superadmin
+                          </span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-gray-600">{log.institution?.name ?? "—"}</td>
                       <td className="px-4 py-3">
                         <span className="inline-flex rounded bg-slate-100 px-2 py-0.5 text-xs font-mono text-slate-700">
@@ -86,7 +100,7 @@ export default function AuditPage() {
                         </span>
                       </td>
                       <td className="px-4 py-3 text-gray-600 max-w-xs truncate">{log.detail ?? "—"}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-gray-400">{log.ipAddress ?? "—"}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-gray-400">{log.ip ?? "—"}</td>
                     </tr>
                   ))
                 )}

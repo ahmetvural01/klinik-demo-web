@@ -4,15 +4,19 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { confirmDialog } from "@/lib/confirm-client";
+import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
+import { showToastSafe } from "@/lib/toast-client";
 import {
   type AppointmentTreatmentKey,
   type FollowUpKey,
+  type TreatmentOption,
   APPOINTMENT_TREATMENT_OPTIONS,
   FOLLOW_UP_OPTIONS,
   buildAppointmentNote,
   getFollowUpMeta,
-  getTreatmentMeta,
-  parseAppointmentNote,
+  getTreatmentMeta as getTreatmentMetaBase,
+  parseAppointmentNote as parseAppointmentNoteBase,
 } from "@/lib/appointment-follow-up";
 
 type Appointment = {
@@ -27,7 +31,7 @@ type Appointment = {
   doctor?: { id: string; fullName: string };
 };
 
-type Staff = { id: string; fullName: string; role: string };
+type Staff = { id: string; fullName: string; role: string; profile?: { workStart?: string | null; workEnd?: string | null; hideAsDoctor?: boolean } | null };
 type Patient = { id: string; fullName: string; tcNo?: string; phone?: string };
 type UpcomingAppointment = {
   id: string;
@@ -52,6 +56,11 @@ const STATUS_LABELS: Record<string, string> = {
 function toLocalInput(date: Date) {
   const z = (n: number) => String(n).padStart(2, "0");
   return date.getFullYear() + "-" + z(date.getMonth() + 1) + "-" + z(date.getDate()) + "T" + z(date.getHours()) + ":" + z(date.getMinutes());
+}
+
+function toLocalDateKey(date: Date) {
+  const z = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${z(date.getMonth() + 1)}-${z(date.getDate())}`;
 }
 
 const TR_DAYS = ["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"];
@@ -104,6 +113,29 @@ type CalendarSettings = {
 
   type DoctorBlock = { id: string; doctorId: string; date: string; startTime: string; endTime: string; reason?: string | null; doctor?: { id: string; fullName: string } };
 
+type BookingRequestEntry = {
+  id: string;
+  fullName: string;
+  phone: string;
+  tcNo?: string | null;
+  doctor?: { id: string; fullName: string } | null;
+  preferredFrom: string;
+  note?: string | null;
+  status: "BEKLIYOR" | "ONAYLANDI" | "REDDEDILDI" | "IPTAL";
+  createdAt: string;
+};
+
+type WaitlistEntry = {
+  id: string;
+  patient: { id: string; fullName: string; phone?: string | null };
+  doctor?: { id: string; fullName: string } | null;
+  preferredFrom?: string | null;
+  preferredTo?: string | null;
+  note?: string | null;
+  status: "BEKLIYOR" | "ARANDI" | "YERLESTIRILDI" | "IPTAL";
+  createdAt: string;
+};
+
 const APPOINTMENT_CREATOR_ROLES = new Set(["DOKTOR", "YONETICI", "ADMIN", "SUPERADMIN"]);
 
 type RandevuCache = {
@@ -147,11 +179,15 @@ export default function RandevuPage() {
   const [doctorId, setDoctorId] = useState("");
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
+  const [treatmentOptions, setTreatmentOptions] = useState<TreatmentOption[]>(APPOINTMENT_TREATMENT_OPTIONS);
+  const getTreatmentMeta = useCallback((key: AppointmentTreatmentKey) => getTreatmentMetaBase(key, treatmentOptions), [treatmentOptions]);
+  const parseAppointmentNote = useCallback((note?: string | null) => parseAppointmentNoteBase(note, treatmentOptions), [treatmentOptions]);
   const [currentUserRole, setCurrentUserRole] = useState("");
   const [canCreateAppointments, setCanCreateAppointments] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  useEscapeClose(() => { setShowForm(false); resetForm(); }, showForm);
   const [saving, setSaving] = useState(false);
 
   // Hasta arama (combobox)
@@ -204,6 +240,7 @@ export default function RandevuPage() {
   const [doctorBlocks, setDoctorBlocks] = useState<DoctorBlock[]>([]);
   const [focusAppointmentId, setFocusAppointmentId] = useState<string | null>(null);
   const [showBlockModal, setShowBlockModal] = useState(false);
+  useEscapeClose(() => setShowBlockModal(false), showBlockModal);
   const [blockDoctorId, setBlockDoctorId] = useState("");
   const [blockDate, setBlockDate] = useState(() => { const d = new Date(); return d.toISOString().slice(0, 10); });
   const [blockStartTime, setBlockStartTime] = useState("13:00");
@@ -217,6 +254,207 @@ export default function RandevuPage() {
     holidayDays: ["Pazar"],
     dailySchedules: [],
   });
+
+  // Bekleme Listesi state
+  const [waitlist, setWaitlist] = useState<WaitlistEntry[]>([]);
+  const [showWaitlistModal, setShowWaitlistModal] = useState(false);
+  useEscapeClose(() => setShowWaitlistModal(false), showWaitlistModal);
+  const [wlPatientSearch, setWlPatientSearch] = useState("");
+  const [wlPatientResults, setWlPatientResults] = useState<Patient[]>([]);
+  const [wlSelectedPatient, setWlSelectedPatient] = useState<Patient | null>(null);
+  const [wlDoctorId, setWlDoctorId] = useState("");
+  const [wlFrom, setWlFrom] = useState("");
+  const [wlTo, setWlTo] = useState("");
+  const [wlNote, setWlNote] = useState("");
+  const [wlSaving, setWlSaving] = useState(false);
+
+  const loadWaitlist = useCallback(async () => {
+    try {
+      const res = await fetch("/api/waitlist", { cache: "no-store" });
+      if (!res.ok) { setError("Bekleme listesi yüklenemedi."); setWaitlist([]); return; }
+      const json = await res.json().catch(() => []);
+      setWaitlist(Array.isArray(json) ? json : []);
+    } catch {
+      setWaitlist([]);
+    }
+  }, []);
+
+  useEffect(() => { void loadWaitlist(); }, [loadWaitlist]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onRealtime = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void loadWaitlist(), 300);
+    };
+    window.addEventListener("ks:realtime-sync", onRealtime);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("ks:realtime-sync", onRealtime);
+    };
+  }, [loadWaitlist]);
+
+  useEffect(() => {
+    if (wlPatientSearch.trim().length < 2) { setWlPatientResults([]); return; }
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch("/api/patients?q=" + encodeURIComponent(wlPatientSearch.trim()) + "&take=10");
+        const data = await res.json();
+        setWlPatientResults(Array.isArray(data.patients) ? data.patients : (Array.isArray(data) ? data : []));
+      } catch { setWlPatientResults([]); }
+    }, 280);
+    return () => clearTimeout(t);
+  }, [wlPatientSearch]);
+
+  const resetWaitlistForm = () => {
+    setWlPatientSearch("");
+    setWlPatientResults([]);
+    setWlSelectedPatient(null);
+    setWlDoctorId("");
+    setWlFrom("");
+    setWlTo("");
+    setWlNote("");
+  };
+
+  const submitWaitlist = async () => {
+    if (!wlSelectedPatient) { showToastSafe({ title: "Hata", message: "Lütfen bir hasta seçin", type: "error" }); return; }
+    setWlSaving(true);
+    try {
+      const res = await fetch("/api/waitlist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patientId: wlSelectedPatient.id,
+          doctorId: wlDoctorId || null,
+          preferredFrom: wlFrom ? new Date(wlFrom).toISOString() : null,
+          preferredTo: wlTo ? new Date(wlTo).toISOString() : null,
+          note: wlNote || null,
+        }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToastSafe({ title: "Hata", message: json?.error || "Bekleme listesine eklenemedi", type: "error" });
+        return;
+      }
+      setWaitlist((prev) => [...prev, json as WaitlistEntry]);
+      resetWaitlistForm();
+      showToastSafe({ title: "Eklendi", message: "Hasta bekleme listesine eklendi.", type: "success" });
+    } finally {
+      setWlSaving(false);
+    }
+  };
+
+  const updateWaitlistStatus = async (entryId: string, status: WaitlistEntry["status"]) => {
+    if (status === "YERLESTIRILDI") {
+      // "Yerleştirildi" = fiilen randevu oluşturma. Durum, randevu formu
+      // başarıyla kaydedilene kadar değişmez (bkz. createAppointment).
+      const entry = waitlist.find((w) => w.id === entryId);
+      if (!entry) return;
+      setShowWaitlistModal(false);
+      resetForm();
+      setPatientId(entry.patient.id);
+      setPatientSearch(entry.patient.fullName);
+      setNote(entry.note ? `Bekleme listesinden: ${entry.note}` : "Bekleme listesinden yerleştirildi");
+      const preferred = entry.preferredFrom ? new Date(entry.preferredFrom) : new Date();
+      setStartAt(toLocalInput(preferred));
+      setDurationMinutes(slotInterval);
+      if (entry.doctor?.id) {
+        setNewDoctorId(entry.doctor.id);
+        setDoctorQuery(entry.doctor.fullName);
+      }
+      setPendingWaitlistId(entryId);
+      setShowForm(true);
+      showToastSafe({ title: "Randevu oluşturun", message: "Randevuyu kaydedince bekleme listesi otomatik güncellenecek.", type: "success" });
+      return;
+    }
+
+    const res = await fetch(`/api/waitlist/${entryId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+    if (!res.ok) { showToastSafe({ title: "Hata", message: "Güncellenemedi", type: "error" }); return; }
+    const json = await res.json();
+    setWaitlist((prev) => prev.map((w) => (w.id === entryId ? json : w)));
+  };
+
+  const removeWaitlistEntry = async (entryId: string) => {
+    if (!(await confirmDialog({ message: "Bu kayıt bekleme listesinden kaldırılsın mı?", danger: true, confirmText: "Kaldır" }))) return;
+    const res = await fetch(`/api/waitlist/${entryId}`, { method: "DELETE" });
+    if (!res.ok) { showToastSafe({ title: "Hata", message: "Kaldırılamadı", type: "error" }); return; }
+    setWaitlist((prev) => prev.filter((w) => w.id !== entryId));
+  };
+
+  const activeWaitlist = useMemo(() => waitlist.filter((w) => w.status === "BEKLIYOR" || w.status === "ARANDI"), [waitlist]);
+
+  // Online randevu talepleri
+  const [bookingRequests, setBookingRequests] = useState<BookingRequestEntry[]>([]);
+  const [showBookingRequestsModal, setShowBookingRequestsModal] = useState(false);
+  // Onaylanan talep, randevu gerçekten oluşturulana kadar burada bekler —
+  // önceden "Onayla" tek başına durumu ONAYLANDI yapıyor, hiçbir randevu
+  // oluşturulmasını gerektirmiyordu (bkz. denetim raporu Tema 4).
+  const [pendingBookingRequestId, setPendingBookingRequestId] = useState<string | null>(null);
+  const [pendingWaitlistId, setPendingWaitlistId] = useState<string | null>(null);
+  useEscapeClose(() => setShowBookingRequestsModal(false), showBookingRequestsModal);
+
+  const loadBookingRequests = useCallback(async () => {
+    try {
+      const res = await fetch("/api/booking-requests", { cache: "no-store" });
+      if (!res.ok) { setError("Online randevu talepleri yüklenemedi."); setBookingRequests([]); return; }
+      const json = await res.json().catch(() => []);
+      setBookingRequests(Array.isArray(json) ? json : []);
+    } catch {
+      setBookingRequests([]);
+    }
+  }, []);
+
+  useEffect(() => { void loadBookingRequests(); }, [loadBookingRequests]);
+
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onRealtime = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => void loadBookingRequests(), 300);
+    };
+    window.addEventListener("ks:realtime-sync", onRealtime);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("ks:realtime-sync", onRealtime);
+    };
+  }, [loadBookingRequests]);
+
+  const respondBookingRequest = async (requestId: string, status: "ONAYLANDI" | "REDDEDILDI") => {
+    if (status === "REDDEDILDI") {
+      const res = await fetch(`/api/booking-requests/${requestId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) { showToastSafe({ title: "Hata", message: "Güncellenemedi", type: "error" }); return; }
+      setBookingRequests((prev) => prev.filter((r) => r.id !== requestId));
+      showToastSafe({ title: "Reddedildi", message: "Talep güncellendi.", type: "success" });
+      return;
+    }
+
+    // Onaylama = fiilen randevu oluşturma. Talep durumu, randevu formu
+    // başarıyla kaydedilene kadar BEKLIYOR'da kalır (bkz. createAppointment).
+    const request = bookingRequests.find((r) => r.id === requestId);
+    if (!request) return;
+    setShowBookingRequestsModal(false);
+    resetForm();
+    setPatientSearch(request.fullName || "");
+    setNote(`Online talep: ${request.fullName} (${request.phone}${request.tcNo ? `, TC ${request.tcNo}` : ""})${request.note ? ` — ${request.note}` : ""}`);
+    const preferred = request.preferredFrom ? new Date(request.preferredFrom) : new Date();
+    setStartAt(toLocalInput(preferred));
+    setDurationMinutes(slotInterval);
+    if (request.doctor?.id) {
+      setNewDoctorId(request.doctor.id);
+      setDoctorQuery(request.doctor.fullName);
+    }
+    setPendingBookingRequestId(requestId);
+    setShowForm(true);
+    showToastSafe({ title: "Randevu oluşturun", message: "Hastayı seçip randevuyu kaydedince talep otomatik onaylanacak.", type: "success" });
+  };
 
   const currentRange = useMemo(() => {
     const from = new Date(date);
@@ -242,7 +480,7 @@ export default function RandevuPage() {
 
   const isBookableDoctor = useCallback((person: Staff & { profile?: { hideAsDoctor?: boolean } | null; isActive?: boolean }) => {
     if (person.isActive === false) return false;
-    if (["DOKTOR", "SUPERADMIN", "ADMIN"].includes(person.role)) return true;
+    if (person.role === "DOKTOR") return true;
     if (person.role === "YONETICI") return !Boolean(person.profile?.hideAsDoctor);
     return false;
   }, []);
@@ -250,9 +488,9 @@ export default function RandevuPage() {
   const selectedTreatmentMeta = useMemo(() => getTreatmentMeta(treatmentKey), [treatmentKey]);
   const filteredTreatmentOptions = useMemo(() => {
     const q = treatmentQuery.trim().toLowerCase();
-    if (!q) return APPOINTMENT_TREATMENT_OPTIONS;
-    return APPOINTMENT_TREATMENT_OPTIONS.filter((item) => item.label.toLowerCase().includes(q));
-  }, [treatmentQuery]);
+    if (!q) return treatmentOptions;
+    return treatmentOptions.filter((item) => item.label.toLowerCase().includes(q));
+  }, [treatmentQuery, treatmentOptions]);
 
   const filteredDoctorOptions = useMemo(() => {
     const q = doctorQuery.trim().toLowerCase();
@@ -349,11 +587,11 @@ export default function RandevuPage() {
   const resolveTreatmentKey = useCallback((query: string): AppointmentTreatmentKey => {
     const q = query.trim().toLowerCase();
     if (!q) return "MUAYENE";
-    const exact = APPOINTMENT_TREATMENT_OPTIONS.find((item) => item.label.toLowerCase() === q);
+    const exact = treatmentOptions.find((item) => item.label.toLowerCase() === q);
     if (exact) return exact.value;
-    const included = APPOINTMENT_TREATMENT_OPTIONS.find((item) => item.label.toLowerCase().includes(q));
-    return included?.value || "DIGER";
-  }, []);
+    const included = treatmentOptions.find((item) => item.label.toLowerCase().includes(q));
+    return included?.value || treatmentOptions[0]?.value || "DIGER";
+  }, [treatmentOptions]);
 
   const getEffectiveRole = useCallback(() => {
     if (typeof window === "undefined") return "";
@@ -474,8 +712,8 @@ export default function RandevuPage() {
       const params = new URLSearchParams({ from: currentRange.from.toISOString(), to: currentRange.to.toISOString() });
       if (doctorId) params.set("doctorId", doctorId);
       // Format range dates as YYYY-MM-DD for doctor-blocks
-      const fromDate = currentRange.from.toISOString().slice(0, 10);
-      const toDate = currentRange.to.toISOString().slice(0, 10);
+      const fromDate = toLocalDateKey(currentRange.from);
+      const toDate = toLocalDateKey(currentRange.to);
 
       const [appointmentsRes, meRes] = await Promise.all([
         fetch("/api/appointments?" + params.toString(), { cache: "no-store" }),
@@ -491,7 +729,7 @@ export default function RandevuPage() {
       setCanCreateAppointments(APPOINTMENT_CREATOR_ROLES.has(role));
 
       void Promise.allSettled([
-        fetch("/api/staff?booking=1", { cache: "no-store" })
+        fetch("/api/staff", { cache: "no-store" })
           .then((r) => r.json())
           .then((sJson) => {
             const staffList = Array.isArray(sJson) ? sJson : (sJson?.staff || []);
@@ -536,10 +774,34 @@ export default function RandevuPage() {
           })
           .catch(() => {}),
         fetch(`/api/doctor-blocks?from=${fromDate}&to=${toDate}`, { cache: "no-store" })
+          .then(async (r) => {
+            if (!r.ok) {
+              // Blokaj listesi yüklenemedi — sessizce "blokaj yok" varsaymak doktorun kapattığı
+              // bir saate randevu yazılmasına yol açabilir, o yüzden görünür şekilde uyar.
+              setError("Doktor blokaj bilgisi yüklenemedi — çakışma kontrolü eksik olabilir. Sayfayı yenileyin.");
+              setDoctorBlocks([]);
+              return;
+            }
+            const blocksJson = await r.json();
+            setDoctorBlocks(Array.isArray(blocksJson) ? blocksJson : []);
+          })
+          .catch(() => {
+            setError("Doktor blokaj bilgisi yüklenemedi — çakışma kontrolü eksik olabilir. Sayfayı yenileyin.");
+            setDoctorBlocks([]);
+          }),
+        fetch("/api/treatment-types", { cache: "no-store" })
           .then((r) => r.json())
-          .then((blocksJson) => {
-            const resolvedBlocks = Array.isArray(blocksJson) ? blocksJson : [];
-            setDoctorBlocks(resolvedBlocks);
+          .then((typesJson) => {
+            const list = Array.isArray(typesJson) ? typesJson : [];
+            const active = list.filter((t: { isActive?: boolean }) => t.isActive !== false);
+            if (active.length > 0) {
+              setTreatmentOptions(active.map((t: { value: string; label: string; color: string }) => ({
+                value: t.value,
+                label: t.label,
+                color: t.color,
+                badge: "",
+              })));
+            }
           })
           .catch(() => {}),
       ]);
@@ -578,6 +840,20 @@ export default function RandevuPage() {
     };
   }, [load]);
 
+  // Sekmeye geri dönüldüğünde (arka planda kaçırılmış olabilecek olayları) tazele.
+  useEffect(() => {
+    const refreshVisible = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void load();
+    };
+    window.addEventListener("focus", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => {
+      window.removeEventListener("focus", refreshVisible);
+      document.removeEventListener("visibilitychange", refreshVisible);
+    };
+  }, [load]);
+
   useEffect(() => {
     if (!focusAppointmentId) return;
     const found = appointments.find((a) => a.id === focusAppointmentId);
@@ -608,6 +884,8 @@ export default function RandevuPage() {
     setTreatmentQuery(getTreatmentMeta("MUAYENE").label);
     setDoctorQuery(""); setDoctorDropdownOpen(false); setTreatmentDropdownOpen(false);
     setDurationMinutes(slotInterval);
+    setPendingBookingRequestId(null);
+    setPendingWaitlistId(null);
   };
 
   const closeAppointmentModal = useCallback(() => {
@@ -620,6 +898,8 @@ export default function RandevuPage() {
     setEditDoctorDropdownOpen(false);
     setSelectedAppt(null);
   }, []);
+
+  useEscapeClose(closeAppointmentModal, Boolean(selectedAppt));
 
   const createAppointment = async () => {
     if (!canCreateAppointments) {
@@ -656,8 +936,43 @@ export default function RandevuPage() {
       })
     });
     setSaving(false);
-    if (!res.ok) { const b = await res.json().catch(() => ({ message: "Kaydedilemedi" })); setError(b.message || "Kaydedilemedi"); return; }
+    const responseBody = await res.json().catch(() => ({ message: "Kaydedilemedi" }));
+    if (!res.ok) { setError(responseBody.message || "Kaydedilemedi"); return; }
+
+    if (pendingBookingRequestId) {
+      const requestId = pendingBookingRequestId;
+      setPendingBookingRequestId(null);
+      await fetch(`/api/booking-requests/${requestId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "ONAYLANDI", appointmentId: responseBody.id }),
+      }).catch(() => {});
+      setBookingRequests((prev) => prev.filter((r) => r.id !== requestId));
+    }
+
+    if (pendingWaitlistId) {
+      const waitlistId = pendingWaitlistId;
+      setPendingWaitlistId(null);
+      await fetch(`/api/waitlist/${waitlistId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "YERLESTIRILDI", appointmentId: responseBody.id }),
+      }).catch(() => {});
+      setWaitlist((prev) => prev.filter((w) => w.id !== waitlistId));
+    }
+
     setShowForm(false); resetForm();
+    const smsStatus = responseBody.smsStatus;
+    const smsMessages = [
+      smsStatus?.infoMessage,
+      smsStatus?.reminderMessage,
+      smsStatus?.surveyMessage,
+    ].filter(Boolean).join(" ");
+    showToastSafe({
+      title: "Randevu oluşturuldu",
+      message: smsMessages || "Randevu takvime eklendi.",
+      type: smsStatus?.info === "failed" ? "error" : "success",
+    });
     await load();
   };
 
@@ -693,7 +1008,7 @@ export default function RandevuPage() {
   };
 
   const remove = async (id: string) => {
-    if (!window.confirm("Randevu silinsin mi?")) return;
+    if (!(await confirmDialog({ message: "Randevu silinsin mi?", danger: true, confirmText: "Sil" }))) return;
     const res = await fetch("/api/appointments/" + id, { method: "DELETE" });
     if (!res.ok) {
       const body = await res.json().catch(() => ({ message: "Randevu silinemedi" }));
@@ -829,6 +1144,25 @@ export default function RandevuPage() {
     });
   };
 
+  const getContinuingApptForSlot = (docId: string | null, slotTime: string, forDate: Date) => {
+    const [h, m] = slotTime.split(":").map(Number);
+    const slotStart = new Date(forDate);
+    slotStart.setHours(h, m, 0, 0);
+
+    return appointments.filter((a) => {
+      if (a.status === "IPTAL") return false;
+      if (docId && a.doctor?.id !== docId) return false;
+      const start = new Date(a.startAt);
+      const end = new Date(a.endAt);
+      const sameDay = start.getFullYear() === forDate.getFullYear()
+        && start.getMonth() === forDate.getMonth()
+        && start.getDate() === forDate.getDate();
+      if (!sameDay) return false;
+      const startsAtSlot = start.getTime() === slotStart.getTime();
+      return !startsAtSlot && start < slotStart && end > slotStart;
+    });
+  };
+
   const getApptForDay = (d: Date) => appointments.filter(a => {
     if (a.status === "IPTAL") return false;
     const ad = new Date(a.startAt);
@@ -870,8 +1204,13 @@ export default function RandevuPage() {
     });
 
     const slotTime = String(start.getHours()).padStart(2, "0") + ":" + String(start.getMinutes()).padStart(2, "0");
+    const dateKey = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}-${String(start.getDate()).padStart(2, "0")}`;
+    const blockHit = doctorBlocks.find(b => b.doctorId === targetDoctorId && b.date === dateKey && slotTime >= b.startTime && slotTime < b.endTime) || null;
+
     const warning = overlaps.length > 0
       ? `Bu aralıkta (${slotTime}, ${targetDurationMinutes} dk) ${overlaps.length} çakışan randevu var: ${overlaps.map((a) => a.patient?.fullName || "Hasta").join(", ")}.`
+      : blockHit
+      ? `Doktor bu saatte bloke edilmiş (${blockHit.startTime}–${blockHit.endTime}${blockHit.reason ? `: ${blockHit.reason}` : ""}).`
       : null;
 
     const candidates: { slot: string; distance: number }[] = [];
@@ -898,7 +1237,7 @@ export default function RandevuPage() {
     const suggestions = candidates.slice(0, 3).map(c => c.slot);
 
     return { warning, suggestions };
-  }, [appointments, slotTimes]);
+  }, [appointments, slotTimes, doctorBlocks]);
 
   const openQuickCreate = (slotTime: string, forDate: Date, slotDoctorId?: string) => {
     if (!canCreateAppointments) return;
@@ -1011,7 +1350,7 @@ export default function RandevuPage() {
 <table style="width:100%;border-collapse:collapse;font-family:Calibri,Arial,sans-serif;">
   <tr>
     <td colspan="8" style="background:#1E3A5F;color:#FFFFFF;font-size:18px;font-weight:700;padding:14px 16px;border:none;letter-spacing:0.5px;">
-      KlinikModern — Randevu Çizelgesi
+      Randevu Çizelgesi
     </td>
   </tr>
   <tr>
@@ -1057,7 +1396,7 @@ export default function RandevuPage() {
   <tr style="height:12px;"><td colspan="8" style="border:none;background:#FFFFFF;"></td></tr>
   <tr>
     <td colspan="8" style="padding:8px 16px;font-size:11px;color:#9CA3AF;font-style:italic;border-top:2px solid #E2E8F0;">
-      Bu çizelge KlinikModern üzerinden ${now.toLocaleString("tr-TR")} tarihinde oluşturulmuştur.
+      Bu çizelge ${now.toLocaleString("tr-TR")} tarihinde oluşturulmuştur.
     </td>
   </tr>
 </table>
@@ -1177,7 +1516,7 @@ export default function RandevuPage() {
 <div class="page">
   <div class="header">
     <div class="logo-area">
-      <div class="logo-name">KlinikModern</div>
+      <div class="logo-name">Randevu Çizelgesi</div>
       <div class="logo-sub">Randevu Çizelgesi</div>
     </div>
     <div class="header-right">
@@ -1229,7 +1568,7 @@ export default function RandevuPage() {
   </table>
 
   <div class="footer">
-    <span>Bu çıktı KlinikModern randevu çizelgesinden üretilmiştir.</span>
+    <span>Bu çıktı randevu çizelgesinden üretilmiştir.</span>
     <span>${now.toLocaleString("tr-TR")}</span>
   </div>
 </div>
@@ -1262,8 +1601,19 @@ export default function RandevuPage() {
     }) || null;
   }, [doctorBlocks]);
 
+  // Doktorun kişisel mesai saati dışını yumuşak biçimde işaretler (DoctorBlock
+  // gibi sert bir engel değil — personel profilinde düzenlenen mesai saatleri
+  // önceden randevu ekranına hiç yansımıyordu, tamamen kozmetikti).
+  const isOutsideDoctorHours = useCallback((docId: string, slotTime: string): boolean => {
+    const doc = staff.find(s => s.id === docId);
+    if (!doc?.profile?.workStart && !doc?.profile?.workEnd) return false;
+    const start = doc.profile?.workStart || "08:30";
+    const end = doc.profile?.workEnd || "18:00";
+    return slotTime < start || slotTime >= end;
+  }, [staff]);
+
   const deleteBlock = async (id: string) => {
-    if (!window.confirm("Bu bloke zaman silinsin mi?")) return;
+    if (!(await confirmDialog({ message: "Bu bloke zaman silinsin mi?", danger: true, confirmText: "Sil" }))) return;
     const res = await fetch("/api/doctor-blocks?id=" + id, { method: "DELETE" });
     if (!res.ok) {
       setError("Bloke zaman silinemedi");
@@ -1303,10 +1653,13 @@ export default function RandevuPage() {
       onDragEnd={enableDrag ? () => { setDraggedApptId(null); setDragOverKey(null); } : undefined}
       onClick={() => setSelectedAppt(a)}
       title={`${a.patient?.fullName || "-"} - ${new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}`}
-      className={"mb-1 cursor-pointer rounded px-1.5 py-1 " + (enableDrag ? "cursor-grab active:cursor-grabbing " : "") + (STATUS_COLORS[a.status] || "bg-blue-50 border-l-4 border-blue-400")}>
+      className={"randevu-appt-card mb-1 cursor-pointer rounded-md border px-2 py-1 shadow-sm " + (enableDrag ? "cursor-grab active:cursor-grabbing " : "") + (STATUS_COLORS[a.status] || "bg-blue-50 border-l-4 border-blue-400")}>
       <div className="flex items-center gap-1">
         <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: treatmentMeta.color }} />
         <p className="min-w-0 flex-1 truncate text-[11px] font-semibold text-gray-800">{a.patient?.fullName || "-"}</p>
+        <span className="shrink-0 text-[10px] font-bold text-slate-500">
+          {new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}
+        </span>
         {parsed.followUp !== "YOK" && (
           <span className={"inline-flex rounded-full px-1 py-0.5 text-[9px] font-semibold " + meta.badge}>T</span>
         )}
@@ -1318,125 +1671,81 @@ export default function RandevuPage() {
   );
 
   return (
-    <section className="space-y-4">
-      <div className="sticky top-[72px] z-20 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="min-w-[170px]">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-lg font-black leading-tight text-slate-900">Randevular</h1>
-              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">
-                {appointments.length} kayıt
-              </span>
-              {doctorBlocks.length > 0 && (
-                <span className="rounded-full border border-orange-200 bg-orange-50 px-2 py-1 text-xs font-bold text-orange-700">
-                  {doctorBlocks.length} blokaj
-                </span>
-              )}
-            </div>
-          </div>
+    <section className="randevu-page space-y-2">
+      <div className="randevu-toolbar flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-2 shadow-sm">
+        <button onClick={() => nav(-1)} aria-label="Önceki tarih aralığı" className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-lg leading-none hover:bg-slate-50">‹</button>
+        <span className="max-w-full truncate rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-sm font-bold text-slate-800">{navLabel()}</span>
+        <button onClick={() => nav(1)} aria-label="Sonraki tarih aralığı" className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-lg leading-none hover:bg-slate-50">›</button>
 
-          <div className="relative min-w-[260px] flex-1">
-            <input
-              value={upcomingSearch}
-              onChange={(e) => setUpcomingSearch(e.target.value)}
-              placeholder="Hasta adıyla yaklaşan randevu ara"
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary"
-            />
-            {upcomingLoading && <span className="absolute right-2 top-2 h-3.5 w-3.5 animate-spin rounded-full border border-slate-300 border-t-primary" aria-hidden="true" />}
-            {upcomingSearch.trim().length >= 2 && (
-              <div className="absolute left-0 right-0 z-20 mt-1 max-h-52 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
-                {upcomingResults.length === 0 ? (
-                  <p className="px-3 py-2 text-sm text-slate-500">Yaklaşan randevu bulunamadı.</p>
-                ) : (
-                  upcomingResults.map((appt) => (
-                    <button
-                      key={appt.id}
-                      type="button"
-                      onClick={() => {
-                        const localDate = new Date(appt.startAt);
-                        setDate(localDate);
-                        setView("HAFTA");
-                        setSelectedAppt(
-                          appointments.find((a) => a.id === appt.id) || {
-                            id: appt.id,
-                            startAt: appt.startAt,
-                            endAt: appt.endAt,
-                            status: appt.status,
-                            type: "STANDART",
-                            note: "",
-                            patient: appt.patient ? { id: appt.patient.id, fullName: appt.patient.fullName } : undefined,
-                            doctor: appt.doctor ? { id: appt.doctor.id, fullName: appt.doctor.fullName } : undefined,
-                          }
-                        );
-                      }}
-                      className="flex w-full items-center justify-between border-b border-slate-100 px-3 py-2 text-left text-sm last:border-b-0 hover:bg-slate-50"
-                    >
-                      <span className="font-semibold text-slate-800">{appt.patient?.fullName || "-"}</span>
-                      <span className="text-xs text-slate-600">
-                        {new Date(appt.startAt).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}
-                        {" · "}
-                        {appt.doctor?.fullName || "Doktor yok"}
-                      </span>
-                    </button>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
+        <div className="mx-1 hidden h-6 w-px bg-slate-200 sm:block" />
 
-          <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" value={doctorId} onChange={e => setDoctorId(e.target.value)}>
-            <option value="">Tüm Doktorlar</option>
-            {staff.map(s => <option key={s.id} value={s.id}>{s.fullName}</option>)}
-          </select>
-        </div>
+        {(["GUN","HAFTA","AY","AJANDA"] as const).map(mode => (
+          <button
+            key={mode}
+            onClick={() => setView(mode)}
+            className={"h-8 rounded-md px-2.5 text-sm font-semibold transition-colors " + (view === mode ? "bg-primary text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200")}
+          >
+            {mode === "GUN" ? "Gün" : mode === "HAFTA" ? "Hafta" : mode === "AY" ? "Ay" : "Ajanda"}
+          </button>
+        ))}
 
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-3">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <button onClick={() => nav(-1)} aria-label="Önceki tarih aralığı" className="flex h-9 w-9 items-center justify-center rounded-lg border text-lg leading-none hover:bg-gray-100">‹</button>
-            <span className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-bold text-gray-800">{navLabel()}</span>
-            <button onClick={() => nav(1)} aria-label="Sonraki tarih aralığı" className="flex h-9 w-9 items-center justify-center rounded-lg border text-lg leading-none hover:bg-gray-100">›</button>
-            {(["GUN","HAFTA","AY","AJANDA"] as const).map(mode => (
-              <button
-                key={mode}
-                onClick={() => setView(mode)}
-                className={"rounded-lg px-3 py-2 text-sm font-semibold transition-colors " + (view === mode ? "bg-primary text-white" : "bg-gray-100 text-gray-700 hover:bg-gray-200")}
-              >
-                {mode === "GUN" ? "Gün" : mode === "HAFTA" ? "Hafta" : mode === "AY" ? "Ay" : "Ajanda"}
-              </button>
-            ))}
-            <button onClick={() => setShowForm(!showForm)} disabled={!canCreateAppointments} className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Yeni Randevu</button>
-            {canCreateAppointments && (
-              <button onClick={() => setShowBlockModal(true)} className="rounded-lg border border-orange-300 bg-orange-50 px-4 py-2 text-sm font-semibold text-orange-700 hover:bg-orange-100">Doktor Blokajı</button>
-            )}
-            <details className="relative">
-              <summary className="cursor-pointer list-none rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                Diğer
-              </summary>
-              <div className="absolute right-0 top-full z-20 mt-1 w-40 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
-                <button
-                  onClick={printReport}
-                  disabled={!canExportOrPrint}
-                  className="block w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Randevu çizelgesini yazdır"}
-                >
-                  Yazdır
-                </button>
-                <button
-                  onClick={downloadExcelReport}
-                  disabled={!canExportOrPrint}
-                  className="block w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                  title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Excel olarak dışa aktar"}
-                >
-                  Excel
-                </button>
-              </div>
-            </details>
+        <select className="h-8 min-w-[170px] rounded-md border border-slate-200 px-2 text-sm focus:border-primary focus:outline-none" value={doctorId} onChange={e => setDoctorId(e.target.value)}>
+          <option value="">Tüm Doktorlar</option>
+          {staff.map(s => <option key={s.id} value={s.id}>{s.fullName}</option>)}
+        </select>
+
+        <span className="ml-auto rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">
+          {appointments.length} kayıt
+        </span>
+        {doctorBlocks.length > 0 && (
+          <span className="rounded-full border border-orange-200 bg-orange-50 px-2 py-1 text-xs font-bold text-orange-700">
+            {doctorBlocks.length} blokaj
+          </span>
+        )}
+
+        <button onClick={() => setShowForm(!showForm)} disabled={!canCreateAppointments} className="h-8 rounded-md bg-accent px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Yeni Randevu</button>
+        {canCreateAppointments && (
+          <button onClick={() => setShowBlockModal(true)} className="h-8 rounded-md border border-orange-300 bg-orange-50 px-3 text-sm font-semibold text-orange-700 hover:bg-orange-100">Blokaj</button>
+        )}
+        <button onClick={() => setShowWaitlistModal(true)} className="relative h-8 rounded-md border border-purple-300 bg-purple-50 px-3 text-sm font-semibold text-purple-700 hover:bg-purple-100">
+          Bekleme Listesi
+          {activeWaitlist.length > 0 && (
+            <span className="ml-1.5 rounded-full bg-purple-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{activeWaitlist.length}</span>
+          )}
+        </button>
+        <button onClick={() => setShowBookingRequestsModal(true)} className="relative h-8 rounded-md border border-cyan-300 bg-cyan-50 px-3 text-sm font-semibold text-cyan-700 hover:bg-cyan-100">
+          Online Talepler
+          {bookingRequests.length > 0 && (
+            <span className="ml-1.5 rounded-full bg-cyan-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{bookingRequests.length}</span>
+          )}
+        </button>
+        <details className="relative">
+          <summary className="flex h-8 cursor-pointer list-none items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+            Diğer
+          </summary>
+          <div className="absolute right-0 top-full z-20 mt-1 w-40 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+            <button
+              onClick={printReport}
+              disabled={!canExportOrPrint}
+              className="block w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Randevu çizelgesini yazdır"}
+            >
+              Yazdır
+            </button>
+            <button
+              onClick={downloadExcelReport}
+              disabled={!canExportOrPrint}
+              className="block w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Excel olarak dışa aktar"}
+            >
+              Excel
+            </button>
           </div>
-        </div>
+        </details>
       </div>
 
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => { setShowForm(false); resetForm(); })}>
           <div className="w-full max-w-3xl rounded-xl border bg-white p-4 shadow-xl">
           <h3 className="mb-3 font-bold text-gray-700">Yeni Randevu</h3>
           {conflictWarning && (
@@ -1570,7 +1879,7 @@ export default function RandevuPage() {
                   const value = e.target.value;
                   setTreatmentQuery(value);
                   setTreatmentDropdownOpen(true);
-                  const exact = APPOINTMENT_TREATMENT_OPTIONS.find((item) => item.label.toLowerCase() === value.trim().toLowerCase());
+                  const exact = treatmentOptions.find((item) => item.label.toLowerCase() === value.trim().toLowerCase());
                   if (exact) setTreatmentKey(exact.value);
                 }}
                 onFocus={() => setTreatmentDropdownOpen(true)}
@@ -1654,8 +1963,8 @@ export default function RandevuPage() {
       <div aria-busy={loading}>
       {view === "GUN" && workingDayIndexes.has(date.getDay()) && (
         <div className="overflow-auto rounded-xl border bg-white">
-          <table className="min-w-full border-collapse text-xs">
-            <thead className="bg-gray-100">
+          <table className="min-w-[980px] border-collapse text-xs">
+            <thead className="sticky top-0 z-10 bg-gray-100">
               <tr>
                 <th className="border px-2 py-2 text-left text-gray-500 w-16">Saat</th>
                 {doctors.length === 0 ? <th className="border px-2 py-2 text-gray-400">Doktor bulunamadı</th> :
@@ -1668,17 +1977,20 @@ export default function RandevuPage() {
                   <td className="border px-2 py-1 text-gray-400 font-mono align-top whitespace-nowrap">{slot}</td>
                   {doctors.map(d => {
                     const slotAppts = getApptForSlot(d.id, slot);
+                    const continuingAppts = getContinuingApptForSlot(d.id, slot, date);
                     const dropKey = `g-${d.id}-${slot}`;
-                    const dateStr = date.toISOString().slice(0, 10);
+                    const dateStr = toLocalDateKey(date);
                     const blocked = isSlotBlocked(d.id, dateStr, slot);
                     const blockInfo = blocked ? getBlockForSlot(d.id, dateStr, slot) : null;
+                    const outsideHours = !blocked && isOutsideDoctorHours(d.id, slot);
                     return (
                       <td
                         key={d.id}
-                        className={"group border p-1 align-top min-h-9 transition-colors " + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-blue-50 ring-2 ring-inset ring-blue-400" : "")}
-                        onDragOver={(e) => { if (draggedApptId && !blocked) { e.preventDefault(); setDragOverKey(dropKey); } }}
+                        title={outsideHours ? "Doktorun mesai saati dışında" : undefined}
+                        className={"group h-12 border p-1 align-top transition-colors " + (continuingAppts.length > 0 ? "bg-slate-50 " : outsideHours ? "bg-slate-50/70 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-blue-50 ring-2 ring-inset ring-blue-400" : "")}
+                        onDragOver={(e) => { if (draggedApptId && !blocked && continuingAppts.length === 0) { e.preventDefault(); setDragOverKey(dropKey); } }}
                         onDragLeave={() => setDragOverKey(prev => prev === dropKey ? null : prev)}
-                        onDrop={(e) => { if (!blocked) { e.preventDefault(); void handleDropOnSlot(date, slot, d.id); } }}
+                        onDrop={(e) => { if (!blocked && continuingAppts.length === 0) { e.preventDefault(); void handleDropOnSlot(date, slot, d.id); } }}
                       >
                         {blocked ? (
                           <div className="flex items-center gap-1 rounded bg-orange-100 border border-orange-200 px-1 py-0.5 text-[10px] text-orange-700">
@@ -1686,8 +1998,15 @@ export default function RandevuPage() {
                             <span className="truncate">{blockInfo?.reason || "Bloke"}</span>
                             {canCreateAppointments && <button onClick={() => blockInfo && deleteBlock(blockInfo.id)} aria-label="Bloke zamanı sil" title="Bloke zamanı sil" className="ml-auto text-red-400 hover:text-red-600">✕</button>}
                           </div>
+                        ) : continuingAppts.length > 0 ? (
+                          <div className="flex h-full min-h-8 items-center rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-semibold text-slate-500">
+                            Devam ediyor
+                          </div>
                         ) : (
                           <>
+                            {outsideHours && slotAppts.length === 0 && (
+                              <p className="mb-0.5 truncate text-[9px] font-semibold text-slate-400">Mesai dışı</p>
+                            )}
                             {slotAppts.map(a => apptBlock(a, canCreateAppointments))}
                             {slotAppts.length === 0 ? (
                               canCreateAppointments ? (
@@ -1728,8 +2047,8 @@ export default function RandevuPage() {
 
       {view === "HAFTA" && (
         <div className="overflow-auto rounded-xl border bg-white">
-          <table className="min-w-full border-collapse text-xs">
-              <thead className="bg-gray-100">
+          <table className="min-w-[980px] border-collapse text-xs">
+              <thead className="sticky top-0 z-10 bg-gray-100">
                 <tr>
                 <th className="border px-2 py-2 text-left text-gray-500 w-16">Saat</th>
                 {weekDays.map((d, i) => {
@@ -1749,8 +2068,9 @@ export default function RandevuPage() {
                   <td className="border px-2 py-1 text-gray-400 font-mono align-top whitespace-nowrap">{slot}</td>
                   {weekDays.map((d, i) => {
                     const slotAppts = getApptForSlot(doctorId || null, slot, d);
+                    const continuingAppts = getContinuingApptForSlot(doctorId || null, slot, d);
                     const dropKey = `h-${d.toDateString()}-${slot}`;
-                    const dateStr = d.toISOString().slice(0, 10);
+                    const dateStr = toLocalDateKey(d);
                     // Hafta görünümünde belirli bir doktor seçiliyse blok kontrolü yap
                     const blocked = doctorId ? isSlotBlocked(doctorId, dateStr, slot) : false;
                     const blockInfo = blocked && doctorId ? getBlockForSlot(doctorId, dateStr, slot) : null;
@@ -1760,13 +2080,17 @@ export default function RandevuPage() {
                     const haftaOutOfHours = haftaDayDs && !haftaDayDs.isHoliday
                       ? (haftaSlotMins < parseTimeToMinutes(haftaDayDs.open, 0) || haftaSlotMins >= parseTimeToMinutes(haftaDayDs.close, 23 * 60 + 59))
                       : false;
+                    // Doktorun kişisel mesai saati dışı — kliniğin genel çalışma
+                    // saatinden (haftaOutOfHours, sert engel) ayrı, yumuşak bir uyarı.
+                    const doctorOutsideHours = !haftaOutOfHours && !blocked && doctorId ? isOutsideDoctorHours(doctorId, slot) : false;
                     return (
                       <td
                         key={i}
-                        className={"group border p-1 align-top min-h-9 transition-colors " + (haftaOutOfHours ? "bg-slate-50 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-blue-50 ring-2 ring-inset ring-blue-400" : "")}
-                        onDragOver={(e) => { if (draggedApptId && !blocked && !haftaOutOfHours) { e.preventDefault(); setDragOverKey(dropKey); } }}
+                        title={doctorOutsideHours ? "Doktorun mesai saati dışında" : undefined}
+                        className={"group h-12 border p-1 align-top transition-colors " + (haftaOutOfHours || continuingAppts.length > 0 ? "bg-slate-50 " : doctorOutsideHours ? "bg-slate-50/70 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-blue-50 ring-2 ring-inset ring-blue-400" : "")}
+                        onDragOver={(e) => { if (draggedApptId && !blocked && !haftaOutOfHours && continuingAppts.length === 0) { e.preventDefault(); setDragOverKey(dropKey); } }}
                         onDragLeave={() => setDragOverKey(prev => prev === dropKey ? null : prev)}
-                        onDrop={(e) => { if (!blocked && !haftaOutOfHours) { e.preventDefault(); void handleDropOnSlot(d, slot); } }}
+                        onDrop={(e) => { if (!blocked && !haftaOutOfHours && continuingAppts.length === 0) { e.preventDefault(); void handleDropOnSlot(d, slot); } }}
                       >
                         {haftaOutOfHours ? (
                           <div className="h-7" />
@@ -1776,8 +2100,15 @@ export default function RandevuPage() {
                             <span className="truncate">{blockInfo?.reason || "Bloke"}</span>
                             {canCreateAppointments && <button onClick={() => blockInfo && deleteBlock(blockInfo.id)} aria-label="Bloke zamanı sil" title="Bloke zamanı sil" className="ml-auto text-red-400 hover:text-red-600">✕</button>}
                           </div>
+                        ) : continuingAppts.length > 0 ? (
+                          <div className="flex h-full min-h-8 items-center rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-semibold text-slate-500">
+                            Devam ediyor
+                          </div>
                         ) : (
                           <>
+                            {doctorOutsideHours && slotAppts.length === 0 && (
+                              <p className="mb-0.5 truncate text-[9px] font-semibold text-slate-400">Mesai dışı</p>
+                            )}
                             {slotAppts.map(a => apptBlock(a, canCreateAppointments))}
                             {slotAppts.length === 0 ? (
                               canCreateAppointments ? (
@@ -1890,7 +2221,7 @@ export default function RandevuPage() {
               <div className="flex-1">
                 <p className="font-semibold text-gray-800">{a.patient?.fullName}</p>
                 <p className="text-xs text-gray-500">{a.doctor?.fullName}</p>
-                <p className={"mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold " + treatmentMeta.badge}>{treatmentMeta.label}</p>
+                <p className="mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold text-white" style={{ backgroundColor: treatmentMeta.color }}>{treatmentMeta.label}</p>
                 {parsed.detail && <p className="text-xs text-gray-400 mt-0.5">{parsed.detail}</p>}
                 {parsed.followUp !== "YOK" && <p className={"mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold " + meta.badge}>{meta.label}</p>}
               </div>
@@ -1907,7 +2238,7 @@ export default function RandevuPage() {
 
       {/* DOKTOR BLOK EKLEME MODALI */}
       {showBlockModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowBlockModal(false))}>
           <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
             <div className="mb-4 flex items-center justify-between">
               <h2 className="text-base font-bold text-slate-900">Doktor Zaman Blokajı Ekle</h2>
@@ -1978,6 +2309,158 @@ export default function RandevuPage() {
                 İptal
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showWaitlistModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowWaitlistModal(false))}>
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-base font-bold text-slate-900">Bekleme Listesi</h2>
+              <button onClick={() => setShowWaitlistModal(false)} aria-label="Kapat" title="Kapat" className="rounded-lg p-1 text-slate-400 hover:bg-slate-100">✕</button>
+            </div>
+            <p className="mb-4 text-xs text-slate-500">Uygun randevu bulunamayan veya iptal olan bir slotu doldurmak istediğiniz hastaları buraya ekleyin.</p>
+
+            <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-4">
+              <h3 className="mb-3 text-xs font-bold uppercase text-purple-700">Listeye Ekle</h3>
+              <div className="space-y-3">
+                <div className="relative">
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta</label>
+                  {wlSelectedPatient ? (
+                    <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+                      <span className="font-semibold text-slate-800">{wlSelectedPatient.fullName}</span>
+                      <button onClick={() => { setWlSelectedPatient(null); setWlPatientSearch(""); }} className="text-xs font-semibold text-slate-400 hover:text-slate-600">Değiştir</button>
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        value={wlPatientSearch}
+                        onChange={(e) => setWlPatientSearch(e.target.value)}
+                        placeholder="Hasta adı, TC veya telefon…"
+                        className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                      />
+                      {wlPatientResults.length > 0 && (
+                        <div className="absolute z-10 mt-1 max-h-48 w-full overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
+                          {wlPatientResults.map((p) => (
+                            <button
+                              key={p.id}
+                              onClick={() => { setWlSelectedPatient(p); setWlPatientResults([]); }}
+                              className="block w-full px-3 py-2 text-left text-sm hover:bg-slate-50"
+                            >
+                              {p.fullName} {p.phone ? <span className="text-xs text-slate-400">· {p.phone}</span> : null}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor (opsiyonel)</label>
+                  <select value={wlDoctorId} onChange={(e) => setWlDoctorId(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                    <option value="">— Fark etmez —</option>
+                    {staff.map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-600">Tercih edilen tarih (opsiyonel)</label>
+                    <input type="date" value={wlFrom} onChange={(e) => setWlFrom(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-600">Son tarih (opsiyonel)</label>
+                    <input type="date" value={wlTo} onChange={(e) => setWlTo(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Not (opsiyonel)</label>
+                  <input value={wlNote} onChange={(e) => setWlNote(e.target.value)} placeholder="örn. Sadece sabah saatleri uygun" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+                </div>
+                <button
+                  onClick={submitWaitlist}
+                  disabled={wlSaving || !wlSelectedPatient}
+                  className="w-full rounded-lg bg-purple-600 py-2 text-sm font-bold text-white hover:bg-purple-700 disabled:opacity-50"
+                >
+                  {wlSaving ? "Ekleniyor…" : "Bekleme Listesine Ekle"}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-5">
+              <h3 className="mb-2 text-xs font-bold uppercase text-slate-500">Listede Bekleyenler ({activeWaitlist.length})</h3>
+              {activeWaitlist.length === 0 ? (
+                <p className="py-6 text-center text-sm text-slate-400">Bekleme listesi boş.</p>
+              ) : (
+                <div className="space-y-2">
+                  {activeWaitlist.map((w) => (
+                    <div key={w.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-bold text-slate-800">{w.patient.fullName}</p>
+                          <p className="text-xs text-slate-500">
+                            {w.doctor?.fullName ? `${w.doctor.fullName} · ` : ""}
+                            {w.preferredFrom ? new Date(w.preferredFrom).toLocaleDateString("tr-TR") : "Tarih fark etmez"}
+                            {w.preferredTo ? ` – ${new Date(w.preferredTo).toLocaleDateString("tr-TR")}` : ""}
+                          </p>
+                          {w.note && <p className="mt-1 text-xs text-slate-500">{w.note}</p>}
+                          {w.patient.phone && <p className="mt-1 text-xs text-slate-400">📞 {w.patient.phone}</p>}
+                        </div>
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${w.status === "ARANDI" ? "bg-amber-100 text-amber-700" : "bg-purple-100 text-purple-700"}`}>
+                          {w.status === "ARANDI" ? "Arandı" : "Bekliyor"}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex gap-2">
+                        {w.status === "BEKLIYOR" && (
+                          <button onClick={() => void updateWaitlistStatus(w.id, "ARANDI")} className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100">Arandı olarak işaretle</button>
+                        )}
+                        <button onClick={() => void updateWaitlistStatus(w.id, "YERLESTIRILDI")} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">Randevuya yerleştirildi</button>
+                        <button onClick={() => void removeWaitlistEntry(w.id)} className="ml-auto rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50">Kaldır</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showBookingRequestsModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowBookingRequestsModal(false))}>
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="text-base font-bold text-slate-900">Online Randevu Talepleri</h2>
+              <button onClick={() => setShowBookingRequestsModal(false)} aria-label="Kapat" title="Kapat" className="rounded-lg p-1 text-slate-400 hover:bg-slate-100">✕</button>
+            </div>
+            <p className="mb-4 text-xs text-slate-500">Hastaların self-servis bağlantı üzerinden gönderdiği randevu talepleri. Onayladığınızda hastayı arayıp gerçek randevuyu siz oluşturursunuz.</p>
+
+            {bookingRequests.length === 0 ? (
+              <p className="py-8 text-center text-sm text-slate-400">Bekleyen online talep yok.</p>
+            ) : (
+              <div className="space-y-2">
+                {bookingRequests.map((r) => (
+                  <div key={r.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-bold text-slate-800">{r.fullName}</p>
+                        <p className="text-xs text-slate-500">
+                          {r.doctor?.fullName ? `${r.doctor.fullName} · ` : "Doktor tercihi yok · "}
+                          Tercih: {new Date(r.preferredFrom).toLocaleDateString("tr-TR")}
+                        </p>
+                        {r.note && <p className="mt-1 text-xs text-slate-500">{r.note}</p>}
+                        <p className="mt-1 text-xs text-slate-400">📞 {r.phone}{r.tcNo ? ` · TC: ${r.tcNo}` : ""}</p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-bold text-cyan-700">Bekliyor</span>
+                    </div>
+                    <div className="mt-2 flex gap-2">
+                      <button onClick={() => void respondBookingRequest(r.id, "ONAYLANDI")} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">Onayla</button>
+                      <button onClick={() => void respondBookingRequest(r.id, "REDDEDILDI")} className="ml-auto rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50">Reddet</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -2083,19 +2566,25 @@ export default function RandevuPage() {
                   <div className="flex justify-between"><span className="text-gray-500">Doktor:</span><span>{selectedAppt.doctor?.fullName}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Başlangıç:</span><span>{new Date(selectedAppt.startAt).toLocaleString("tr-TR")}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Bitiş:</span><span>{new Date(selectedAppt.endAt).toLocaleString("tr-TR")}</span></div>
-                  <div className="flex justify-between"><span className="text-gray-500">Tedavi:</span><span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + treatmentMeta.badge}>{treatmentMeta.label}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Tedavi:</span><span className="rounded-full px-2 py-0.5 text-xs font-semibold text-white" style={{ backgroundColor: treatmentMeta.color }}>{treatmentMeta.label}</span></div>
                   {parsed.detail && <div className="flex justify-between gap-3"><span className="text-gray-500">Not:</span><span className="max-w-xs text-right">{parsed.detail}</span></div>}
                   {parsed.followUp !== "YOK" && <div className="flex justify-between"><span className="text-gray-500">Takip:</span><span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + meta.badge}>{meta.label}</span></div>}
                 </div>
                 <div className="mt-4">
                   <p className="text-xs text-gray-500 mb-2 font-semibold">Durum Güncelle:</p>
                   <div className="flex flex-wrap gap-2">
-                    {[{v:"BEKLIYOR",l:"Bekliyor",c:"bg-yellow-100 text-yellow-700"},{v:"GELDI",l:"Geldi",c:"bg-green-100 text-green-700"},{v:"GELMEDI",l:"Gelmedi",c:"bg-red-100 text-red-700"},{v:"IPTAL",l:"İptal",c:"bg-gray-200 text-gray-700"}].map(s => (
-                      <button key={s.v} onClick={() => updateStatus(selectedAppt.id, s.v)}
-                        className={"rounded-full px-3 py-1 text-sm font-semibold " + s.c + (selectedAppt.status===s.v?" ring-2 ring-gray-400":"")}>
-                        {s.l}
-                      </button>
-                    ))}
+                    {[{v:"BEKLIYOR",l:"Bekliyor",c:"bg-yellow-100 text-yellow-700"},{v:"GELDI",l:"Geldi",c:"bg-green-100 text-green-700"},{v:"GELMEDI",l:"Gelmedi",c:"bg-red-100 text-red-700"},{v:"IPTAL",l:"İptal",c:"bg-gray-200 text-gray-700"}].map(s => {
+                      // İptal edilmiş bir randevu geldi/gelmedi olarak işaretlenemez —
+                      // önce "Bekliyor"a alınıp yeniden açılmalı (bkz. denetim raporu Tema 5).
+                      const disabled = selectedAppt.status === "IPTAL" && (s.v === "GELDI" || s.v === "GELMEDI");
+                      return (
+                        <button key={s.v} onClick={() => updateStatus(selectedAppt.id, s.v)} disabled={disabled}
+                          title={disabled ? "İptal edilmiş randevu önce 'Bekliyor'a alınmalı" : undefined}
+                          className={"rounded-full px-3 py-1 text-sm font-semibold " + s.c + (selectedAppt.status===s.v?" ring-2 ring-gray-400":"") + (disabled ? " opacity-40 cursor-not-allowed" : "")}>
+                          {s.l}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
                 <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -2114,7 +2603,9 @@ export default function RandevuPage() {
                 </div>
                 <div className="mt-4 flex gap-2">
                   <a href={"/hasta-detay?id=" + selectedAppt.patient?.id} className="rounded-lg bg-primary px-3 py-2 text-sm text-white">Hasta Detayı</a>
-                  <button onClick={openEditMode} className="rounded-lg bg-slate-600 px-3 py-2 text-sm text-white">Düzenle</button>
+                  <button onClick={openEditMode} disabled={selectedAppt.status === "IPTAL"}
+                    title={selectedAppt.status === "IPTAL" ? "İptal edilmiş randevu düzenlenemez — önce 'Bekliyor'a alın" : undefined}
+                    className="rounded-lg bg-slate-600 px-3 py-2 text-sm text-white disabled:opacity-40 disabled:cursor-not-allowed">Düzenle</button>
                   <button onClick={() => remove(selectedAppt.id)} className="rounded-lg bg-red-600 px-3 py-2 text-sm text-white">Sil</button>
                   <button onClick={closeAppointmentModal} className="ml-auto rounded-lg border px-3 py-2 text-sm text-gray-600">Kapat</button>
                 </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { confirmDialog } from "@/lib/confirm-client";
 
 type Role = "YONETICI" | "DOKTOR" | "ASISTAN" | "BANKO" | "MUHASEBE";
 type Category = "tumu" | "klinik" | "finans" | "yonetim" | "iletisim" | "sistem";
@@ -161,7 +162,7 @@ export default function RolePermissionsPage() {
   };
 
   const resetDefaults = async () => {
-    if (!window.confirm("Tüm rol izinleri varsayılan değerlere dönsün mü?")) return;
+    if (!(await confirmDialog({ message: "Tüm rol izinleri varsayılan değerlere dönsün mü?", danger: true, confirmText: "Sıfırla" }))) return;
     setSaving(true);
     setMessage(null);
     const res = await fetch("/api/superadmin/role-permissions", {

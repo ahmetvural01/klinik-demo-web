@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 
 function taksitPlanTenantWhere(id: string, institutionId: string | null | undefined, role: string) {
   return {
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       }
     });
     if (!plan) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
-    const hidePhone = user.role === "DOKTOR" || user.role === "ASISTAN";
+    const hidePhone = shouldHidePatientPhone(user.role);
     const result = hidePhone
       ? {
           ...plan,

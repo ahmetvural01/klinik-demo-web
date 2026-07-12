@@ -65,12 +65,14 @@ export async function POST(request: NextRequest, { params }: { params: { id: str
     return NextResponse.json({ message: "Aktif doktor limiti dolu" }, { status: 409 });
   }
 
-  // TC kimlik no benzersizliği
+  // TC kimlik no benzersizliği SADECE bu kurum içinde kontrol edilir — başka bir
+  // klinikte aynı TC'li personel olması bu kurumdaki eklemeyi engellememeli
+  // (bkz. User.identityNo şema notu — kurumlar arası TC çakışması geçerlidir).
   const existing = await prisma.user.findFirst({
-    where: { identityNo: body.identityNo },
+    where: { identityNo: body.identityNo, institutionId: params.id },
   });
   if (existing) {
-    return NextResponse.json({ message: "Bu TC kimlik no zaten kayıtlı" }, { status: 400 });
+    return NextResponse.json({ message: "Bu TC kimlik no bu kurumda zaten kayıtlı" }, { status: 400 });
   }
 
   const passwordHash = await bcrypt.hash(body.password, 10);

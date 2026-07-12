@@ -1,12 +1,33 @@
 import { NextResponse } from "next/server";
+import { headers } from "next/headers";
 import { decodeTokenUser } from "@/lib/auth";
 import { can } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
+import { metricObserve } from "@/lib/metrics";
 import {
   bumpRealtimeInstitution as bumpRealtimeInstitutionBus,
   getRealtimeInstitutionVersion as getRealtimeInstitutionVersionBus,
   subscribeRealtimeInstitution as subscribeRealtimeInstitutionBus,
 } from "@/lib/realtime-bus";
+
+// ── Rota bazlı gecikme ölçümü ────────────────────────────────────────────────
+// login dışındaki endpoint'lerde hiç latency ölçümü yoktu; /sistem-izleme'deki
+// "API gecikmesi yüksek" uyarısı bu yüzden sadece login'i izliyordu. Bilinen en
+// riskli (büyüyen tablo/aggregate) route'lara sarılarak gelecekteki bir
+// regresyonun sessizce donmaya dönüşmeden önce alarmda görünmesi sağlanıyor.
+export function withApiTiming<Args extends unknown[]>(
+  routeName: string,
+  handler: (...args: Args) => Promise<NextResponse>
+): (...args: Args) => Promise<NextResponse> {
+  return async (...args: Args) => {
+    const started = Date.now();
+    try {
+      return await handler(...args);
+    } finally {
+      metricObserve(`api_request_ms:${routeName}`, Date.now() - started);
+    }
+  };
+}
 
 // ── Kurum bilgisi in-memory cache (60 saniyelik TTL) ───────────────────────
 type CachedInstitution = {
@@ -35,7 +56,7 @@ export function subscribeRealtimeInstitution(
 }
 
 export function bumpRealtimeInstitution(institutionId?: string | null) {
-  void bumpRealtimeInstitutionBus(institutionId);
+  return bumpRealtimeInstitutionBus(institutionId);
 }
 
 async function getCachedInstitution(institutionId: string) {
@@ -90,7 +111,15 @@ export async function requireAuth(permission?: string) {
     return { error: NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 }) };
   }
 
-  // SUPERADMIN için kurum kontrolü yok
+  // SUPERADMIN için kurum kontrolü yok. Diğer tüm roller için institutionId
+  // zorunlu: eksikse aşağıdaki `auth.user.institutionId ? {...} : {}` filtre
+  // deseni sessizce tüm kurumların verisini döndürür (bkz. denetim raporu,
+  // Tema 1). Bu yüzden institutionId'siz non-superadmin oturumu burada,
+  // tek merkezi noktada reddediliyor.
+  if (user.role !== "SUPERADMIN" && !user.institutionId) {
+    return { error: NextResponse.json({ message: "Oturum kurumu bulunamadı. Lütfen yeniden giriş yapın." }, { status: 401 }) };
+  }
+
   if (user.role !== "SUPERADMIN" && user.institutionId) {
     const now = new Date();
 
@@ -179,32 +208,52 @@ export async function requireAuth(permission?: string) {
   return { user };
 }
 
+function getRequestIp(): string | null {
+  try {
+    const h = headers();
+    const forwarded = h.get("x-forwarded-for");
+    if (forwarded) return forwarded.split(",")[0].trim();
+    return h.get("x-real-ip") || null;
+  } catch {
+    // İstek bağlamı dışında (ör. arka plan işleri) — sessizce atla
+    return null;
+  }
+}
+
 export async function writeAudit(userId: string, action: string, detail?: string) {
   const currentUser = decodeTokenUser();
+  let realtimeInstitutionId = currentUser?.institutionId || null;
+  let realtimeBumped = false;
 
-  // Ghost token (superadmin gizli giriş) veya SUPERADMIN rolü — log atılmaz
-  if (currentUser?.ghost) {
-    return;
-  }
-  if (currentUser?.id === userId && currentUser.role === "SUPERADMIN") {
-    return;
-  }
+  const bumpOnce = async () => {
+    if (realtimeBumped) return;
+    realtimeBumped = true;
+    await bumpRealtimeInstitution(realtimeInstitutionId);
+  };
 
   const actor = currentUser?.id === userId
-    ? { role: currentUser.role }
-    : await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+    ? { role: currentUser.role, institutionId: currentUser.institutionId }
+    : await prisma.user.findUnique({ where: { id: userId }, select: { role: true, institutionId: true } });
 
-  if (actor?.role === "SUPERADMIN") {
-    return;
+  if (!realtimeInstitutionId && actor && "institutionId" in actor) {
+    realtimeInstitutionId = actor.institutionId || null;
   }
 
+  // KVKK/denetim gereği: ghost (superadmin gizli giriş) ve doğrudan superadmin
+  // işlemleri de kayıt altına alınır — gerçek işlemi yapan actorId/actorRole/isGhost
+  // alanlarında ayrıca tutulur, userId alanı ise işlemin ait olduğu kullanıcı/kurumu
+  // gösterir (mevcut kurum bazlı filtreleme ile uyumlu kalır).
   await prisma.auditLog.create({
     data: {
       userId,
       action,
-      detail
+      detail,
+      actorId: currentUser?.id ?? null,
+      actorRole: currentUser?.role ?? null,
+      isGhost: Boolean(currentUser?.ghost),
+      ip: getRequestIp(),
     }
   });
 
-  bumpRealtimeInstitution(currentUser?.institutionId || null);
+  await bumpOnce();
 }

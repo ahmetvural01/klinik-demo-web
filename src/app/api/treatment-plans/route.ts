@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
+import { parsePagination } from "@/lib/pagination";
+import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 
-export async function GET(req: NextRequest) {
+const PLAN_STATUSES = ["PLANLANDI", "DEVAM_EDIYOR", "TAMAMLANDI", "IPTAL"] as const;
+
+export const GET = withApiTiming("treatment-plans", async function GET(req: NextRequest) {
   const auth = await requireAuth("treatment:read");
   if (auth.error) return auth.error;
   const user = auth.user;
@@ -13,31 +17,64 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const patientId = searchParams.get("patientId");
   const status    = searchParams.get("status");
+  const q         = (searchParams.get("q") || "").trim();
+  const { page, take, skip, pageCount } = parsePagination(searchParams, { defaultTake: 30, maxTake: 100 });
 
-  const plans = await (prisma as any).treatmentPlan.findMany({
-    where: {
-      ...(patientId ? { patientId } : {}),
-      ...(status    ? { status }    : {}),
-      ...(user.role !== "SUPERADMIN" ? { patient: { institutionId: user.institutionId } } : {}),
-    },
-    include: {
-      patient: { select: { id: true, fullName: true, tcNo: true, phone: true } },
-      doctor:  { select: { id: true, fullName: true } },
-      steps:   { orderBy: { order: "asc" } },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+  const baseWhere: Record<string, unknown> = {
+    ...(patientId ? { patientId } : {}),
+    ...(status    ? { status }    : {}),
+    ...(user.role !== "SUPERADMIN" ? { patient: { institutionId: user.institutionId } } : {}),
+  };
+  const searchWhere = q
+    ? {
+        OR: [
+          { patient: { fullName: { contains: q, mode: "insensitive" as const } } },
+          { title:   { contains: q, mode: "insensitive" as const } },
+        ],
+      }
+    : {};
+  const listWhere = q ? { AND: [baseWhere, searchWhere] } : baseWhere;
 
-  const hidePhone = user.role === "DOKTOR" || user.role === "ASISTAN";
-  const result = hidePhone
+  const [total, plans, statusCountsRaw] = await Promise.all([
+    (prisma as any).treatmentPlan.count({ where: listWhere }),
+    (prisma as any).treatmentPlan.findMany({
+      where: listWhere,
+      include: {
+        patient: { select: { id: true, fullName: true, tcNo: true, phone: true } },
+        doctor:  { select: { id: true, fullName: true } },
+        steps:   { orderBy: { order: "asc" } },
+      },
+      orderBy: { createdAt: "desc" },
+      skip,
+      take,
+    }),
+    (prisma as any).treatmentPlan.groupBy({
+      by: ["status"],
+      where: { ...(patientId ? { patientId } : {}), ...(user.role !== "SUPERADMIN" ? { patient: { institutionId: user.institutionId } } : {}) },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const statusCounts: Record<string, number> = Object.fromEntries(PLAN_STATUSES.map((s) => [s, 0]));
+  for (const row of statusCountsRaw) statusCounts[row.status] = row._count._all;
+  const totalAll = Object.values(statusCounts).reduce((s, n) => s + n, 0);
+
+  const hidePhone = shouldHidePatientPhone(user.role);
+  const items = hidePhone
     ? plans.map((p: any) => ({
         ...p,
         patient: p.patient ? { ...p.patient, phone: "***" } : p.patient,
       }))
     : plans;
 
-  return NextResponse.json(result);
-}
+  return NextResponse.json({
+    items,
+    total,
+    page,
+    pageCount: pageCount(total),
+    stats: { total: totalAll, byStatus: statusCounts },
+  });
+});
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth("treatment:write");

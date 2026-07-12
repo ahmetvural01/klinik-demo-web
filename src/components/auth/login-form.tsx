@@ -46,7 +46,7 @@ export function LoginForm() {
                 <path d="M12 2C8 2 5 5 5 8c0 2 .5 3.5 1 5l1 4.5C7.5 19 8.5 22 10 22h4c1.5 0 2.5-3 3-4.5l1-4.5c.5-1.5 1-3 1-5 0-3-3-6-7-6z"/>
               </svg>
             </div>
-            <span className="text-xl font-black text-white">KlinikModern</span>
+            <span className="text-xl font-black text-white">Klinik Paneli</span>
           </div>
           <div className="mt-16">
             <h2 className="text-4xl font-black leading-tight text-white">Kliniğinizi<br />profesyonelce<br />yönetin.</h2>
@@ -63,7 +63,7 @@ export function LoginForm() {
             ))}
           </div>
         </div>
-        <p className="text-xs text-white/40">© {new Date().getFullYear()} KlinikModern. Tüm hakları saklıdır.</p>
+        <p className="text-xs text-white/40">© {new Date().getFullYear()} Klinik Yönetim Paneli. Tüm hakları saklıdır.</p>
       </div>
 
       {/* Sağ panel — form */}
@@ -75,7 +75,7 @@ export function LoginForm() {
                 <path d="M12 2C8 2 5 5 5 8c0 2 .5 3.5 1 5l1 4.5C7.5 19 8.5 22 10 22h4c1.5 0 2.5-3 3-4.5l1-4.5c.5-1.5 1-3 1-5 0-3-3-6-7-6z"/>
               </svg>
             </div>
-            <span className="font-black text-primary">KlinikModern</span>
+            <span className="font-black text-primary">Klinik Paneli</span>
           </div>
 
           <h1 className="text-2xl font-black text-slate-900">Hesabınıza giriş yapın</h1>

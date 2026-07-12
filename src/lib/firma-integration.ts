@@ -24,7 +24,7 @@ type IntegrationInput = {
   stockQuantity?: number | null;
 };
 
-type IntegrationSummary = {
+export type IntegrationSummary = {
   stockApplied: boolean;
   expenseApplied: boolean;
   notes: string[];
@@ -74,8 +74,12 @@ export async function applyFirmaIslemIntegration({
     summary.notes.push("stok girişi oluşturuldu");
   }
 
-  if (islem.islemTipi === "HIZMET" || islem.islemTipi === "ODEME") {
-    const categoryName = islem.islemTipi === "HIZMET" ? "Firma Hizmeti" : "Firma Ödemesi";
+  if (islem.islemTipi === "HIZMET") {
+    summary.notes.push("firma borcu oluşturuldu");
+  }
+
+  if (islem.islemTipi === "ODEME") {
+    const categoryName = "Firma Ödemesi";
     const category = await ensureExpenseCategory(tx, categoryName, firma.institutionId);
 
     await tx.expense.create({

@@ -61,45 +61,49 @@ async function main() {
   });
 
   // Create default SUPERADMIN user
+  // Not: identityNo artık sadece kurum içinde benzersiz (bkz. schema notu), bu yüzden
+  // institutionId=null olan superadmin hesapları için upsert yerine findFirst+create/update
+  // kullanılıyor (compound unique key non-null institutionId gerektiriyor).
   const systemSuperadminPass = await bcrypt.hash("superadmin123", 10);
-  const systemSuperadmin = await prisma.user.upsert({
-    where: { identityNo: "99999999999" },
-    update: {
-      fullName: "Sistem Yonetici",
-      role: Role.SUPERADMIN,
-      institutionId: null,
-      isActive: true,
-    },
-    create: {
-      identityNo: "99999999999",
-      fullName: "Sistem Yonetici",
-      role: Role.SUPERADMIN,
-      institutionId: null,
-      passwordHash: systemSuperadminPass,
-      isActive: true,
-    }
+  const existingSystemSuperadmin = await prisma.user.findFirst({
+    where: { identityNo: "99999999999", role: Role.SUPERADMIN },
   });
+  const systemSuperadmin = existingSystemSuperadmin
+    ? await prisma.user.update({
+        where: { id: existingSystemSuperadmin.id },
+        data: { fullName: "Sistem Yonetici", role: Role.SUPERADMIN, institutionId: null, isActive: true },
+      })
+    : await prisma.user.create({
+        data: {
+          identityNo: "99999999999",
+          fullName: "Sistem Yonetici",
+          role: Role.SUPERADMIN,
+          institutionId: null,
+          passwordHash: systemSuperadminPass,
+          isActive: true,
+        },
+      });
 
   // Requested superadmin account
   const ahmetSuperadminPass = await bcrypt.hash("10711453", 10);
-  const ahmetSuperadmin = await prisma.user.upsert({
-    where: { identityNo: "11509380760" },
-    update: {
-      fullName: "Ahmet Gulden",
-      role: Role.SUPERADMIN,
-      institutionId: null,
-      passwordHash: ahmetSuperadminPass,
-      isActive: true,
-    },
-    create: {
-      identityNo: "11509380760",
-      fullName: "Ahmet Gulden",
-      role: Role.SUPERADMIN,
-      institutionId: null,
-      passwordHash: ahmetSuperadminPass,
-      isActive: true,
-    },
+  const existingAhmetSuperadmin = await prisma.user.findFirst({
+    where: { identityNo: "11509380760", role: Role.SUPERADMIN },
   });
+  const ahmetSuperadmin = existingAhmetSuperadmin
+    ? await prisma.user.update({
+        where: { id: existingAhmetSuperadmin.id },
+        data: { fullName: "Ahmet Gulden", role: Role.SUPERADMIN, institutionId: null, passwordHash: ahmetSuperadminPass, isActive: true },
+      })
+    : await prisma.user.create({
+        data: {
+          identityNo: "11509380760",
+          fullName: "Ahmet Gulden",
+          role: Role.SUPERADMIN,
+          institutionId: null,
+          passwordHash: ahmetSuperadminPass,
+          isActive: true,
+        },
+      });
 
   void systemSuperadmin;
   void ahmetSuperadmin;
@@ -164,7 +168,7 @@ async function main() {
       isActive: true,
       priority: 1,
       httpMethod: "POST",
-      sender: "KlinikModern",
+      sender: "KlinikPanel",
       bodyTemplate: "phone={{phone}}&message={{message}}",
       successPattern: "MOCK",
     },

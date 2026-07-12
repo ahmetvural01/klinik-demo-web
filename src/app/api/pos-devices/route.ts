@@ -15,8 +15,9 @@ export async function GET() {
     });
 
     return NextResponse.json(devices);
-  } catch {
-    return NextResponse.json([]);
+  } catch (error) {
+    console.error("[pos-devices GET] fallback:", error);
+    return NextResponse.json({ message: "POS cihazları yüklenemedi." }, { status: 503 });
   }
 }
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
 
 type PlanStatus = "PLANLANDI" | "DEVAM_EDIYOR" | "TAMAMLANDI" | "IPTAL";
 type StepStatus = "BEKLIYOR" | "YAPILDI" | "IPTAL";
@@ -18,7 +19,7 @@ type Plan = {
 };
 
 type Patient = { id: string; fullName: string; tcNo: string };
-type Doctor  = { id: string; fullName: string; role: string };
+type Doctor  = { id: string; fullName: string; role: string; profile?: { hideAsDoctor?: boolean | null } | null };
 
 const STATUS_CFG: Record<PlanStatus, { label: string; bg: string; text: string }> = {
   PLANLANDI:    { label: "Planlandı",    bg: "bg-blue-100",   text: "text-blue-700" },
@@ -35,13 +36,29 @@ const STEP_STATUS: Record<StepStatus, { label: string; cls: string }> = {
 
 const CURRENCY = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 0 });
 
+const EMPTY_STATUS_COUNTS: Record<PlanStatus, number> = { PLANLANDI: 0, DEVAM_EDIYOR: 0, TAMAMLANDI: 0, IPTAL: 0 };
+
 export default function TedaviPlaniPage() {
   const [plans,    setPlans]    = useState<Plan[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [filter,   setFilter]   = useState<"" | PlanStatus>("");
   const [search,   setSearch]   = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selected, setSelected] = useState<Plan | null>(null);
   const [showNew,  setShowNew]  = useState(false);
+  const [page,       setPage]       = useState(1);
+  const [pageCount,  setPageCount]  = useState(1);
+  const [stats, setStats] = useState<{ total: number; byStatus: Record<PlanStatus, number> }>({ total: 0, byStatus: EMPTY_STATUS_COUNTS });
+
+  useEffect(() => {
+    const timer = setTimeout(() => { setDebouncedSearch(search.trim()); setPage(1); }, 300);
+    return () => clearTimeout(timer);
+  }, [search]);
+
+  useEffect(() => { setPage(1); }, [filter]);
+
+  useEscapeClose(() => setSelected(null), Boolean(selected));
+  useEscapeClose(() => setShowNew(false), showNew);
 
   // New plan form
   const [patients,  setPatients]  = useState<Patient[]>([]);
@@ -51,20 +68,32 @@ export default function TedaviPlaniPage() {
   const [saving,    setSaving]    = useState(false);
 
   useEffect(() => {
-    fetchPlans();
     fetch("/api/patients?limit=200").then(r => r.json()).then(d => setPatients(Array.isArray(d) ? d : (d.patients || []))).catch(() => {});
-    fetch("/api/staff").then(r => r.json()).then(d => setDoctors((Array.isArray(d) ? d : []).filter((u: Doctor) => u.role === "DOKTOR"))).catch(() => {});
+    fetch("/api/staff").then(r => r.json()).then(d => setDoctors((Array.isArray(d) ? d : []).filter((u: Doctor) => u.role === "DOKTOR" || (u.role === "YONETICI" && u.profile?.hideAsDoctor === false)))).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    fetchPlans();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filter, debouncedSearch, page]);
 
   function fetchPlans() {
     setLoading(true);
-    fetch("/api/treatment-plans").then(r => r.json()).then(d => setPlans(Array.isArray(d) ? d : [])).catch(() => {}).finally(() => setLoading(false));
+    const params = new URLSearchParams({ page: String(page) });
+    if (filter) params.set("status", filter);
+    if (debouncedSearch) params.set("q", debouncedSearch);
+    fetch(`/api/treatment-plans?${params.toString()}`)
+      .then(r => r.json())
+      .then(d => {
+        setPlans(Array.isArray(d.items) ? d.items : []);
+        setPageCount(d.pageCount || 1);
+        if (d.stats) setStats(d.stats);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
   }
 
-  const filtered = plans.filter(p =>
-    (!filter || p.status === filter) &&
-    (!search || p.patient.fullName.toLowerCase().includes(search.toLowerCase()) || p.title.toLowerCase().includes(search.toLowerCase()))
-  );
+  const filtered = plans;
 
   async function submitNew() {
     if (!newPlan.patientId || !newPlan.doctorId || !newPlan.title) return;
@@ -101,8 +130,8 @@ export default function TedaviPlaniPage() {
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-lg font-black text-slate-900">Tedavi Planları</h1>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{plans.length} plan</span>
-          <span className="rounded-full bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-700">{plans.filter(p => p.status === "DEVAM_EDIYOR").length} devam ediyor</span>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{stats.total} plan</span>
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-700">{stats.byStatus.DEVAM_EDIYOR} devam ediyor</span>
         </div>
         <button onClick={() => setShowNew(true)} className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700">
           <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -127,7 +156,7 @@ export default function TedaviPlaniPage() {
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {(["PLANLANDI","DEVAM_EDIYOR","TAMAMLANDI","IPTAL"] as PlanStatus[]).map(s => {
           const cfg = STATUS_CFG[s];
-          const count = plans.filter(p => p.status === s).length;
+          const count = stats.byStatus[s] || 0;
           return (
             <div key={s} className={`rounded-2xl border p-4 ${cfg.bg.replace("100","50")} border-${cfg.bg.includes("blue") ? "blue" : cfg.bg.includes("amber") ? "amber" : cfg.bg.includes("emerald") ? "emerald" : "red"}-100`}>
               <p className={`text-[11px] font-bold uppercase tracking-wider ${cfg.text}`}>{cfg.label}</p>
@@ -176,9 +205,19 @@ export default function TedaviPlaniPage() {
           })}
       </div>
 
+      {pageCount > 1 && (
+        <div className="flex items-center justify-between">
+          <p className="text-sm text-slate-500">Sayfa {page} / {pageCount}</p>
+          <div className="flex gap-2">
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-40">← Önceki</button>
+            <button onClick={() => setPage(p => Math.min(pageCount, p + 1))} disabled={page === pageCount} className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm hover:bg-slate-50 disabled:opacity-40">Sonraki →</button>
+          </div>
+        </div>
+      )}
+
       {/* Detail Modal */}
       {selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setSelected(null))}>
           <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
               <div>
@@ -213,7 +252,10 @@ export default function TedaviPlaniPage() {
                         </div>
                         <span className="shrink-0 text-xs font-bold text-slate-600">{CURRENCY.format(step.amount)}</span>
                         <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${sCfg.cls}`}>{sCfg.label}</span>
-                        <select value={step.status} onChange={e => updateStep(selected.id, step.id, e.target.value as StepStatus)} className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none">
+                        <select value={step.status} onChange={e => updateStep(selected.id, step.id, e.target.value as StepStatus)}
+                          disabled={selected.status === "TAMAMLANDI" || selected.status === "IPTAL"}
+                          title={selected.status === "TAMAMLANDI" || selected.status === "IPTAL" ? "Tamamlanmış/iptal edilmiş planın adımları değiştirilemez — önce planı yeniden açın" : undefined}
+                          className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-slate-100">
                           <option value="BEKLIYOR">Bekliyor</option>
                           <option value="YAPILDI">Yapıldı</option>
                           <option value="IPTAL">İptal</option>
@@ -237,7 +279,7 @@ export default function TedaviPlaniPage() {
 
       {/* New Plan Modal */}
       {showNew && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowNew(false))}>
           <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
               <h2 className="text-lg font-black text-slate-900">Yeni Tedavi Planı</h2>

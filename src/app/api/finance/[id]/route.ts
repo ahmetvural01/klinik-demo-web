@@ -2,6 +2,7 @@
 import { paymentSchema } from "@/lib/validators";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { deleteIntegratedPayment, updateIntegratedPayment } from "@/lib/payment-ledger";
 
 type Params = { params: { id: string } };
 
@@ -42,10 +43,22 @@ export async function PUT(request: NextRequest, { params }: Params) {
     return NextResponse.json({ message: "Ödeme bulunamadı" }, { status: 404 });
   }
 
-  const payment = await prisma.payment.update({
-    where: { id: params.id },
-    data: parsed.data
-  });
+  // Hasta (patientId) bilinçli olarak değiştirilmiyor: taksit entegrasyonu hasta
+  // bazlı olduğu için hasta değişimi ayrı bir sil+yeniden-oluştur akışı gerektirir.
+  const { payment } = await prisma.$transaction(
+    (tx) =>
+      updateIntegratedPayment({
+        tx,
+        paymentId: params.id,
+        amount: Number(parsed.data.amount),
+        method: parsed.data.method,
+        description: parsed.data.description ?? null,
+        posId: parsed.data.posId ?? null,
+        createdAt: parsed.data.createdAt,
+        doctorId: parsed.data.doctorId ?? null,
+      }),
+    { isolationLevel: "Serializable" }
+  );
 
   const beforeParts: string[] = [];
   const afterParts: string[] = [];
@@ -58,12 +71,11 @@ export async function PUT(request: NextRequest, { params }: Params) {
     }
   };
 
-  pushDiff("Tutar", Number(existing.amount), Number(parsed.data.amount));
-  pushDiff("Yöntem", existing.method, parsed.data.method);
-  pushDiff("Açıklama", existing.description, parsed.data.description);
-  pushDiff("Hasta", existing.patientId, parsed.data.patientId);
-  pushDiff("Doktor", existing.doctorId, parsed.data.doctorId);
-  pushDiff("POS", existing.posId, parsed.data.posId);
+  pushDiff("Tutar", Number(existing.amount), Number(payment.amount));
+  pushDiff("Yöntem", existing.method, payment.method);
+  pushDiff("Açıklama", existing.description, payment.description);
+  pushDiff("Doktor", existing.doctorId, payment.doctorId);
+  pushDiff("POS", existing.posId, payment.posId);
 
   const detail = [
     `${auth.user.fullName || "Personel"} tarafından ödeme kaydı güncellendi.`,
@@ -79,7 +91,10 @@ export async function DELETE(_: NextRequest, { params }: Params) {
   const auth = await requireAuth("finance:write");
   if (auth.error) return auth.error;
 
-  const payment = await prisma.payment.delete({ where: { id: params.id } });
+  const { payment } = await prisma.$transaction(
+    (tx) => deleteIntegratedPayment(tx, params.id),
+    { isolationLevel: "Serializable" }
+  );
   await writeAudit(auth.user.id, "PAYMENT_DELETE", `${payment.amount.toString()} ödeme silindi`);
 
   return NextResponse.json({ ok: true });

@@ -4,7 +4,7 @@ import { requireAuth } from "@/lib/api";
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await requireAuth("*");
+    const auth = await requireAuth("audit:read");
     if (auth.error) return auth.error;
 
     const sp = request.nextUrl.searchParams;
@@ -37,7 +37,14 @@ export async function GET(request: NextRequest) {
       prisma.auditLog.count({ where }),
       prisma.auditLog.findMany({
         where,
-        include: { user: { select: { id: true, fullName: true, role: true } } },
+        select: {
+          id: true,
+          action: true,
+          detail: true,
+          createdAt: true,
+          isGhost: true,
+          user: { select: { id: true, fullName: true, role: true } },
+        },
         orderBy: { createdAt: "desc" },
         skip: (page - 1) * limit,
         take: limit
@@ -47,6 +54,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ logs, total });
   } catch (error) {
     console.error("[logs GET] fallback:", error);
-    return NextResponse.json({ logs: [], total: 0 });
+    return NextResponse.json({ message: "İşlem kayıtları yüklenemedi." }, { status: 503 });
   }
 }

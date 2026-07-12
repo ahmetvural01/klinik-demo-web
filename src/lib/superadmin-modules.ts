@@ -45,7 +45,7 @@ const MODULE_ROUTE_RULES: Array<{ module: SuperadminModule; prefixes: string[] }
   { module: "support", prefixes: ["/superadmin/support", "/api/superadmin/support"] },
   { module: "audit", prefixes: ["/superadmin/audit", "/api/superadmin/audit"] },
   { module: "announcements", prefixes: ["/superadmin/announcements", "/api/superadmin/announcements"] },
-  { module: "settings", prefixes: ["/superadmin/settings", "/superadmin/site-content", "/api/superadmin/system-settings", "/api/superadmin/site-content"] },
+  { module: "settings", prefixes: ["/superadmin/settings", "/superadmin/onam", "/superadmin/site-content", "/api/superadmin/system-settings", "/api/superadmin/consent-template", "/api/superadmin/site-content"] },
   { module: "admins", prefixes: ["/superadmin/admins", "/api/superadmin/admins"] },
 ];
 

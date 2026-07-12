@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
+import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth("appointments:read");
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest) {
     take,
   });
 
-  const hidePhone = auth.user.role === "DOKTOR" || auth.user.role === "ASISTAN";
+  const hidePhone = shouldHidePatientPhone(auth.user.role);
   const result = hidePhone
     ? appointments.map((a) => ({
         ...a,

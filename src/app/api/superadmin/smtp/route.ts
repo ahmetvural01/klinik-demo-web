@@ -12,8 +12,8 @@ export async function GET() {
   if (!config) {
     return NextResponse.json({
       id: 1, host: "", port: 587, secure: false,
-      username: "", password: "", fromName: "Klinik Modern",
-      fromEmail: "noreply@klinikmodern.com", isActive: false,
+      username: "", password: "", fromName: "Klinik Yönetim Paneli",
+      fromEmail: "noreply@klinik.local", isActive: false,
     });
   }
 
@@ -41,8 +41,8 @@ export async function PUT(request: NextRequest) {
       secure: Boolean(body.secure),
       username: body.username || "",
       password: passwordToSave,
-      fromName: body.fromName || "Klinik Modern",
-      fromEmail: body.fromEmail || "noreply@klinikmodern.com",
+      fromName: body.fromName || "Klinik Yönetim Paneli",
+      fromEmail: body.fromEmail || "noreply@klinik.local",
       isActive: Boolean(body.isActive),
     },
     create: {
@@ -52,8 +52,8 @@ export async function PUT(request: NextRequest) {
       secure: Boolean(body.secure),
       username: body.username || "",
       password: passwordToSave,
-      fromName: body.fromName || "Klinik Modern",
-      fromEmail: body.fromEmail || "noreply@klinikmodern.com",
+      fromName: body.fromName || "Klinik Yönetim Paneli",
+      fromEmail: body.fromEmail || "noreply@klinik.local",
       isActive: Boolean(body.isActive),
     },
   });
@@ -86,9 +86,9 @@ export async function POST(request: NextRequest) {
 
     await transporter.verify();
     await transporter.sendMail({
-      from: `"${body.fromName || "Klinik Modern"}" <${body.fromEmail || body.username}>`,
+      from: `"${body.fromName || "Klinik Yönetim Paneli"}" <${body.fromEmail || body.username}>`,
       to: body.testTo,
-      subject: "Klinik Modern - SMTP Test",
+      subject: "Klinik Yönetim Paneli - SMTP Test",
       html: "<p>Bu bir test e-postasıdır. SMTP yapılandırmanız başarılı!</p>",
     });
 

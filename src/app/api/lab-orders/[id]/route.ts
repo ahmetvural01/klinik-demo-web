@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
+import { applyLabInvoiceFirmaIntegration, reverseLabInvoiceFirmaIntegration } from "@/lib/lab-firma-integration";
+import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+
+export const dynamic = "force-dynamic";
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth("appointments:read");
@@ -22,7 +26,7 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
 
   if (!order) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
 
-  const hidePhone = user.role === "DOKTOR" || user.role === "ASISTAN";
+  const hidePhone = shouldHidePatientPhone(user.role);
   if (hidePhone && order.patient) {
     return NextResponse.json({
       ...order,
@@ -46,7 +50,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       id: params.id,
       ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
     },
-    select: { id: true, notes: true, labName: true, labType: true, invoiceNo: true, price: true, patient: { select: { fullName: true } } },
+    select: { id: true, status: true, notes: true, labName: true, labType: true, invoiceNo: true, price: true, patient: { select: { fullName: true } } },
   });
   if (!existing) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
 
@@ -60,6 +64,34 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     const rptNote = `RPT yeniden açıldı (${timestamp}): ${reason.trim()}`;
 
     const reopened = await (prisma as any).$transaction(async (tx: any) => {
+      const existingInvoices = await tx.labOrderInvoice.findMany({
+        where: { labOrderId: params.id },
+        select: { id: true, item: true, amount: true, invoiceNo: true },
+      });
+
+      for (const invoice of existingInvoices) {
+        await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, {
+          labInvoiceId: invoice.id,
+          labOrderId: params.id,
+          invoiceNo: invoice.invoiceNo || null,
+          item: invoice.item || null,
+          amount: Number(invoice.amount || 0),
+        });
+      }
+
+      if (existingInvoices.length > 0) {
+        await tx.labOrderInvoice.deleteMany({ where: { labOrderId: params.id } });
+      }
+
+      if (existing.invoiceNo || existing.price) {
+        await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, {
+          labOrderId: params.id,
+          invoiceNo: existing.invoiceNo || null,
+          item: existing.labType,
+          amount: Number(existing.price || 0),
+        });
+      }
+
       const currentTrip = await tx.labTrip.findFirst({
         where: { labOrderId: params.id },
         orderBy: { order: "desc" },
@@ -99,6 +131,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     });
 
     await writeAudit(auth.user.id, "LAB_ORDER_RPT_REOPEN", `Laboratuvar siparişi RPT ile yeniden açıldı (${params.id})`);
+    await bumpRealtimeInstitution(auth.user.institutionId || null);
     return NextResponse.json(reopened);
   }
 
@@ -115,6 +148,32 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const nowInvoiced = !!(invoiceNo || existing.invoiceNo) && !!(price !== undefined ? price : existing.price);
 
   const updated = await (prisma as any).$transaction(async (tx: any) => {
+    if (status === "IPTAL" && existing.status !== "IPTAL") {
+      const existingInvoices = await tx.labOrderInvoice.findMany({
+        where: { labOrderId: params.id },
+        select: { id: true, item: true, amount: true, invoiceNo: true },
+      });
+
+      for (const invoice of existingInvoices) {
+        await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, {
+          labInvoiceId: invoice.id,
+          labOrderId: params.id,
+          invoiceNo: invoice.invoiceNo || null,
+          item: invoice.item || null,
+          amount: Number(invoice.amount || 0),
+        });
+      }
+
+      if (existingInvoices.length === 0 && (existing.invoiceNo || existing.price)) {
+        await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, {
+          labOrderId: params.id,
+          invoiceNo: existing.invoiceNo || null,
+          item: existing.labType,
+          amount: Number(existing.price || 0),
+        });
+      }
+    }
+
     const order = await tx.labOrder.update({
       where: { id: params.id },
       data,
@@ -126,8 +185,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       },
     });
 
+    let createdInvoice: any = null;
     if (appendInvoice?.item && appendInvoice?.amount) {
-      await tx.labOrderInvoice.create({
+      createdInvoice = await tx.labOrderInvoice.create({
         data: {
           labOrderId: params.id,
           item: appendInvoice.item,
@@ -139,29 +199,37 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       });
     }
 
-    if (!wasInvoiced && nowInvoiced && existing.labName) {
-      const matchedFirma = await tx.firma.findFirst({
-        where: {
-          name: { contains: existing.labName, mode: "insensitive" },
-          isActive: true,
-          ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
-        },
-        select: { id: true, name: true },
+    if (createdInvoice && existing.labName) {
+      await applyLabInvoiceFirmaIntegration({
+        tx,
+        userId: auth.user.id,
+        institutionId: auth.user.institutionId || null,
+        labName: existing.labName,
+        labType: existing.labType,
+        patientName: existing.patient?.fullName || null,
+        item: createdInvoice.item,
+        amount: Number(createdInvoice.amount),
+        invoiceNo: createdInvoice.invoiceNo || null,
+        issuedAt: createdInvoice.issuedAt,
+        note: createdInvoice.note || null,
+        labOrderId: params.id,
+        labInvoiceId: createdInvoice.id,
       });
-      if (matchedFirma) {
-        await tx.firmaIslem.create({
-          data: {
-            firmaId: matchedFirma.id,
-            tarih: new Date(),
-            islemTipi: "HIZMET",
-            urunHizmet: `Lab: ${existing.labType}${existing.patient ? ` — ${existing.patient.fullName}` : ""}`,
-            tutar: Number(price ?? existing.price),
-            faturaNo: invoiceNo || existing.invoiceNo || null,
-            status: "AKTIF",
-            kdvOrani: 0,
-          },
-        });
-      }
+    } else if (!wasInvoiced && nowInvoiced && existing.labName) {
+      await applyLabInvoiceFirmaIntegration({
+        tx,
+        userId: auth.user.id,
+        institutionId: auth.user.institutionId || null,
+        labName: existing.labName,
+        labType: existing.labType,
+        patientName: existing.patient?.fullName || null,
+        item: existing.labType,
+        amount: Number(price ?? existing.price),
+        invoiceNo: invoiceNo || existing.invoiceNo || null,
+        issuedAt: new Date(),
+        note: null,
+        labOrderId: params.id,
+      });
     }
 
     return order;
@@ -178,5 +246,6 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   });
 
   await writeAudit(auth.user.id, "LAB_ORDER_UPDATE", `Laboratuvar siparişi güncellendi (${params.id})`);
+  await bumpRealtimeInstitution(auth.user.institutionId || null);
   return NextResponse.json(fresh || updated);
 }

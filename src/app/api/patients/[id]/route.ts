@@ -2,6 +2,8 @@
 import { prisma } from "@/lib/prisma";
 import { patientSchema } from "@/lib/validators";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { reverseLabInvoiceFirmaIntegration } from "@/lib/lab-firma-integration";
+import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 
 type Params = { params: { id: string } };
 
@@ -121,7 +123,7 @@ export async function GET(_: NextRequest, { params }: Params) {
     include: {
       appointments: { include: { doctor: { select: { fullName: true } } }, orderBy: { startAt: "desc" } },
       examinations: { include: { doctor: { select: { fullName: true } } }, orderBy: { diagnosedAt: "desc" } },
-      payments: { orderBy: { createdAt: "desc" } },
+      payments: { include: { doctor: { select: { id: true, fullName: true } } }, orderBy: { createdAt: "desc" } },
       prescriptions: { orderBy: { createdAt: "desc" } },
       labOrders: {
         include: { doctor: { select: { id: true, fullName: true } } },
@@ -142,7 +144,7 @@ export async function GET(_: NextRequest, { params }: Params) {
   }
 
   // DOKTOR ve ASISTAN telefon numaralarını göremez
-  if (auth.user.role === "DOKTOR" || auth.user.role === "ASISTAN") {
+  if (shouldHidePatientPhone(auth.user.role)) {
     return NextResponse.json({ ...patient, phone: "***" });
   }
 
@@ -222,7 +224,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 }
 
 export async function DELETE(_: NextRequest, { params }: Params) {
-  const auth = await requireAuth("patients:write");
+  const auth = await requireAuth("patients:delete");
   if (auth.error) return auth.error;
 
   const existing = await prisma.patient.findFirst({
@@ -230,14 +232,16 @@ export async function DELETE(_: NextRequest, { params }: Params) {
       id: params.id,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
     },
-    select: { id: true },
+    select: { id: true, fullName: true },
   });
 
   if (!existing) {
     return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });
   }
 
-  const deleted = await prisma.$transaction(async (tx) => {
+  let deleted: { fullName: string };
+  try {
+    deleted = await prisma.$transaction(async (tx) => {
     // Önce taksit planlarının ID'lerini al (reminder silimi için)
     const planIds = (await tx.taksitPlan.findMany({
       where: { patientId: params.id },
@@ -257,8 +261,57 @@ export async function DELETE(_: NextRequest, { params }: Params) {
     // Taksit planlarını sil (Taksit ve TaksitOdeme cascade ile silinir)
     await tx.taksitPlan.deleteMany({ where: { patientId: params.id } });
 
-    // Lab siparişlerini sil (LabTrip cascade ile silinir)
+    const labOrders = await tx.labOrder.findMany({
+      where: { patientId: params.id },
+      select: {
+        id: true,
+        labType: true,
+        invoiceNo: true,
+        price: true,
+        invoices: { select: { id: true, item: true, amount: true, invoiceNo: true } },
+      },
+    });
+
+    for (const order of labOrders) {
+      if (order.invoices.length > 0) {
+        for (const invoice of order.invoices) {
+          await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, {
+            labInvoiceId: invoice.id,
+            labOrderId: order.id,
+            invoiceNo: invoice.invoiceNo || null,
+            item: invoice.item || null,
+            amount: Number(invoice.amount || 0),
+          });
+        }
+      } else if (order.invoiceNo || order.price) {
+        await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, {
+          labOrderId: order.id,
+          invoiceNo: order.invoiceNo || null,
+          item: order.labType,
+          amount: Number(order.price || 0),
+        });
+      }
+    }
+
+    // Lab siparişlerini sil (LabTrip ve LabOrderInvoice cascade ile silinir)
     await tx.labOrder.deleteMany({ where: { patientId: params.id } });
+
+    // Hasta takip kayıtlarını sil (PatientFollowUp/Event, ON DELETE RESTRICT
+    // olduğu için silinmeden hasta.delete() FK ihlaliyle çöker — events önce,
+    // sonra follow-up'lar).
+    const followUpIds = (await tx.patientFollowUp.findMany({
+      where: { patientId: params.id },
+      select: { id: true },
+    })).map((f) => f.id);
+    await tx.patientFollowUpEvent.deleteMany({
+      where: {
+        OR: [
+          { patientId: params.id },
+          ...(followUpIds.length > 0 ? [{ followUpId: { in: followUpIds } }] : []),
+        ],
+      },
+    });
+    await tx.patientFollowUp.deleteMany({ where: { patientId: params.id } });
 
     // Reçeteleri sil
     await tx.prescription.deleteMany({ where: { patientId: params.id } });
@@ -269,10 +322,16 @@ export async function DELETE(_: NextRequest, { params }: Params) {
     await tx.appointment.deleteMany({ where: { patientId: params.id } });
     await tx.examination.deleteMany({ where: { patientId: params.id } });
     await tx.payment.deleteMany({ where: { patientId: params.id } });
-    return tx.patient.delete({ where: { id: params.id } });
-  });
+      return tx.patient.delete({ where: { id: params.id } });
+    });
+  } catch {
+    return NextResponse.json(
+      { message: "Hasta silinemedi: bağlı kayıtlar tam temizlenemedi. Lütfen tekrar deneyin veya destek ekibiyle iletişime geçin." },
+      { status: 409 }
+    );
+  }
 
-  await writeAudit(auth.user.id, "PATIENT_DELETE", `${deleted.fullName} silindi`);
+  await writeAudit(auth.user.id, "PATIENT_DELETE", `${deleted.fullName || existing.fullName} kalıcı olarak silindi`);
 
   return NextResponse.json({ ok: true });
 }

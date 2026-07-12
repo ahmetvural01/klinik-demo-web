@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { patientFollowUpEventCreateSchema } from "@/lib/validators";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 type Params = { params: { id: string } };
 
@@ -12,7 +13,7 @@ export async function GET(_: NextRequest, { params }: Params) {
 
     const institutionDoctors = auth.user.institutionId
       ? await prisma.user.findMany({
-          where: { institutionId: auth.user.institutionId, role: "DOKTOR", isActive: true },
+          where: effectiveDoctorWhere(auth.user.institutionId),
           select: { id: true },
         })
       : [];
@@ -58,7 +59,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     const institutionDoctors = auth.user.institutionId
       ? await prisma.user.findMany({
-          where: { institutionId: auth.user.institutionId, role: "DOKTOR", isActive: true },
+          where: effectiveDoctorWhere(auth.user.institutionId),
           select: { id: true },
         })
       : [];

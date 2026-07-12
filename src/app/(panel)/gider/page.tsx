@@ -1,9 +1,9 @@
 import { redirect } from "next/navigation";
 
 /**
- * /gider → /muhasebe?tab=gider
- * Gider yönetimi artık Muhasebe Merkezi > Gider sekmesinde yönetilmektedir.
+ * /gider → /muhasebe?islem=gider
+ * Gider yönetimi artık Muhasebe Merkezi'ndeki tek işlem formundan yönetilmektedir.
  */
 export default function GiderRedirectPage() {
-  redirect("/muhasebe?tab=gider");
+  redirect("/muhasebe?islem=gider");
 }

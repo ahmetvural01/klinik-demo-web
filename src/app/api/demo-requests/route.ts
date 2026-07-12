@@ -87,7 +87,7 @@ export async function POST(request: NextRequest) {
       const institution = await tx.institution.create({
         data: {
           name: slug,
-          email: `demo-${seed}@klinikmodern.local`,
+          email: `demo-${seed}@klinik.local`,
           phone: phone || null,
           address: "Demo ortamı - gerçek hasta verisi içermez",
           subscriptionPlan: "PROFESYONEL",
@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
             institutionId: institution.id,
             identityNo: managerIdentityNo,
             fullName: `${contactName} - Demo Yönetici`,
-            email: `demo-yonetici-${seed}@klinikmodern.local`,
+            email: `demo-yonetici-${seed}@klinik.local`,
             passwordHash,
             role: "YONETICI",
           },
@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
             institutionId: institution.id,
             identityNo: doctorIdentityNo,
             fullName: "Demo Doktor",
-            email: `demo-doktor-${seed}@klinikmodern.local`,
+            email: `demo-doktor-${seed}@klinik.local`,
             passwordHash,
             role: "DOKTOR",
           },
@@ -123,7 +123,7 @@ export async function POST(request: NextRequest) {
             institutionId: institution.id,
             identityNo: bankoIdentityNo,
             fullName: "Demo Banko",
-            email: `demo-banko-${seed}@klinikmodern.local`,
+            email: `demo-banko-${seed}@klinik.local`,
             passwordHash,
             role: "BANKO",
           },
@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
           institutionId: institution.id,
           institutionName,
           institutionPhone: phone || null,
-          institutionWebsite: "https://klinikmodern.com",
+          institutionWebsite: "https://klinik.local",
         },
       });
 

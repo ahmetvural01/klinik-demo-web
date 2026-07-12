@@ -75,6 +75,24 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
     return { sent: 0, failed: 0, failedRecipients: [], message: "Randevu bulunamadi" };
   }
 
+  const reservation = await prisma.institution.updateMany({
+    where: { id: institution.id, smsBalance: { gte: appointments.length } },
+    data: { smsBalance: { decrement: appointments.length } },
+  });
+
+  if (reservation.count === 0) {
+    return {
+      sent: 0,
+      failed: appointments.length,
+      failedRecipients: appointments.map((appt) => ({
+        appointmentId: appt.id,
+        phone: appt.patient.phone,
+        reason: "Yetersiz SMS kredisi",
+      })),
+      message: `Yetersiz SMS kredisi. Gerekli: ${appointments.length}, Mevcut: ${institution.smsBalance}`,
+    };
+  }
+
   const smsTemplate = await prisma.smsTemplate.findFirst({
     where: { code: job.smsType, isActive: true },
   });
@@ -128,10 +146,11 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
     }
   }
 
-  if (sent > 0) {
+  const failed = appointments.length - sent;
+  if (failed > 0) {
     await prisma.institution.update({
       where: { id: institution.id },
-      data: { smsBalance: { decrement: sent } },
+      data: { smsBalance: { increment: failed } },
     });
   }
 
@@ -156,10 +175,15 @@ export async function runSmsWorker() {
 
     try {
       const job = JSON.parse(raw) as SmsDispatchJob;
-      if (!job?.institutionId || !job?.userId || !Array.isArray(job.appointmentIds)) continue;
+      if (!job?.institutionId || !job?.userId || !Array.isArray(job.appointmentIds)) {
+        console.error("[sms-worker] Geçersiz iş atlandı:", raw);
+        continue;
+      }
       await processSmsDispatchJob(job);
-    } catch {
-      // malformed payload or processing error; continue worker loop
+    } catch (error) {
+      // Bozuk veri veya işleme hatası — worker döngüsü devam eder, ama artık
+      // sessizce yutulmuyor: kaybolan randevu hatırlatma SMS'i artık iz bırakıyor.
+      console.error("[sms-worker] İş işlenemedi, atlanıyor:", raw, error);
     }
   }
 }
