@@ -15,6 +15,7 @@ const PUBLIC_PREFIXES = [
   "/api/auth/superadmin/login",
   "/api/auth/superadmin/impersonate",
   "/api/auth/logout",
+  "/health",
   "/api/system/health",
   "/randevu-al",
   "/api/public/booking",
