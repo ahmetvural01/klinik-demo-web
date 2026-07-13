@@ -27,8 +27,8 @@ export function formatZodError(error: z.ZodError) {
 }
 
 export const loginSchema = z.object({
-  institution: z.string().min(2),
-  identityNo: z.string().min(5),
+  institution: z.string().trim().min(2),
+  identityNo: z.string().trim().min(5),
   password: z.string().min(6)
 });
 

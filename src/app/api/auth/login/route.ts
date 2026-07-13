@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
     // Regular clinic user login
     const institution = await prisma.institution.findFirst({
       where: {
-        name: { contains: parsed.data.institution, mode: "insensitive" }
+        name: { contains: institutionInput, mode: "insensitive" }
       }
     });
 

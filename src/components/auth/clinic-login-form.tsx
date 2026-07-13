@@ -23,7 +23,7 @@ export function ClinicLoginForm() {
     const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ institution, identityNo, password, rememberMe: remember }),
+      body: JSON.stringify({ institution: institution.trim(), identityNo: identityNo.trim(), password, rememberMe: remember }),
     });
 
     const payload = await res.json().catch(() => ({}));
@@ -139,6 +139,7 @@ export function ClinicLoginForm() {
                 onChange={(e) => setInstitution(e.target.value)}
                 placeholder="ornekklinik"
                 autoComplete="organization"
+                required
               />
             </label>
 
