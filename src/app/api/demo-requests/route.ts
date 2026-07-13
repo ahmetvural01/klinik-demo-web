@@ -15,7 +15,7 @@ function makeIdentity(seed: string, offset: number) {
 }
 
 function makePassword() {
-  return `Demo${Math.random().toString(36).slice(2, 6).toUpperCase()}${Math.floor(100 + Math.random() * 900)}`;
+  return `Kp${Math.random().toString(36).slice(2, 6).toUpperCase()}${Math.floor(100 + Math.random() * 900)}`;
 }
 
 function normalizeSlug(value: string) {
@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
           name: slug,
           email: `demo-${seed}@klinik.local`,
           phone: phone || null,
-          address: "Demo ortamı - gerçek hasta verisi içermez",
+          address: "Geçici test ortamı - gerçek hasta verisi içermez",
           subscriptionPlan: "PROFESYONEL",
           isDemo: true,
           demoExpiresAt,
@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
           data: {
             institutionId: institution.id,
             identityNo: managerIdentityNo,
-            fullName: `${contactName} - Demo Yönetici`,
+            fullName: contactName,
             email: `demo-yonetici-${seed}@klinik.local`,
             passwordHash,
             role: "YONETICI",
@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
           data: {
             institutionId: institution.id,
             identityNo: doctorIdentityNo,
-            fullName: "Demo Doktor",
+            fullName: "Dr. Elif Karaca",
             email: `demo-doktor-${seed}@klinik.local`,
             passwordHash,
             role: "DOKTOR",
@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
           data: {
             institutionId: institution.id,
             identityNo: bankoIdentityNo,
-            fullName: "Demo Banko",
+            fullName: "Sibel Yalçın",
             email: `demo-banko-${seed}@klinik.local`,
             passwordHash,
             role: "BANKO",
@@ -140,12 +140,12 @@ export async function POST(request: NextRequest) {
       });
 
       const demoPatients = [
-        { fullName: "Demo Ayse Yilmaz", phone: "05550000101", gender: "K", referrer: "Instagram" },
-        { fullName: "Demo Mehmet Kaya", phone: "05550000102", gender: "E", referrer: "Tavsiye" },
-        { fullName: "Demo Elif Demir", phone: "05550000103", gender: "K", referrer: "Google" },
-        { fullName: "Demo Kerem Aydin", phone: "05550000104", gender: "E", referrer: "Tabela" },
-        { fullName: "Demo Zeynep Arslan", phone: "05550000105", gender: "K", referrer: "Web sitesi" },
-        { fullName: "Demo Burak Sahin", phone: "05550000106", gender: "E", referrer: "Hasta yakini" },
+        { fullName: "Ayşe Yılmaz", phone: "05550000101", gender: "K", referrer: "Instagram" },
+        { fullName: "Mehmet Kaya", phone: "05550000102", gender: "E", referrer: "Tavsiye" },
+        { fullName: "Elif Demir", phone: "05550000103", gender: "K", referrer: "Google" },
+        { fullName: "Kerem Aydın", phone: "05550000104", gender: "E", referrer: "Tabela" },
+        { fullName: "Zeynep Arslan", phone: "05550000105", gender: "K", referrer: "Web sitesi" },
+        { fullName: "Burak Şahin", phone: "05550000106", gender: "E", referrer: "Hasta yakını" },
       ];
 
       const patients = await Promise.all(demoPatients.map((patient, index) =>
@@ -156,8 +156,8 @@ export async function POST(request: NextRequest) {
             fullName: patient.fullName,
             phone: patient.phone,
             gender: patient.gender,
-            insurance: index % 2 === 0 ? "SGK" : "Ozel",
-            notes: "Demo ortamı için oluşturulmuş sahte hasta kaydı.",
+            insurance: index % 2 === 0 ? "SGK" : "Özel Sigorta",
+            notes: "Test ortamı için oluşturulmuş örnek hasta kaydı.",
             referrer: patient.referrer,
           },
         })
@@ -173,10 +173,10 @@ export async function POST(request: NextRequest) {
 
       const stockItems = await Promise.all([
         tx.stockItem.create({
-          data: { institutionId: institution.id, name: "Demo Eldiven", category: "SARF", unit: "kutu", quantity: 12, minQuantity: 5, unitPrice: 350, supplier: "Demo Tedarikci" },
+          data: { institutionId: institution.id, name: "Nitril Eldiven M", category: "SARF", unit: "kutu", quantity: 12, minQuantity: 5, unitPrice: 350, supplier: "Medikal Sarf Deposu" },
         }),
         tx.stockItem.create({
-          data: { institutionId: institution.id, name: "Demo Anestezi", category: "MEDIKAL", unit: "adet", quantity: 20, minQuantity: 8, unitPrice: 120, supplier: "Demo Tedarikci" },
+          data: { institutionId: institution.id, name: "Artikain Anestezi Ampul", category: "MEDIKAL", unit: "adet", quantity: 20, minQuantity: 8, unitPrice: 120, supplier: "Aydın Dental Tedarik" },
         }),
       ]);
 
@@ -186,7 +186,7 @@ export async function POST(request: NextRequest) {
             stockItemId: item.id,
             type: "GIRIS",
             quantity: item.quantity,
-            note: "Demo acilis stok hareketi",
+            note: "Açılış stok girişi",
             userId: users[0].id,
           },
         })
@@ -202,13 +202,13 @@ export async function POST(request: NextRequest) {
             endAt: new Date(startAt.getTime() + 30 * 60 * 1000),
             status: index === 1 ? "GELDI" : "BEKLIYOR",
             type: index % 2 === 0 ? "KONTROL" : "STANDART",
-            note: index === 0 ? "Demo ilk muayene randevusu" : "Demo kontrol randevusu",
+            note: index === 0 ? "İlk muayene randevusu" : "Kontrol randevusu",
           },
         });
       }));
 
       const pos = await tx.posDevice.create({
-        data: { institutionId: institution.id, name: "Demo POS", isActive: true },
+        data: { institutionId: institution.id, name: "Klinik POS", isActive: true },
       });
 
       await tx.payment.create({
@@ -217,7 +217,7 @@ export async function POST(request: NextRequest) {
           posId: pos.id,
           method: "KREDI_KARTI",
           amount: 1250,
-          description: "Demo muayene tahsilatı",
+          description: "Muayene tahsilatı",
         },
       });
 
@@ -225,10 +225,10 @@ export async function POST(request: NextRequest) {
         data: {
           patientId: patients[0].id,
           doctorId: users[1].id,
-          title: "Demo Tedavi Planı",
+          title: "Tedavi Planı",
           status: "DEVAM_EDIYOR",
           totalCost: 8750,
-          notes: "Demo plan: muayene, dolgu ve kontrol adımları.",
+          notes: "Plan: muayene, dolgu ve kontrol adımları.",
         },
       });
 
@@ -244,12 +244,12 @@ export async function POST(request: NextRequest) {
         data: {
           patientId: patients[1].id,
           doctorId: users[1].id,
-          baslik: "Demo implant ödeme planı",
+          baslik: "İmplant ödeme planı",
           toplamBorc: 12000,
           pesnat: 3000,
           taksitSayisi: 3,
           startDate: new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000),
-          notes: "Demo taksit planı",
+          notes: "Taksit planı",
         },
       });
 
@@ -267,10 +267,10 @@ export async function POST(request: NextRequest) {
         data: {
           patientId: patients[2].id,
           doctorId: users[1].id,
-          labName: "Demo Lab",
+          labName: "Marmara Dental Lab",
           labType: "Zirkonyum",
           teeth: "11,12",
-          notes: "Demo laboratuvar işi",
+          notes: "Laboratuvar işi",
           price: 4200,
           invoiceNo: `DLAB-${seed}`,
         },
@@ -282,14 +282,14 @@ export async function POST(request: NextRequest) {
           order: 1,
           description: "Ölçü gönderildi",
           expectedAt: new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000),
-          sentNote: "Demo kurye teslimi",
+          sentNote: "Kurye teslimi",
         },
       });
 
       await tx.labOrderInvoice.create({
         data: {
           labOrderId: labOrder.id,
-          item: "Demo zirkonyum laboratuvar ücreti",
+          item: "Zirkonyum laboratuvar ücreti",
           amount: 4200,
           invoiceNo: `DLAB-F-${seed}`,
         },
@@ -298,10 +298,10 @@ export async function POST(request: NextRequest) {
       const firma = await tx.firma.create({
         data: {
           institutionId: institution.id,
-          name: "Demo Tedarikci",
+          name: "Medikal Sarf Deposu",
           phone: "02120000000",
           kategori: "TEDARICI",
-          notes: "Demo stok ve sarf tedarikçisi",
+          notes: "Stok ve sarf tedarikçisi",
           vendorScore: 82,
         },
       });
@@ -312,7 +312,7 @@ export async function POST(request: NextRequest) {
           tarih: now,
           islemTipi: "ALIM",
           urunHizmet: "Eldiven ve anestezi alımı",
-          aciklama: "Demo tedarikçi siparişi",
+          aciklama: "Tedarikçi siparişi",
           tutar: 4800,
           faturaNo: `DF-${seed}`,
           yontem: "HAVALE_EFT",
@@ -323,7 +323,7 @@ export async function POST(request: NextRequest) {
       await tx.firmaKontakt.create({
         data: {
           firmaId: firma.id,
-          ad: "Demo Tedarik Yetkilisi",
+          ad: "Merve Çetin",
           unvan: "Satış Temsilcisi",
           telefon: "02120000001",
           rol: "Sipariş",
@@ -335,7 +335,7 @@ export async function POST(request: NextRequest) {
         data: {
           institutionId: institution.id,
           patientId: patients[3].id,
-          title: "Demo hasta geri arama",
+          title: "Hasta geri arama",
           details: "Tedavi planı onayı için hastayı arayın.",
           type: "ARAMA",
           priority: 1,
@@ -348,7 +348,7 @@ export async function POST(request: NextRequest) {
       await tx.announcement.create({
         data: {
           institutionId: institution.id,
-          text: "Demo ortamınız hazır. Bu alandaki veriler gerçek müşteri verileriyle karışmaz.",
+          text: "Test ortamınız hazır. Bu alandaki veriler gerçek müşteri verileriyle karışmaz.",
           createdById: users[0].id,
           endsAt: demoExpiresAt,
         },
