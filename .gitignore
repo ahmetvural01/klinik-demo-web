@@ -34,6 +34,7 @@ node_modules/
 .env.development.local
 .env.test.local
 .env.production.local
+docs/LOCAL-DEPLOYMENT-SECRETS.md
 *.pem
 *.key
 *.p12
