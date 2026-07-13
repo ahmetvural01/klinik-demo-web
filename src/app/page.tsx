@@ -1,19 +1,12 @@
+"use client";
+
 import Image from "next/image";
 import Link from "next/link";
 import { CalendarDays, CheckCircle2, ClipboardList, CreditCard, ShieldCheck, Stethoscope } from "lucide-react";
 import { DemoRequestForm } from "@/components/marketing/DemoRequestForm";
-import { getSiteContent } from "@/lib/site-content";
-
-export const dynamic = "force-dynamic";
 
 const FALLBACK_HERO =
   "https://images.unsplash.com/photo-1606811971618-4486d14f3f99?auto=format&fit=crop&w=1800&q=85";
-
-function text(value: string | undefined, fallback: string) {
-  return String(value || fallback)
-    .replace(/klinik\s*modern|klinikmodern/gi, "Klinik Yönetim Platformu")
-    .trim();
-}
 
 const modules = [
   { title: "Hasta ve randevu", desc: "Hasta kartı, randevu akışı, takip ve görev kayıtları tek dosyada.", icon: CalendarDays },
@@ -29,14 +22,7 @@ const assurances = [
   "Demo ortamında gerçek veriyle karışmayan test alanı",
 ];
 
-export default async function RootPage() {
-  const site = await getSiteContent();
-  const heroTitle = text(site.heroTitle, "Diş klinikleri için uçtan uca yönetim platformu.");
-  const heroDescription = text(
-    site.heroDescription,
-    "Hasta, randevu, tedavi, laboratuvar, stok, tedarikçi ve muhasebe süreçlerini tek panelde, kontrollü ve sade bir iş akışıyla yönetin.",
-  );
-
+export default function RootPage() {
   return (
     <main className="min-h-screen bg-white text-slate-950">
       <header className="border-b border-slate-200 bg-white/95">
@@ -63,7 +49,7 @@ export default async function RootPage() {
 
       <section className="relative overflow-hidden border-b border-slate-200">
         <Image
-          src={site.heroImageUrl || FALLBACK_HERO}
+          src={FALLBACK_HERO}
           alt="Diş kliniği çalışma alanı"
           fill
           priority
@@ -73,13 +59,13 @@ export default async function RootPage() {
         <div className="relative mx-auto grid min-h-[620px] max-w-7xl items-center gap-10 px-5 py-16 lg:grid-cols-[1.05fr_0.95fr]">
           <div className="max-w-3xl text-white">
             <span className="inline-flex items-center rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wide text-cyan-100">
-              {text(site.heroBadge, "Diş hekimliği klinikleri için")}
+              Diş hekimliği klinikleri için
             </span>
             <h1 className="mt-5 max-w-4xl text-4xl font-black leading-tight tracking-tight md:text-6xl">
-              {heroTitle}
+              Diş klinikleri için uçtan uca yönetim platformu.
             </h1>
             <p className="mt-5 max-w-2xl text-base leading-7 text-slate-200 md:text-lg">
-              {heroDescription}
+              Hasta, randevu, tedavi, laboratuvar, stok, tedarikçi ve muhasebe süreçlerini tek panelde, kontrollü ve sade bir iş akışıyla yönetin.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <a
@@ -168,13 +154,10 @@ export default async function RootPage() {
         <div>
           <p className="text-xs font-black uppercase tracking-wide text-cyan-700">Demo Talebi</p>
           <h2 className="mt-2 text-3xl font-black tracking-tight">
-            {text(site.promoTitle, "Canlı demo erişimi oluşturun")}
+            Canlı demo erişimi oluşturun
           </h2>
           <p className="mt-3 text-sm leading-6 text-slate-600">
-            {text(
-              site.promoDescription,
-              "Demo hesabınız süreli ve izole şekilde oluşturulur. Hasta, randevu, tedavi, ödeme, lab, stok ve firma akışlarını örnek verilerle test edebilirsiniz.",
-            )}
+            Demo hesabınız süreli ve izole şekilde oluşturulur. Hasta, randevu, tedavi, ödeme, lab, stok ve firma akışlarını örnek verilerle test edebilirsiniz.
           </p>
         </div>
         <DemoRequestForm />
