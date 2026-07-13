@@ -272,6 +272,10 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   const w = collapsed ? "w-[68px]" : "w-[256px]";
 
   useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
+  useEffect(() => {
     const coreRoutes = ["/anasayfa", "/randevu", "/hasta", "/hasta-takip", "/gorevler"];
     const prefetchAll = () => {
       coreRoutes.forEach((href) => {
@@ -295,8 +299,12 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   return (
     <div>
       {mobileOpen && (
-        <div className="fixed inset-0 z-50 md:hidden">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setMobileOpen(false)} />
+        <div
+          className="fixed inset-0 z-50 bg-black/40 md:hidden"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setMobileOpen(false);
+          }}
+        >
           <div className="relative flex h-dvh max-h-dvh">
             <div className="flex h-dvh max-h-dvh w-[min(86vw,288px)] flex-col overflow-hidden bg-[#0f172a]">
               {isSuperAdmin && activePreview && (
@@ -355,7 +363,10 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                       {PREVIEW_ROLES.map(r => (
                         <button
                           key={r.key}
-                          onClick={() => handlePreviewRole(previewRole === r.key ? null : r.key)}
+                          onClick={() => {
+                            handlePreviewRole(previewRole === r.key ? null : r.key);
+                            setMobileOpen(false);
+                          }}
                           className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition ${
                             previewRole === r.key ? `${r.color} text-white` : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
                           }`}
@@ -367,7 +378,10 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                       ))}
                       {previewRole && (
                         <button
-                          onClick={() => handlePreviewRole(null)}
+                          onClick={() => {
+                            handlePreviewRole(null);
+                            setMobileOpen(false);
+                          }}
                           className="mt-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-500 transition hover:bg-white/10 hover:text-slate-300"
                         >
                           <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
