@@ -16,6 +16,7 @@ node_modules/
 *.dump
 *.backup
 *.sql
+!prisma/migrations/**/migration.sql
 *.sqlite
 *.db
 
