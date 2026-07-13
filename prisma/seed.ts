@@ -6,20 +6,34 @@ const prisma = new PrismaClient();
 async function main() {
   const adminPass = await bcrypt.hash("10711453", 10);
 
-  // Create Institution first
-  const institution = await prisma.institution.upsert({
-    where: { email: "info@whitedental.com" },
-    update: {},
-    create: {
-      name: "whitedental",
-      email: "info@whitedental.com",
-      phone: "05306375370",
-      address: "Cukurova / Adana",
-      subscriptionPlan: "PROFESYONEL",
-      smsBalance: 0,
-      isActive: true
-    }
+  // Create or update Institution first. Name and email are both unique in the schema,
+  // so seed must tolerate either one already existing in a fresh/demo database.
+  const existingInstitution = await prisma.institution.findFirst({
+    where: { OR: [{ email: "info@whitedental.com" }, { name: "whitedental" }] },
   });
+  const institution = existingInstitution
+    ? await prisma.institution.update({
+        where: { id: existingInstitution.id },
+        data: {
+          name: "whitedental",
+          email: "info@whitedental.com",
+          phone: "05306375370",
+          address: "Cukurova / Adana",
+          subscriptionPlan: "PROFESYONEL",
+          isActive: true,
+        },
+      })
+    : await prisma.institution.create({
+        data: {
+          name: "whitedental",
+          email: "info@whitedental.com",
+          phone: "05306375370",
+          address: "Cukurova / Adana",
+          subscriptionPlan: "PROFESYONEL",
+          smsBalance: 0,
+          isActive: true,
+        },
+      });
 
   const admin = await prisma.user.upsert({
     where: {
