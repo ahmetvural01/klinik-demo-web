@@ -86,7 +86,7 @@ function buildDatabaseUrl() {
   try {
     const url = new URL(raw);
     // Bağlantı kopuksa isteklerin saniyelerce asılı kalmasını önle.
-    url.searchParams.set("connect_timeout", "1");
+    url.searchParams.set("connect_timeout", "10");
     // Güvenlik ağı: beklenmedik bir sorgu (ör. gelecekte eklenecek limitsiz bir
     // findMany) veritabanı bağlantısını sonsuza kadar meşgul edip havuzu
     // tıkamasın diye sunucu tarafında sert bir üst sınır. Sadece uygulama
