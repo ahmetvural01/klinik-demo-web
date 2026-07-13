@@ -12,7 +12,7 @@
     "build:clean": "node scripts/ensure-postgres.mjs && node scripts/clean-next.mjs && next build",
     "build:render": "prisma generate && next build",
     "start": "next start",
-    "start:render": "prisma migrate deploy && next start -H 0.0.0.0",
+    "start:render": "node scripts/start-render.mjs",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
