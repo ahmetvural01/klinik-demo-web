@@ -85,6 +85,12 @@ function buildDatabaseUrl() {
 
   try {
     const url = new URL(raw);
+    // Neon pooler URL'lerinde libpq `options` parametresi Prisma runtime
+    // bağlantısını bozabiliyor. Migration/seed ham URL ile çalıştığı için
+    // uygulama runtime'ında da Neon bağlantısını aynen kullanıyoruz.
+    if (url.hostname.includes("neon.tech")) {
+      return raw;
+    }
     // Bağlantı kopuksa isteklerin saniyelerce asılı kalmasını önle.
     url.searchParams.set("connect_timeout", "10");
     // Güvenlik ağı: beklenmedik bir sorgu (ör. gelecekte eklenecek limitsiz bir
