@@ -297,8 +297,18 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
       {mobileOpen && (
         <div className="fixed inset-0 z-50 md:hidden">
           <div className="absolute inset-0 bg-black/40" onClick={() => setMobileOpen(false)} />
-          <div className="relative flex h-full">
-            <div className="w-64 bg-[#0f172a] p-3">
+          <div className="relative flex h-dvh max-h-dvh">
+            <div className="flex h-dvh max-h-dvh w-[min(86vw,288px)] flex-col overflow-hidden bg-[#0f172a]">
+              {isSuperAdmin && activePreview && (
+                <div className={`flex shrink-0 items-center gap-2 px-3 py-2 text-xs font-bold text-white ${activePreview.color}`}>
+                  <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+                  </svg>
+                  <span>{activePreview.label} görünümü</span>
+                </div>
+              )}
+
+              <div className="shrink-0 p-3">
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
                   <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-blue-700">
@@ -308,7 +318,71 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                 </div>
                 <button onClick={() => setMobileOpen(false)} aria-label="Kapat" className="text-slate-300">✕</button>
               </div>
-              <nav className="space-y-3">
+
+              {userName && (
+                <div className="mb-3 flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2.5">
+                  {user.photoUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={user.photoUrl} alt={userName} className="h-9 w-9 shrink-0 rounded-full object-cover" />
+                  ) : (
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white">
+                      {userName.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold text-white">{userName}</p>
+                    <p className="text-xs font-semibold uppercase text-slate-500">
+                      {activePreview ? activePreview.label : (ROLE_LABELS[userRole] ?? userRole)}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {isSuperAdmin && (
+                <details className="mb-2">
+                  <summary className="flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-slate-100">
+                    <svg className="h-3.5 w-3.5 shrink-0 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+                    </svg>
+                    <span className="flex-1 text-left">{previewRole ? `Görünüm: ${activePreview?.label}` : "Rol Görünümü"}</span>
+                    <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="6 9 12 15 18 9"/>
+                    </svg>
+                  </summary>
+                  <div className="mt-1 rounded-lg border border-white/10 bg-[#1e2d45] p-1.5">
+                    <p className="mb-1.5 px-1 text-xs font-bold uppercase text-slate-500">Rol seç</p>
+                    <div className="flex flex-col gap-0.5">
+                      {PREVIEW_ROLES.map(r => (
+                        <button
+                          key={r.key}
+                          onClick={() => handlePreviewRole(previewRole === r.key ? null : r.key)}
+                          className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition ${
+                            previewRole === r.key ? `${r.color} text-white` : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                          }`}
+                        >
+                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.color}`} />
+                          {r.label}
+                          {previewRole === r.key && <span className="ml-auto text-xs opacity-80">aktif</span>}
+                        </button>
+                      ))}
+                      {previewRole && (
+                        <button
+                          onClick={() => handlePreviewRole(null)}
+                          className="mt-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-500 transition hover:bg-white/10 hover:text-slate-300"
+                        >
+                          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                          </svg>
+                          Önizlemeyi kapat
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </details>
+              )}
+              </div>
+
+              <nav className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 pb-3 [-webkit-overflow-scrolling:touch]">
                 {navGroups.map((group) => (
                   <div key={group.label} className="border-t border-white/5 pt-2">
                     <p className="mb-1 px-1 text-xs font-bold uppercase tracking-widest text-slate-400">{group.label}</p>
@@ -326,6 +400,19 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                   </div>
                 ))}
               </nav>
+
+              <div className="shrink-0 border-t border-white/5 p-3">
+                <button
+                  onClick={async () => {
+                    await fetch("/api/auth/logout", { method: "POST" });
+                    window.location.href = "/giris";
+                  }}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-400 transition hover:bg-red-500/10 hover:text-red-400"
+                >
+                  {ICONS.logout}
+                  <span>Oturumu Kapat</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
