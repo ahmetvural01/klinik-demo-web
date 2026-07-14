@@ -6,6 +6,7 @@ import { sendSms } from "@/lib/sms";
 import { turkeyDayRangeUtc } from "@/lib/tz";
 import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { getDailySchedules, checkWithinWorkingHours } from "@/lib/working-hours";
 
 const APPT_REMINDER_PREFIX = "[APPT_REMINDER]";
 
@@ -236,6 +237,13 @@ export async function POST(request: NextRequest) {
   // Başlangıç / bitiş mantık kontrolü
   if (startAt >= endAt) {
     return NextResponse.json({ message: "Başlangıç saati bitiş saatinden önce olmalıdır" }, { status: 400 });
+  }
+
+  // ── Çalışma saatleri / tatil günü kontrolü ──────────────────────────────
+  const dailySchedules = await getDailySchedules(auth.user.institutionId);
+  const workingHoursError = checkWithinWorkingHours(startAt, dailySchedules);
+  if (workingHoursError) {
+    return NextResponse.json({ message: workingHoursError }, { status: 400 });
   }
 
   // ── Doktor çakışma kontrolü ─────────────────────────────────────────────

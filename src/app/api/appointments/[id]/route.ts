@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { appointmentSchema } from "@/lib/validators";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
+import { getDailySchedules, checkWithinWorkingHours } from "@/lib/working-hours";
 
 const APPT_REMINDER_PREFIX = "[APPT_REMINDER]";
 
@@ -187,6 +188,15 @@ export async function PUT(request: NextRequest, { params }: Params) {
   // Çakışma kontrolü — saat/doktor değişiyorsa yeniden kontrol
   const timeChanged   = parsed.data.startAt !== existing.startAt.toISOString() || parsed.data.endAt !== existing.endAt.toISOString();
   const doctorChanged = parsed.data.doctorId !== existing.doctorId;
+
+  if (timeChanged) {
+    const dailySchedules = await getDailySchedules(auth.user.institutionId);
+    const workingHoursError = checkWithinWorkingHours(newStart, dailySchedules);
+    if (workingHoursError) {
+      return NextResponse.json({ message: workingHoursError }, { status: 400 });
+    }
+  }
+
   if (timeChanged || doctorChanged) {
     const conflict = await prisma.appointment.findFirst({
       where: {

@@ -106,6 +106,20 @@ type DaySchedule = {
 };
 
 const SCHEDULE_IDX_TO_JS_DAY = [1, 2, 3, 4, 5, 6, 0] as const;
+const SCHEDULE_DAY_NAMES = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"] as const;
+// Ayarlar > Çalışma Saatleri'nde henüz hiç kayıt yapılmamış (kurum bu ekranı
+// hiç ziyaret etmemiş) kurumlar için güvenli varsayılan — ayar/page.tsx'teki
+// DEFAULT_SCHEDULES ile birebir aynı olmalı, aksi halde randevu oluşturma
+// tatil/mesai kontrolü sessizce devre dışı kalır (bkz. dailySchedules boşsa
+// scheduleByJsDay boş Map döner).
+const FALLBACK_DAILY_SCHEDULES: DaySchedule[] = SCHEDULE_DAY_NAMES.map((day) => ({
+  day,
+  isHoliday: day === "Pazar",
+  open: "08:30",
+  close: day === "Cumartesi" ? "15:00" : "18:00",
+  lunchStart: "",
+  lunchEnd: "",
+}));
 
 type CalendarSettings = {
   openingTime: string;
@@ -759,11 +773,11 @@ export default function RandevuPage() {
 
             const parsedDailySchedules = (() => {
               const raw = settingsJson?.dailySchedules;
-              if (Array.isArray(raw)) return raw as DaySchedule[];
+              if (Array.isArray(raw) && raw.length > 0) return raw as DaySchedule[];
               if (typeof raw === "string") {
-                try { const p = JSON.parse(raw); return Array.isArray(p) ? p as DaySchedule[] : []; } catch { return []; }
+                try { const p = JSON.parse(raw); return Array.isArray(p) && p.length > 0 ? p as DaySchedule[] : FALLBACK_DAILY_SCHEDULES; } catch { return FALLBACK_DAILY_SCHEDULES; }
               }
-              return [];
+              return FALLBACK_DAILY_SCHEDULES;
             })();
 
             const resolvedSettings: CalendarSettings = {
