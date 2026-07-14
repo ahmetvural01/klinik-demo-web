@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 function safeParseJson(value: string) {
   try {
@@ -52,6 +52,7 @@ export async function POST(request: NextRequest) {
 
   const response = await fetch(body.url, init);
   const text = await response.text();
+  await writeAudit(auth.user.id, "SUPERADMIN_API_PLAYGROUND_REQUEST", `${method} ${body.url} → ${response.status}`);
 
   return NextResponse.json({
     status: response.status,

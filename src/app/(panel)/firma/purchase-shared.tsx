@@ -35,7 +35,7 @@ export const fmt = (n: number) =>
   "₺" + new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 2 }).format(n);
 export const fmtDate = (d: string) => new Date(d).toLocaleDateString("tr-TR");
 export const formLabel = "mb-1.5 block text-sm font-semibold text-slate-700";
-export const formInput = "w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-400 disabled:bg-slate-100";
+export const formInput = "w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30 disabled:bg-slate-100";
 export const modalAction = "flex-1 rounded-xl px-4 py-3 text-sm font-bold transition";
 const PAYMENT_METHODS = [
   { value: "NAKIT", label: "Nakit" },
@@ -137,7 +137,7 @@ export function PurchaseLineEditor({ items, setItems, stockItems }: {
               className={formInput}
             />
             {!line.stockItemId && line.productQuery.trim() && (
-              <p className="mt-1 text-xs font-medium text-blue-600">Yeni ürün olarak oluşturulacak</p>
+              <p className="mt-1 text-xs font-medium text-primary">Yeni ürün olarak oluşturulacak</p>
             )}
           </div>
           {!line.stockItemId && line.productQuery.trim() && (
@@ -576,7 +576,7 @@ export function usePurchaseModals({
               <button onClick={() => setShowEditPurchase(false)}
                 className={`${modalAction} border border-slate-200 text-slate-700 hover:bg-slate-50`}>Vazgeç</button>
               <button onClick={submitPurchaseEdit} disabled={isSubmittingPurchaseEdit}
-                className={`${modalAction} bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60`}>
+                className={`${modalAction} bg-primary text-white hover:bg-primary-strong disabled:opacity-60`}>
                 {isSubmittingPurchaseEdit ? "Kaydediliyor..." : "Düzeltmeyi Kaydet"}
               </button>
             </div>

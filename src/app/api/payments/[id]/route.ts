@@ -7,14 +7,26 @@ import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 type Params = { params: { id: string } };
 
+const METHOD_LABELS: Record<string, string> = {
+  NAKIT: "Nakit",
+  KREDI_KARTI: "Kredi Kartı",
+  HAVALE_EFT: "Havale/EFT",
+  MAIL_ORDER: "Mail Order",
+  DIGER: "Diğer",
+};
+
 function fmt(v: unknown): string {
   if (v === null || v === undefined || v === "") return "-";
   return String(v);
 }
 
 async function findAccessiblePayment(id: string, auth: { user: { role: string; institutionId: string | null } }) {
+  const include = {
+    patient: { select: { id: true, fullName: true } },
+    doctor: { select: { id: true, fullName: true } },
+  } as const;
   if (auth.user.role === "SUPERADMIN") {
-    return prisma.payment.findUnique({ where: { id } });
+    return prisma.payment.findUnique({ where: { id }, include });
   }
   if (!auth.user.institutionId) return null;
 
@@ -32,6 +44,7 @@ async function findAccessiblePayment(id: string, auth: { user: { role: string; i
         { doctorId: { in: userIds } },
       ],
     },
+    include,
   });
 }
 
@@ -47,9 +60,15 @@ export async function DELETE(_: NextRequest, { params }: Params) {
       (tx) => deleteIntegratedPayment(tx, params.id),
       { isolationLevel: "Serializable" }
     );
-    const detail = taksitReverseInfo.updatedCount
-      ? `Ödeme silindi (${params.id}) - ${taksitReverseInfo.updatedCount} taksit geri güncellendi`
-      : `Ödeme silindi (${params.id})`;
+    const detail = [
+      `${auth.user.fullName || "Personel"} tarafından tahsilat silindi.`,
+      `Hasta: ${existing.patient?.fullName || "Genel tahsilat"}`,
+      `Doktor: ${existing.doctor?.fullName || "-"}`,
+      `Tutar: ${Number(existing.amount)} TL`,
+      `Yöntem: ${METHOD_LABELS[existing.method] || existing.method}`,
+      existing.description ? `Açıklama: ${existing.description}` : "",
+      taksitReverseInfo.updatedCount ? `Taksit entegrasyonu: ${taksitReverseInfo.updatedCount} taksit geri güncellendi` : "Taksit entegrasyonu: değişiklik yok",
+    ].filter(Boolean).join("\n");
     await writeAudit(auth.user.id, "PAYMENT_DELETE", detail);
 
     return NextResponse.json({ ok: true, taksitReverseInfo });
@@ -137,6 +156,9 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     throw e;
   }
   const { payment, taksitReverseInfo, taksitInfo } = paymentResult;
+  const nextDoctorInfo = payment.doctorId
+    ? await prisma.user.findUnique({ where: { id: payment.doctorId }, select: { fullName: true } })
+    : null;
 
   const beforeParts: string[] = [];
   const afterParts: string[] = [];
@@ -150,10 +172,10 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   };
 
   pushDiff("Tutar", Number(existing.amount), Number(payment.amount));
-  pushDiff("Yöntem", existing.method, payment.method);
+  pushDiff("Yöntem", METHOD_LABELS[existing.method] || existing.method, METHOD_LABELS[payment.method] || payment.method);
   pushDiff("Açıklama", existing.description, payment.description);
   pushDiff("Tarih", existing.createdAt, payment.createdAt);
-  pushDiff("Doktor", existing.doctorId, payment.doctorId);
+  pushDiff("Doktor", existing.doctor?.fullName || existing.doctorId, nextDoctorInfo?.fullName || payment.doctorId);
 
   const integrationText =
     taksitReverseInfo.updatedCount || taksitInfo?.updatedCount
@@ -162,6 +184,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const detail = [
     `${auth.user.fullName || "Personel"} tarafından ödeme kaydı güncellendi.`,
+    `Hasta: ${existing.patient?.fullName || "Genel tahsilat"}`,
     `Değişiklik öncesi: ${beforeParts.length > 0 ? beforeParts.join(" | ") : "Alan değişikliği yok"}`,
     `Değişiklik sonrası: ${afterParts.length > 0 ? afterParts.join(" | ") : "Alan değişikliği yok"}`,
     integrationText,

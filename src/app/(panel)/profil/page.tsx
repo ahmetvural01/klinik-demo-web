@@ -3,6 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { confirmDialog } from "@/lib/confirm-client";
 import { downscaleImageToDataUrl } from "@/lib/image-upload";
+import { invalidateCachedGet } from "@/lib/client-cache";
+import { showToastSafe } from "@/lib/toast-client";
+import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { FormField } from "@/components/ui/FormField";
 
 const roleLabel: Record<string, string> = {
   YONETICI: "Yönetici", DOKTOR: "Diş Hekimi", ASISTAN: "Asistan",
@@ -17,7 +22,6 @@ export default function ProfilPage() {
   const [photoSaving, setPhotoSaving] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
-  const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
   const [twoFactorSetup, setTwoFactorSetup] = useState<{ secret: string; qrCodeDataUrl: string } | null>(null);
   const [twoFactorCode, setTwoFactorCode] = useState("");
@@ -27,8 +31,7 @@ export default function ProfilPage() {
   const [showDisableForm, setShowDisableForm] = useState(false);
 
   const showToast = (type: "success" | "error", text: string) => {
-    setToast({ type, text });
-    setTimeout(() => setToast(null), 3500);
+    showToastSafe({ message: text, type });
   };
 
   useEffect(() => {
@@ -116,6 +119,8 @@ export default function ProfilPage() {
       });
       if (res.ok) {
         setProfile(p => ({ ...p, photoUrl: dataUrl }));
+        invalidateCachedGet("/api/auth/me");
+        invalidateCachedGet("/api/staff");
         showToast("success", dataUrl ? "Fotoğraf güncellendi" : "Fotoğraf kaldırıldı");
       } else {
         showToast("error", "Fotoğraf kaydedilemedi");
@@ -150,8 +155,13 @@ export default function ProfilPage() {
           ...(profile.role === "YONETICI" ? { hideAsDoctor: !profile.showAsDoctor } : {}),
         })
       });
-      if (res.ok) showToast("success", "Profil güncellendi");
-      else showToast("error", "Güncelleme başarısız");
+      if (res.ok) {
+        invalidateCachedGet("/api/auth/me");
+        invalidateCachedGet("/api/staff");
+        showToast("success", "Profil güncellendi");
+      } else {
+        showToast("error", "Güncelleme başarısız");
+      }
     } catch { showToast("error", "Bağlantı hatası"); }
     finally { setSaving(false); }
   };
@@ -197,15 +207,6 @@ export default function ProfilPage() {
 
   return (
     <div className="space-y-5">
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed right-5 top-5 z-[100] flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${
-          toast.type === "success" ? "bg-emerald-500" : "bg-red-500"
-        }`}>
-          {toast.type === "success" ? "✓" : "✕"} {toast.text}
-        </div>
-      )}
-
       {/* Header */}
       <div>
         <h1 className="text-lg font-bold text-slate-900">Profilim</h1>
@@ -228,30 +229,25 @@ export default function ProfilPage() {
           />
           {/* eslint-disable-next-line @next/next/no-img-element */}
           {profile.photoUrl ? (
-            <img src={profile.photoUrl} alt={profile.fullName} className="h-16 w-16 rounded-full object-cover ring-4 ring-blue-100" />
+            <img src={profile.photoUrl} alt={profile.fullName} className="h-16 w-16 rounded-full object-cover ring-4 ring-primary/20" />
           ) : (
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary text-xl font-bold text-white ring-4 ring-blue-100">
+            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary text-xl font-bold text-white ring-4 ring-primary/20">
               {initials}
             </div>
           )}
           <div className="flex-1">
             <p className="text-xl font-bold text-slate-900">{profile.fullName || "—"}</p>
-            <span className="inline-block rounded-full bg-blue-100 px-3 py-0.5 text-xs font-bold text-blue-700">
+            <Badge tone="info" size="md">
               {roleLabel[profile.role] ?? profile.role}
-            </span>
+            </Badge>
             <div className="mt-2 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => photoInputRef.current?.click()}
-                disabled={photoSaving}
-                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:opacity-50"
-              >
+              <Button variant="secondary" size="sm" onClick={() => photoInputRef.current?.click()} loading={photoSaving}>
                 {photoSaving ? "Kaydediliyor…" : "Fotoğraf Değiştir"}
-              </button>
+              </Button>
               {profile.photoUrl && (
-                <button type="button" onClick={() => void savePhoto("")} disabled={photoSaving} className="rounded-lg border border-red-100 px-3 py-1.5 text-xs font-bold text-red-600 transition hover:bg-red-50 disabled:opacity-50">
+                <Button variant="danger" size="sm" onClick={() => void savePhoto("")} disabled={photoSaving}>
                   Kaldır
-                </button>
+                </Button>
               )}
             </div>
             {photoError && <p className="mt-1 text-xs text-red-600">{photoError}</p>}
@@ -279,24 +275,21 @@ export default function ProfilPage() {
           )}
           {(profile.role === "DOKTOR" || profile.showAsDoctor) && (
             <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-500 uppercase">Başlangıç</label>
+              <FormField label="Başlangıç">
                 <input type="time" value={profile.workStart}
                   onChange={e => setProfile(p => ({ ...p, workStart: e.target.value }))}
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20" />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-500 uppercase">Bitiş</label>
+              </FormField>
+              <FormField label="Bitiş">
                 <input type="time" value={profile.workEnd}
                   onChange={e => setProfile(p => ({ ...p, workEnd: e.target.value }))}
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20" />
-              </div>
+              </FormField>
             </div>
           )}
-          <button onClick={updateProfile} disabled={saving}
-            className="w-full rounded-xl bg-primary py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-50">
-            {saving ? "Kaydediliyor…" : "Kaydet"}
-          </button>
+          <Button variant="primary" fullWidth onClick={() => void updateProfile()} loading={saving}>
+            Kaydet
+          </Button>
         </div>
         )}
 
@@ -309,19 +302,17 @@ export default function ProfilPage() {
               { key: "new", label: "Yeni Şifre", placeholder: "En az 6 karakter" },
               { key: "confirm", label: "Yeni Şifre Tekrar", placeholder: "Yeni şifreyi tekrar girin" },
             ].map(f => (
-              <div key={f.key}>
-                <label className="mb-1 block text-xs font-semibold text-slate-500 uppercase">{f.label}</label>
+              <FormField key={f.key} label={f.label}>
                 <input type="password"
                   value={(password as Record<string, string>)[f.key]}
                   onChange={e => setPassword(p => ({ ...p, [f.key]: e.target.value }))}
                   placeholder={f.placeholder}
                   className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20" />
-              </div>
+              </FormField>
             ))}
-            <button onClick={changePassword} disabled={saving}
-              className="w-full rounded-xl bg-red-600 py-2.5 text-sm font-bold text-white transition hover:bg-red-700 disabled:opacity-50">
-              {saving ? "Değiştiriliyor…" : "Şifre Değiştir"}
-            </button>
+            <Button variant="danger" fullWidth onClick={() => void changePassword()} loading={saving}>
+              Şifre Değiştir
+            </Button>
           </div>
         </div>
       </div>
@@ -333,15 +324,15 @@ export default function ProfilPage() {
             <h3 className="text-sm font-bold text-slate-800">İki Faktörlü Doğrulama</h3>
             <p className="mt-0.5 text-xs text-slate-500">Girişte şifreye ek olarak kimlik doğrulama uygulamasından (Google Authenticator, Authy vb.) kod istenir.</p>
           </div>
-          <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-bold ${twoFactorEnabled ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
+          <Badge tone={twoFactorEnabled ? "success" : "neutral"} size="md">
             {twoFactorEnabled ? "Aktif" : "Kapalı"}
-          </span>
+          </Badge>
         </div>
 
         {!twoFactorEnabled && !twoFactorSetup && (
-          <button onClick={startTwoFactorSetup} disabled={twoFactorSaving} className="rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-50">
-            {twoFactorSaving ? "Hazırlanıyor…" : "Etkinleştir"}
-          </button>
+          <Button variant="primary" onClick={() => void startTwoFactorSetup()} loading={twoFactorSaving}>
+            Etkinleştir
+          </Button>
         )}
 
         {twoFactorSetup && (
@@ -358,11 +349,11 @@ export default function ProfilPage() {
                 inputMode="numeric"
                 className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-center text-lg tracking-[0.3em] focus:border-primary focus:outline-none"
               />
-              <button onClick={confirmTwoFactor} disabled={twoFactorSaving || twoFactorCode.length < 6} className="rounded-lg bg-emerald-600 px-4 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50">
-                {twoFactorSaving ? "Onaylanıyor…" : "Onayla"}
-              </button>
+              <Button variant="primary" onClick={() => void confirmTwoFactor()} disabled={twoFactorCode.length < 6} loading={twoFactorSaving}>
+                Onayla
+              </Button>
             </div>
-            <button onClick={() => { setTwoFactorSetup(null); setTwoFactorCode(""); }} className="mt-2 text-xs font-semibold text-slate-400 hover:text-slate-600">Vazgeç</button>
+            <Button variant="ghost" size="sm" onClick={() => { setTwoFactorSetup(null); setTwoFactorCode(""); }}>Vazgeç</Button>
           </div>
         )}
 
@@ -373,14 +364,14 @@ export default function ProfilPage() {
             <div className="grid grid-cols-2 gap-2 font-mono text-sm text-amber-900 sm:grid-cols-4">
               {backupCodes.map((code) => <div key={code} className="rounded-lg bg-white px-2 py-1.5 text-center">{code}</div>)}
             </div>
-            <button onClick={() => setBackupCodes(null)} className="mt-3 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100">Kaydettim, kapat</button>
+            <Button variant="secondary" size="sm" onClick={() => setBackupCodes(null)}>Kaydettim, kapat</Button>
           </div>
         )}
 
         {twoFactorEnabled && !showDisableForm && (
-          <button onClick={() => setShowDisableForm(true)} className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-100">
+          <Button variant="danger" onClick={() => setShowDisableForm(true)}>
             Devre Dışı Bırak
-          </button>
+          </Button>
         )}
 
         {twoFactorEnabled && showDisableForm && (
@@ -388,11 +379,11 @@ export default function ProfilPage() {
             <label className="mb-1 block text-xs font-semibold text-red-700">Devam etmek için şifrenizi girin</label>
             <div className="flex gap-2">
               <input type="password" value={disablePassword} onChange={(e) => setDisablePassword(e.target.value)} className="flex-1 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm focus:border-red-400 focus:outline-none" />
-              <button onClick={disableTwoFactor} disabled={twoFactorSaving} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50">
-                {twoFactorSaving ? "…" : "Onayla"}
-              </button>
+              <Button variant="danger" onClick={() => void disableTwoFactor()} loading={twoFactorSaving}>
+                Onayla
+              </Button>
             </div>
-            <button onClick={() => { setShowDisableForm(false); setDisablePassword(""); }} className="mt-2 text-xs font-semibold text-red-400 hover:text-red-600">Vazgeç</button>
+            <Button variant="ghost" size="sm" onClick={() => { setShowDisableForm(false); setDisablePassword(""); }}>Vazgeç</Button>
           </div>
         )}
       </div>

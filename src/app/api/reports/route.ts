@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming } from "@/lib/api";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
+import { buildDataConsistencyReport } from "@/lib/data-consistency";
 
 // 2026 gelir vergisi dilimleri
 function gelirVergisiHesapla(matrah: number): number {
@@ -316,6 +317,76 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
   const annualNetProfit = annualRevenue - annualExpense;
   const gelirVergisi = gelirVergisiHesapla(annualNetProfit);
 
+  const patientTreatmentTotal: Record<string, number> = {};
+  const patientPaymentTotal: Record<string, number> = {};
+  for (const exam of examinations) {
+    if (!exam.patientId) continue;
+    patientTreatmentTotal[exam.patientId] = (patientTreatmentTotal[exam.patientId] || 0) + Number(exam.amount || 0);
+  }
+  for (const payment of payments) {
+    if (!payment.patientId) continue;
+    patientPaymentTotal[payment.patientId] = (patientPaymentTotal[payment.patientId] || 0) + Number(payment.amount || 0);
+  }
+  const unpaidTreatmentPatientCount = Object.entries(patientTreatmentTotal)
+    .filter(([patientId, total]) => total - (patientPaymentTotal[patientId] || 0) > 0.01)
+    .length;
+
+  const [openLabCount, openFollowUpCount, consistency] = await Promise.all([
+    (prisma as any).labOrder.count({
+      where: {
+        status: "DEVAM_EDIYOR",
+        ...(institutionId ? { patient: { institutionId } } : {}),
+      },
+    }),
+    (prisma as any).patientFollowUp.count({
+      where: {
+        status: "ACIK",
+        ...(institutionId ? { patient: { institutionId } } : {}),
+      },
+    }),
+    buildDataConsistencyReport(institutionId),
+  ]);
+
+  const dayCloseChecks = [
+    {
+      key: "cash-ledger",
+      label: "Kasa ve tahsilat defteri",
+      status: totalRevenue >= 0 ? "ok" : "critical",
+      detail: `Seçili dönemde ${payments.length} tahsilat, ${totalRevenue.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL gelir kaydı var.`,
+      href: "/muhasebe",
+    },
+    {
+      key: "open-lab",
+      label: "Açık laboratuvar işleri",
+      status: openLabCount === 0 ? "ok" : openLabCount > 10 ? "critical" : "warning",
+      detail: openLabCount === 0 ? "Açık laboratuvar işi yok." : `${openLabCount} açık laboratuvar işi takip bekliyor.`,
+      href: "/lab",
+    },
+    {
+      key: "open-follow-up",
+      label: "Hasta takip aksiyonları",
+      status: openFollowUpCount === 0 ? "ok" : openFollowUpCount > 20 ? "critical" : "warning",
+      detail: openFollowUpCount === 0 ? "Açık hasta takip aksiyonu yok." : `${openFollowUpCount} açık hasta takip aksiyonu var.`,
+      href: "/hasta-takip",
+    },
+    {
+      key: "installments",
+      label: "Gecikmiş taksit",
+      status: taksitler.length === 0 ? "ok" : "warning",
+      detail: taksitler.length === 0 ? "Gecikmiş taksit yok." : `${taksitler.length} gecikmiş taksit var.`,
+      href: "/muhasebe?tab=alacak",
+    },
+    {
+      key: "data-consistency",
+      label: "Veri tutarlılığı",
+      status: consistency.summary.critical > 0 ? "critical" : consistency.summary.warning > 0 ? "warning" : "ok",
+      detail: consistency.summary.total === 0
+        ? "Kritik veri bağlantısı sorunu bulunmadı."
+        : `${consistency.summary.critical} kritik, ${consistency.summary.warning} uyarı, ${consistency.summary.info} bilgi kontrolü var.`,
+      href: "/sistem-izleme",
+    },
+  ];
+
   // ── İşlem analizi ─────────────────────────────────────────────────────────
   const treatmentCounts: Record<string, number> = {};
   const toothCounts: Record<string, number> = {};
@@ -367,5 +438,21 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
     labStatusSummary: labStatusMap,
     totalLabOrders: labOrders.length,
     overdueInstallments: taksitler.length,
+    consistency,
+    dayClose: {
+      income: totalRevenue,
+      expense: totalExpenses + totalFirmaAlim,
+      net: netCash,
+      cash: cashTotal,
+      card: cardTotal,
+      transfer: transferTotal,
+      mailOrder: mailOrderTotal,
+      other: otherTotal,
+      openLabCount,
+      openFollowUpCount,
+      overdueInstallments: taksitler.length,
+      unpaidTreatmentPatientCount,
+      checks: dayCloseChecks,
+    },
   });
 });

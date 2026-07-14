@@ -3,15 +3,17 @@ import { useState, useEffect, useCallback, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
-import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
 import { confirmDialog } from "@/lib/confirm-client";
+import { showToastSafe } from "@/lib/toast-client";
 import { ProfessionalDataTable } from "@/components/ui/ProfessionalDataTable";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { Badge } from "@/components/ui/Badge";
+import { FormField } from "@/components/ui/FormField";
 import {
-  usePurchaseModals, fmt, fmtDate, formLabel, formInput, modalAction,
+  usePurchaseModals, fmt, fmtDate, formInput,
   type StockItem, type Purchase,
 } from "../firma/purchase-shared";
-
-type Toast = { type: "success" | "error" | "info"; text: string };
 
 type FirmaKontakt = {
   id: string; ad: string; unvan?: string; email?: string; telefon?: string;
@@ -45,8 +47,8 @@ const ISLEM_TIPI: Record<string, string> = { ALIM: "Alım", HIZMET: "Hizmet", OD
 const YONTEMLER: Record<string, string> = {
   NAKIT: "Nakit", KREDI_KARTI: "Kredi Kartı", HAVALE_EFT: "Havale/EFT", MAIL_ORDER: "Mail Order", DIGER: "Diğer"
 };
-const TIPI_COLOR: Record<string, string> = {
-  ALIM: "bg-red-100 text-red-700", HIZMET: "bg-amber-100 text-amber-700", ODEME: "bg-emerald-100 text-emerald-700"
+const TIPI_TONE: Record<string, "critical" | "warning" | "success"> = {
+  ALIM: "critical", HIZMET: "warning", ODEME: "success"
 };
 
 function FirmaDetayContent() {
@@ -67,11 +69,9 @@ function FirmaDetayContent() {
   const [firmaPurchases, setFirmaPurchases] = useState<Purchase[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [toast, setToast] = useState<Toast | null>(null);
 
-  const showToast = useCallback((type: Toast["type"], text: string) => {
-    setToast({ type, text });
-    setTimeout(() => setToast(null), 3500);
+  const showToast = useCallback((type: "success" | "error" | "info", text: string) => {
+    showToastSafe({ message: text, type });
   }, []);
 
   const loadFirma = useCallback(async () => {
@@ -155,7 +155,6 @@ function FirmaDetayContent() {
 
   // ── Firma Düzenle modal ───────────────────────────────────────────────────
   const [showEditFirma, setShowEditFirma] = useState(false);
-  useEscapeClose(() => setShowEditFirma(false), showEditFirma);
   const [editForm, setEditForm] = useState({
     name: "", phone: "", iban: "", ibanName: "", notes: "", kategori: "TEDARICI", paymentTerms: "NET_30"
   });
@@ -178,7 +177,6 @@ function FirmaDetayContent() {
 
   // ── Hizmet/Ödeme Ekle modal ───────────────────────────────────────────────
   const [showAddIslem, setShowAddIslem] = useState(false);
-  useEscapeClose(() => setShowAddIslem(false), showAddIslem);
   const [isSubmittingIslem, setIsSubmittingIslem] = useState(false);
   const [islemForm, setIslemForm] = useState({
     tarih: new Date().toISOString().split("T")[0], islemTipi: "HIZMET", urunHizmet: "", aciklama: "",
@@ -229,7 +227,6 @@ function FirmaDetayContent() {
 
   // ── Kontakt Ekle modal ────────────────────────────────────────────────────
   const [showAddKontakt, setShowAddKontakt] = useState(false);
-  useEscapeClose(() => setShowAddKontakt(false), showAddKontakt);
   const [isSubmittingKontakt, setIsSubmittingKontakt] = useState(false);
   const [kontaktForm, setKontaktForm] = useState({ ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false });
   const handleAddKontakt = async () => {
@@ -257,7 +254,7 @@ function FirmaDetayContent() {
     { accessorKey: "tarih", header: "Tarih", cell: ({ row }) => <span className="whitespace-nowrap">{fmtDate(row.original.tarih)}</span> },
     {
       accessorKey: "islemTipi", header: "Tip",
-      cell: ({ row }) => <span className={`rounded px-2 py-1 text-xs font-semibold ${TIPI_COLOR[row.original.islemTipi]}`}>{ISLEM_TIPI[row.original.islemTipi]}</span>,
+      cell: ({ row }) => <Badge tone={TIPI_TONE[row.original.islemTipi]}>{ISLEM_TIPI[row.original.islemTipi]}</Badge>,
     },
     {
       id: "detail", accessorFn: (item) => item.urunHizmet || item.aciklama || "", header: "Ürün/Hizmet",
@@ -280,13 +277,13 @@ function FirmaDetayContent() {
         if (purchase) {
           return (
             <div className="flex justify-end gap-1">
-              <button onClick={() => purchaseManager.openPurchaseDetail(purchase.id)} className="rounded-lg px-2 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100">Detay</button>
-              <button onClick={() => purchaseManager.openPurchaseEdit(purchase.id)} className="rounded-lg px-2 py-1.5 text-xs font-bold text-blue-600 hover:bg-blue-50">Düzenle</button>
-              <button onClick={() => purchaseManager.cancelPurchase(purchase.id, purchase.firmaId)} className="rounded-lg px-2 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 hover:text-red-700">İptal</button>
+              <Button size="sm" variant="secondary" onClick={() => purchaseManager.openPurchaseDetail(purchase.id)}>Detay</Button>
+              <Button size="sm" variant="secondary" onClick={() => purchaseManager.openPurchaseEdit(purchase.id)}>Düzenle</Button>
+              <Button size="sm" variant="danger" onClick={() => purchaseManager.cancelPurchase(purchase.id, purchase.firmaId)}>İptal</Button>
             </div>
           );
         }
-        return <button onClick={() => cancelIslem(row.original.id)} className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 hover:text-red-700">İptal</button>;
+        return <Button size="sm" variant="danger" onClick={() => cancelIslem(row.original.id)}>İptal</Button>;
       },
     },
   ];
@@ -312,14 +309,6 @@ function FirmaDetayContent() {
 
   return (
     <section className="space-y-4">
-      {toast && (
-        <div className={`fixed right-5 top-5 z-[100] flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${
-          toast.type === "success" ? "bg-emerald-500" : toast.type === "error" ? "bg-red-500" : "bg-blue-500"
-        }`}>
-          {toast.text}
-        </div>
-      )}
-
       {/* Header */}
       <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -335,12 +324,12 @@ function FirmaDetayContent() {
             {firma.notes && <p className="mt-2 text-sm italic text-slate-500">{firma.notes}</p>}
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Link href="/firma" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Tedarikçi Listesi</Link>
-            <button onClick={openEditFirma} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">Düzenle</button>
+            <Button variant="secondary" href="/firma">Tedarikçi Listesi</Button>
+            <Button variant="secondary" onClick={openEditFirma}>Düzenle</Button>
             {isLabFirma ? (
-              <Link href={`/lab?new=1&labName=${encodeURIComponent(firma.name)}`} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white hover:bg-slate-700">Lab İşi Gönder</Link>
+              <Button variant="primary" href={`/lab?new=1&labName=${encodeURIComponent(firma.name)}`}>Lab Siparişi Oluştur</Button>
             ) : (
-              <button onClick={() => purchaseManager.openAddPurchase(firma.id)} className="rounded-xl bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700">Malzeme Alımı</button>
+              <Button variant="danger" onClick={() => purchaseManager.openAddPurchase(firma.id)}>Malzeme Alımı</Button>
             )}
           </div>
         </div>
@@ -381,7 +370,7 @@ function FirmaDetayContent() {
             </dl>
           </div>
           {isLabFirma ? (
-            <div className="rounded-2xl border border-blue-100 bg-blue-50/70 p-4 shadow-sm">
+            <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 shadow-sm">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h3 className="text-sm font-black text-slate-900">Laboratuvar İşleri</h3>
@@ -389,14 +378,14 @@ function FirmaDetayContent() {
                     Bu firma laboratuvar olarak çalışır. Malzeme siparişi açılmaz; lab işi ve faturası Laboratuvar ekranından kaydedilir, tutarlar aşağıdaki hesap ekstresine hizmet borcu olarak düşer.
                   </p>
                 </div>
-                <Link href={`/lab?new=1&labName=${encodeURIComponent(firma.name)}`} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-700">Lab İşi Gönder</Link>
+                <Button size="sm" variant="primary" href={`/lab?new=1&labName=${encodeURIComponent(firma.name)}`}>Lab Siparişi Oluştur</Button>
               </div>
             </div>
           ) : (
             <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <h3 className="text-sm font-black text-slate-900">Satın Alımlar</h3>
-                <button onClick={() => purchaseManager.openAddPurchase(firma.id)} className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-700">Yeni Satın Alma</button>
+                <Button size="sm" variant="danger" onClick={() => purchaseManager.openAddPurchase(firma.id)}>Yeni Satın Alma</Button>
               </div>
               {firmaPurchases.length === 0 ? (
                 <p className="py-6 text-center text-sm text-slate-400">Henüz satın alma kaydı yok</p>
@@ -421,7 +410,7 @@ function FirmaDetayContent() {
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-black text-slate-900">Kontaklar</h3>
-            <button onClick={() => setShowAddKontakt(true)} className="rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white hover:bg-blue-700">Kontakt Ekle</button>
+            <Button size="sm" onClick={() => setShowAddKontakt(true)}>Kontakt Ekle</Button>
           </div>
           {kontaktler.length === 0 ? (
             <div className="py-10 text-center text-sm text-slate-500">Henüz kontakt eklenmemiş</div>
@@ -431,7 +420,7 @@ function FirmaDetayContent() {
                 <div key={k.id} className="rounded-xl border border-slate-100 p-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="font-bold text-slate-800">{k.ad}</p>
-                    {k.isPrimary && <span className="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-bold text-blue-700">Ana Kontakt</span>}
+                    {k.isPrimary && <Badge tone="info">Ana Kontakt</Badge>}
                     {k.unvan && <span className="text-sm text-slate-500">{k.unvan}</span>}
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
@@ -458,151 +447,137 @@ function FirmaDetayContent() {
         </div>
 
       {/* Modal: Firma Düzenle */}
-      {showEditFirma && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" {...backdropClose(() => setShowEditFirma(false))}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4">
-            <h3 className="text-xl font-black text-slate-900">Firma Bilgilerini Düzenle</h3>
-            {[
-              { key: "name", label: "Firma Adı *" }, { key: "phone", label: "Telefon" },
-              { key: "iban", label: "IBAN" }, { key: "ibanName", label: "IBAN Hesap Sahibi" },
-            ].map(f => (
-              <div key={f.key}>
-                <label className={formLabel}>{f.label}</label>
-                <input value={(editForm as Record<string, string>)[f.key]} onChange={e => setEditForm({ ...editForm, [f.key]: e.target.value })} className={formInput} />
-              </div>
-            ))}
-            <div>
-              <div>
-                <label className={formLabel}>Firma Türü *</label>
-                <select value={editForm.kategori} onChange={e => setEditForm({ ...editForm, kategori: e.target.value })} className={formInput}>
-                  {Object.entries(FIRMA_KATEGORILERI).map(([key, label]) => (
-                    <option key={key} value={key}>{label}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className={formLabel}>Notlar</label>
-              <textarea value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })} rows={3} className={formInput} />
-            </div>
-            <div className="flex gap-2 pt-1">
-              <button onClick={() => setShowEditFirma(false)} className={`${modalAction} border border-slate-200 text-slate-700 hover:bg-slate-50`}>Vazgeç</button>
-              <button onClick={handleEditFirma} className={`${modalAction} bg-blue-600 text-white hover:bg-blue-700`}>Güncelle</button>
-            </div>
-          </div>
+      <Modal
+        open={showEditFirma}
+        onClose={() => setShowEditFirma(false)}
+        title="Firma Bilgilerini Düzenle"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowEditFirma(false)}>Vazgeç</Button>
+            <Button onClick={handleEditFirma}>Güncelle</Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          {[
+            { key: "name", label: "Firma Adı", required: true }, { key: "phone", label: "Telefon" },
+            { key: "iban", label: "IBAN" }, { key: "ibanName", label: "IBAN Hesap Sahibi" },
+          ].map(f => (
+            <FormField key={f.key} label={f.label} required={f.required}>
+              <input value={(editForm as Record<string, string>)[f.key]} onChange={e => setEditForm({ ...editForm, [f.key]: e.target.value })} className={formInput} />
+            </FormField>
+          ))}
+          <FormField label="Firma Türü" required>
+            <select value={editForm.kategori} onChange={e => setEditForm({ ...editForm, kategori: e.target.value })} className={formInput}>
+              {Object.entries(FIRMA_KATEGORILERI).map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Notlar">
+            <textarea value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })} rows={3} className={formInput} />
+          </FormField>
         </div>
-      )}
+      </Modal>
 
-      {/* Modal: Hizmet/Ödeme Ekle */}
-      {showAddIslem && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" {...backdropClose(() => setShowAddIslem(false))}>
-          <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl space-y-4">
-            <div>
-              <h3 className="text-xl font-black text-slate-900">{isLabFirma ? "Firma Ödemesi Ekle" : "Hizmet veya Ödeme Ekle"}</h3>
-              <p className="mt-1 text-sm text-slate-500">
-                {isLabFirma
-                  ? `${firma.name} laboratuvar faturaları Laboratuvar ekranından oluşur. Burada firmaya yapılan ödeme kaydedilir.`
-                  : `${firma.name} için cari ve gider kaydı birlikte güncellenir. Malzeme/ürün alımı için "Malzeme Alımı" butonunu kullanın.`}
-              </p>
+      <Modal
+        open={showAddIslem}
+        onClose={() => setShowAddIslem(false)}
+        title={isLabFirma ? "Firma Ödemesi Ekle" : "Hizmet veya Ödeme Ekle"}
+        description={
+          isLabFirma
+            ? `${firma.name} laboratuvar faturaları Laboratuvar ekranından oluşur. Burada firmaya yapılan ödeme kaydedilir.`
+            : `${firma.name} için cari ve gider kaydı birlikte güncellenir. Malzeme/ürün alımı için "Malzeme Alımı" butonunu kullanın.`
+        }
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowAddIslem(false)}>Vazgeç</Button>
+            <Button onClick={handleAddIslem} loading={isSubmittingIslem}>Kaydet</Button>
+          </>
+        }
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <FormField label="Tarih" required>
+            <input type="date" value={islemForm.tarih} onChange={e => setIslemForm({ ...islemForm, tarih: e.target.value })} className={formInput} />
+          </FormField>
+          <FormField label="İşlem Tipi" required>
+            <select value={islemForm.islemTipi} onChange={e => setIslemForm({ ...islemForm, islemTipi: e.target.value })} className={formInput}>
+              {!isLabFirma && <option value="HIZMET">Hizmet Alımı</option>}
+              <option value="ODEME">Firmaya Ödeme</option>
+            </select>
+          </FormField>
+          {!isLabFirma && (
+            <div className="sm:col-span-2">
+              <FormField label="Ürün veya Hizmet Adı">
+                <input value={islemForm.urunHizmet} onChange={e => setIslemForm({ ...islemForm, urunHizmet: e.target.value })} className={formInput} />
+              </FormField>
             </div>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className={formLabel}>Tarih *</label>
-                <input type="date" value={islemForm.tarih} onChange={e => setIslemForm({ ...islemForm, tarih: e.target.value })} className={formInput} />
-              </div>
-              <div>
-                <label className={formLabel}>İşlem Tipi *</label>
-                <select value={islemForm.islemTipi} onChange={e => setIslemForm({ ...islemForm, islemTipi: e.target.value })} className={formInput}>
-                  {!isLabFirma && <option value="HIZMET">Hizmet Alımı</option>}
-                  <option value="ODEME">Firmaya Ödeme</option>
-                </select>
-              </div>
-              {!isLabFirma && (
-                <div className="sm:col-span-2">
-                  <label className={formLabel}>Ürün veya Hizmet Adı</label>
-                  <input value={islemForm.urunHizmet} onChange={e => setIslemForm({ ...islemForm, urunHizmet: e.target.value })} className={formInput} />
-                </div>
-              )}
-              {(islemForm.islemTipi === "HIZMET" || islemForm.islemTipi === "ODEME") && (
-                <div className="sm:col-span-2 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
-                  {isLabFirma ? "Ödeme kaydedildiğinde laboratuvar firmasının cari bakiyesi güncellenir." : "Bu işlem kaydedildiğinde muhasebe gider kaydı otomatik oluşur."}
-                </div>
-              )}
-              <div className="sm:col-span-2">
-                <label className={formLabel}>Açıklama</label>
-                <input value={islemForm.aciklama} onChange={e => setIslemForm({ ...islemForm, aciklama: e.target.value })} className={formInput} />
-              </div>
-              <div>
-                <label className={formLabel}>Tutar (₺) *</label>
-                <input type="number" value={islemForm.tutar} onChange={e => setIslemForm({ ...islemForm, tutar: e.target.value })} placeholder="0.00" className={formInput} />
-              </div>
-              <div>
-                <label className={formLabel}>Fatura No</label>
-                <input value={islemForm.faturaNo} onChange={e => setIslemForm({ ...islemForm, faturaNo: e.target.value })} className={formInput} />
-              </div>
-              {islemForm.islemTipi === "ODEME" && (
-                <div>
-                  <label className={formLabel}>Ödeme Yöntemi</label>
-                  <select value={islemForm.yontem} onChange={e => setIslemForm({ ...islemForm, yontem: e.target.value })} className={formInput}>
-                    {Object.entries(YONTEMLER).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
-                </div>
-              )}
-              <div>
-                <label className={formLabel}>KDV Oranı (%)</label>
-                <select value={islemForm.kdvOrani} onChange={e => setIslemForm({ ...islemForm, kdvOrani: e.target.value })} className={formInput}>
-                  <option value="0">%0</option><option value="10">%10</option><option value="20">%20</option>
-                </select>
-              </div>
+          )}
+          {(islemForm.islemTipi === "HIZMET" || islemForm.islemTipi === "ODEME") && (
+            <div className="sm:col-span-2 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
+              {isLabFirma ? "Ödeme kaydedildiğinde laboratuvar firmasının cari bakiyesi güncellenir." : "Bu işlem kaydedildiğinde muhasebe gider kaydı otomatik oluşur."}
             </div>
-            <div className="flex gap-2 pt-1">
-              <button onClick={() => setShowAddIslem(false)} className={`${modalAction} border border-slate-200 text-slate-700 hover:bg-slate-50`}>Vazgeç</button>
-              <button onClick={handleAddIslem} disabled={isSubmittingIslem} className={`${modalAction} bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60`}>
-                {isSubmittingIslem ? "Kaydediliyor..." : "Kaydet"}
-              </button>
-            </div>
+          )}
+          <div className="sm:col-span-2">
+            <FormField label="Açıklama">
+              <input value={islemForm.aciklama} onChange={e => setIslemForm({ ...islemForm, aciklama: e.target.value })} className={formInput} />
+            </FormField>
           </div>
+          <FormField label="Tutar (₺)" required>
+            <input type="number" value={islemForm.tutar} onChange={e => setIslemForm({ ...islemForm, tutar: e.target.value })} placeholder="0.00" className={formInput} />
+          </FormField>
+          <FormField label="Fatura No">
+            <input value={islemForm.faturaNo} onChange={e => setIslemForm({ ...islemForm, faturaNo: e.target.value })} className={formInput} />
+          </FormField>
+          {islemForm.islemTipi === "ODEME" && (
+            <FormField label="Ödeme Yöntemi">
+              <select value={islemForm.yontem} onChange={e => setIslemForm({ ...islemForm, yontem: e.target.value })} className={formInput}>
+                {Object.entries(YONTEMLER).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </FormField>
+          )}
+          <FormField label="KDV Oranı (%)">
+            <select value={islemForm.kdvOrani} onChange={e => setIslemForm({ ...islemForm, kdvOrani: e.target.value })} className={formInput}>
+              <option value="0">%0</option><option value="10">%10</option><option value="20">%20</option>
+            </select>
+          </FormField>
         </div>
-      )}
+      </Modal>
 
-      {/* Modal: Kontakt Ekle */}
-      {showAddKontakt && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" {...backdropClose(() => setShowAddKontakt(false))}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4">
-            <h3 className="text-xl font-black text-slate-900">Kontakt Ekle</h3>
-            <div>
-              <label className={formLabel}>Ad Soyad *</label>
-              <input value={kontaktForm.ad} onChange={e => setKontaktForm({ ...kontaktForm, ad: e.target.value })} className={formInput} />
-            </div>
-            <div>
-              <label className={formLabel}>Unvan</label>
-              <input value={kontaktForm.unvan} onChange={e => setKontaktForm({ ...kontaktForm, unvan: e.target.value })} className={formInput} />
-            </div>
-            <div>
-              <label className={formLabel}>Telefon</label>
-              <input value={kontaktForm.telefon} onChange={e => setKontaktForm({ ...kontaktForm, telefon: e.target.value })} className={formInput} />
-            </div>
-            <div>
-              <label className={formLabel}>E-posta</label>
-              <input value={kontaktForm.email} onChange={e => setKontaktForm({ ...kontaktForm, email: e.target.value })} className={formInput} />
-            </div>
-            <div>
-              <label className={formLabel}>Rol</label>
-              <input value={kontaktForm.rol} onChange={e => setKontaktForm({ ...kontaktForm, rol: e.target.value })} className={formInput} />
-            </div>
-            <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-              <input type="checkbox" checked={kontaktForm.isPrimary} onChange={e => setKontaktForm({ ...kontaktForm, isPrimary: e.target.checked })} />
-              Ana kontakt olarak işaretle
-            </label>
-            <div className="flex gap-2 pt-1">
-              <button onClick={() => setShowAddKontakt(false)} className={`${modalAction} border border-slate-200 text-slate-700 hover:bg-slate-50`}>Vazgeç</button>
-              <button onClick={handleAddKontakt} disabled={isSubmittingKontakt} className={`${modalAction} bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60`}>
-                {isSubmittingKontakt ? "Kaydediliyor..." : "Kaydet"}
-              </button>
-            </div>
-          </div>
+      <Modal
+        open={showAddKontakt}
+        onClose={() => setShowAddKontakt(false)}
+        title="Kontakt Ekle"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowAddKontakt(false)}>Vazgeç</Button>
+            <Button onClick={handleAddKontakt} loading={isSubmittingKontakt}>Kaydet</Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <FormField label="Ad Soyad" required>
+            <input value={kontaktForm.ad} onChange={e => setKontaktForm({ ...kontaktForm, ad: e.target.value })} className={formInput} />
+          </FormField>
+          <FormField label="Unvan">
+            <input value={kontaktForm.unvan} onChange={e => setKontaktForm({ ...kontaktForm, unvan: e.target.value })} className={formInput} />
+          </FormField>
+          <FormField label="Telefon">
+            <input value={kontaktForm.telefon} onChange={e => setKontaktForm({ ...kontaktForm, telefon: e.target.value })} className={formInput} />
+          </FormField>
+          <FormField label="E-posta">
+            <input value={kontaktForm.email} onChange={e => setKontaktForm({ ...kontaktForm, email: e.target.value })} className={formInput} />
+          </FormField>
+          <FormField label="Rol">
+            <input value={kontaktForm.rol} onChange={e => setKontaktForm({ ...kontaktForm, rol: e.target.value })} className={formInput} />
+          </FormField>
+          <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+            <input type="checkbox" checked={kontaktForm.isPrimary} onChange={e => setKontaktForm({ ...kontaktForm, isPrimary: e.target.checked })} />
+            Ana kontakt olarak işaretle
+          </label>
         </div>
-      )}
+      </Modal>
 
       {purchaseManager.modals}
     </section>

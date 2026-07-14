@@ -37,6 +37,7 @@ export const patientSchema = z.object({
   fullName: z.string().min(3),
   phone: z.string().regex(/^0\d{10}$/, "Telefon 11 haneli olmalı ve 0 ile başlamalı"),
   address: z.string().optional(),
+  profession: z.string().trim().max(120).optional(),
   gender: z.string().min(1),
   birthDate: z.string().optional(),
   insurance: z.string().optional(),
@@ -52,6 +53,8 @@ export const patientSchema = z.object({
   hasDiabetes: z.boolean().default(false),
   hasHeart: z.boolean().default(false),
   hasBloodIssue: z.boolean().default(false),
+  hasContagiousDisease: z.boolean().default(false),
+  contagiousDiseaseNote: z.string().trim().max(200).optional(),
   bloodType: z.string().optional(),
   toothChart: z.string().optional()
 });

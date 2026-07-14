@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { generateTwoFactorSecret, twoFactorKeyUri, twoFactorQrCodeDataUrl } from "@/lib/two-factor";
 
 export async function POST() {
@@ -15,6 +15,7 @@ export async function POST() {
 
   const secret = generateTwoFactorSecret();
   await prisma.user.update({ where: { id: auth.user.id }, data: { twoFactorSecret: secret, twoFactorEnabled: false } });
+  await writeAudit(auth.user.id, "PROFILE_2FA_SETUP_START", "İki faktörlü doğrulama kurulum QR/secret üretildi");
 
   const otpauthUrl = twoFactorKeyUri(user.identityNo, secret);
   const qrCodeDataUrl = await twoFactorQrCodeDataUrl(otpauthUrl);

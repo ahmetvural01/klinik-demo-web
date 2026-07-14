@@ -2,7 +2,12 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useEscapeClose } from "@/lib/use-modal-dismiss";
+import { RefreshCw, Printer } from "lucide-react";
+import type { ConsistencyIssue, ConsistencyPayload } from "@/lib/data-consistency";
+import { CONSISTENCY_SEVERITY_STYLE } from "@/lib/consistency-ui";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
 
 type DoctorReport = {
   id: string; fullName: string;
@@ -18,6 +23,14 @@ type FirmaRow   = { name: string; amount: number };
 type TopExam    = { treatmentName: string; count: number };
 type TopTooth   = { tooth: string; count: number };
 
+type DayCloseCheck = { key: string; label: string; status: "ok" | "warning" | "critical"; detail: string; href: string };
+type DayClose = {
+  income: number; expense: number; net: number;
+  cash: number; card: number; transfer: number; mailOrder: number; other: number;
+  openLabCount: number; openFollowUpCount: number; overdueInstallments: number;
+  unpaidTreatmentPatientCount: number;
+  checks: DayCloseCheck[];
+};
 type Stats = {
   total: number; totalRevenue: number; totalExpenses: number;
   totalLabCost: number; totalFirmaAlim: number; netCash: number;
@@ -31,6 +44,8 @@ type Stats = {
   totalLabOrders: number; overdueInstallments: number;
   outputVAT: number; inputVAT: number; netVAT: number;
   periodNetProfit: number; annualNetProfit: number; gelirVergisi: number;
+  dayClose: DayClose | null;
+  consistency: ConsistencyPayload | null;
 };
 
 const EMPTY: Stats = {
@@ -42,6 +57,7 @@ const EMPTY: Stats = {
   totalLabOrders: 0, overdueInstallments: 0,
   outputVAT: 0, inputVAT: 0, netVAT: 0,
   periodNetProfit: 0, annualNetProfit: 0, gelirVergisi: 0,
+  dayClose: null, consistency: null,
 };
 
 const CUR  = (n: number) => "₺" + (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -49,7 +65,15 @@ const PCT  = (n: number, t: number) => t > 0 ? Math.round((n / t) * 100) : 0;
 const FMT  = (n: number) => (n || 0).toLocaleString("tr-TR");
 const SIGN = (n: number) => n >= 0 ? `+${CUR(n)}` : CUR(n);
 
-type Tab = "genel" | "doktorlar" | "giderler" | "kdv" | "islemler";
+type Tab = "genel" | "gunsonu" | "doktorlar" | "giderler" | "kdv" | "islemler";
+
+const STATUS_STYLE: Record<DayCloseCheck["status"], { badge: string; dot: string; label: string }> = {
+  ok:       { badge: "bg-emerald-50 border-emerald-200 text-emerald-700", dot: "bg-emerald-500", label: "Tamam" },
+  warning:  { badge: "bg-amber-50 border-amber-200 text-amber-700",       dot: "bg-amber-500",   label: "Uyarı" },
+  critical: { badge: "bg-red-50 border-red-200 text-red-700",             dot: "bg-red-500",      label: "Kritik" },
+};
+const STATUS_TONE: Record<DayCloseCheck["status"], BadgeTone> = { ok: "success", warning: "warning", critical: "critical" };
+
 
 export default function RaporPage() {
   const [fromDate, setFromDate] = useState("");
@@ -58,8 +82,6 @@ export default function RaporPage() {
   const [loading,  setLoading]  = useState(false);
   const [tab,      setTab]      = useState<Tab>("genel");
   const [printDr,  setPrintDr]  = useState<DoctorReport | null>(null);
-
-  useEscapeClose(() => setPrintDr(null), Boolean(printDr));
 
   const setQuickRange = (period: "bugun" | "hafta" | "ay" | "yil") => {
     const now = new Date();
@@ -100,8 +122,13 @@ export default function RaporPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (fromDate && toDate) void load(); }, [fromDate, toDate]);
 
-  const TABS: { id: Tab; label: string }[] = [
+  const dayCloseAlertCount = (stats.dayClose?.checks || []).filter(c => c.status !== "ok").length;
+  const consistencyAlertCount = (stats.consistency?.summary.critical || 0) + (stats.consistency?.summary.warning || 0);
+  const gunSonuAlertTotal = dayCloseAlertCount + consistencyAlertCount;
+
+  const TABS: { id: Tab; label: string; badge?: number }[] = [
     { id: "genel",     label: "Genel Bakış" },
+    { id: "gunsonu",   label: "Gün Sonu & Kontrol", badge: gunSonuAlertTotal || undefined },
     { id: "doktorlar", label: "Doktor Hakediş" },
     { id: "giderler",  label: "Giderler & Alımlar" },
     { id: "kdv",       label: "KDV & Vergi" },
@@ -112,7 +139,7 @@ export default function RaporPage() {
   const maxExp = Math.max(...stats.expenseByCategory.map(e => e.amount), 1);
   const headlineMetrics = [
     { label: "Toplam Ciro",    val: stats.totalRevenue,    cls: "text-emerald-700", bg: "bg-emerald-50 border-emerald-100", isCount: false },
-    { label: "Net Kasa",       val: stats.netCash,         cls: stats.netCash >= 0 ? "text-blue-700" : "text-red-700", bg: "bg-blue-50 border-blue-100", isCount: false },
+    { label: "Net Kasa",       val: stats.netCash,         cls: stats.netCash >= 0 ? "text-primary" : "text-red-700", bg: "bg-primary/5 border-primary/15", isCount: false },
     { label: "Ödenecek KDV",   val: Math.abs(stats.netVAT), cls: stats.netVAT >= 0 ? "text-amber-700" : "text-green-700", bg: "bg-amber-50 border-amber-100", isCount: false },
     { label: "Gecikmiş Taksit", val: stats.overdueInstallments, cls: "text-violet-700", bg: "bg-violet-50 border-violet-100", isCount: true },
   ];
@@ -141,10 +168,9 @@ export default function RaporPage() {
             { key: "ay",    label: "Bu Ay" },
             { key: "yil",   label: "Bu Yıl" },
           ] as const).map(p => (
-            <button key={p.key} onClick={() => setQuickRange(p.key)}
-              className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm font-bold text-slate-600 transition hover:border-primary hover:bg-primary hover:text-white">
+            <Button key={p.key} variant="secondary" onClick={() => setQuickRange(p.key)}>
               {p.label}
-            </button>
+            </Button>
           ))}
           <div className="hidden h-6 w-px bg-slate-200 lg:block" />
           <input type="datetime-local" value={fromDate} onChange={e => setFromDate(e.target.value)}
@@ -152,13 +178,9 @@ export default function RaporPage() {
           <span className="text-slate-400 text-sm">—</span>
           <input type="datetime-local" value={toDate} onChange={e => setToDate(e.target.value)}
             className="min-w-[190px] flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 lg:flex-none" />
-          <button onClick={load} disabled={loading}
-            className="flex min-h-11 items-center gap-1.5 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90 disabled:opacity-50">
-            {loading
-              ? <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><circle cx="12" cy="12" r="10" strokeOpacity={0.25}/><path d="M12 2a10 10 0 0110 10"/></svg>
-              : <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>}
+          <Button onClick={load} loading={loading} icon={RefreshCw}>
             Yenile
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -193,8 +215,13 @@ export default function RaporPage() {
       <div className="sticky top-0 z-20 flex gap-1 rounded-2xl border border-slate-100 bg-white p-1 shadow-sm overflow-x-auto">
         {TABS.map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
-            className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition ${tab === t.id ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>
+            className={`flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold transition ${tab === t.id ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>
             {t.label}
+            {Boolean(t.badge) && (
+              <Badge tone="critical" solid={tab === t.id} size="sm">
+                {t.badge}
+              </Badge>
+            )}
           </button>
         ))}
       </div>
@@ -256,6 +283,123 @@ export default function RaporPage() {
         </div>
       )}
 
+      {/* ── GÜN SONU & VERİ KONTROLÜ ──────────────────────────────────── */}
+      {tab === "gunsonu" && (
+        <div className="space-y-5">
+          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+            <p className="text-sm font-bold text-slate-800">Gün sonu kontrol listesi</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Seçili dönem için kasa, laboratuvar, hasta takip ve taksit tarafında kapanmamış açık kalemleri gösterir.
+              Kapanış öncesi tüm kalemlerin "Tamam" olması önerilir.
+            </p>
+          </div>
+
+          {stats.dayClose ? (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {stats.dayClose.checks.map(check => {
+                  const s = STATUS_STYLE[check.status];
+                  return (
+                    <div key={check.key} className={`rounded-2xl border p-4 shadow-sm ${s.badge}`}>
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`h-2 w-2 shrink-0 rounded-full ${s.dot}`} />
+                          <span className="text-sm font-bold">{check.label}</span>
+                        </div>
+                        <Badge tone={STATUS_TONE[check.status]} size="sm">{s.label}</Badge>
+                      </div>
+                      <p className="mt-2 text-xs leading-relaxed">{check.detail}</p>
+                      <Link href={check.href} className="mt-2 inline-block text-xs font-bold underline underline-offset-2">
+                        İncele →
+                      </Link>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
+                <h3 className="mb-4 text-sm font-bold text-slate-800">Kapanış Özeti</h3>
+                <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
+                  {[
+                    { label: "Nakit",      val: stats.dayClose.cash },
+                    { label: "Kredi Kartı", val: stats.dayClose.card },
+                    { label: "Havale/EFT", val: stats.dayClose.transfer },
+                    { label: "Mail Order", val: stats.dayClose.mailOrder },
+                  ].map(r => (
+                    <div key={r.label} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                      <p className="text-[11px] font-bold uppercase text-slate-500">{r.label}</p>
+                      <p className="mt-1 text-sm font-black text-slate-800">{CUR(r.val)}</p>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+                  <span className="text-xs text-slate-500">
+                    Tahsil edilmemiş tedavi bakiyesi olan hasta sayısı: <span className="font-bold text-slate-700">{FMT(stats.dayClose.unpaidTreatmentPatientCount)}</span>
+                  </span>
+                  <span className="text-sm font-black text-slate-800">Net: <span className={stats.dayClose.net >= 0 ? "text-emerald-700" : "text-red-600"}>{CUR(stats.dayClose.net)}</span></span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <div className="rounded-xl border border-slate-100 bg-white p-8 text-center shadow-sm">
+              <p className="text-sm text-slate-400">Gün sonu verisi yüklenemedi.</p>
+            </div>
+          )}
+
+          <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">Veri Tutarlılığı</h3>
+                <p className="mt-0.5 text-xs text-slate-500">Kayıtlar arasında kopan bağlantıları ve düzeltilmesi gereken kalemleri gösterir.</p>
+              </div>
+              {stats.consistency && (
+                <Badge
+                  tone={stats.consistency.summary.critical > 0 ? "critical" : stats.consistency.summary.warning > 0 ? "warning" : "success"}
+                  size="md"
+                >
+                  Skor: {stats.consistency.summary.score}/100
+                </Badge>
+              )}
+            </div>
+
+            {stats.consistency && stats.consistency.issues.length > 0 ? (
+              <div className="space-y-2.5">
+                {stats.consistency.issues.map(issue => {
+                  const s = CONSISTENCY_SEVERITY_STYLE[issue.severity];
+                  return (
+                    <div key={issue.id} className={`rounded-xl border p-3.5 ${s.badge}`}>
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className={`h-2 w-2 shrink-0 rounded-full ${s.dot}`} />
+                          <span className="text-xs font-black uppercase tracking-wide">{s.label}</span>
+                          <span className="text-xs text-slate-400">·</span>
+                          <span className="text-xs font-semibold text-slate-500">{issue.area}</span>
+                        </div>
+                        <span className="rounded-full bg-white/70 px-2 py-0.5 text-[11px] font-black">{issue.count} kayıt</span>
+                      </div>
+                      <p className="mt-1.5 text-sm font-bold">{issue.title}</p>
+                      <p className="mt-0.5 text-xs leading-relaxed">{issue.detail}</p>
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs italic">{issue.action}</span>
+                        {issue.href && (
+                          <Link href={issue.href} className="text-xs font-bold underline underline-offset-2">
+                            İlgili ekrana git →
+                          </Link>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-6 text-center">
+                <p className="text-sm font-semibold text-emerald-700">Kritik veri bağlantısı sorunu bulunamadı.</p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* ── DOKTOR HAKEDİŞ ──────────────────────────────────────────────── */}
       {tab === "doktorlar" && (
         <div className="space-y-4">
@@ -275,7 +419,10 @@ export default function RaporPage() {
               <div className="rounded-xl border border-slate-100 bg-white shadow-sm overflow-x-auto">
                 <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 bg-slate-50">
                   <h3 className="text-sm font-bold text-slate-700">Dönem: {fromDate?.slice(0,10)} — {toDate?.slice(0,10)}</h3>
-                  <button
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={Printer}
                     onClick={() => {
                       const win = window.open("", "_blank");
                       if (!win) return;
@@ -315,10 +462,9 @@ export default function RaporPage() {
                         <script>window.onload=()=>window.print()<\/script></body></html>`);
                       win.document.close();
                     }}
-                    className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition">
-                    <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
+                  >
                     PDF / Yazdır
-                  </button>
+                  </Button>
                 </div>
                 <table className="w-full text-xs">
                   <thead>
@@ -347,16 +493,15 @@ export default function RaporPage() {
                         <td className="px-3 py-2.5 text-right font-mono text-red-500">{CUR(dr.labCost)}</td>
                         <td className="px-3 py-2.5 text-right font-mono text-slate-500">{CUR(dr.genelMasraf)}</td>
                         <td className="px-3 py-2.5 text-right font-mono text-red-600 font-semibold">{CUR(dr.toplamGider)}</td>
-                        <td className="px-3 py-2.5 text-right font-mono text-blue-700 font-semibold">{CUR(dr.brut)}</td>
+                        <td className="px-3 py-2.5 text-right font-mono text-primary font-semibold">{CUR(dr.brut)}</td>
                         <td className="px-3 py-2.5 text-right font-mono text-slate-500">%{dr.maasYuzde}</td>
                         <td className="px-3 py-2.5 text-right">
                           <span className={`font-black text-sm ${dr.hakEdis >= 0 ? "text-emerald-700" : "text-red-600"}`}>{CUR(dr.hakEdis)}</span>
                         </td>
                         <td className="px-3 py-2.5">
-                          <button onClick={() => setPrintDr(dr)}
-                            className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-100">
+                          <Button variant="secondary" size="sm" onClick={() => setPrintDr(dr)}>
                             Doktor Detayı
-                          </button>
+                          </Button>
                         </td>
                       </tr>
                     ))}
@@ -393,14 +538,14 @@ export default function RaporPage() {
                           <span className="font-semibold text-slate-700">{dr.fullName}</span>
                           <span className="text-slate-500">
                             Ciro: <span className="font-bold text-emerald-700">{CUR(dr.ciro)}</span>
-                            {" → "}Hakediş: <span className="font-bold text-blue-700">{CUR(dr.hakEdis)}</span>
+                            {" → "}Hakediş: <span className="font-bold text-primary">{CUR(dr.hakEdis)}</span>
                             {" "}({Math.round((dr.toplamGider / (dr.ciro || 1)) * 100)}% gider)
                           </span>
                         </div>
                         <div className="relative h-5 overflow-hidden rounded-full bg-slate-100">
                           <div className="absolute inset-y-0 left-0 flex items-center rounded-full bg-emerald-400/50 transition-all"
                             style={{ width: Math.max(4, pctCiro) + "%" }} />
-                          <div className="absolute inset-y-0 left-0 flex items-center rounded-full bg-blue-600 transition-all"
+                          <div className="absolute inset-y-0 left-0 flex items-center rounded-full bg-primary transition-all"
                             style={{ width: Math.max(2, Math.round(pctCiro * pctHakedis / 100)) + "%" }}>
                             {pctHakedis > 30 && <span className="pl-2 text-xs font-bold text-white">%{pctHakedis}</span>}
                           </div>
@@ -521,7 +666,7 @@ export default function RaporPage() {
             <div className="space-y-2.5 text-sm">
               {[
                 { label: "Dönem Net Kâr (KDV hariç)", val: stats.periodNetProfit, cls: stats.periodNetProfit >= 0 ? "text-emerald-700" : "text-red-600" },
-                { label: "Yıllık Net Kâr (Tahmin)",   val: stats.annualNetProfit, cls: stats.annualNetProfit >= 0 ? "text-blue-700" : "text-red-600" },
+                { label: "Yıllık Net Kâr (Tahmin)",   val: stats.annualNetProfit, cls: stats.annualNetProfit >= 0 ? "text-primary" : "text-red-600" },
               ].map(r => (
                 <div key={r.label} className="flex justify-between py-1.5 border-b border-slate-50">
                   <span className="text-slate-600">{r.label}</span>
@@ -605,95 +750,93 @@ export default function RaporPage() {
 
       {/* ── DOKTOR DETAY MODAL ───────────────────────────────────────── */}
       {printDr && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setPrintDr(null)}>
-          <div className="relative w-full max-w-lg rounded-2xl bg-white shadow-2xl" onClick={e => e.stopPropagation()}>
-            {/* Modal Header */}
-            <div className="flex items-center justify-between rounded-t-2xl border-b border-slate-100 bg-slate-50 px-6 py-4">
-              <div>
-                <h2 className="text-base font-black text-slate-900">{printDr.fullName}</h2>
-                <p className="text-xs text-slate-500">Dönem: {fromDate?.slice(0,10)} — {toDate?.slice(0,10)}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    const dr = printDr;
-                    const win = window.open("", "_blank");
-                    if (!win) return;
-                    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
-                    <title>${dr.fullName} - Hakediş Raporu</title>
-                    <style>
-                      body{font-family:Arial,sans-serif;font-size:12px;margin:30px;color:#222}
-                      h2{margin:0 0 4px;font-size:18px} p.sub{color:#666;margin:0 0 20px;font-size:11px}
-                      table{width:100%;border-collapse:collapse;margin-top:10px}
-                      th,td{border:1px solid #ccc;padding:7px 10px} th{background:#f0f0f0}
-                      .r{text-align:right} .gr{color:#16a34a;font-weight:bold} .rd{color:#dc2626}
-                      .info{background:#f8fafc;border:1px solid #e2e8f0;padding:12px;border-radius:6px;margin-bottom:16px}
-                      .info-row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #f1f5f9}
-                    </style></head><body>
-                    <h2>${dr.fullName} — Hakediş Raporu</h2>
-                    <p class="sub">Dönem: ${fromDate?.slice(0,10)} — ${toDate?.slice(0,10)}</p>
-                    <div class="info">
-                      <div class="info-row"><span>Komisyon Oranları</span><span>KK: %${dr.kkYuzde} · Genel: %${dr.genelYuzde} · Maaş: %${dr.maasYuzde}</span></div>
-                      <div class="info-row"><span>Muayene Sayısı</span><span>${dr.examinationCount}</span></div>
-                      <div class="info-row"><span>Benzersiz Hasta</span><span>${dr.uniquePatients}</span></div>
-                    </div>
-                    <table>
-                      <tbody>
-                        <tr><th style="text-align:left">Toplam Ciro</th><td class="r gr">₺${dr.ciro.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
-                        <tr><td>— KK Masrafı (KK × %${dr.kkYuzde})</td><td class="r rd">₺${dr.kkMasraf.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
-                        <tr><td>— Lab Maliyeti</td><td class="r rd">₺${dr.labCost.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
-                        <tr><td>— Genel Masraf (Ciro × %${dr.genelYuzde})</td><td class="r rd">₺${dr.genelMasraf.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
-                        <tr><th style="text-align:left">Toplam Gider</th><td class="r rd">₺${dr.toplamGider.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
-                        <tr><th style="text-align:left">Brüt (Ciro − Gider)</th><td class="r" style="color:#1d4ed8">₺${dr.brut.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
-                        <tr><th style="text-align:left;font-size:14px">HAKEDİŞ (Brüt × %${dr.maasYuzde})</th>
-                          <td class="r ${dr.hakEdis>=0?"gr":"rd"}" style="font-size:16px">₺${dr.hakEdis.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
-                      </tbody>
-                    </table>
-                    <script>window.onload=()=>window.print()<\/script></body></html>`);
-                    win.document.close();
-                  }}
-                  className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-bold text-white hover:bg-primary/90 transition">
-                  <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>
-                  PDF / Yazdır
-                </button>
-                <button onClick={() => setPrintDr(null)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 transition">Kapat</button>
-              </div>
+        <Modal
+          open={Boolean(printDr)}
+          onClose={() => setPrintDr(null)}
+          title={printDr.fullName}
+          description={`Dönem: ${fromDate?.slice(0,10)} — ${toDate?.slice(0,10)}`}
+          footer={
+            <>
+              <Button
+                variant="primary"
+                size="sm"
+                icon={Printer}
+                onClick={() => {
+                  const dr = printDr;
+                  const win = window.open("", "_blank");
+                  if (!win) return;
+                  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+                  <title>${dr.fullName} - Hakediş Raporu</title>
+                  <style>
+                    body{font-family:Arial,sans-serif;font-size:12px;margin:30px;color:#222}
+                    h2{margin:0 0 4px;font-size:18px} p.sub{color:#666;margin:0 0 20px;font-size:11px}
+                    table{width:100%;border-collapse:collapse;margin-top:10px}
+                    th,td{border:1px solid #ccc;padding:7px 10px} th{background:#f0f0f0}
+                    .r{text-align:right} .gr{color:#16a34a;font-weight:bold} .rd{color:#dc2626}
+                    .info{background:#f8fafc;border:1px solid #e2e8f0;padding:12px;border-radius:6px;margin-bottom:16px}
+                    .info-row{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #f1f5f9}
+                  </style></head><body>
+                  <h2>${dr.fullName} — Hakediş Raporu</h2>
+                  <p class="sub">Dönem: ${fromDate?.slice(0,10)} — ${toDate?.slice(0,10)}</p>
+                  <div class="info">
+                    <div class="info-row"><span>Komisyon Oranları</span><span>KK: %${dr.kkYuzde} · Genel: %${dr.genelYuzde} · Maaş: %${dr.maasYuzde}</span></div>
+                    <div class="info-row"><span>Muayene Sayısı</span><span>${dr.examinationCount}</span></div>
+                    <div class="info-row"><span>Benzersiz Hasta</span><span>${dr.uniquePatients}</span></div>
+                  </div>
+                  <table>
+                    <tbody>
+                      <tr><th style="text-align:left">Toplam Ciro</th><td class="r gr">₺${dr.ciro.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
+                      <tr><td>— KK Masrafı (KK × %${dr.kkYuzde})</td><td class="r rd">₺${dr.kkMasraf.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
+                      <tr><td>— Lab Maliyeti</td><td class="r rd">₺${dr.labCost.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
+                      <tr><td>— Genel Masraf (Ciro × %${dr.genelYuzde})</td><td class="r rd">₺${dr.genelMasraf.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
+                      <tr><th style="text-align:left">Toplam Gider</th><td class="r rd">₺${dr.toplamGider.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
+                      <tr><th style="text-align:left">Brüt (Ciro − Gider)</th><td class="r" style="color:#1d4ed8">₺${dr.brut.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
+                      <tr><th style="text-align:left;font-size:14px">HAKEDİŞ (Brüt × %${dr.maasYuzde})</th>
+                        <td class="r ${dr.hakEdis>=0?"gr":"rd"}" style="font-size:16px">₺${dr.hakEdis.toLocaleString("tr-TR",{minimumFractionDigits:2})}</td></tr>
+                    </tbody>
+                  </table>
+                  <script>window.onload=()=>window.print()<\/script></body></html>`);
+                  win.document.close();
+                }}
+              >
+                PDF / Yazdır
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setPrintDr(null)}>Kapat</Button>
+            </>
+          }
+        >
+          <div className="space-y-2.5 text-sm">
+            <div className="flex justify-between items-center rounded-lg bg-slate-50 px-4 py-2 text-xs">
+              <span className="text-slate-500">Komisyon Oranları</span>
+              <span className="font-semibold text-slate-700">KK: %{printDr.kkYuzde} · Genel: %{printDr.genelYuzde} · Maaş: %{printDr.maasYuzde}</span>
+            </div>
+            <div className="flex justify-between items-center rounded-lg bg-slate-50 px-4 py-2 text-xs">
+              <span className="text-slate-500">Muayene / Hasta</span>
+              <span className="font-semibold text-slate-700">{printDr.examinationCount} işlem · {printDr.uniquePatients} hasta</span>
             </div>
 
-            {/* Bilgi satırları */}
-            <div className="px-6 py-4 space-y-2.5 text-sm">
-              <div className="flex justify-between items-center rounded-lg bg-slate-50 px-4 py-2 text-xs">
-                <span className="text-slate-500">Komisyon Oranları</span>
-                <span className="font-semibold text-slate-700">KK: %{printDr.kkYuzde} · Genel: %{printDr.genelYuzde} · Maaş: %{printDr.maasYuzde}</span>
-              </div>
-              <div className="flex justify-between items-center rounded-lg bg-slate-50 px-4 py-2 text-xs">
-                <span className="text-slate-500">Muayene / Hasta</span>
-                <span className="font-semibold text-slate-700">{printDr.examinationCount} işlem · {printDr.uniquePatients} hasta</span>
-              </div>
-
-              {/* Hesap özeti */}
-              <div className="rounded-lg border border-slate-100 divide-y divide-slate-50">
-                {[
-                  { label: "Toplam Ciro",                    val: printDr.ciro,        cls: "text-emerald-700 font-black text-base" },
-                  { label: `KK Masrafı (KK × %${printDr.kkYuzde})`,  val: -printDr.kkMasraf,   cls: "text-red-600" },
-                  { label: "Lab Maliyeti",                   val: -printDr.labCost,    cls: "text-red-600" },
-                  { label: `Genel Masraf (Ciro × %${printDr.genelYuzde})`, val: -printDr.genelMasraf, cls: "text-red-600" },
-                  { label: "Toplam Gider",                   val: -printDr.toplamGider, cls: "text-red-700 font-semibold" },
-                  { label: "Brüt (Ciro − Gider)",            val: printDr.brut,        cls: "text-blue-700 font-semibold" },
-                ].map(r => (
-                  <div key={r.label} className="flex justify-between items-center px-4 py-2 text-xs">
-                    <span className="text-slate-600">{r.label}</span>
-                    <span className={r.cls}>{r.val < 0 ? "−" : ""}{CUR(Math.abs(r.val))}</span>
-                  </div>
-                ))}
-                <div className="flex justify-between items-center px-4 py-3 bg-emerald-50 rounded-b-lg">
-                  <span className="text-sm font-black text-slate-800">HAKEDİŞ (Brüt × %{printDr.maasYuzde})</span>
-                  <span className={`text-xl font-black ${printDr.hakEdis >= 0 ? "text-emerald-700" : "text-red-600"}`}>{CUR(printDr.hakEdis)}</span>
+            {/* Hesap özeti */}
+            <div className="rounded-lg border border-slate-100 divide-y divide-slate-50">
+              {[
+                { label: "Toplam Ciro",                    val: printDr.ciro,        cls: "text-emerald-700 font-black text-base" },
+                { label: `KK Masrafı (KK × %${printDr.kkYuzde})`,  val: -printDr.kkMasraf,   cls: "text-red-600" },
+                { label: "Lab Maliyeti",                   val: -printDr.labCost,    cls: "text-red-600" },
+                { label: `Genel Masraf (Ciro × %${printDr.genelYuzde})`, val: -printDr.genelMasraf, cls: "text-red-600" },
+                { label: "Toplam Gider",                   val: -printDr.toplamGider, cls: "text-red-700 font-semibold" },
+                { label: "Brüt (Ciro − Gider)",            val: printDr.brut,        cls: "text-primary font-semibold" },
+              ].map(r => (
+                <div key={r.label} className="flex justify-between items-center px-4 py-2 text-xs">
+                  <span className="text-slate-600">{r.label}</span>
+                  <span className={r.cls}>{r.val < 0 ? "−" : ""}{CUR(Math.abs(r.val))}</span>
                 </div>
+              ))}
+              <div className="flex justify-between items-center px-4 py-3 bg-emerald-50 rounded-b-lg">
+                <span className="text-sm font-black text-slate-800">HAKEDİŞ (Brüt × %{printDr.maasYuzde})</span>
+                <span className={`text-xl font-black ${printDr.hakEdis >= 0 ? "text-emerald-700" : "text-red-600"}`}>{CUR(printDr.hakEdis)}</span>
               </div>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
     </>
   );

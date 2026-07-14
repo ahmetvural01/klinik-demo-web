@@ -5,7 +5,10 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import { Search, UserPlus, Users } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
+import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
 
 type Staff = {
   id: string;
@@ -23,14 +26,6 @@ type Staff = {
 // hiç yansımıyordu). Buradaki grup/sayım da aynı kuralı kullanır.
 const effectiveGroupRole = (p: Staff) =>
   p.role === "DOKTOR" || (p.role === "YONETICI" && p.profile?.hideAsDoctor === false) ? "DOKTOR" : p.role;
-
-const ROLE_COLORS: Record<string, string> = {
-  YONETICI: "bg-indigo-100 text-indigo-700",
-  DOKTOR: "bg-blue-100 text-blue-700",
-  ASISTAN: "bg-emerald-100 text-emerald-700",
-  BANKO: "bg-amber-100 text-amber-700",
-  MUHASEBE: "bg-purple-100 text-purple-700",
-};
 
 function initials(name: string) {
   return name
@@ -96,10 +91,9 @@ export default function PersonelPage() {
           <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{staff.length} kişi</span>
           <span className="rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-700">{staff.filter(s => s.isActive).length} aktif</span>
         </div>
-        <Link href="/personel-ekle" className="flex min-h-11 items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90">
-          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <Button icon={UserPlus} href="/personel-ekle">
           Yeni Personel Ekle
-        </Link>
+        </Button>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -119,9 +113,7 @@ export default function PersonelPage() {
       {/* Arama & Filtre */}
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
         <div className="relative flex-1 min-w-48">
-          <svg className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-          </svg>
+          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
           <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Ad veya TC kimlik ara" className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20" />
         </div>
         <select value={filterRole} onChange={e => setFilterRole(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-2.5 text-sm text-slate-700 focus:border-primary focus:outline-none">
@@ -139,10 +131,15 @@ export default function PersonelPage() {
         </select>
       </div>
 
-      <div aria-busy={loading} />
       {error && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">{error}</p>}
 
-      {(() => {
+      {loading && staff.length === 0 ? (
+        <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+          {Array.from({ length: 10 }).map((_, i) => (
+            <div key={i} className="h-40 animate-pulse rounded-xl border border-slate-100 bg-slate-50" style={{ animationDelay: `${i * 40}ms` }} />
+          ))}
+        </div>
+      ) : (() => {
         const filtered = staff.filter(s =>
           (!filterRole || effectiveGroupRole(s) === filterRole) &&
           (!filterStatus || (filterStatus === "aktif" ? s.isActive : !s.isActive)) &&
@@ -161,7 +158,7 @@ export default function PersonelPage() {
         if (filtered.length === 0 && !loading) {
           return (
             <div className="flex flex-col items-center justify-center py-16 text-slate-400">
-              <svg className="mb-2 h-10 w-10 text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+              <Users className="mb-2 h-10 w-10 text-slate-200" />
               <p className="text-sm">Personel bulunamadı</p>
             </div>
           );
@@ -181,7 +178,9 @@ export default function PersonelPage() {
                   className={`group relative flex flex-col items-center rounded-xl border border-slate-100 bg-white p-5 text-center shadow-sm transition hover:border-primary/30 hover:shadow-md ${!p.isActive ? "opacity-60" : ""}`}
                 >
                   {!p.isActive && (
-                    <span className="absolute right-3 top-3 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">Pasif</span>
+                    <span className="absolute right-3 top-3">
+                      <Badge tone="critical">Pasif</Badge>
+                    </span>
                   )}
                   {p.profile?.photoUrl ? (
                     <img src={p.profile.photoUrl || ''} alt={p.fullName} className="h-20 w-20 flex-shrink-0 rounded-full border-2 border-slate-100 object-cover" />
@@ -189,8 +188,8 @@ export default function PersonelPage() {
                       <Image src={avatarDataUrl(p.fullName, p.role)} alt={p.fullName} width={80} height={80} className="h-20 w-20 flex-shrink-0 rounded-full border-2 border-slate-100 object-cover" />
                   )}
                   <h4 className="mt-3 truncate text-sm font-bold text-slate-900">{p.fullName}</h4>
-                  <span className={`mt-1.5 inline-block rounded-full px-2.5 py-1 text-xs font-semibold ${ROLE_COLORS[effectiveGroupRole(p)] || "bg-slate-100 text-slate-600"}`}>
-                    {roleLabel[effectiveGroupRole(p)] || p.role}
+                  <span className="mt-1.5">
+                    <Badge tone="info" size="md">{roleLabel[effectiveGroupRole(p)] || p.role}</Badge>
                   </span>
                   <span className="mt-2 block text-xs font-bold text-primary opacity-0 transition group-hover:opacity-100">Düzenle →</span>
                 </Link>

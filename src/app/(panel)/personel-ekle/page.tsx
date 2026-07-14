@@ -3,8 +3,12 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { ArrowLeft, IdCard, Clock, Percent, Upload, X } from "lucide-react";
 import { confirmDialog } from "@/lib/confirm-client";
 import { downscaleImageToDataUrl } from "@/lib/image-upload";
+import { invalidateCachedGet } from "@/lib/client-cache";
+import { Button } from "@/components/ui/Button";
+import { FormField, FormSection, FormErrorBanner, inputErrorClass } from "@/components/ui/FormField";
 
 const isEffectiveDoctorRole = (role: string, showAsDoctor: boolean) => role === "DOKTOR" || (role === "YONETICI" && showAsDoctor);
 
@@ -97,6 +101,7 @@ function PersonelEkleContent() {
       return;
     }
 
+    invalidateCachedGet("/api/staff");
     router.push("/personel");
   };
 
@@ -106,8 +111,7 @@ function PersonelEkleContent() {
     <div className="h-10 animate-pulse rounded-lg bg-slate-50" />
   </div>;
 
-  const inputCls = "w-full rounded-lg border border-gray-300 px-3 py-2 text-sm";
-  const labelCls = "mb-1 block text-sm font-medium text-gray-700";
+  const inputCls = (hasError = false) => `h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(hasError)}`;
 
   const togglePasif = async () => {
     if (form.isActive) {
@@ -124,7 +128,7 @@ function PersonelEkleContent() {
   return (
     <section className="space-y-5">
       <Link href="/personel" className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-primary">
-        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+        <ArrowLeft className="h-4 w-4" />
         Personellere Dön
       </Link>
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
@@ -133,13 +137,9 @@ function PersonelEkleContent() {
           <p className="mt-0.5 text-sm text-slate-500">{isEdit ? "Personel bilgilerini, mesai saatlerini ve durumunu buradan yönetin" : "Yeni personel bilgilerini girin"}</p>
         </div>
         {isEdit && (
-          <button
-            type="button"
-            onClick={togglePasif}
-            className={`rounded-lg border px-3 py-2 text-xs font-bold transition ${form.isActive ? "border-red-100 bg-red-50 text-red-600 hover:bg-red-100" : "border-emerald-100 bg-emerald-50 text-emerald-600 hover:bg-emerald-100"}`}
-          >
+          <Button variant={form.isActive ? "danger" : "primary"} size="sm" onClick={togglePasif}>
             {form.isActive ? "Pasif Yap" : "Aktif Yap"}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -149,41 +149,37 @@ function PersonelEkleContent() {
         </div>
       )}
 
-      <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-        <h2 className="mb-4 text-sm font-bold uppercase tracking-wide text-slate-500">Kimlik Bilgileri</h2>
+      <FormSection icon={IdCard} title="Kimlik Bilgileri">
         <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <label className={labelCls}>Kimlik No (TC) *</label>
+          <FormField
+            label="Kimlik No (TC)"
+            required
+            error={form.identityNo && !/^\d{11}$/.test(form.identityNo) ? "TC Kimlik No 11 haneli olmalıdır." : undefined}
+          >
             <input
-              className={`${inputCls} font-mono ${form.identityNo && !/^\d{11}$/.test(form.identityNo) ? "border-red-300 bg-red-50 text-red-900" : ""}`}
+              className={`${inputCls(Boolean(form.identityNo && !/^\d{11}$/.test(form.identityNo)))} font-mono`}
               placeholder="11 haneli TC No"
               inputMode="numeric"
               maxLength={11}
               value={form.identityNo}
               onChange={(e) => setForm((p) => ({ ...p, identityNo: e.target.value.replace(/\D/g, "").slice(0, 11) }))}
             />
-            {form.identityNo && !/^\d{11}$/.test(form.identityNo) && (
-              <p className="mt-1 text-xs text-amber-600">TC Kimlik No 11 haneli olmalıdır.</p>
-            )}
-          </div>
-          <div>
-            <label className={labelCls}>Ad Soyad *</label>
-            <input className={inputCls} placeholder="Ad Soyad" value={form.fullName} onChange={(e) => setForm((p) => ({ ...p, fullName: e.target.value }))} />
-          </div>
-          <div>
-            <label className={labelCls}>Unvan</label>
-            <select className={inputCls} value={form.role} onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}>
+          </FormField>
+          <FormField label="Ad Soyad" required>
+            <input className={inputCls()} placeholder="Ad Soyad" value={form.fullName} onChange={(e) => setForm((p) => ({ ...p, fullName: e.target.value }))} />
+          </FormField>
+          <FormField label="Unvan">
+            <select className={inputCls()} value={form.role} onChange={(e) => setForm((p) => ({ ...p, role: e.target.value }))}>
               <option value="YONETICI">Yönetici</option>
               <option value="DOKTOR">Diş Hekimi</option>
               <option value="ASISTAN">Asistan</option>
               <option value="BANKO">Banko Personeli</option>
               <option value="MUHASEBE">Muhasebe</option>
             </select>
-          </div>
-          <div>
-            <label className={labelCls}>{isEdit ? "Yeni Şifre (boş bırakılabilir)" : "Şifre *"}</label>
-            <input className={inputCls} placeholder={isEdit ? "Değiştirmek için yazın" : "Şifre belirleyin"} type="password" value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
-          </div>
+          </FormField>
+          <FormField label={isEdit ? "Yeni Şifre (boş bırakılabilir)" : "Şifre"} required={!isEdit}>
+            <input className={inputCls()} placeholder={isEdit ? "Değiştirmek için yazın" : "Şifre belirleyin"} type="password" value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
+          </FormField>
           {form.role === "YONETICI" && (
             <div className="flex items-center md:col-span-2">
               <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-700">
@@ -194,97 +190,93 @@ function PersonelEkleContent() {
             </div>
           )}
         </div>
-      </div>
+      </FormSection>
 
-      <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-        <h2 className="mb-4 text-sm font-bold uppercase tracking-wide text-slate-500">{showDoctorRates ? "Mesai ve Profil" : "Profil Fotoğrafı"}</h2>
+      <FormSection icon={showDoctorRates ? Clock : Upload} title={showDoctorRates ? "Mesai ve Profil" : "Profil Fotoğrafı"}>
         <div className="grid gap-4 md:grid-cols-2">
           {showDoctorRates && (
             <>
-              <div>
-                <label className={labelCls}>Mesai Başlangıç</label>
-                <input type="time" className={inputCls} value={form.workStart} onChange={(e) => setForm((p) => ({ ...p, workStart: e.target.value }))} />
-              </div>
-              <div>
-                <label className={labelCls}>Mesai Bitiş</label>
-                <input type="time" className={inputCls} value={form.workEnd} onChange={(e) => setForm((p) => ({ ...p, workEnd: e.target.value }))} />
-              </div>
+              <FormField label="Mesai Başlangıç">
+                <input type="time" className={inputCls()} value={form.workStart} onChange={(e) => setForm((p) => ({ ...p, workStart: e.target.value }))} />
+              </FormField>
+              <FormField label="Mesai Bitiş">
+                <input type="time" className={inputCls()} value={form.workEnd} onChange={(e) => setForm((p) => ({ ...p, workEnd: e.target.value }))} />
+              </FormField>
             </>
           )}
           <div className="md:col-span-2">
-            <label className={labelCls}>Profil Fotoğrafı</label>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp"
-              className="hidden"
-              onChange={async (e) => {
-                const file = e.target.files?.[0];
-                e.target.value = "";
-                if (!file) return;
-                setPhotoError(null);
-                if (file.size > 8 * 1024 * 1024) { setPhotoError("Dosya en fazla 8MB olabilir."); return; }
-                try {
-                  const dataUrl = await downscaleImageToDataUrl(file);
-                  setForm((p) => ({ ...p, photoUrl: dataUrl }));
-                } catch {
-                  setPhotoError("Fotoğraf işlenemedi. Lütfen JPG, PNG veya WEBP deneyin.");
-                }
-              }}
-            />
-            <div className="flex items-center gap-3">
-              {form.photoUrl.trim() ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={form.photoUrl.trim()} alt="Önizleme" className="h-14 w-14 rounded-full border border-slate-100 object-cover" />
-              ) : (
-                <div className="flex h-14 w-14 items-center justify-center rounded-full border border-dashed border-slate-200 text-[10px] text-slate-400">Yok</div>
-              )}
-              <button type="button" onClick={() => fileInputRef.current?.click()} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 hover:bg-slate-50">
-                Fotoğraf Seç
-              </button>
-              {form.photoUrl.trim() && (
-                <button type="button" onClick={() => setForm((p) => ({ ...p, photoUrl: "" }))} className="rounded-lg border border-red-100 px-3 py-2 text-xs font-bold text-red-600 hover:bg-red-50">
-                  Kaldır
-                </button>
-              )}
-            </div>
-            <p className="mt-1 text-xs text-slate-400">Boş bırakırsanız isim baş harflerinden oluşan bir avatar kullanılır.</p>
-            {photoError && <p className="mt-1 text-xs text-red-600">{photoError}</p>}
+            <FormField
+              label="Profil Fotoğrafı"
+              error={photoError || undefined}
+              hint={!photoError ? "Boş bırakırsanız isim baş harflerinden oluşan bir avatar kullanılır." : undefined}
+            >
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  setPhotoError(null);
+                  if (file.size > 8 * 1024 * 1024) { setPhotoError("Dosya en fazla 8MB olabilir."); return; }
+                  try {
+                    const dataUrl = await downscaleImageToDataUrl(file);
+                    setForm((p) => ({ ...p, photoUrl: dataUrl }));
+                  } catch {
+                    setPhotoError("Fotoğraf işlenemedi. Lütfen JPG, PNG veya WEBP deneyin.");
+                  }
+                }}
+              />
+              <div className="flex items-center gap-3">
+                {form.photoUrl.trim() ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={form.photoUrl.trim()} alt="Önizleme" className="h-14 w-14 rounded-full border border-slate-100 object-cover" />
+                ) : (
+                  <div className="flex h-14 w-14 items-center justify-center rounded-full border border-dashed border-slate-200 text-[10px] text-slate-400">Yok</div>
+                )}
+                <Button variant="secondary" size="sm" icon={Upload} onClick={() => fileInputRef.current?.click()}>
+                  Fotoğraf Seç
+                </Button>
+                {form.photoUrl.trim() && (
+                  <Button variant="danger" size="sm" icon={X} onClick={() => setForm((p) => ({ ...p, photoUrl: "" }))}>
+                    Kaldır
+                  </Button>
+                )}
+              </div>
+            </FormField>
           </div>
         </div>
-      </div>
+      </FormSection>
 
       {isEdit && showDoctorRates && (
-        <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-          <h2 className="mb-1 text-sm font-bold uppercase tracking-wide text-slate-500">Doktor Ödeme Oranları</h2>
-          <p className="mb-4 text-xs text-slate-500">Bu oranlar doktor raporlarında ve hakediş hesabında kullanılır. Emin değilseniz varsayılan değerleri koruyun.</p>
+        <FormSection icon={Percent} title="Doktor Ödeme Oranları" description="Bu oranlar doktor raporlarında ve hakediş hesabında kullanılır. Emin değilseniz varsayılan değerleri koruyun.">
           <div className="grid gap-4 sm:grid-cols-3">
             {[
               { label: "KK Masraf %", key: "kkYuzde" as const, help: "Kredi kartı gelirinden düşülecek % (banka komisyonu)" },
               { label: "Genel Masraf %", key: "genelYuzde" as const, help: "Toplam cirodan düşülecek genel gider payı %" },
               { label: "Maaş %", key: "maasYuzde" as const, help: "Brütten doktora ödenecek %" },
             ].map(f => (
-              <div key={f.key}>
-                <label className={labelCls}>{f.label}</label>
+              <FormField key={f.key} label={f.label} hint={f.help}>
                 <input type="number" min={0} max={100} step={0.1}
-                  className={inputCls}
+                  className={inputCls()}
                   value={form[f.key]}
                   onChange={e => setForm(p => ({ ...p, [f.key]: e.target.value }))} />
-                <p className="mt-1 text-xs text-slate-400">{f.help}</p>
-              </div>
+              </FormField>
             ))}
           </div>
-        </div>
+        </FormSection>
       )}
 
-      {error && <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</div>}
+      <FormErrorBanner message={error} />
       <div className="flex gap-3">
-        <button disabled={saving} onClick={save} className="rounded-lg bg-primary px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-primary/90 disabled:opacity-60">
-          {saving ? "Kaydediliyor..." : (isEdit ? "Güncelle" : "Personel Kaydet")}
-        </button>
-        <button onClick={() => router.push("/personel")} className="rounded-lg border border-gray-300 px-6 py-2.5 text-sm text-gray-600 transition hover:bg-gray-50">
+        <Button onClick={save} loading={saving}>
+          {isEdit ? "Güncelle" : "Personel Kaydet"}
+        </Button>
+        <Button variant="secondary" onClick={() => router.push("/personel")}>
           İptal
-        </button>
+        </Button>
       </div>
     </section>
   );

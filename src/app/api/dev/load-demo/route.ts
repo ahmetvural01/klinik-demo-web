@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { exec } from "child_process";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function POST(req: Request): Promise<NextResponse> {
   if (process.env.NODE_ENV === 'production') {
@@ -23,6 +23,7 @@ export async function POST(req: Request): Promise<NextResponse> {
         const message = (stderr || err.message || '').toString();
         // If seed already applied (unique constraint), treat as success
         if (message.includes('P2002') || message.toLowerCase().includes('unique constraint failed')) {
+          writeAudit(auth.user.id, "DEV_DEMO_LOAD_SKIPPED", "Demo verisi zaten mevcut olduğu için yükleme atlandı").catch(() => {});
           resolve(NextResponse.json({ ok: true, message: 'Demo verisi zaten mevcut, tekrar yükleme atlandı.', output: stdout }));
           return;
         }
@@ -33,6 +34,7 @@ export async function POST(req: Request): Promise<NextResponse> {
         resolve(NextResponse.json({ ok: false, error: 'Demo verisi yüklenemedi.', detail: stderr || err.message }, { status: 500 }));
         return;
       }
+      writeAudit(auth.user.id, "DEV_DEMO_LOAD", "Yerel demo seed komutu çalıştırıldı").catch(() => {});
       resolve(NextResponse.json({ ok: true, output: stdout }));
     });
 

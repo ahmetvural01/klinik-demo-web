@@ -10,7 +10,7 @@ export default function MuayenePage() {
         </p>
       </div>
 
-      <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
+      <div className="rounded-xl border border-primary/20 bg-primary/5 p-4 text-sm text-primary-strong">
         Hasta seçimi için önce Hastalar listesine gidin, sonra ilgili hastanın kartını açın.
       </div>
 

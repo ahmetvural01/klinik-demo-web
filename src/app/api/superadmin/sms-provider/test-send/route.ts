@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { testProviderSend } from "@/lib/sms";
 
 export async function POST(request: Request) {
@@ -21,6 +21,7 @@ export async function POST(request: Request) {
   }
 
   const result = await testProviderSend(body.providerId, body.phone, body.message);
+  await writeAudit(auth.user.id, "SUPERADMIN_SMS_PROVIDER_TEST_SEND", `SMS test gönderimi: ${body.phone} / ${result.success ? "başarılı" : "başarısız"} / ${result.providerCode || body.providerId}`);
 
   return NextResponse.json({
     ok: result.success,

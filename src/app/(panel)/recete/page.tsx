@@ -6,6 +6,9 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState, useEffect } from "react";
 import { formatDate } from "@/lib/format";
+import { cachedGet } from "@/lib/client-cache";
+import { Button } from "@/components/ui/Button";
+import { Printer } from "lucide-react";
 
 type Setting = {
   institutionName?: string | null;
@@ -44,8 +47,7 @@ export default function PrescriptionPage() {
   const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
 
   useEffect(() => {
-    fetch("/api/auth/me")
-      .then(r => r.json())
+    cachedGet<{ role?: string }>("/api/auth/me", 60_000)
       .then(d => {
         const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
         setUserRole(preview || d?.role || "");
@@ -53,7 +55,7 @@ export default function PrescriptionPage() {
       .catch(() => {});
     const onPreview = () => {
       const preview = sessionStorage.getItem("dev-preview-role");
-      fetch("/api/auth/me").then(r => r.json()).then(d => setUserRole(preview || d?.role || "")).catch(() => {});
+      cachedGet<{ role?: string }>("/api/auth/me", 60_000).then(d => setUserRole(preview || d?.role || "")).catch(() => {});
     };
     window.addEventListener("preview-role-change", onPreview);
     return () => window.removeEventListener("preview-role-change", onPreview);
@@ -187,12 +189,11 @@ export default function PrescriptionPage() {
         <Link href={`/hasta-detay?id=${patientId}`} className="text-sm text-slate-600 hover:text-slate-900">
           ← Hasta kartına dön
         </Link>
-        <button
-          onClick={handlePrint}
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary/90 transition print:hidden"
-        >
-          Yazdır
-        </button>
+        <div className="print:hidden">
+          <Button variant="primary" icon={Printer} onClick={handlePrint}>
+            Yazdır
+          </Button>
+        </div>
       </div>
 
       <div className="mx-auto w-full max-w-[148mm] min-h-[210mm] rounded-xl border border-slate-200 bg-white shadow-sm print:shadow-none print:border-0 print:p-0">

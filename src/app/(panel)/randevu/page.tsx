@@ -3,10 +3,14 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { confirmDialog } from "@/lib/confirm-client";
-import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
 import { showToastSafe } from "@/lib/toast-client";
+import { cachedGet } from "@/lib/client-cache";
+import { Modal } from "@/components/ui/Modal";
+import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { FormField } from "@/components/ui/FormField";
 import {
   type AppointmentTreatmentKey,
   type FollowUpKey,
@@ -27,7 +31,7 @@ type Appointment = {
   status: string;
   note?: string | null;
   colorCode?: string;
-  patient?: { id: string; fullName: string };
+  patient?: { id: string; fullName: string; hasContagiousDisease?: boolean; contagiousDiseaseNote?: string | null };
   doctor?: { id: string; fullName: string };
 };
 
@@ -173,6 +177,7 @@ function readRandevuCache(cacheKey: string) {
 }
 
 export default function RandevuPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [view, setView] = useState<"GUN" | "HAFTA" | "AY" | "AJANDA">("HAFTA");
   const [date, setDate] = useState(() => new Date());
@@ -187,7 +192,6 @@ export default function RandevuPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
-  useEscapeClose(() => { setShowForm(false); resetForm(); }, showForm);
   const [saving, setSaving] = useState(false);
 
   // Hasta arama (combobox)
@@ -240,7 +244,6 @@ export default function RandevuPage() {
   const [doctorBlocks, setDoctorBlocks] = useState<DoctorBlock[]>([]);
   const [focusAppointmentId, setFocusAppointmentId] = useState<string | null>(null);
   const [showBlockModal, setShowBlockModal] = useState(false);
-  useEscapeClose(() => setShowBlockModal(false), showBlockModal);
   const [blockDoctorId, setBlockDoctorId] = useState("");
   const [blockDate, setBlockDate] = useState(() => { const d = new Date(); return d.toISOString().slice(0, 10); });
   const [blockStartTime, setBlockStartTime] = useState("13:00");
@@ -258,7 +261,6 @@ export default function RandevuPage() {
   // Bekleme Listesi state
   const [waitlist, setWaitlist] = useState<WaitlistEntry[]>([]);
   const [showWaitlistModal, setShowWaitlistModal] = useState(false);
-  useEscapeClose(() => setShowWaitlistModal(false), showWaitlistModal);
   const [wlPatientSearch, setWlPatientSearch] = useState("");
   const [wlPatientResults, setWlPatientResults] = useState<Patient[]>([]);
   const [wlSelectedPatient, setWlSelectedPatient] = useState<Patient | null>(null);
@@ -395,7 +397,6 @@ export default function RandevuPage() {
   // oluşturulmasını gerektirmiyordu (bkz. denetim raporu Tema 4).
   const [pendingBookingRequestId, setPendingBookingRequestId] = useState<string | null>(null);
   const [pendingWaitlistId, setPendingWaitlistId] = useState<string | null>(null);
-  useEscapeClose(() => setShowBookingRequestsModal(false), showBookingRequestsModal);
 
   const loadBookingRequests = useCallback(async () => {
     try {
@@ -715,6 +716,10 @@ export default function RandevuPage() {
       const fromDate = toLocalDateKey(currentRange.from);
       const toDate = toLocalDateKey(currentRange.to);
 
+      // /api/auth/me burada kasıtlı olarak önbelleklenmiyor: canCreateAppointments
+      // randevu oluşturma butonunu gösterip gizleyen bir yetki kontrolü — 60sn'lik
+      // önbellek, yetkisi az önce alınan bir kullanıcıya bir dakikaya kadar
+      // "randevu oluştur" butonunu yanlışlıkla göstermeye devam edebilirdi.
       const [appointmentsRes, meRes] = await Promise.all([
         fetch("/api/appointments?" + params.toString(), { cache: "no-store" }),
         fetch("/api/auth/me", { cache: "no-store" }),
@@ -729,16 +734,14 @@ export default function RandevuPage() {
       setCanCreateAppointments(APPOINTMENT_CREATOR_ROLES.has(role));
 
       void Promise.allSettled([
-        fetch("/api/staff", { cache: "no-store" })
-          .then((r) => r.json())
+        cachedGet<any>("/api/staff", 60_000)
           .then((sJson) => {
             const staffList = Array.isArray(sJson) ? sJson : (sJson?.staff || []);
             const filteredStaff = staffList.filter((x: Staff & { profile?: { hideAsDoctor?: boolean } | null; isActive?: boolean }) => isBookableDoctor(x));
             setStaff(filteredStaff);
           })
           .catch(() => {}),
-        fetch("/api/settings", { cache: "no-store" })
-          .then((r) => r.json())
+        cachedGet<any>("/api/settings", 60_000)
           .then((settingsJson) => {
             const parsedHolidayDays = (() => {
               const raw = settingsJson?.holidayDays;
@@ -860,8 +863,17 @@ export default function RandevuPage() {
     if (found) {
       setSelectedAppt(found);
       setFocusAppointmentId(null);
+      // URL'deki focusAppointmentId temizlenmezse, bir sonraki render'da yukarıdaki
+      // searchParams senkron effect'i onu tekrar okuyup modalı sonsuz döngüde
+      // yeniden açıyordu (kapat butonu bu yüzden işe yaramıyormuş gibi görünüyordu).
+      if (typeof window !== "undefined") {
+        const next = new URLSearchParams(window.location.search);
+        next.delete("focusAppointmentId");
+        const qs = next.toString();
+        router.replace(`/randevu${qs ? `?${qs}` : ""}`, { scroll: false });
+      }
     }
-  }, [appointments, focusAppointmentId]);
+  }, [appointments, focusAppointmentId, router]);
 
   useEffect(() => {
     if (!selectedAppt) return;
@@ -899,8 +911,6 @@ export default function RandevuPage() {
     setSelectedAppt(null);
   }, []);
 
-  useEscapeClose(closeAppointmentModal, Boolean(selectedAppt));
-
   const createAppointment = async () => {
     if (!canCreateAppointments) {
       setError("Bu görünümde randevu oluşturma yetkiniz yok.");
@@ -915,6 +925,20 @@ export default function RandevuPage() {
     if (Number.isNaN(startDate.getTime())) {
       setError("Başlangıç tarih ve saatini doğru girin");
       return;
+    }
+    const daySchedule = scheduleByJsDay.get(startDate.getDay());
+    if (daySchedule?.isHoliday) {
+      setError("Seçilen gün, Ayarlar > Çalışma Saatleri sekmesinde tatil olarak işaretli. Randevu oluşturmak için önce çalışma günlerini güncelleyin.");
+      return;
+    }
+    if (daySchedule) {
+      const startMinutes = startDate.getHours() * 60 + startDate.getMinutes();
+      const openMinutes = parseTimeToMinutes(daySchedule.open, 8 * 60 + 30);
+      const closeMinutes = parseTimeToMinutes(daySchedule.close, 18 * 60);
+      if (startMinutes < openMinutes || startMinutes >= closeMinutes) {
+        setError(`Seçilen saat, o günün çalışma saatleri (${daySchedule.open}–${daySchedule.close}) dışında. Ayarlar > Çalışma Saatleri sekmesinden kontrol edin.`);
+        return;
+      }
     }
     const endDate = new Date(startDate);
     endDate.setMinutes(endDate.getMinutes() + durationMinutes);
@@ -1043,6 +1067,11 @@ export default function RandevuPage() {
     }
     const startDate = new Date(editStartAt);
     if (Number.isNaN(startDate.getTime())) { setError("Geçerli bir başlangıç tarihi/saati girin."); return; }
+    const editDaySchedule = scheduleByJsDay.get(startDate.getDay());
+    if (editDaySchedule?.isHoliday) {
+      setError("Seçilen gün, Ayarlar > Çalışma Saatleri sekmesinde tatil olarak işaretli. Randevuyu taşımak için önce çalışma günlerini güncelleyin.");
+      return;
+    }
     const endDate = new Date(startDate);
     endDate.setMinutes(endDate.getMinutes() + editDurationMinutes);
     const parsed = parseAppointmentNote(selectedAppt.note);
@@ -1652,10 +1681,11 @@ export default function RandevuPage() {
       onDragStart={enableDrag ? (e) => { e.stopPropagation(); e.dataTransfer.effectAllowed = "move"; setDraggedApptId(a.id); } : undefined}
       onDragEnd={enableDrag ? () => { setDraggedApptId(null); setDragOverKey(null); } : undefined}
       onClick={() => setSelectedAppt(a)}
-      title={`${a.patient?.fullName || "-"} - ${new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}`}
-      className={"randevu-appt-card mb-1 cursor-pointer rounded-md border px-2 py-1 shadow-sm " + (enableDrag ? "cursor-grab active:cursor-grabbing " : "") + (STATUS_COLORS[a.status] || "bg-blue-50 border-l-4 border-blue-400")}>
+      title={`${a.patient?.fullName || "-"}${a.patient?.hasContagiousDisease ? ` — ⚠ Bulaşıcı Hastalık${a.patient.contagiousDiseaseNote ? `: ${a.patient.contagiousDiseaseNote}` : ""}` : ""} - ${new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}`}
+      className={"randevu-appt-card mb-1 cursor-pointer rounded-md border px-2 py-1 shadow-sm " + (enableDrag ? "cursor-grab active:cursor-grabbing " : "") + (STATUS_COLORS[a.status] || "bg-primary/5 border-l-4 border-l-primary")}>
       <div className="flex items-center gap-1">
         <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: treatmentMeta.color }} />
+        {a.patient?.hasContagiousDisease && <span className="shrink-0 text-[11px]" title="Bulaşıcı Hastalık">⚠</span>}
         <p className="min-w-0 flex-1 truncate text-[11px] font-semibold text-gray-800">{a.patient?.fullName || "-"}</p>
         <span className="shrink-0 text-[10px] font-bold text-slate-500">
           {new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}
@@ -1744,10 +1774,20 @@ export default function RandevuPage() {
         </details>
       </div>
 
-      {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => { setShowForm(false); resetForm(); })}>
-          <div className="w-full max-w-3xl rounded-xl border bg-white p-4 shadow-xl">
-          <h3 className="mb-3 font-bold text-gray-700">Yeni Randevu</h3>
+      <Modal
+        open={showForm}
+        onClose={() => { setShowForm(false); resetForm(); }}
+        title="Yeni Randevu"
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => { setShowForm(false); resetForm(); }}>İptal</Button>
+            <Button variant="primary" onClick={createAppointment} loading={saving}>
+              {saving ? "Kaydediliyor..." : "Randevu Ekle"}
+            </Button>
+          </>
+        }
+      >
           {conflictWarning && (
             <div className="mb-3 flex items-start gap-2 rounded-lg border border-yellow-300 bg-yellow-50 px-3 py-2 text-sm text-yellow-800">
               <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-yellow-500" aria-hidden="true" />
@@ -1755,7 +1795,7 @@ export default function RandevuPage() {
             </div>
           )}
           {conflictSuggestions.length > 0 && (
-            <div className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+            <div className="mb-3 rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-xs text-primary-strong">
               <p className="font-semibold">Önerilen uygun saatler:</p>
               <div className="mt-1 flex flex-wrap gap-1.5">
                 {conflictSuggestions.map((slot) => (
@@ -1769,7 +1809,7 @@ export default function RandevuPage() {
                       setStartAt(toLocalInput(d));
                       setDurationMinutes(slotInterval);
                     }}
-                    className="rounded-md border border-blue-300 bg-white px-2 py-0.5 font-semibold text-blue-700 hover:bg-blue-100"
+                    className="rounded-md border border-primary/30 bg-white px-2 py-0.5 font-semibold text-primary hover:bg-primary/10"
                   >
                     {slot}
                   </button>
@@ -1938,15 +1978,7 @@ export default function RandevuPage() {
               </label>
             ))}
           </div>
-          <div className="mt-3 flex gap-2">
-            <button onClick={createAppointment} disabled={saving} className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
-              {saving ? "Kaydediliyor..." : "Randevu Ekle"}
-            </button>
-            <button onClick={() => { setShowForm(false); resetForm(); }} className="rounded-lg border px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">İptal</button>
-          </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {error && (
         <div className="mb-3 flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
@@ -1987,7 +2019,7 @@ export default function RandevuPage() {
                       <td
                         key={d.id}
                         title={outsideHours ? "Doktorun mesai saati dışında" : undefined}
-                        className={"group h-12 border p-1 align-top transition-colors " + (continuingAppts.length > 0 ? "bg-slate-50 " : outsideHours ? "bg-slate-50/70 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-blue-50 ring-2 ring-inset ring-blue-400" : "")}
+                        className={"group h-12 border p-1 align-top transition-colors " + (continuingAppts.length > 0 ? "bg-slate-50 " : outsideHours ? "bg-slate-50/70 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-primary/10 ring-2 ring-inset ring-primary" : "")}
                         onDragOver={(e) => { if (draggedApptId && !blocked && continuingAppts.length === 0) { e.preventDefault(); setDragOverKey(dropKey); } }}
                         onDragLeave={() => setDragOverKey(prev => prev === dropKey ? null : prev)}
                         onDrop={(e) => { if (!blocked && continuingAppts.length === 0) { e.preventDefault(); void handleDropOnSlot(date, slot, d.id); } }}
@@ -2005,11 +2037,13 @@ export default function RandevuPage() {
                         ) : (
                           <>
                             {outsideHours && slotAppts.length === 0 && (
-                              <p className="mb-0.5 truncate text-[9px] font-semibold text-slate-400">Mesai dışı</p>
+                              <p className="truncate text-[9px] font-semibold text-slate-400">Mesai dışı</p>
                             )}
                             {slotAppts.map(a => apptBlock(a, canCreateAppointments))}
                             {slotAppts.length === 0 ? (
-                              canCreateAppointments ? (
+                              outsideHours ? (
+                                <div className="h-7" />
+                              ) : canCreateAppointments ? (
                                 <button
                                   onClick={() => openQuickCreate(slot, date, d.id)}
                                   className="w-full rounded border border-dashed border-gray-300 px-1 py-1 text-[11px] text-gray-500 transition hover:border-primary hover:text-primary"
@@ -2087,7 +2121,7 @@ export default function RandevuPage() {
                       <td
                         key={i}
                         title={doctorOutsideHours ? "Doktorun mesai saati dışında" : undefined}
-                        className={"group h-12 border p-1 align-top transition-colors " + (haftaOutOfHours || continuingAppts.length > 0 ? "bg-slate-50 " : doctorOutsideHours ? "bg-slate-50/70 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-blue-50 ring-2 ring-inset ring-blue-400" : "")}
+                        className={"group h-12 border p-1 align-top transition-colors " + (haftaOutOfHours || continuingAppts.length > 0 ? "bg-slate-50 " : doctorOutsideHours ? "bg-slate-50/70 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-primary/10 ring-2 ring-inset ring-primary" : "")}
                         onDragOver={(e) => { if (draggedApptId && !blocked && !haftaOutOfHours && continuingAppts.length === 0) { e.preventDefault(); setDragOverKey(dropKey); } }}
                         onDragLeave={() => setDragOverKey(prev => prev === dropKey ? null : prev)}
                         onDrop={(e) => { if (!blocked && !haftaOutOfHours && continuingAppts.length === 0) { e.preventDefault(); void handleDropOnSlot(d, slot); } }}
@@ -2107,11 +2141,13 @@ export default function RandevuPage() {
                         ) : (
                           <>
                             {doctorOutsideHours && slotAppts.length === 0 && (
-                              <p className="mb-0.5 truncate text-[9px] font-semibold text-slate-400">Mesai dışı</p>
+                              <p className="truncate text-[9px] font-semibold text-slate-400">Mesai dışı</p>
                             )}
                             {slotAppts.map(a => apptBlock(a, canCreateAppointments))}
                             {slotAppts.length === 0 ? (
-                              canCreateAppointments ? (
+                              doctorOutsideHours ? (
+                                <div className="h-7" />
+                              ) : canCreateAppointments ? (
                                 <button
                                   onClick={() => openQuickCreate(slot, d, doctorId || undefined)}
                                   className="w-full rounded border border-dashed border-gray-300 px-1 py-1 text-[11px] text-gray-500 transition hover:border-primary hover:text-primary"
@@ -2156,7 +2192,7 @@ export default function RandevuPage() {
               const isWorkday = workingDayIndexes.has(d.getDay());
               return (
                 <div key={i} onClick={() => { setDate(d); setView("GUN"); }}
-                  className={"bg-white min-h-20 p-1 cursor-pointer hover:bg-blue-50 " + (isToday ? "ring-2 ring-inset ring-primary" : "") + (isWorkday ? "" : " opacity-70") }>
+                  className={"bg-white min-h-20 p-1 cursor-pointer hover:bg-primary/5 " + (isToday ? "ring-2 ring-inset ring-primary" : "") + (isWorkday ? "" : " opacity-70") }>
                   <div className="mb-1 flex items-center justify-between">
                     <div className={"text-xs font-bold " + (isToday ? "text-primary" : "text-gray-700")}>{d.getDate()}</div>
                     {canCreateAppointments && isWorkday ? (
@@ -2237,46 +2273,53 @@ export default function RandevuPage() {
       </div>
 
       {/* DOKTOR BLOK EKLEME MODALI */}
-      {showBlockModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowBlockModal(false))}>
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-base font-bold text-slate-900">Doktor Zaman Blokajı Ekle</h2>
-              <button onClick={() => setShowBlockModal(false)} aria-label="Kapat" title="Kapat" className="rounded-lg p-1 hover:bg-slate-100 text-slate-400">✕</button>
-            </div>
-            <p className="mb-4 text-xs text-slate-500">Seçili zaman aralığında doktor randevuya kapalı olarak işaretlenir. Mevcut randevular etkilenmez.</p>
+      <Modal
+        open={showBlockModal}
+        onClose={() => setShowBlockModal(false)}
+        title="Doktor Zaman Blokajı Ekle"
+        description="Seçili zaman aralığında doktor randevuya kapalı olarak işaretlenir. Mevcut randevular etkilenmez."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowBlockModal(false)}>İptal</Button>
+            <Button
+              variant="primary"
+              onClick={saveBlock}
+              disabled={!blockDoctorId || !blockDate || !blockStartTime || !blockEndTime}
+              loading={blockSaving}
+              fullWidth
+            >
+              {blockSaving ? "Kaydediliyor…" : "Blok Ekle"}
+            </Button>
+          </>
+        }
+      >
             <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Doktor</label>
+              <FormField label="Doktor">
                 <select className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none"
                   value={blockDoctorId} onChange={e => setBlockDoctorId(e.target.value)}>
                   <option value="">— Doktor Seçin —</option>
                   {staff.map(s => <option key={s.id} value={s.id}>{s.fullName}</option>)}
                 </select>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Tarih</label>
+              </FormField>
+              <FormField label="Tarih">
                 <input type="date" value={blockDate} onChange={e => setBlockDate(e.target.value)}
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
-              </div>
+              </FormField>
               <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Başlangıç</label>
+                <FormField label="Başlangıç">
                   <input type="time" value={blockStartTime} onChange={e => setBlockStartTime(e.target.value)}
                     className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Bitiş</label>
+                </FormField>
+                <FormField label="Bitiş">
                   <input type="time" value={blockEndTime} onChange={e => setBlockEndTime(e.target.value)}
                     className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
-                </div>
+                </FormField>
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Neden (isteğe bağlı)</label>
+              <FormField label="Neden (isteğe bağlı)">
                 <input type="text" value={blockReason} onChange={e => setBlockReason(e.target.value)}
                   placeholder="Öğle arası, toplantı, izin..."
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
-              </div>
+              </FormField>
             </div>
 
             {/* Mevcut bloklar bu doktor için */}
@@ -2298,35 +2341,20 @@ export default function RandevuPage() {
                 )}
               </div>
             )}
+      </Modal>
 
-            <div className="mt-5 flex gap-2">
-              <button onClick={saveBlock} disabled={blockSaving || !blockDoctorId || !blockDate || !blockStartTime || !blockEndTime}
-                className="flex-1 rounded-lg bg-orange-500 py-2 text-sm font-bold text-white hover:bg-orange-600 disabled:opacity-50">
-                {blockSaving ? "Kaydediliyor…" : "Blok Ekle"}
-              </button>
-              <button onClick={() => setShowBlockModal(false)}
-                className="rounded-lg border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">
-                İptal
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showWaitlistModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowWaitlistModal(false))}>
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-base font-bold text-slate-900">Bekleme Listesi</h2>
-              <button onClick={() => setShowWaitlistModal(false)} aria-label="Kapat" title="Kapat" className="rounded-lg p-1 text-slate-400 hover:bg-slate-100">✕</button>
-            </div>
-            <p className="mb-4 text-xs text-slate-500">Uygun randevu bulunamayan veya iptal olan bir slotu doldurmak istediğiniz hastaları buraya ekleyin.</p>
-
+      <Modal
+        open={showWaitlistModal}
+        onClose={() => setShowWaitlistModal(false)}
+        title="Bekleme Listesi"
+        description="Uygun randevu bulunamayan veya iptal olan bir slotu doldurmak istediğiniz hastaları buraya ekleyin."
+        size="lg"
+      >
             <div className="rounded-xl border border-purple-100 bg-purple-50/50 p-4">
               <h3 className="mb-3 text-xs font-bold uppercase text-purple-700">Listeye Ekle</h3>
               <div className="space-y-3">
                 <div className="relative">
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta</label>
+                  <span className="mb-1 block text-xs font-semibold text-slate-600">Hasta</span>
                   {wlSelectedPatient ? (
                     <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
                       <span className="font-semibold text-slate-800">{wlSelectedPatient.fullName}</span>
@@ -2356,34 +2384,33 @@ export default function RandevuPage() {
                     </>
                   )}
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor (opsiyonel)</label>
+                <FormField label="Doktor (opsiyonel)">
                   <select value={wlDoctorId} onChange={(e) => setWlDoctorId(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none">
                     <option value="">— Fark etmez —</option>
                     {staff.map((s) => <option key={s.id} value={s.id}>{s.fullName}</option>)}
                   </select>
-                </div>
+                </FormField>
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold text-slate-600">Tercih edilen tarih (opsiyonel)</label>
+                  <FormField label="Tercih edilen tarih (opsiyonel)">
                     <input type="date" value={wlFrom} onChange={(e) => setWlFrom(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none" />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-semibold text-slate-600">Son tarih (opsiyonel)</label>
+                  </FormField>
+                  <FormField label="Son tarih (opsiyonel)">
                     <input type="date" value={wlTo} onChange={(e) => setWlTo(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none" />
-                  </div>
+                  </FormField>
                 </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Not (opsiyonel)</label>
+                <FormField label="Not (opsiyonel)">
                   <input value={wlNote} onChange={(e) => setWlNote(e.target.value)} placeholder="örn. Sadece sabah saatleri uygun" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:border-primary focus:outline-none" />
-                </div>
-                <button
+                </FormField>
+                <Button
+                  variant="primary"
                   onClick={submitWaitlist}
-                  disabled={wlSaving || !wlSelectedPatient}
-                  className="w-full rounded-lg bg-purple-600 py-2 text-sm font-bold text-white hover:bg-purple-700 disabled:opacity-50"
+                  disabled={!wlSelectedPatient}
+                  loading={wlSaving}
+                  fullWidth
+                  className="bg-purple-600 hover:bg-purple-700"
                 >
                   {wlSaving ? "Ekleniyor…" : "Bekleme Listesine Ekle"}
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -2406,9 +2433,9 @@ export default function RandevuPage() {
                           {w.note && <p className="mt-1 text-xs text-slate-500">{w.note}</p>}
                           {w.patient.phone && <p className="mt-1 text-xs text-slate-400">📞 {w.patient.phone}</p>}
                         </div>
-                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold ${w.status === "ARANDI" ? "bg-amber-100 text-amber-700" : "bg-purple-100 text-purple-700"}`}>
+                        <Badge tone={w.status === "ARANDI" ? "warning" : "info"}>
                           {w.status === "ARANDI" ? "Arandı" : "Bekliyor"}
-                        </span>
+                        </Badge>
                       </div>
                       <div className="mt-2 flex gap-2">
                         {w.status === "BEKLIYOR" && (
@@ -2422,19 +2449,15 @@ export default function RandevuPage() {
                 </div>
               )}
             </div>
-          </div>
-        </div>
-      )}
+      </Modal>
 
-      {showBookingRequestsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowBookingRequestsModal(false))}>
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-base font-bold text-slate-900">Online Randevu Talepleri</h2>
-              <button onClick={() => setShowBookingRequestsModal(false)} aria-label="Kapat" title="Kapat" className="rounded-lg p-1 text-slate-400 hover:bg-slate-100">✕</button>
-            </div>
-            <p className="mb-4 text-xs text-slate-500">Hastaların self-servis bağlantı üzerinden gönderdiği randevu talepleri. Onayladığınızda hastayı arayıp gerçek randevuyu siz oluşturursunuz.</p>
-
+      <Modal
+        open={showBookingRequestsModal}
+        onClose={() => setShowBookingRequestsModal(false)}
+        title="Online Randevu Talepleri"
+        description="Hastaların self-servis bağlantı üzerinden gönderdiği randevu talepleri. Onayladığınızda hastayı arayıp gerçek randevuyu siz oluşturursunuz."
+        size="lg"
+      >
             {bookingRequests.length === 0 ? (
               <p className="py-8 text-center text-sm text-slate-400">Bekleyen online talep yok.</p>
             ) : (
@@ -2451,7 +2474,7 @@ export default function RandevuPage() {
                         {r.note && <p className="mt-1 text-xs text-slate-500">{r.note}</p>}
                         <p className="mt-1 text-xs text-slate-400">📞 {r.phone}{r.tcNo ? ` · TC: ${r.tcNo}` : ""}</p>
                       </div>
-                      <span className="shrink-0 rounded-full bg-cyan-100 px-2 py-0.5 text-[10px] font-bold text-cyan-700">Bekliyor</span>
+                      <Badge tone="info">Bekliyor</Badge>
                     </div>
                     <div className="mt-2 flex gap-2">
                       <button onClick={() => void respondBookingRequest(r.id, "ONAYLANDI")} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">Onayla</button>
@@ -2461,9 +2484,7 @@ export default function RandevuPage() {
                 ))}
               </div>
             )}
-          </div>
-        </div>
-      )}
+      </Modal>
 
       {selectedAppt && (
         (() => {
@@ -2471,18 +2492,17 @@ export default function RandevuPage() {
           const meta = getFollowUpMeta(parsed.followUp);
           const treatmentMeta = getTreatmentMeta(parsed.treatment);
           return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onMouseDown={closeAppointmentModal}>
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-lg font-bold text-primary">{editMode ? "Randevuyu Düzenle" : "Randevu Detayı"}</h3>
-              <button onClick={closeAppointmentModal} aria-label="Kapat" title="Kapat" className="text-gray-400 hover:text-gray-600 text-xl">×</button>
-            </div>
+        <Modal
+          open={Boolean(selectedAppt)}
+          onClose={closeAppointmentModal}
+          title={editMode ? "Randevuyu Düzenle" : "Randevu Detayı"}
+        >
             {editMode ? (
               <div className="space-y-3">
                 {error && <p className="text-red-600 text-sm">{error}</p>}
                 {/* Hasta */}
                 <div>
-                  <label className="text-xs font-semibold text-slate-600 mb-1 block">Hasta</label>
+                  <span className="text-xs font-semibold text-slate-600 mb-1 block">Hasta</span>
                   <div className="relative">
                     <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/20">
                       <span className="text-slate-400 text-sm">🔍</span>
@@ -2514,7 +2534,7 @@ export default function RandevuPage() {
                 </div>
                 {/* Doktor */}
                 <div>
-                  <label className="text-xs font-semibold text-slate-600 mb-1 block">Doktor</label>
+                  <span className="text-xs font-semibold text-slate-600 mb-1 block">Doktor</span>
                   <div className="relative">
                     <input type="text" placeholder="Doktor ara veya seç" value={editDoctorQuery}
                       onChange={e => { setEditDoctorQuery(e.target.value); setEditDoctorId(""); setEditDoctorDropdownOpen(true); }}
@@ -2540,29 +2560,31 @@ export default function RandevuPage() {
                 </div>
                 {/* Başlangıç & Süre */}
                 <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="text-xs font-semibold text-slate-600 mb-1 block">Başlangıç</label>
+                  <FormField label="Başlangıç">
                     <input type="datetime-local" className="w-full rounded-lg border px-3 py-2 text-sm" value={editStartAt} onChange={e => setEditStartAt(e.target.value)} />
-                  </div>
-                  <div>
-                    <label className="text-xs font-semibold text-slate-600 mb-1 block">Süre</label>
+                  </FormField>
+                  <FormField label="Süre">
                     <select className="w-full rounded-lg border px-3 py-2 text-sm" value={editDurationMinutes} onChange={e => setEditDurationMinutes(Number(e.target.value))}>
                       {durationOptions.map(opt => <option key={opt} value={opt}>{opt} dk</option>)}
                     </select>
-                  </div>
+                  </FormField>
                 </div>
                 <div className="flex gap-2 pt-1">
-                  <button onClick={updateAppointment} disabled={editSaving || !editPatientId || !editDoctorId}
-                    className="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                  <Button variant="primary" onClick={updateAppointment} disabled={!editPatientId || !editDoctorId} loading={editSaving}>
                     {editSaving ? "Kaydediliyor..." : "Kaydet"}
-                  </button>
-                  <button onClick={() => { setEditMode(false); setError(null); }} className="rounded-lg border px-4 py-2 text-sm text-gray-600 hover:bg-gray-50">İptal</button>
+                  </Button>
+                  <Button variant="secondary" onClick={() => { setEditMode(false); setError(null); }}>İptal</Button>
                 </div>
               </div>
             ) : (
               <>
                 <div className="space-y-2 text-sm">
-                  <div className="flex justify-between"><span className="text-gray-500">Hasta:</span><span className="font-semibold">{selectedAppt.patient?.fullName}</span></div>
+                  <div className="flex justify-between"><span className="text-gray-500">Hasta:</span><span className="flex items-center gap-1.5 font-semibold">
+                    {selectedAppt.patient?.fullName}
+                    {selectedAppt.patient?.hasContagiousDisease && (
+                      <Badge tone="critical" solid title={selectedAppt.patient.contagiousDiseaseNote || undefined}>⚠ Bulaşıcı Hastalık</Badge>
+                    )}
+                  </span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Doktor:</span><span>{selectedAppt.doctor?.fullName}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Başlangıç:</span><span>{new Date(selectedAppt.startAt).toLocaleString("tr-TR")}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Bitiş:</span><span>{new Date(selectedAppt.endAt).toLocaleString("tr-TR")}</span></div>
@@ -2596,23 +2618,28 @@ export default function RandevuPage() {
                     placeholder="Örn: Hasta gelmedi, 2 kez arandı ulaşılmadı. Yarın tekrar aranacak."
                     className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
                   <div className="mt-2 flex justify-end">
-                    <button onClick={saveAppointmentFollowUp} disabled={detailSaving} className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                    <Button variant="primary" size="sm" onClick={saveAppointmentFollowUp} loading={detailSaving}>
                       {detailSaving ? "Kaydediliyor..." : "Takip Notunu Kaydet"}
-                    </button>
+                    </Button>
                   </div>
                 </div>
                 <div className="mt-4 flex gap-2">
-                  <a href={"/hasta-detay?id=" + selectedAppt.patient?.id} className="rounded-lg bg-primary px-3 py-2 text-sm text-white">Hasta Detayı</a>
-                  <button onClick={openEditMode} disabled={selectedAppt.status === "IPTAL"}
+                  <Button variant="primary" size="sm" href={"/hasta-detay?id=" + selectedAppt.patient?.id}>Hasta Detayı</Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={openEditMode}
+                    disabled={selectedAppt.status === "IPTAL"}
                     title={selectedAppt.status === "IPTAL" ? "İptal edilmiş randevu düzenlenemez — önce 'Bekliyor'a alın" : undefined}
-                    className="rounded-lg bg-slate-600 px-3 py-2 text-sm text-white disabled:opacity-40 disabled:cursor-not-allowed">Düzenle</button>
-                  <button onClick={() => remove(selectedAppt.id)} className="rounded-lg bg-red-600 px-3 py-2 text-sm text-white">Sil</button>
-                  <button onClick={closeAppointmentModal} className="ml-auto rounded-lg border px-3 py-2 text-sm text-gray-600">Kapat</button>
+                  >
+                    Düzenle
+                  </Button>
+                  <Button variant="danger" size="sm" onClick={() => remove(selectedAppt.id)}>Sil</Button>
+                  <Button variant="secondary" size="sm" onClick={closeAppointmentModal} className="ml-auto">Kapat</Button>
                 </div>
               </>
             )}
-          </div>
-        </div>
+        </Modal>
           );
         })()
       )}

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(request: NextRequest) {
@@ -62,6 +62,7 @@ export async function POST(request: NextRequest) {
     })),
   });
 
+  await writeAudit(auth.user.id, "SUPERADMIN_ANNOUNCEMENT_CREATE", `${result.count} kurum için duyuru oluşturuldu: ${body.text.trim().slice(0, 120)}`);
   return NextResponse.json({ ok: true, created: result.count }, { status: 201 });
 }
 
@@ -74,6 +75,8 @@ export async function DELETE(request: NextRequest) {
   const id = searchParams.get("id");
   if (!id) return NextResponse.json({ message: "id zorunlu" }, { status: 400 });
 
+  const existing = await prisma.announcement.findUnique({ where: { id }, select: { text: true } });
   await prisma.announcement.updateMany({ where: { id }, data: { isActive: false } });
+  await writeAudit(auth.user.id, "SUPERADMIN_ANNOUNCEMENT_DELETE", `Duyuru pasifleştirildi: ${existing?.text?.slice(0, 120) || id}`);
   return NextResponse.json({ ok: true });
 }

@@ -97,40 +97,14 @@ export function ClinicLoginForm() {
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-slate-100 p-4 md:p-8">
-      <div className="relative mx-auto grid w-full max-w-5xl grid-cols-1 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl lg:grid-cols-[0.95fr_1.05fr]">
-        <aside className="relative bg-slate-950 p-8 text-white md:p-10">
-          <div className="relative z-10 flex h-full flex-col justify-between">
-            <div>
-              <div className="flex items-center gap-3">
-                <div>
-                  <p className="text-sm font-black tracking-wide">Klinik Yönetim Platformu</p>
-                  <p className="text-xs text-slate-400">Yetkili personel paneli</p>
-                </div>
-              </div>
-              <h1 className="mt-10 max-w-sm text-3xl font-black leading-tight md:text-4xl">Yetkili personel erişimi</h1>
-              <p className="mt-4 max-w-md text-sm leading-6 text-slate-300">
-                Hasta, randevu, tedavi ve finans süreçleri için kurumunuza ait güvenli yönetim paneli.
-              </p>
-            </div>
+    <main className="relative flex min-h-screen items-start justify-center overflow-hidden bg-slate-50 px-4 py-10 md:items-center md:py-12">
+      <form onSubmit={onSubmit} className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl shadow-slate-200/70 md:p-8">
+        <div className="border-b border-slate-100 pb-5">
+          <p className="text-xs font-black uppercase tracking-wide text-slate-500">Yetkili personel girişi</p>
+          <h1 className="mt-2 text-2xl font-black text-slate-950">Panele giriş</h1>
+        </div>
 
-            <div className="mt-10 grid grid-cols-1 gap-2 text-sm text-slate-300">
-              <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3">Kurum ve rol bazlı yetkilendirme</div>
-              <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3">Hasta verileri için denetlenebilir erişim</div>
-              <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3">Tek panelden günlük operasyon takibi</div>
-            </div>
-
-            <p className="mt-10 text-xs text-slate-500">Yetkili kullanıcı girişi</p>
-          </div>
-        </aside>
-
-        <form onSubmit={onSubmit} className="p-7 md:p-10 lg:p-12">
-          <div>
-            <h2 className="text-2xl font-black text-slate-950">Panele giriş</h2>
-            <p className="mt-1 text-sm text-slate-500">Kurum kodu ve personel kimliğinizle devam edin.</p>
-          </div>
-
-          <div className="mt-7 space-y-4">
+          <div className="mt-6 space-y-4">
             <label className="block text-sm font-semibold text-slate-700">
               Kurum Kodu veya Kısa Adı
               <input
@@ -184,7 +158,6 @@ export function ClinicLoginForm() {
                 <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="h-4 w-4 accent-cyan-600" />
                 Oturumu açık tut
               </label>
-              <span className="text-xs text-slate-500">Yetkili erişim</span>
             </div>
 
             {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{error}</p>}
@@ -194,7 +167,6 @@ export function ClinicLoginForm() {
             </button>
           </div>
         </form>
-      </div>
     </main>
   );
 }

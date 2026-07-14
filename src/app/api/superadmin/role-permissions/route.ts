@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import {
   getPermissionPanelPayload,
   resetRolePermissionMap,
@@ -21,6 +21,7 @@ export async function PUT(req: NextRequest) {
   const map = body?.map ?? {};
 
   const next = saveRolePermissionMap(map, auth.user.fullName || auth.user.id);
+  await writeAudit(auth.user.id, "SUPERADMIN_ROLE_PERMISSIONS_UPDATE", `Rol yetki matrisi güncellendi. Versiyon: ${next.version}`);
   return NextResponse.json({
     ok: true,
     version: next.version,
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
   }
 
   const next = resetRolePermissionMap(auth.user.fullName || auth.user.id);
+  await writeAudit(auth.user.id, "SUPERADMIN_ROLE_PERMISSIONS_RESET", `Rol yetki matrisi varsayılana döndürüldü. Versiyon: ${next.version}`);
   return NextResponse.json({
     ok: true,
     version: next.version,

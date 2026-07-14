@@ -2,6 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { confirmDialog } from "@/lib/confirm-client";
+import { showToastSafe } from "@/lib/toast-client";
+import { Button } from "@/components/ui/Button";
+import { FormField } from "@/components/ui/FormField";
+import SmsPage from "../sms/page";
+import FiyatPage from "../fiyat/page";
 
 type PosDevice = { id: string; name: string; isActive: boolean; createdAt: string };
 type TreatmentType = { id: string; value: string; label: string; color: string; order: number; isActive: boolean };
@@ -16,6 +21,17 @@ type DaySchedule = {
 };
 
 const DAYS = ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","Pazar"];
+const TABS = [
+  { id: "genel", label: "Genel Ayarlar" },
+  { id: "calisma", label: "Çalışma Saatleri" },
+  { id: "sms", label: "SMS Ayarları" },
+  { id: "smsKayit", label: "SMS Kayıtları" },
+  { id: "fiyat", label: "Fiyat Listesi" },
+  { id: "pos", label: "POS Cihazları" },
+  { id: "tedavi", label: "Tedavi Türleri" },
+] as const;
+
+type SettingsTab = (typeof TABS)[number]["id"];
 
 const DEFAULT_SCHEDULES: DaySchedule[] = DAYS.map(day => ({
   day,
@@ -27,7 +43,7 @@ const DEFAULT_SCHEDULES: DaySchedule[] = DAYS.map(day => ({
 }));
 
 export default function AyarPage() {
-  const [activeTab, setActiveTab] = useState<"genel" | "calisma" | "sms" | "pos" | "tedavi">("genel");
+  const [activeTab, setActiveTab] = useState<SettingsTab>("genel");
   const [settings, setSettings] = useState({
     institutionName: "Adana White Dental Clinic",
     institutionAddress: "Çukurova/Adana",
@@ -47,9 +63,8 @@ export default function AyarPage() {
   const [institutionSlug, setInstitutionSlug] = useState("");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const showToast = (type: "success" | "error", text: string) => {
-    setToast({ type, text }); setTimeout(() => setToast(null), 3500);
+    showToastSafe({ message: text, type });
   };
 
   // POS cihazları
@@ -69,7 +84,21 @@ export default function AyarPage() {
   const [editingTreatment, setEditingTreatment] = useState<{ id: string; label: string; color: string } | null>(null);
   const [savingTreatment, setSavingTreatment] = useState(false);
 
-  useEffect(() => { void fetchSettings(); void fetchPos(); void fetchTreatmentTypes(); }, []);
+  useEffect(() => {
+    const requestedTab = new URLSearchParams(window.location.search).get("tab");
+    if (TABS.some((tab) => tab.id === requestedTab)) setActiveTab(requestedTab as SettingsTab);
+    void fetchSettings();
+    void fetchPos();
+    void fetchTreatmentTypes();
+  }, []);
+
+  const changeTab = (tab: SettingsTab) => {
+    setActiveTab(tab);
+    const url = new URL(window.location.href);
+    if (tab === "genel") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", tab);
+    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  };
 
   const fetchSettings = async () => {
     try {
@@ -245,24 +274,8 @@ export default function AyarPage() {
     void fetchTreatmentTypes();
   };
 
-  const TABS = [
-    { id: "genel"   as const, label: "Genel Ayarlar" },
-    { id: "calisma" as const, label: "Çalışma Saatleri" },
-    { id: "sms"     as const, label: "SMS Ayarları" },
-    { id: "pos"     as const, label: "POS Cihazları" },
-    { id: "tedavi"  as const, label: "Tedavi Türleri" },
-  ];
-
   return (
     <section className="space-y-5" aria-busy={loading}>
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed right-5 top-5 z-[100] flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${
-          toast.type === "success" ? "bg-emerald-500" : "bg-red-500"
-        }`}>
-          {toast.text}
-        </div>
-      )}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-lg font-black text-slate-900">Ayarlar</h1>
@@ -270,14 +283,15 @@ export default function AyarPage() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 overflow-x-auto rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
-        {TABS.map(t => (
-          <button key={t.id} onClick={() => setActiveTab(t.id)}
-            className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition ${activeTab === t.id ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>
-            {t.label}
-          </button>
-        ))}
+      <div className="rounded-2xl border border-slate-100 bg-white p-2 shadow-sm">
+        <div className="flex gap-1 overflow-x-auto">
+          {TABS.map(t => (
+            <button key={t.id} onClick={() => changeTab(t.id)}
+              className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition ${activeTab === t.id ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* ── GENEL AYARLAR ──────────────────────────────────────────────── */}
@@ -293,12 +307,11 @@ export default function AyarPage() {
                 { label: "Telefon",        key: "institutionPhone"   as const },
                 { label: "Web Sitesi",     key: "institutionWebsite" as const, placeholder: "https://..." },
               ].map(f => (
-                <div key={f.key}>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">{f.label}</label>
+                <FormField key={f.key} label={f.label}>
                   <input value={(settings as any)[f.key]} placeholder={f.placeholder}
                     onChange={e => setSettings({ ...settings, [f.key]: e.target.value })}
                     className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
-                </div>
+                </FormField>
               ))}
             </div>
           </div>
@@ -309,15 +322,16 @@ export default function AyarPage() {
               <p className="mb-2 text-xs text-slate-500">Bu bağlantıyı hastalarınızla (web sitesi, WhatsApp, SMS) paylaşın; gönderdikleri randevu talepleri Randevu sayfasındaki &quot;Online Talepler&quot; bölümünde görünür.</p>
               <div className="flex items-center gap-2">
                 <input readOnly value={typeof window !== "undefined" ? `${window.location.origin}/randevu-al/${encodeURIComponent(institutionSlug)}` : ""} className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600" />
-                <button
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => {
                     navigator.clipboard.writeText(`${window.location.origin}/randevu-al/${encodeURIComponent(institutionSlug)}`);
                     showToast("success", "Bağlantı kopyalandı");
                   }}
-                  className="shrink-0 rounded-lg bg-cyan-600 px-3 py-2 text-xs font-bold text-white hover:bg-cyan-700"
                 >
                   Kopyala
-                </button>
+                </Button>
               </div>
             </div>
           )}
@@ -326,24 +340,21 @@ export default function AyarPage() {
             <h3 className="mb-1 text-base font-black text-slate-900">Randevu Ayarı</h3>
             <p className="mb-3 text-sm text-slate-500">Takvimde varsayılan randevu aralığını belirler.</p>
             <div className="grid gap-3 sm:grid-cols-1 max-w-xs">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Randevu Süresi (dakika)</label>
+              <FormField label="Randevu Süresi (dakika)">
                 <input type="number" value={settings.appointmentDuration}
                   onChange={e => setSettings({ ...settings, appointmentDuration: parseInt(e.target.value) })}
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
-              </div>
+              </FormField>
             </div>
           </div>
 
           <div className="flex gap-2 pt-2 border-t border-slate-100">
-            <button onClick={saveSettings} disabled={saving}
-              className="rounded-lg bg-primary px-6 py-2 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50">
-              {saving ? "Kaydediliyor…" : "Ayarları Kaydet"}
-            </button>
-            <button onClick={fetchSettings}
-              className="rounded-lg border border-slate-200 px-6 py-2 text-sm text-slate-600 hover:bg-slate-50">
+            <Button variant="primary" onClick={() => void saveSettings()} loading={saving}>
+              Ayarları Kaydet
+            </Button>
+            <Button variant="ghost" onClick={() => void fetchSettings()}>
               Eski Değerleri Getir
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -356,18 +367,16 @@ export default function AyarPage() {
             <h3 className="mb-1 text-sm font-bold text-slate-800">Genel Öğle Arası</h3>
             <p className="mb-3 text-xs text-slate-500">Gün bazlı ayar yapılmamışsa bu saatler öğle arası olarak uygulanır. Boş bırakılırsa öğle arası uygulanmaz.</p>
             <div className="flex gap-4 flex-wrap">
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Öğle Başlangıcı</label>
+              <FormField label="Öğle Başlangıcı">
                 <input type="time" value={settings.lunchStart}
                   onChange={e => setSettings({ ...settings, lunchStart: e.target.value })}
                   className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Öğle Bitişi</label>
+              </FormField>
+              <FormField label="Öğle Bitişi">
                 <input type="time" value={settings.lunchEnd}
                   onChange={e => setSettings({ ...settings, lunchEnd: e.target.value })}
                   className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
-              </div>
+              </FormField>
             </div>
           </div>
 
@@ -482,14 +491,12 @@ export default function AyarPage() {
           </div>
 
           <div className="flex gap-2 pt-2 border-t border-slate-100">
-            <button onClick={saveSettings} disabled={saving}
-              className="rounded-lg bg-primary px-6 py-2 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50">
-              {saving ? "Kaydediliyor…" : "Çalışma Saatlerini Kaydet"}
-            </button>
-            <button onClick={fetchSettings}
-              className="rounded-lg border border-slate-200 px-6 py-2 text-sm text-slate-600 hover:bg-slate-50">
+            <Button variant="primary" onClick={() => void saveSettings()} loading={saving}>
+              Çalışma Saatlerini Kaydet
+            </Button>
+            <Button variant="ghost" onClick={() => void fetchSettings()}>
               Eski Değerleri Getir
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -515,11 +522,22 @@ export default function AyarPage() {
             ))}
           </div>
           <div className="flex gap-2 pt-2 border-t border-slate-100">
-            <button onClick={saveSettings} disabled={saving}
-              className="rounded-lg bg-primary px-6 py-2 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50">
-              {saving ? "Kaydediliyor…" : "SMS Ayarlarını Kaydet"}
-            </button>
+            <Button variant="primary" onClick={() => void saveSettings()} loading={saving}>
+              SMS Ayarlarını Kaydet
+            </Button>
           </div>
+        </div>
+      )}
+
+      {activeTab === "smsKayit" && (
+        <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
+          <SmsPage />
+        </div>
+      )}
+
+      {activeTab === "fiyat" && (
+        <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
+          <FiyatPage />
         </div>
       )}
 
@@ -534,10 +552,9 @@ export default function AyarPage() {
                 onKeyDown={e => e.key === "Enter" && void addPos()}
                 placeholder="Cihaz adı (örn: İşbankası POS, Vakıfbank POS…)"
                 className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
-              <button onClick={addPos} disabled={addingPos || !newPosName.trim()}
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50">
-                {addingPos ? "Ekleniyor…" : "POS Ekle"}
-              </button>
+              <Button variant="primary" onClick={() => void addPos()} disabled={!newPosName.trim()} loading={addingPos}>
+                POS Ekle
+              </Button>
             </div>
           </div>
 
@@ -572,26 +589,24 @@ export default function AyarPage() {
                     </div>
                     {editingPos?.id === dev.id ? (
                       <>
-                        <button onClick={() => void savePosName()} disabled={savingPos || !editingPos.name.trim()} className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50">
+                        <Button variant="primary" size="sm" onClick={() => void savePosName()} disabled={!editingPos.name.trim()} loading={savingPos}>
                           Kaydet
-                        </button>
-                        <button onClick={() => setEditingPos(null)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50">
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => setEditingPos(null)}>
                           Vazgeç
-                        </button>
+                        </Button>
                       </>
                     ) : (
-                      <button onClick={() => setEditingPos({ id: dev.id, name: dev.name })} className="rounded-lg border border-blue-100 px-3 py-1.5 text-[11px] font-semibold text-blue-700 transition hover:bg-blue-50">
+                      <Button variant="secondary" size="sm" onClick={() => setEditingPos({ id: dev.id, name: dev.name })}>
                         Düzenle
-                      </button>
+                      </Button>
                     )}
-                    <button onClick={() => togglePos(dev.id, !dev.isActive)}
-                      className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold transition ${dev.isActive ? "border-amber-100 text-amber-700 hover:bg-amber-50" : "border-emerald-100 text-emerald-700 hover:bg-emerald-50"}`}>
+                    <Button variant="secondary" size="sm" onClick={() => togglePos(dev.id, !dev.isActive)}>
                       {dev.isActive ? "Pasif Yap" : "Aktif Yap"}
-                    </button>
-                    <button onClick={() => deletePos(dev.id, dev.name)}
-                      className="rounded-lg border border-red-100 px-3 py-1.5 text-[11px] font-semibold text-red-600 hover:bg-red-50 transition">
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => deletePos(dev.id, dev.name)}>
                       Sil
-                    </button>
+                    </Button>
                   </div>
                 ))}
               </div>
@@ -614,10 +629,9 @@ export default function AyarPage() {
               <input type="color" value={newTreatmentColor} onChange={e => setNewTreatmentColor(e.target.value)}
                 title="Renk seç"
                 className="h-[38px] w-14 cursor-pointer rounded-lg border border-slate-200 p-1" />
-              <button onClick={addTreatmentType} disabled={addingTreatment || !newTreatmentLabel.trim()}
-                className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary/90 disabled:opacity-50">
-                {addingTreatment ? "Ekleniyor…" : "Tedavi Ekle"}
-              </button>
+              <Button variant="primary" onClick={() => void addTreatmentType()} disabled={!newTreatmentLabel.trim()} loading={addingTreatment}>
+                Tedavi Ekle
+              </Button>
             </div>
           </div>
 
@@ -660,26 +674,24 @@ export default function AyarPage() {
                     </div>
                     {editingTreatment?.id === t.id ? (
                       <>
-                        <button onClick={() => void saveTreatmentType()} disabled={savingTreatment || !editingTreatment.label.trim()} className="rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100 disabled:opacity-50">
+                        <Button variant="primary" size="sm" onClick={() => void saveTreatmentType()} disabled={!editingTreatment.label.trim()} loading={savingTreatment}>
                           Kaydet
-                        </button>
-                        <button onClick={() => setEditingTreatment(null)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-[11px] font-semibold text-slate-600 transition hover:bg-slate-50">
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => setEditingTreatment(null)}>
                           Vazgeç
-                        </button>
+                        </Button>
                       </>
                     ) : (
-                      <button onClick={() => setEditingTreatment({ id: t.id, label: t.label, color: t.color })} className="rounded-lg border border-blue-100 px-3 py-1.5 text-[11px] font-semibold text-blue-700 transition hover:bg-blue-50">
+                      <Button variant="secondary" size="sm" onClick={() => setEditingTreatment({ id: t.id, label: t.label, color: t.color })}>
                         Düzenle
-                      </button>
+                      </Button>
                     )}
-                    <button onClick={() => toggleTreatmentType(t.id, !t.isActive)}
-                      className={`rounded-lg border px-3 py-1.5 text-[11px] font-semibold transition ${t.isActive ? "border-amber-100 text-amber-700 hover:bg-amber-50" : "border-emerald-100 text-emerald-700 hover:bg-emerald-50"}`}>
+                    <Button variant="secondary" size="sm" onClick={() => toggleTreatmentType(t.id, !t.isActive)}>
                       {t.isActive ? "Pasif Yap" : "Aktif Yap"}
-                    </button>
-                    <button onClick={() => deleteTreatmentType(t.id, t.label)}
-                      className="rounded-lg border border-red-100 px-3 py-1.5 text-[11px] font-semibold text-red-600 hover:bg-red-50 transition">
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => deleteTreatmentType(t.id, t.label)}>
                       Sil
-                    </button>
+                    </Button>
                   </div>
                 ))}
               </div>

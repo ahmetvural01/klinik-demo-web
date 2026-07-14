@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import type { ComponentType, ReactNode } from "react";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -17,11 +16,14 @@ import {
   WalletCards,
 } from "lucide-react";
 import PhoneInput from "@/components/PhoneInput";
+import { Button } from "@/components/ui/Button";
+import { FormField, FormSection, FormErrorBanner, inputErrorClass } from "@/components/ui/FormField";
 
 type PatientFormState = {
   tcNo: string;
   fullName: string;
   phone: string;
+  profession: string;
   gender: string;
   birthDate: string;
   insurance: string;
@@ -39,6 +41,8 @@ type PatientFormState = {
   hasDiabetes: boolean;
   hasHeart: boolean;
   hasBloodIssue: boolean;
+  hasContagiousDisease: boolean;
+  contagiousDiseaseNote: string;
 };
 
 type DuplicatePatient = {
@@ -55,12 +59,14 @@ type HealthFlagKey =
   | "hasKidney"
   | "hasDiabetes"
   | "hasHeart"
-  | "hasBloodIssue";
+  | "hasBloodIssue"
+  | "hasContagiousDisease";
 
 const INITIAL_FORM: PatientFormState = {
   tcNo: "",
   fullName: "",
   phone: "",
+  profession: "",
   gender: "",
   birthDate: "",
   insurance: "",
@@ -78,6 +84,8 @@ const INITIAL_FORM: PatientFormState = {
   hasDiabetes: false,
   hasHeart: false,
   hasBloodIssue: false,
+  hasContagiousDisease: false,
+  contagiousDiseaseNote: "",
 };
 
 const HEALTH_FLAGS: Array<[HealthFlagKey, string, string]> = [
@@ -87,6 +95,7 @@ const HEALTH_FLAGS: Array<[HealthFlagKey, string, string]> = [
   ["hasKidney", "Böbrek Hastalığı", "İlaç ve anestezi planlaması için kritik"],
   ["hasHepatitis", "Hepatit", "Enfeksiyon kontrol süreçleri için işaretlenir"],
   ["hasBloodIssue", "Kan Sorunu", "Kanama, pıhtılaşma veya kan hastalığı öyküsü"],
+  ["hasContagiousDisease", "Bulaşıcı Hastalık", "HIV, tüberküloz, COVID-19 gibi enfeksiyon kontrolü gerektiren durumlar"],
 ];
 
 function toDateInput(value?: string | null) {
@@ -94,38 +103,6 @@ function toDateInput(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toISOString().slice(0, 10);
-}
-
-function Section({
-  icon: Icon,
-  title,
-  description,
-  children,
-}: {
-  icon: ComponentType<{ className?: string }>;
-  title: string;
-  description: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-4 flex items-start gap-3 border-b border-slate-100 pb-3">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <Icon className="h-4 w-4" />
-        </span>
-        <div>
-          <h2 className="text-sm font-black text-slate-900">{title}</h2>
-          <p className="mt-0.5 text-xs text-slate-500">{description}</p>
-        </div>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function FieldError({ message }: { message?: string }) {
-  if (!message) return null;
-  return <p className="mt-1 text-xs font-medium text-red-600">{message}</p>;
 }
 
 function HastaEkleContent() {
@@ -165,6 +142,7 @@ function HastaEkleContent() {
           tcNo: body.tcNo || "",
           fullName: body.fullName || "",
           phone: body.phone === "***" ? "" : body.phone || "",
+          profession: body.profession || "",
           gender: body.gender || "",
           birthDate: toDateInput(body.birthDate),
           insurance: body.insurance || "",
@@ -182,6 +160,8 @@ function HastaEkleContent() {
           hasDiabetes: body.hasDiabetes || false,
           hasHeart: body.hasHeart || false,
           hasBloodIssue: body.hasBloodIssue || false,
+          hasContagiousDisease: body.hasContagiousDisease || false,
+          contagiousDiseaseNote: body.contagiousDiseaseNote || "",
         });
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Hasta bilgileri alınamadı"))
@@ -255,6 +235,7 @@ function HastaEkleContent() {
     const body = {
       ...form,
       fullName: form.fullName.trim(),
+      profession: form.profession.trim() || undefined,
       insurance: form.insurance.trim() || undefined,
       referrer: form.referrer.trim() || undefined,
       address: form.address.trim() || undefined,
@@ -262,6 +243,7 @@ function HastaEkleContent() {
       surgeries: form.surgeries.trim() || undefined,
       medications: form.medications.trim() || undefined,
       otherDiseases: form.otherDiseases.trim() || undefined,
+      contagiousDiseaseNote: form.contagiousDiseaseNote.trim() || undefined,
       bloodType: form.bloodType || undefined,
       birthDate: form.birthDate ? new Date(`${form.birthDate}T00:00:00.000Z`).toISOString() : undefined,
     };
@@ -336,38 +318,33 @@ function HastaEkleContent() {
       )}
 
       {duplicateLoading && <p className="text-xs font-semibold text-slate-400">Benzer hasta kayıtları kontrol ediliyor...</p>}
-      {error && <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">{error}</div>}
+      <FormErrorBanner message={error} />
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-4">
-          <Section icon={UserRound} title="Kimlik Bilgileri" description="Hasta dosyasının temel ve zorunlu alanları.">
+          <FormSection icon={UserRound} title="Kimlik Bilgileri" description="Hasta dosyasının temel ve zorunlu alanları.">
             <div className="grid gap-4 md:grid-cols-2">
-              <label className="block">
-                <span className="mb-1 block text-sm font-bold text-slate-700">TC Kimlik No *</span>
+              <FormField label="TC Kimlik No" required error={fieldErrors.tcNo}>
                 <input
-                  className={`h-10 w-full rounded-lg border px-3 text-sm font-mono outline-none transition focus:ring-2 focus:ring-primary/20 ${fieldErrors.tcNo ? "border-red-300 bg-red-50" : "border-slate-200 focus:border-primary"}`}
+                  className={`h-10 w-full rounded-lg border px-3 text-sm font-mono outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.tcNo))}`}
                   placeholder="11 haneli TC No"
                   inputMode="numeric"
                   maxLength={11}
                   value={form.tcNo}
                   onChange={(event) => setField("tcNo", event.target.value.replace(/\D/g, "").slice(0, 11))}
                 />
-                <FieldError message={fieldErrors.tcNo} />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-sm font-bold text-slate-700">Ad Soyad *</span>
+              </FormField>
+              <FormField label="Ad Soyad" required error={fieldErrors.fullName}>
                 <input
-                  className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 focus:ring-primary/20 ${fieldErrors.fullName ? "border-red-300 bg-red-50" : "border-slate-200 focus:border-primary"}`}
+                  className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.fullName))}`}
                   placeholder="Ad Soyad"
                   value={form.fullName}
                   onChange={(event) => setField("fullName", event.target.value)}
                 />
-                <FieldError message={fieldErrors.fullName} />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-sm font-bold text-slate-700">Cinsiyet *</span>
+              </FormField>
+              <FormField label="Cinsiyet" required error={fieldErrors.gender}>
                 <select
-                  className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 focus:ring-primary/20 ${fieldErrors.gender ? "border-red-300 bg-red-50" : "border-slate-200 focus:border-primary"}`}
+                  className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.gender))}`}
                   value={form.gender}
                   onChange={(event) => setField("gender", event.target.value)}
                 >
@@ -375,55 +352,50 @@ function HastaEkleContent() {
                   <option value="ERKEK">Erkek</option>
                   <option value="KADIN">Kadın</option>
                 </select>
-                <FieldError message={fieldErrors.gender} />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-sm font-bold text-slate-700">Doğum Tarihi</span>
+              </FormField>
+              <FormField label="Doğum Tarihi" error={fieldErrors.birthDate}>
                 <input
                   type="date"
-                  className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 focus:ring-primary/20 ${fieldErrors.birthDate ? "border-red-300 bg-red-50" : "border-slate-200 focus:border-primary"}`}
+                  className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.birthDate))}`}
                   value={form.birthDate}
                   onChange={(event) => setField("birthDate", event.target.value)}
                 />
-                <FieldError message={fieldErrors.birthDate} />
-              </label>
+              </FormField>
             </div>
-          </Section>
+          </FormSection>
 
-          <Section icon={WalletCards} title="İletişim ve Kurum Bilgileri" description="Banko, randevu ve finans süreçlerinde kullanılan alanlar.">
+          <FormSection icon={WalletCards} title="İletişim ve Kurum Bilgileri" description="Banko, randevu ve finans süreçlerinde kullanılan alanlar.">
             <div className="grid gap-4 md:grid-cols-2">
               <div>
                 <PhoneInput value={form.phone} onChange={(phone) => setField("phone", phone)} label="Telefon *" />
-                <FieldError message={fieldErrors.phone} />
+                {fieldErrors.phone && <p className="mt-1 text-xs font-medium text-red-600">{fieldErrors.phone}</p>}
               </div>
-              <label className="block">
-                <span className="mb-1 block text-sm font-bold text-slate-700">Anlaşmalı Kurum</span>
+              <FormField label="Anlaşmalı Kurum">
                 <input className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Kurum adı" value={form.insurance} onChange={(event) => setField("insurance", event.target.value)} />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-sm font-bold text-slate-700">Referans Eden Kişi</span>
+              </FormField>
+              <FormField label="Referans Eden Kişi">
                 <input className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Örn. Mehmet Yılmaz" value={form.referrer} onChange={(event) => setField("referrer", event.target.value)} />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-sm font-bold text-slate-700">İndirim Oranı (%)</span>
+              </FormField>
+              <FormField label="Meslek">
+                <input className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Örn. Öğretmen, mühendis" value={form.profession} onChange={(event) => setField("profession", event.target.value)} />
+              </FormField>
+              <FormField label="İndirim Oranı (%)">
                 <input type="number" min={0} max={100} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" value={form.discountRate} onChange={(event) => setField("discountRate", Math.min(100, Math.max(0, Number(event.target.value || 0))))} />
-              </label>
-              <label className="block md:col-span-2">
-                <span className="mb-1 block text-sm font-bold text-slate-700">Adres</span>
-                <textarea rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Adres" value={form.address} onChange={(event) => setField("address", event.target.value)} />
-              </label>
+              </FormField>
+              <FormField label="Adres" htmlFor="hasta-ekle-address">
+                <textarea id="hasta-ekle-address" rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Adres" value={form.address} onChange={(event) => setField("address", event.target.value)} />
+              </FormField>
             </div>
-          </Section>
+          </FormSection>
 
-          <Section icon={ShieldAlert} title="Medikal Anamnez" description="Tedavi ve reçete öncesi görülecek klinik risk bilgileri.">
+          <FormSection icon={ShieldAlert} title="Medikal Anamnez" description="Tedavi ve reçete öncesi görülecek klinik risk bilgileri.">
             <div className="grid gap-4 md:grid-cols-2">
-              <label className="block">
-                <span className="mb-1 block text-sm font-bold text-slate-700">Kan Grubu</span>
+              <FormField label="Kan Grubu">
                 <select className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" value={form.bloodType} onChange={(event) => setField("bloodType", event.target.value)}>
                   <option value="">Bilinmiyor</option>
                   {["A+", "A-", "B+", "B-", "AB+", "AB-", "0+", "0-"].map((bloodType) => <option key={bloodType} value={bloodType}>{bloodType}</option>)}
                 </select>
-              </label>
+              </FormField>
               <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
                 <div className="flex gap-2">
                   <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
@@ -444,24 +416,26 @@ function HastaEkleContent() {
                   ))}
                 </div>
               </div>
-              <label className="block">
-                <span className="mb-1 block text-sm font-bold text-slate-700">Geçirdiği Ameliyatlar</span>
+              {form.hasContagiousDisease && (
+                <FormField label="Bulaşıcı Hastalık Detayı">
+                  <textarea rows={2} className="w-full rounded-lg border border-red-200 bg-red-50/50 px-3 py-2 text-sm outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-200" placeholder="Hangi bulaşıcı hastalık? (ör. Hepatit B, Tüberküloz)" value={form.contagiousDiseaseNote} onChange={(event) => setField("contagiousDiseaseNote", event.target.value)} />
+                </FormField>
+              )}
+              <FormField label="Geçirdiği Ameliyatlar">
                 <textarea rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Varsa operasyon öyküsü" value={form.surgeries} onChange={(event) => setField("surgeries", event.target.value)} />
-              </label>
-              <label className="block">
-                <span className="mb-1 block text-sm font-bold text-slate-700">Kullandığı İlaçlar</span>
+              </FormField>
+              <FormField label="Kullandığı İlaçlar">
                 <textarea rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Düzenli ilaçlar" value={form.medications} onChange={(event) => setField("medications", event.target.value)} />
-              </label>
-              <label className="block md:col-span-2">
-                <span className="mb-1 block text-sm font-bold text-slate-700">Diğer Hastalıklar / Klinik Not</span>
+              </FormField>
+              <FormField label="Diğer Hastalıklar / Klinik Not">
                 <textarea rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Ek hastalık veya tedavi öncesi bilinmesi gerekenler" value={form.otherDiseases} onChange={(event) => setField("otherDiseases", event.target.value)} />
-              </label>
+              </FormField>
             </div>
-          </Section>
+          </FormSection>
 
-          <Section icon={FileText} title="Hasta Notu" description="Banko ve klinik ekip tarafından görülecek genel notlar.">
+          <FormSection icon={FileText} title="Hasta Notu" description="Banko ve klinik ekip tarafından görülecek genel notlar.">
             <textarea rows={4} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Hasta notu" value={form.notes} onChange={(event) => setField("notes", event.target.value)} />
-          </Section>
+          </FormSection>
         </div>
 
         <aside className="space-y-3">
@@ -484,18 +458,18 @@ function HastaEkleContent() {
               </div>
             </div>
             <div className="mt-4 grid gap-2">
-              <button
-                type="button"
-                onClick={onSave}
-                disabled={saving}
-                className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-black text-white transition hover:bg-primary/90 disabled:opacity-60"
+              <Button
+                variant="primary"
+                icon={Save}
+                onClick={() => void onSave()}
+                loading={saving}
+                fullWidth
               >
-                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                {saving ? "Kaydediliyor" : isEdit ? "Güncelle" : "Kaydet ve Kartı Aç"}
-              </button>
-              <button type="button" onClick={() => router.push("/hasta")} className="h-10 rounded-lg border border-slate-200 text-sm font-bold text-slate-600 transition hover:bg-slate-50">
+                {isEdit ? "Güncelle" : "Kaydet ve Kartı Aç"}
+              </Button>
+              <Button variant="secondary" onClick={() => router.push("/hasta")} fullWidth>
                 Vazgeç
-              </button>
+              </Button>
             </div>
           </div>
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { sendEmail, buildInvoiceReminderHtml, buildInvoiceReminderSms } from "@/lib/email";
 import { sendSms } from "@/lib/sms";
@@ -102,6 +102,11 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  await writeAudit(
+    auth.user.id,
+    "SUPERADMIN_INVOICE_REMINDER_SEND",
+    `${invoice.institution.name} / ${invoice.invoiceNo} için hatırlatma: ${channels.join(", ")} (${results.filter((r) => r.success).length}/${results.length} başarılı)`,
+  );
   return NextResponse.json({ results });
 }
 

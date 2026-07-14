@@ -132,8 +132,6 @@ function buildNavGroups(role: string): NavGroup[] {
       label: "Yönetim",
       items: [
         { href: "/personel", label: "Personeller",   icon: "person" },
-        { href: "/fiyat",    label: "Fiyat Listesi", icon: "price" },
-        { href: "/sms",      label: "SMS Modülü",    icon: "sms" },
         { href: "/sistem-izleme", label: "Sistem İzleme", icon: "chart" },
         { href: "/ayar",     label: "Sistem Ayarları", icon: "settings" },
       ],
@@ -301,7 +299,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
       {mobileOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/40 md:hidden"
-          onMouseDown={(event) => {
+          onPointerDown={(event) => {
             if (event.target === event.currentTarget) setMobileOpen(false);
           }}
         >

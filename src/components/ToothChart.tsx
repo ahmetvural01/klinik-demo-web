@@ -105,6 +105,7 @@ function ToothAssetButton({
           alt={`Diş ${num}`}
           width={70}
           height={100}
+          unoptimized
           className={`h-full max-h-[96px] w-auto object-contain transition ${selected ? "scale-105" : "group-hover:scale-105"} ${status === "eksik" ? "opacity-40 grayscale" : ""}`}
           draggable={false}
           priority={false}

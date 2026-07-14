@@ -33,7 +33,7 @@ export function addPdfSection(
   headers: string[],
   rows: (string | number)[][]
 ): number {
-  doc.setFontSize(11);
+  doc.setFontSize(10.5);
   doc.setTextColor(17, 24, 39);
   doc.text(pdfSafeText(title), 14, startY);
   autoTable(doc, {
@@ -43,9 +43,18 @@ export function addPdfSection(
       rows.length === 0
         ? [[{ content: "Kayıt yok", colSpan: headers.length, styles: { halign: "center" as const, textColor: 150 } }]]
         : rows.map((r) => r.map(pdfSafeText)),
-    styles: { fontSize: 8, cellPadding: 2, textColor: [30, 41, 59] },
-    headStyles: { fillColor: [17, 24, 39], textColor: 255, fontStyle: "bold" },
+    theme: "grid",
+    styles: {
+      fontSize: 7.8,
+      cellPadding: { top: 2.1, right: 2.4, bottom: 2.1, left: 2.4 },
+      overflow: "linebreak",
+      textColor: [30, 41, 59],
+      lineColor: [203, 213, 225],
+      lineWidth: 0.12,
+    },
+    headStyles: { fillColor: [15, 23, 42], textColor: 255, fontStyle: "bold", fontSize: 7.8 },
     alternateRowStyles: { fillColor: [248, 250, 252] },
+    bodyStyles: { valign: "middle" },
     margin: { left: 14, right: 14 },
   });
   // jspdf-autotable, son tablonun bittiği Y konumunu doc üzerine ekler.

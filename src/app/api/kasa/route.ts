@@ -75,6 +75,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Hasta tahsilatı için doktor seçimi zorunlu" }, { status: 400 });
   }
 
+  if (!patientId && !doctorId) {
+    return NextResponse.json({ error: "Tahsilat hasta veya doktor ile ilişkilendirilmelidir" }, { status: 400 });
+  }
+
   if ((method === "KREDI_KARTI" || method === "MAIL_ORDER") && !posId) {
     return NextResponse.json({ error: "Kart / mail order tahsilatı için POS seçimi zorunlu" }, { status: 400 });
   }

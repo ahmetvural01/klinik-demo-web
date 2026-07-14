@@ -242,7 +242,9 @@ export async function writeAudit(userId: string, action: string, detail?: string
   // KVKK/denetim gereği: ghost (superadmin gizli giriş) ve doğrudan superadmin
   // işlemleri de kayıt altına alınır — gerçek işlemi yapan actorId/actorRole/isGhost
   // alanlarında ayrıca tutulur, userId alanı ise işlemin ait olduğu kullanıcı/kurumu
-  // gösterir (mevcut kurum bazlı filtreleme ile uyumlu kalır).
+  // gösterir (mevcut kurum bazlı filtreleme ile uyumlu kalır). Kurum bazlı /api/logs
+  // ve superadmin'in kendi /api/superadmin/audit ekranı bu kayıtları farklı şekilde
+  // filtreleyebilir, ama burada yazılmadan hiçbir yerde görünemezler.
   await prisma.auditLog.create({
     data: {
       userId,

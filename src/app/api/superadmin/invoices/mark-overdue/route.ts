@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 
 // Bu endpoint manuel veya bir cron job ile çağrılabilir.
@@ -20,6 +20,7 @@ export async function POST(request: NextRequest) {
     data: { status: "OVERDUE" },
   });
 
+  await writeAudit(auth.user.id, "SUPERADMIN_INVOICE_MARK_OVERDUE", `${result.count} fatura gecikmiş olarak işaretlendi`);
   return NextResponse.json({
     updated: result.count,
     message: `${result.count} fatura OVERDUE olarak işaretlendi`,

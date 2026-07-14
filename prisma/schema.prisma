@@ -366,6 +366,7 @@ model Patient {
   fullName        String
   phone           String
   address         String?
+  profession      String?
   gender          String
   birthDate       DateTime?
   insurance       String?
@@ -377,6 +378,8 @@ model Patient {
   hasDiabetes     Boolean                @default(false)
   hasHeart        Boolean                @default(false)
   hasBloodIssue   Boolean                @default(false)
+  hasContagiousDisease  Boolean          @default(false)
+  contagiousDiseaseNote String?
   surgeries       String?
   medications     String?
   otherDiseases   String?

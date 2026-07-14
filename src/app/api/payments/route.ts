@@ -1,9 +1,17 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { createIntegratedPayment } from "@/lib/payment-ledger";
 import { formatZodError, paymentSchema } from "@/lib/validators";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
+
+const METHOD_LABELS: Record<string, string> = {
+  NAKIT: "Nakit",
+  KREDI_KARTI: "Kredi Kartı",
+  HAVALE_EFT: "Havale/EFT",
+  MAIL_ORDER: "Mail Order",
+  DIGER: "Diğer",
+};
 
 export async function POST(request: NextRequest) {
   try {
@@ -39,19 +47,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: "Bu doktor kurum kapsamı disinda" }, { status: 403 });
     }
 
+    let relatedPatient: { id: string; fullName: string } | null = null;
     if (auth.user.institutionId && patientId) {
-      const relatedPatient = await prisma.patient.findFirst({
+      relatedPatient = await prisma.patient.findFirst({
         where: {
           id: patientId,
           institutionId: auth.user.institutionId,
         },
-        select: { id: true },
+        select: { id: true, fullName: true },
       });
 
       if (!relatedPatient) {
         return NextResponse.json({ message: "Hasta kurum kapsamı disinda" }, { status: 403 });
       }
     }
+
+    const [doctorInfo, posInfo] = await Promise.all([
+      doctorId ? prisma.user.findUnique({ where: { id: doctorId }, select: { fullName: true } }) : Promise.resolve(null),
+      posId ? prisma.posDevice.findUnique({ where: { id: posId }, select: { name: true } }) : Promise.resolve(null),
+    ]);
 
     const { payment, taksitInfo } = await prisma.$transaction(
       (tx) =>
@@ -68,9 +82,16 @@ export async function POST(request: NextRequest) {
       { isolationLevel: "Serializable" }
     );
 
-    const auditNote = taksitInfo?.updatedCount
-      ? `${amount} TL ödeme — ${taksitInfo.updatedCount} taksit otomatik güncellendi`
-      : `${amount} TL ödeme eklendi`;
+    const auditNote = [
+      `${auth.user.fullName || "Personel"} tarafından tahsilat kaydedildi.`,
+      `Hasta: ${relatedPatient?.fullName || payment.patient?.fullName || "Genel tahsilat"}`,
+      `Doktor: ${doctorInfo?.fullName || "-"}`,
+      `Tutar: ${amount} TL`,
+      `Yöntem: ${METHOD_LABELS[method] || method}`,
+      `POS: ${posInfo?.name || "-"}`,
+      description ? `Açıklama: ${description}` : "",
+      taksitInfo?.updatedCount ? `Taksit entegrasyonu: ${taksitInfo.updatedCount} taksit otomatik güncellendi` : "Taksit entegrasyonu: değişiklik yok",
+    ].filter(Boolean).join("\n");
     await writeAudit(auth.user.id, "PAYMENT_CREATE", auditNote);
     return NextResponse.json({ ...payment, taksitInfo }, { status: 201 });
   } catch (e) {
@@ -84,7 +105,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export async function GET(request: NextRequest) {
+export const GET = withApiTiming("payments", async function GET(request: NextRequest) {
   try {
     const auth = await requireAuth("payments:read");
     if (auth.error) return auth.error;
@@ -125,4 +146,4 @@ export async function GET(request: NextRequest) {
     console.error("[payments GET]", error);
     return NextResponse.json({ message: "Ödeme kayıtları yüklenemedi. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });
   }
-}
+});

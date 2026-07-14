@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { DEFAULT_SITE_CONTENT, normalizeSiteContent } from "@/lib/site-content";
 
@@ -87,5 +87,6 @@ export async function PUT(request: NextRequest) {
     },
   });
 
+  await writeAudit(auth.user.id, "SUPERADMIN_SITE_CONTENT_UPDATE", `Tanıtım içerikleri güncellendi: ${data.heroTitle}`);
   return NextResponse.json({ ok: true, updatedAt: saved.updatedAt.toISOString() });
 }

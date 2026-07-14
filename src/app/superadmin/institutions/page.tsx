@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { cachedGet } from "@/lib/client-cache";
 
 type Institution = {
   id: string;
@@ -70,12 +71,11 @@ export default function InstitutionsPage() {
 
   useEffect(() => {
     const bootstrap = async () => {
-      const me = await fetch("/api/auth/me");
-      if (!me.ok) {
+      const meData = await cachedGet<{ role?: string } | null>("/api/auth/me", 60_000);
+      if (!meData) {
         router.replace("/superadmin");
         return;
       }
-      const meData = (await me.json()) as { role?: string };
       if (meData.role !== "SUPERADMIN") {
         router.replace("/superadmin");
         return;

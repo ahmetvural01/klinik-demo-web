@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(request: NextRequest) {
@@ -45,6 +45,7 @@ export async function PATCH(request: NextRequest) {
     data: { answer: answer.trim() },
   });
 
+  await writeAudit(auth.user.id, "SUPERADMIN_SUPPORT_ANSWER", `Destek talebi yanıtlandı: ${ticket.id}`);
   return NextResponse.json(ticket);
 }
 
@@ -57,6 +58,8 @@ export async function DELETE(request: NextRequest) {
   const id = searchParams.get("id");
   if (!id) return NextResponse.json({ message: "id zorunlu" }, { status: 400 });
 
+  const existing = await prisma.supportTicket.findUnique({ where: { id }, select: { subject: true, user: { select: { fullName: true } } } });
   await prisma.supportTicket.delete({ where: { id } });
+  await writeAudit(auth.user.id, "SUPERADMIN_SUPPORT_DELETE", `Destek talebi silindi: ${existing?.subject || id} / ${existing?.user?.fullName || "-"}`);
   return NextResponse.json({ ok: true });
 }

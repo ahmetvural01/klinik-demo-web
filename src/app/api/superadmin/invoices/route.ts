@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(request: NextRequest) {
@@ -80,5 +80,7 @@ export async function POST(request: NextRequest) {
     },
   });
 
+  const institution = await prisma.institution.findUnique({ where: { id: body.institutionId }, select: { name: true } });
+  await writeAudit(auth.user.id, "SUPERADMIN_INVOICE_CREATE", `${institution?.name || body.institutionId} için ${invoice.invoiceNo} oluşturuldu: ₺${Number(invoice.amount).toLocaleString("tr-TR")}`);
   return NextResponse.json(invoice);
 }

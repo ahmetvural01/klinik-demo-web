@@ -1,52 +1,34 @@
 ﻿"use client";
 
 import { useEffect, useState } from "react";
+import { showToastSafe } from "@/lib/toast-client";
+import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { FormField } from "@/components/ui/FormField";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 
 type Ticket = { id: string; subject: string; message: string; answer: string | null; createdAt: string };
 
-const UPDATE_NOTES = [
-  {
-    version: "v1.10",
-    date: "21.05.2024",
-    notes: [
-      "Eğitim modülüyle ilgili bir problem giderildi.",
-      "Tedavi ücretleri TDB 2024 tarifesine göre güncellendi."
-    ]
-  },
-  {
-    version: "v1.09",
-    date: "16.12.2023",
-    notes: [
-      "Yeni SMS sistemi (Beta) aktif edildi.",
-      "Hızlı hasta aramada telefon numarası ile arama eklendi."
-    ]
-  },
-  {
-    version: "v1.08",
-    date: "04.12.2022",
-    notes: [
-      "Randevu modülü tek ekranda tüm doktorları gösterecek şekilde yenilendi.",
-      "Doktor mesai saatleri ayarlanabilir hale getirildi."
-    ]
-  },
-  {
-    version: "v1.07",
-    date: "30.11.2022",
-    notes: ["Tedavi kayıtlarında sonradan düzenleme desteği eklendi."]
-  }
-];
+const SUPPORT_TOPICS = [
+  "Giriş ve yetki problemi",
+  "Hasta / randevu işlemleri",
+  "Tedavi / laboratuvar akışı",
+  "Muhasebe / ödeme işlemleri",
+  "Stok / tedarikçi işlemleri",
+  "SMS / bildirim problemi",
+  "Rapor / dışa aktarım",
+  "Diğer",
+] as const;
 
 export default function DestekPage() {
   const [tickets, setTickets] = useState<Ticket[]>([]);
   const [loading, setLoading] = useState(false);
-  const [newTicket, setNewTicket] = useState({ subject: "Destek Talebi", message: "" });
+  const [newTicket, setNewTicket] = useState({ subject: SUPPORT_TOPICS[0] as string, customSubject: "", message: "" });
   const [sending, setSending] = useState(false);
   const [query, setQuery] = useState("");
-  const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   const showToast = (type: "success" | "error", text: string) => {
-    setToast({ type, text });
-    setTimeout(() => setToast(null), 3500);
+    showToastSafe({ message: text, type });
   };
 
   useEffect(() => { fetchTickets(); }, []);
@@ -61,11 +43,13 @@ export default function DestekPage() {
 
   const sendTicket = async () => {
     if (!newTicket.message.trim()) return showToast("error", "Lütfen görüşünüzü yazın");
+    const subject = newTicket.subject === "Diğer" ? newTicket.customSubject.trim() : newTicket.subject;
+    if (!subject) return showToast("error", "Lütfen konu seçin veya yazın");
     setSending(true);
     try {
-      const res = await fetch("/api/support", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(newTicket) });
+      const res = await fetch("/api/support", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject, message: newTicket.message }) });
       if (res.ok) {
-        setNewTicket({ subject: "Destek Talebi", message: "" });
+        setNewTicket({ subject: SUPPORT_TOPICS[0], customSubject: "", message: "" });
         showToast("success", "Destek talebiniz gönderildi");
         fetchTickets();
       }
@@ -82,17 +66,23 @@ export default function DestekPage() {
     );
   });
 
+  const ticketColumns: ListTableColumn<Ticket>[] = [
+    { key: "subject", header: "Konu", render: (t) => <span className="font-medium text-slate-800">{t.subject}</span> },
+    { key: "message", header: "Mesaj", cellClassName: "max-w-[240px] truncate", render: (t) => <span className="text-slate-600">{t.message}</span> },
+    {
+      key: "answer",
+      header: "Yanıt",
+      render: (t) => (t.answer ? <span className="text-slate-700">{t.answer}</span> : <Badge tone="warning">Bekliyor</Badge>),
+    },
+    {
+      key: "createdAt",
+      header: "Tarih",
+      render: (t) => <span className="text-xs text-slate-400">{new Date(t.createdAt).toLocaleDateString("tr-TR")}</span>,
+    },
+  ];
+
   return (
     <div className="space-y-5">
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed right-5 top-5 z-[100] flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${
-          toast.type === "success" ? "bg-emerald-500" : "bg-red-500"
-        }`}>
-          {toast.type === "success" ? "✓" : "✕"} {toast.text}
-        </div>
-      )}
-
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
@@ -116,21 +106,29 @@ export default function DestekPage() {
         </a>
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)]">
         {/* Görüş Gönder */}
         <div className="rounded-2xl bg-white border border-slate-100 p-5 shadow-sm space-y-3">
           <h3 className="text-base font-black text-slate-900">Yeni Destek Talebi</h3>
           <p className="text-sm text-slate-500">Yaşadığınız sorunu veya önerinizi kısa ve anlaşılır şekilde yazın.</p>
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-500 uppercase">Konu</label>
-            <input
+          <FormField label="Konu">
+            <select
               value={newTicket.subject}
               onChange={e => setNewTicket({ ...newTicket, subject: e.target.value })}
               className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs font-semibold text-slate-500 uppercase">Mesaj</label>
+            >
+              {SUPPORT_TOPICS.map((topic) => <option key={topic} value={topic}>{topic}</option>)}
+            </select>
+            {newTicket.subject === "Diğer" && (
+              <input
+                value={newTicket.customSubject}
+                onChange={e => setNewTicket({ ...newTicket, customSubject: e.target.value })}
+                placeholder="Kısa konu başlığı"
+                className="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none"
+              />
+            )}
+          </FormField>
+          <FormField label="Mesaj">
             <textarea
               rows={4}
               placeholder="Detaylı açıklayınız…"
@@ -138,93 +136,44 @@ export default function DestekPage() {
               onChange={e => setNewTicket({ ...newTicket, message: e.target.value })}
               className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none"
             />
-          </div>
-          <button onClick={sendTicket} disabled={sending || loading}
-            className="w-full rounded-xl bg-primary py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-50">
-            {sending ? "Gönderiliyor…" : "Talebi Gönder"}
-          </button>
+          </FormField>
+          <Button onClick={sendTicket} disabled={sending || loading} loading={sending} fullWidth>
+            Talebi Gönder
+          </Button>
         </div>
 
-        {/* Sistem Güncellemeleri */}
+        {/* Destek Bilgilendirme */}
         <div className="rounded-2xl bg-white border border-slate-100 p-5 shadow-sm space-y-3">
-          <h3 className="text-sm font-bold text-slate-800">Sistem Güncellemeleri</h3>
-          <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-4 py-2.5 text-sm font-semibold text-emerald-700">
-            Yazılımınız güncel
+          <h3 className="text-sm font-bold text-slate-800">Destek Süreci</h3>
+          <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
+            Talep oluştururken hangi ekranda, hangi işlemde ve mümkünse hasta/firma adı gibi bağlam bilgilerini yazmanız çözümü hızlandırır.
           </div>
-          <div className="max-h-72 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50 p-3 space-y-3">
-            {UPDATE_NOTES.map((row) => (
-              <div key={row.version} className="border-b border-slate-100 last:border-0 pb-2 last:pb-0">
-                <p className="text-xs font-bold text-primary">{row.version} <span className="text-slate-400 font-normal">— {row.date}</span></p>
-                {row.notes.map((n, i) => (
-                  <p key={i} className="text-xs text-slate-600 mt-0.5">{n}</p>
-                ))}
-              </div>
-            ))}
+          <div className="grid gap-2 text-xs text-slate-500">
+            <div className="rounded-lg border border-slate-100 px-3 py-2">
+              <span className="font-bold text-slate-700">Açık talepler:</span> {tickets.filter((ticket) => !ticket.answer).length}
+            </div>
+            <div className="rounded-lg border border-slate-100 px-3 py-2">
+              <span className="font-bold text-slate-700">Yanıtlanan:</span> {tickets.filter((ticket) => ticket.answer).length}
+            </div>
           </div>
         </div>
       </div>
 
       {/* Görüşler Tablosu */}
-      <div className="rounded-2xl bg-white border border-slate-100 shadow-sm overflow-hidden">
-        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3">
+      <div className="space-y-3">
+        <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white px-5 py-3 shadow-sm">
           <h3 className="text-sm font-bold text-slate-800">Gönderilen Görüşler</h3>
           <input value={query} onChange={e => setQuery(e.target.value)}
             placeholder="Ara…"
             className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:border-primary focus:bg-white focus:outline-none" />
         </div>
-        {(
-          <>
-          <div className="divide-y divide-slate-100 md:hidden">
-            {filteredTickets.length === 0 ? (
-              <div className="py-8 text-center text-slate-400">Henüz destek talebi gönderilmedi</div>
-            ) : filteredTickets.map(t => (
-              <div key={t.id} className="p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <p className="font-bold text-slate-900">{t.subject}</p>
-                  {t.answer
-                    ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-bold text-emerald-700">Yanıtlandı</span>
-                    : <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-bold text-amber-700">Bekliyor</span>
-                  }
-                </div>
-                <p className="mt-2 text-sm text-slate-600">{t.message}</p>
-                {t.answer && <p className="mt-2 rounded-xl bg-slate-50 p-3 text-sm text-slate-700">{t.answer}</p>}
-                <p className="mt-2 text-xs text-slate-400">{new Date(t.createdAt).toLocaleDateString("tr-TR")}</p>
-              </div>
-            ))}
-          </div>
-          <div className="hidden overflow-x-auto md:block">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-slate-100 bg-slate-50 text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                  <th className="px-4 py-3 text-left">Konu</th>
-                  <th className="px-4 py-3 text-left">Mesaj</th>
-                  <th className="px-4 py-3 text-left">Yanıt</th>
-                  <th className="px-4 py-3 text-left">Tarih</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {filteredTickets.length === 0 ? (
-                  <tr><td colSpan={4} className="py-8 text-center text-slate-400">Henüz destek talebi gönderilmedi</td></tr>
-                ) : filteredTickets.map(t => (
-                  <tr key={t.id} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-medium text-slate-800">{t.subject}</td>
-                    <td className="px-4 py-3 text-slate-600 max-w-[200px] truncate">{t.message}</td>
-                    <td className="px-4 py-3">
-                      {t.answer
-                        ? <span className="text-slate-700">{t.answer}</span>
-                        : <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">Bekliyor</span>
-                      }
-                    </td>
-                    <td className="px-4 py-3 text-xs text-slate-400">
-                      {new Date(t.createdAt).toLocaleDateString("tr-TR")}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          </>
-        )}
+        <ListTable<Ticket>
+          columns={ticketColumns}
+          rows={filteredTickets}
+          rowKey={(t) => t.id}
+          loading={loading}
+          emptyText="Henüz destek talebi gönderilmedi"
+        />
       </div>
     </div>
   );

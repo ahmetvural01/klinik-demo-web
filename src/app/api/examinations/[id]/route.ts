@@ -123,14 +123,24 @@ export async function DELETE(_: NextRequest, { params }: Params) {
 
   const existing = await prisma.examination.findFirst({
     where: examinationTenantWhere(params.id, auth.user.role, auth.user.institutionId),
-    select: { id: true },
+    include: {
+      patient: { select: { fullName: true } },
+      doctor: { select: { fullName: true } },
+    },
   });
   if (!existing) {
     return NextResponse.json({ message: "Muayene kaydı bulunamadı" }, { status: 404 });
   }
 
   await prisma.examination.delete({ where: { id: params.id } });
-  await writeAudit(auth.user.id, "EXAM_DELETE", `Muayene kaydı silindi (${params.id})`);
+  await writeAudit(auth.user.id, "EXAM_DELETE", [
+    `${auth.user.fullName || "Personel"} tarafından tedavi/muayene kaydı silindi.`,
+    `Hasta: ${existing.patient?.fullName || "-"}`,
+    `Doktor: ${existing.doctor?.fullName || "-"}`,
+    `Tedavi: ${existing.treatmentName}`,
+    `Diş/Alan: ${existing.toothNo || "-"}`,
+    `Tutar: ${Number(existing.amount)} TL`,
+  ].join("\n"));
 
   return NextResponse.json({ ok: true });
 }

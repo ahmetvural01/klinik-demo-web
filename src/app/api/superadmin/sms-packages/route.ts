@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 
 export async function GET() {
@@ -36,5 +36,6 @@ export async function POST(request: NextRequest) {
     },
   });
 
+  await writeAudit(auth.user.id, "SUPERADMIN_SMS_PACKAGE_CREATE", `${pkg.name}: ${pkg.smsCount} SMS / ₺${Number(pkg.price).toLocaleString("tr-TR")}`);
   return NextResponse.json(pkg);
 }

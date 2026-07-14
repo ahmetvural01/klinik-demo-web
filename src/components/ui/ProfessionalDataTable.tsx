@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import {
   ColumnDef,
   SortingState,
@@ -47,7 +48,12 @@ export function ProfessionalDataTable<TData>({
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id} className="bg-slate-50 text-left">
                 {headerGroup.headers.map((header) => (
-                  <th key={header.id} className="px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-500">
+                  <th
+                    key={header.id}
+                    className={`px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-500 ${
+                      header.column.id === "actions" ? "sticky right-0 z-10 bg-slate-50 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)]" : ""
+                    }`}
+                  >
                     {header.isPlaceholder ? null : (
                       <button
                         type="button"
@@ -77,9 +83,14 @@ export function ProfessionalDataTable<TData>({
               </tr>
             ) : (
               rows.map((row) => (
-                <tr key={row.id} className="transition hover:bg-slate-50">
+                <tr key={row.id} className="group transition hover:bg-slate-50">
                   {row.getVisibleCells().map((cell) => (
-                    <td key={cell.id} className="px-4 py-3">
+                    <td
+                      key={cell.id}
+                      className={`px-4 py-3 ${
+                        cell.column.id === "actions" ? "sticky right-0 z-10 bg-white shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)] group-hover:bg-slate-50" : ""
+                      }`}
+                    >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
                     </td>
                   ))}
@@ -100,17 +111,19 @@ export function ProfessionalDataTable<TData>({
               type="button"
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
-              className="rounded border border-slate-200 bg-white px-2 py-1 font-semibold disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
             >
+              <ChevronLeft className="h-4 w-4" />
               Önceki
             </button>
             <button
               type="button"
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
-              className="rounded border border-slate-200 bg-white px-2 py-1 font-semibold disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
             >
               Sonraki
+              <ChevronRight className="h-4 w-4" />
             </button>
           </div>
         </div>

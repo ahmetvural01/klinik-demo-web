@@ -1,7 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { appointmentSchema, formatZodError } from "@/lib/validators";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { sendSms } from "@/lib/sms";
 import { turkeyDayRangeUtc } from "@/lib/tz";
 import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
@@ -137,7 +137,7 @@ function canCreateAppointment(role: string) {
   return ["DOKTOR", "YONETICI", "ADMIN", "SUPERADMIN"].includes(role);
 }
 
-export async function GET(request: NextRequest) {
+export const GET = withApiTiming("appointments", async function GET(request: NextRequest) {
   const auth = await requireAuth("appointments:read");
   if (auth.error) return auth.error;
 
@@ -153,7 +153,7 @@ export async function GET(request: NextRequest) {
   const dateTo = dateRange ? dateRange.end : (to ? new Date(to) : undefined);
 
   let appointments: Array<{
-    patient: { id: string; fullName: string; phone: string | null; tcNo: string } | null;
+    patient: { id: string; fullName: string; phone: string | null; tcNo: string; hasContagiousDisease: boolean; contagiousDiseaseNote: string | null } | null;
     [key: string]: unknown;
   }> = [];
   try {
@@ -178,7 +178,7 @@ export async function GET(request: NextRequest) {
         smsSurvey: true,
         doctorId: true,
         patientId: true,
-        patient: { select: { id: true, fullName: true, phone: true, tcNo: true } },
+        patient: { select: { id: true, fullName: true, phone: true, tcNo: true, hasContagiousDisease: true, contagiousDiseaseNote: true } },
         doctor: { select: { id: true, fullName: true, role: true } },
       },
       orderBy: { startAt: "asc" },
@@ -198,7 +198,7 @@ export async function GET(request: NextRequest) {
     : appointments;
 
   return NextResponse.json(result);
-}
+});
 
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("appointments:write");

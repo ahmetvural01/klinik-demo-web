@@ -11,6 +11,8 @@ export const GET = withApiTiming("gider", async function GET(req: NextRequest) {
     const categoryId = searchParams.get("categoryId");
     const from = searchParams.get("from");
     const to = searchParams.get("to");
+    const takeParam = Number.parseInt(searchParams.get("take") || "", 10);
+    const take = Number.isFinite(takeParam) && takeParam > 0 ? Math.min(takeParam, 1000) : 500;
 
     const where: Record<string, unknown> = {
       status: "AKTIF",
@@ -29,7 +31,7 @@ export const GET = withApiTiming("gider", async function GET(req: NextRequest) {
         where,
         include: { expenseCategory: { select: { id: true, name: true } } },
         orderBy: { tarih: "desc" },
-        take: 5000, // güvenlik sınırı: tek istek asla tüm tabloyu döndürmesin
+        take,
       }),
       (prisma as any).expense.aggregate({ _sum: { tutar: true }, where }),
     ]);

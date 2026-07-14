@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { formatZodError, patientSchema } from "@/lib/validators";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 
-const SORT_FIELDS = new Set(["fullName", "tcNo", "phone", "gender", "birthDate", "insurance", "createdAt", "updatedAt"]);
+const SORT_FIELDS = new Set(["fullName", "tcNo", "phone", "gender", "birthDate", "insurance", "profession", "createdAt", "updatedAt"]);
 
 function parsePositiveInt(value: string | null, fallback: number, max: number) {
   const parsed = Number.parseInt(value || "", 10);
@@ -35,6 +35,7 @@ function buildMedicalRiskWhere(): Prisma.PatientWhereInput {
       { hasDiabetes: true },
       { hasHeart: true },
       { hasBloodIssue: true },
+      { hasContagiousDisease: true },
       { surgeries: { not: null } },
       { medications: { not: null } },
       { otherDiseases: { not: null } },
@@ -42,7 +43,7 @@ function buildMedicalRiskWhere(): Prisma.PatientWhereInput {
   };
 }
 
-export async function GET(request: NextRequest) {
+export const GET = withApiTiming("patients", async function GET(request: NextRequest) {
   try {
     const auth = await requireAuth("patients:read");
     if (auth.error) return auth.error;
@@ -69,6 +70,7 @@ export async function GET(request: NextRequest) {
           { fullName: { contains: q, mode: "insensitive" } },
           { tcNo: { contains: q, mode: "insensitive" } },
           { phone: { contains: q, mode: "insensitive" } },
+          { profession: { contains: q, mode: "insensitive" } },
         ],
       });
     }
@@ -82,7 +84,7 @@ export async function GET(request: NextRequest) {
     currentMonthStart.setDate(1);
     currentMonthStart.setHours(0, 0, 0, 0);
 
-    const [patients, total, summaryTotal, summaryMedicalRisk, summaryMissingInfo, summaryNewThisMonth] = await Promise.all([
+    const [patients, total, summaryTotal, summaryNewThisMonth, summaryMedicalRisk, summaryMissingInfo] = await Promise.all([
       prisma.patient.findMany({
         where,
         select: {
@@ -90,6 +92,7 @@ export async function GET(request: NextRequest) {
           fullName: true,
           tcNo: true,
           phone: true,
+          profession: true,
           gender: true,
           birthDate: true,
           insurance: true,
@@ -102,6 +105,8 @@ export async function GET(request: NextRequest) {
           hasDiabetes: true,
           hasHeart: true,
           hasBloodIssue: true,
+          hasContagiousDisease: true,
+          contagiousDiseaseNote: true,
           surgeries: true,
           medications: true,
           otherDiseases: true,
@@ -114,9 +119,9 @@ export async function GET(request: NextRequest) {
       }),
       prisma.patient.count({ where }),
       prisma.patient.count({ where: tenantWhere }),
+      prisma.patient.count({ where: { AND: [tenantWhere, { createdAt: { gte: currentMonthStart } }] } }),
       prisma.patient.count({ where: { AND: [tenantWhere, buildMedicalRiskWhere()] } }),
       prisma.patient.count({ where: { AND: [tenantWhere, buildMissingInfoWhere()] } }),
-      prisma.patient.count({ where: { AND: [tenantWhere, { createdAt: { gte: currentMonthStart } }] } }),
     ]);
 
     const hidePhone = shouldHidePatientPhone(auth.user.role);
@@ -142,7 +147,7 @@ export async function GET(request: NextRequest) {
     console.error("GET /api/patients failed:", error);
     return NextResponse.json({ message: "Hasta listesi yüklenemedi. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });
   }
-}
+});
 
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("patients:write");

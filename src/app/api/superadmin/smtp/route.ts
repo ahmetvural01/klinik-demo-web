@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import nodemailer from "nodemailer";
 
@@ -58,6 +58,7 @@ export async function PUT(request: NextRequest) {
     },
   });
 
+  await writeAudit(auth.user.id, "SUPERADMIN_SMTP_UPDATE", `SMTP ayarı güncellendi: ${config.host}:${config.port} / ${config.fromEmail} / ${config.isActive ? "aktif" : "pasif"}`);
   return NextResponse.json({ ...config, password: config.password ? "••••••••" : "" });
 }
 
@@ -92,9 +93,11 @@ export async function POST(request: NextRequest) {
       html: "<p>Bu bir test e-postasıdır. SMTP yapılandırmanız başarılı!</p>",
     });
 
+    await writeAudit(auth.user.id, "SUPERADMIN_SMTP_TEST_SEND", `SMTP test e-postası gönderildi: ${body.testTo}`);
     return NextResponse.json({ success: true, message: `Test e-postası ${body.testTo} adresine gönderildi` });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
+    await writeAudit(auth.user.id, "SUPERADMIN_SMTP_TEST_FAILED", `SMTP test başarısız: ${body.testTo || "-"} / ${message}`);
     return NextResponse.json({ success: false, message }, { status: 422 });
   }
 }

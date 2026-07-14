@@ -43,6 +43,58 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
         : { patientId: { not: null } },
     });
 
+    const examDoctorRows = await prisma.examination.findMany({
+      where: institutionId
+        ? { ...treatmentOnlyWhere, patient: { institutionId } }
+        : treatmentOnlyWhere,
+      select: {
+        patientId: true,
+        doctorId: true,
+        doctor: { select: { fullName: true } },
+      },
+      distinct: ["patientId", "doctorId"],
+    });
+
+    const latestTreatmentRows = await prisma.examination.findMany({
+      where: institutionId
+        ? { ...treatmentOnlyWhere, patient: { institutionId } }
+        : treatmentOnlyWhere,
+      select: {
+        patientId: true,
+        diagnosedAt: true,
+      },
+      orderBy: { diagnosedAt: "desc" },
+      distinct: ["patientId"],
+    });
+
+    const latestPayments = await prisma.payment.findMany({
+      where: institutionId
+        ? { patientId: { not: null }, patient: { institutionId } }
+        : { patientId: { not: null } },
+      select: { patientId: true, createdAt: true },
+      orderBy: { createdAt: "desc" },
+      distinct: ["patientId"],
+    });
+
+    const doctorMap = new Map<string, Set<string>>();
+    const treatmentDateMap = new Map<string, Date>();
+    examDoctorRows.forEach((exam) => {
+      const doctors = doctorMap.get(exam.patientId) || new Set<string>();
+      if (exam.doctor?.fullName) doctors.add(exam.doctor.fullName);
+      doctorMap.set(exam.patientId, doctors);
+    });
+
+    latestTreatmentRows.forEach((exam) => {
+      const current = treatmentDateMap.get(exam.patientId);
+      if (!current || exam.diagnosedAt > current) treatmentDateMap.set(exam.patientId, exam.diagnosedAt);
+    });
+
+    const paymentDateMap = new Map<string, Date>();
+    latestPayments.forEach((payment) => {
+      if (!payment.patientId) return;
+      paymentDateMap.set(payment.patientId, payment.createdAt);
+    });
+
     // Patient bilgileri
     const patientIds = [...new Set(examGroups.map((e) => e.patientId))];
     const patients = await prisma.patient.findMany({
@@ -79,6 +131,9 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
           odenen,
           bakiye,
           discountRate: p.discountRate,
+          doctorNames: Array.from(doctorMap.get(e.patientId) || []),
+          lastPaymentAt: paymentDateMap.get(e.patientId)?.toISOString() || null,
+          lastTreatmentAt: treatmentDateMap.get(e.patientId)?.toISOString() || null,
         };
       })
       .filter((r): r is NonNullable<typeof r> => r !== null && r.bakiye > 0.5)

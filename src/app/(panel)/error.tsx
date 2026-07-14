@@ -20,7 +20,7 @@ export default function PanelError({
         <p className="text-gray-500 mb-6 text-sm">{error.message || "Beklenmeyen bir hata meydana geldi."}</p>
         <button
           onClick={reset}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm"
+          className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-strong transition text-sm"
         >
           Tekrar Dene
         </button>

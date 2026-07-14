@@ -24,7 +24,7 @@ export default function GlobalError({
             </p>
             <button
               onClick={reset}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm"
+              className="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary-strong transition text-sm"
             >
               Tekrar Dene
             </button>

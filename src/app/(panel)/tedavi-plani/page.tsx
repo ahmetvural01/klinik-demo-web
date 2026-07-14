@@ -1,7 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
+import { Plus } from "lucide-react";
+import { cachedGet } from "@/lib/client-cache";
+import { Button } from "@/components/ui/Button";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Modal } from "@/components/ui/Modal";
 
 type PlanStatus = "PLANLANDI" | "DEVAM_EDIYOR" | "TAMAMLANDI" | "IPTAL";
 type StepStatus = "BEKLIYOR" | "YAPILDI" | "IPTAL";
@@ -21,17 +25,17 @@ type Plan = {
 type Patient = { id: string; fullName: string; tcNo: string };
 type Doctor  = { id: string; fullName: string; role: string; profile?: { hideAsDoctor?: boolean | null } | null };
 
-const STATUS_CFG: Record<PlanStatus, { label: string; bg: string; text: string }> = {
-  PLANLANDI:    { label: "Planlandı",    bg: "bg-blue-100",   text: "text-blue-700" },
-  DEVAM_EDIYOR: { label: "Devam Ediyor", bg: "bg-amber-100",  text: "text-amber-700" },
-  TAMAMLANDI:   { label: "Tamamlandı",   bg: "bg-emerald-100",text: "text-emerald-700" },
-  IPTAL:        { label: "İptal",        bg: "bg-red-100",    text: "text-red-600" },
+const STATUS_CFG: Record<PlanStatus, { label: string; bg: string; text: string; tone: BadgeTone }> = {
+  PLANLANDI:    { label: "Planlandı",    bg: "bg-primary/10",   text: "text-primary",   tone: "info" },
+  DEVAM_EDIYOR: { label: "Devam Ediyor", bg: "bg-amber-100",  text: "text-amber-700",  tone: "warning" },
+  TAMAMLANDI:   { label: "Tamamlandı",   bg: "bg-emerald-100",text: "text-emerald-700",tone: "success" },
+  IPTAL:        { label: "İptal",        bg: "bg-red-100",    text: "text-red-600",    tone: "critical" },
 };
 
-const STEP_STATUS: Record<StepStatus, { label: string; cls: string }> = {
-  BEKLIYOR: { label: "Bekliyor", cls: "bg-slate-100 text-slate-600" },
-  YAPILDI:  { label: "Yapıldı",  cls: "bg-emerald-100 text-emerald-700" },
-  IPTAL:    { label: "İptal",    cls: "bg-red-100 text-red-600" },
+const STEP_STATUS: Record<StepStatus, { label: string; tone: BadgeTone }> = {
+  BEKLIYOR: { label: "Bekliyor", tone: "neutral" },
+  YAPILDI:  { label: "Yapıldı",  tone: "success" },
+  IPTAL:    { label: "İptal",    tone: "critical" },
 };
 
 const CURRENCY = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 0 });
@@ -57,9 +61,6 @@ export default function TedaviPlaniPage() {
 
   useEffect(() => { setPage(1); }, [filter]);
 
-  useEscapeClose(() => setSelected(null), Boolean(selected));
-  useEscapeClose(() => setShowNew(false), showNew);
-
   // New plan form
   const [patients,  setPatients]  = useState<Patient[]>([]);
   const [doctors,   setDoctors]   = useState<Doctor[]>([]);
@@ -69,7 +70,7 @@ export default function TedaviPlaniPage() {
 
   useEffect(() => {
     fetch("/api/patients?limit=200").then(r => r.json()).then(d => setPatients(Array.isArray(d) ? d : (d.patients || []))).catch(() => {});
-    fetch("/api/staff").then(r => r.json()).then(d => setDoctors((Array.isArray(d) ? d : []).filter((u: Doctor) => u.role === "DOKTOR" || (u.role === "YONETICI" && u.profile?.hideAsDoctor === false)))).catch(() => {});
+    cachedGet<unknown>("/api/staff", 60_000).then(d => setDoctors((Array.isArray(d) ? d : []).filter((u: Doctor) => u.role === "DOKTOR" || (u.role === "YONETICI" && u.profile?.hideAsDoctor === false)))).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -122,7 +123,7 @@ export default function TedaviPlaniPage() {
     fetchPlans();
   }
 
-  const inp = "rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20";
+  const inp = "rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20";
 
   return (
     <div className="space-y-5">
@@ -133,10 +134,9 @@ export default function TedaviPlaniPage() {
           <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{stats.total} plan</span>
           <span className="rounded-full bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-700">{stats.byStatus.DEVAM_EDIYOR} devam ediyor</span>
         </div>
-        <button onClick={() => setShowNew(true)} className="flex items-center gap-2 rounded-xl bg-primary px-4 py-2.5 text-sm font-bold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700">
-          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        <Button variant="primary" icon={Plus} onClick={() => setShowNew(true)}>
           Yeni Tedavi Planı
-        </button>
+        </Button>
       </div>
 
       {/* Filters */}
@@ -157,8 +157,14 @@ export default function TedaviPlaniPage() {
         {(["PLANLANDI","DEVAM_EDIYOR","TAMAMLANDI","IPTAL"] as PlanStatus[]).map(s => {
           const cfg = STATUS_CFG[s];
           const count = stats.byStatus[s] || 0;
+          const cardBorderClass: Record<PlanStatus, string> = {
+            PLANLANDI: "bg-primary/5 border-primary/15",
+            DEVAM_EDIYOR: "bg-amber-50 border-amber-100",
+            TAMAMLANDI: "bg-emerald-50 border-emerald-100",
+            IPTAL: "bg-red-50 border-red-100",
+          };
           return (
-            <div key={s} className={`rounded-2xl border p-4 ${cfg.bg.replace("100","50")} border-${cfg.bg.includes("blue") ? "blue" : cfg.bg.includes("amber") ? "amber" : cfg.bg.includes("emerald") ? "emerald" : "red"}-100`}>
+            <div key={s} className={`rounded-2xl border p-4 ${cardBorderClass[s]}`}>
               <p className={`text-[11px] font-bold uppercase tracking-wider ${cfg.text}`}>{cfg.label}</p>
               <p className={`mt-1 text-2xl font-bold ${cfg.text}`}>{count}</p>
             </div>
@@ -179,13 +185,13 @@ export default function TedaviPlaniPage() {
             const done = plan.steps.filter(s => s.status === "YAPILDI").length;
             const pct  = plan.steps.length > 0 ? Math.round((done / plan.steps.length) * 100) : 0;
             return (
-              <button key={plan.id} onClick={() => setSelected(plan)} className="cursor-pointer rounded-2xl border border-slate-100 bg-white p-5 text-left shadow-sm transition hover:border-blue-100 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary/30">
+              <button key={plan.id} onClick={() => setSelected(plan)} className="cursor-pointer rounded-2xl border border-slate-100 bg-white p-5 text-left shadow-sm transition hover:border-primary/20 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary/30">
                 <div className="flex items-start justify-between gap-2 mb-3">
                   <div>
                     <h3 className="font-bold text-slate-900 leading-tight">{plan.title}</h3>
                     <p className="mt-0.5 text-xs text-slate-500">{plan.patient.fullName}</p>
                   </div>
-                  <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${cfg.bg} ${cfg.text}`}>{cfg.label}</span>
+                  <Badge tone={cfg.tone} size="sm">{cfg.label}</Badge>
                 </div>
                 <div className="mb-3">
                   <div className="mb-1 flex items-center justify-between text-[11px] text-slate-500">
@@ -216,129 +222,114 @@ export default function TedaviPlaniPage() {
       )}
 
       {/* Detail Modal */}
-      {selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setSelected(null))}>
-          <div className="w-full max-w-2xl rounded-2xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-              <div>
-                <h2 className="text-lg font-black text-slate-900">{selected.title}</h2>
-                <p className="text-sm text-slate-500">{selected.patient.fullName} · {selected.doctor.fullName}</p>
-              </div>
-              <button onClick={() => setSelected(null)} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100">
-                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
+      <Modal
+        open={Boolean(selected)}
+        onClose={() => setSelected(null)}
+        title={selected?.title ?? ""}
+        description={selected ? `${selected.patient.fullName} · ${selected.doctor.fullName}` : undefined}
+        size="lg"
+      >
+        {selected && (
+          <div className="space-y-5">
+            {/* Status control */}
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+              {(["PLANLANDI","DEVAM_EDIYOR","TAMAMLANDI","IPTAL"] as PlanStatus[]).map(s => (
+                <button key={s} onClick={() => updateStatus(selected.id, s)} className={`rounded-lg px-3 py-2 text-sm font-bold transition ${selected.status === s ? "bg-primary text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
+                  {STATUS_CFG[s].label}
+                </button>
+              ))}
             </div>
-            <div className="p-6 space-y-5">
-              {/* Status control */}
-              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-                {(["PLANLANDI","DEVAM_EDIYOR","TAMAMLANDI","IPTAL"] as PlanStatus[]).map(s => (
-                  <button key={s} onClick={() => updateStatus(selected.id, s)} className={`rounded-lg px-3 py-2 text-sm font-bold transition ${selected.status === s ? "bg-primary text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
-                    {STATUS_CFG[s].label}
-                  </button>
-                ))}
-              </div>
-              {/* Steps */}
-              <div>
-                <h3 className="mb-3 text-sm font-bold text-slate-800">Tedavi Adımları</h3>
-                <div className="space-y-2">
-                  {selected.steps.map(step => {
-                    const sCfg = STEP_STATUS[step.status] || STEP_STATUS.BEKLIYOR;
-                    return (
-                      <div key={step.id} className="grid gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] sm:items-center">
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white border border-slate-200 text-xs font-bold text-slate-600">{step.order}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-semibold text-slate-800">{step.treatmentName}</p>
-                          {step.toothNo && <p className="text-[11px] text-slate-400">Diş: {step.toothNo}</p>}
-                        </div>
-                        <span className="shrink-0 text-xs font-bold text-slate-600">{CURRENCY.format(step.amount)}</span>
-                        <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${sCfg.cls}`}>{sCfg.label}</span>
-                        <select value={step.status} onChange={e => updateStep(selected.id, step.id, e.target.value as StepStatus)}
-                          disabled={selected.status === "TAMAMLANDI" || selected.status === "IPTAL"}
-                          title={selected.status === "TAMAMLANDI" || selected.status === "IPTAL" ? "Tamamlanmış/iptal edilmiş planın adımları değiştirilemez — önce planı yeniden açın" : undefined}
-                          className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-slate-100">
-                          <option value="BEKLIYOR">Bekliyor</option>
-                          <option value="YAPILDI">Yapıldı</option>
-                          <option value="IPTAL">İptal</option>
-                        </select>
+            {/* Steps */}
+            <div>
+              <h3 className="mb-3 text-sm font-bold text-slate-800">Tedavi Adımları</h3>
+              <div className="space-y-2">
+                {selected.steps.map(step => {
+                  const sCfg = STEP_STATUS[step.status] || STEP_STATUS.BEKLIYOR;
+                  return (
+                    <div key={step.id} className="grid gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] sm:items-center">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white border border-slate-200 text-xs font-bold text-slate-600">{step.order}</span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold text-slate-800">{step.treatmentName}</p>
+                        {step.toothNo && <p className="text-[11px] text-slate-400">Diş: {step.toothNo}</p>}
                       </div>
-                    );
-                  })}
-                </div>
+                      <span className="shrink-0 text-xs font-bold text-slate-600">{CURRENCY.format(step.amount)}</span>
+                      <Badge tone={sCfg.tone} size="sm">{sCfg.label}</Badge>
+                      <select value={step.status} onChange={e => updateStep(selected.id, step.id, e.target.value as StepStatus)}
+                        disabled={selected.status === "TAMAMLANDI" || selected.status === "IPTAL"}
+                        title={selected.status === "TAMAMLANDI" || selected.status === "IPTAL" ? "Tamamlanmış/iptal edilmiş planın adımları değiştirilemez — önce planı yeniden açın" : undefined}
+                        className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-slate-100">
+                        <option value="BEKLIYOR">Bekliyor</option>
+                        <option value="YAPILDI">Yapıldı</option>
+                        <option value="IPTAL">İptal</option>
+                      </select>
+                    </div>
+                  );
+                })}
               </div>
-              {selected.totalCost && (
-                <div className="rounded-xl bg-blue-50 px-4 py-3 flex items-center justify-between">
-                  <span className="text-sm font-semibold text-blue-700">Toplam Tutar</span>
-                  <span className="text-xl font-black text-blue-800">{CURRENCY.format(selected.totalCost)}</span>
-                </div>
-              )}
-              {selected.notes && <p className="text-sm text-slate-600 bg-slate-50 rounded-xl p-3">{selected.notes}</p>}
             </div>
+            {selected.totalCost && (
+              <div className="rounded-xl bg-primary/5 px-4 py-3 flex items-center justify-between">
+                <span className="text-sm font-semibold text-primary">Toplam Tutar</span>
+                <span className="text-xl font-black text-primary-strong">{CURRENCY.format(selected.totalCost)}</span>
+              </div>
+            )}
+            {selected.notes && <p className="text-sm text-slate-600 bg-slate-50 rounded-xl p-3">{selected.notes}</p>}
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
       {/* New Plan Modal */}
-      {showNew && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowNew(false))}>
-          <div className="w-full max-w-xl rounded-2xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-              <h2 className="text-lg font-black text-slate-900">Yeni Tedavi Planı</h2>
-              <button onClick={() => setShowNew(false)} className="rounded-lg p-2 text-slate-400 transition hover:bg-slate-100">
-                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
+      <Modal open={showNew} onClose={() => setShowNew(false)} title="Yeni Tedavi Planı" size="md">
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta</label>
+              <select value={newPlan.patientId} onChange={e => setNewPlan(p => ({ ...p, patientId: e.target.value }))} className={inp + " w-full"}>
+                <option value="">Seçiniz…</option>
+                {patients.map(p => <option key={p.id} value={p.id}>{p.fullName}</option>)}
+              </select>
             </div>
-            <div className="p-6 space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta</label>
-                  <select value={newPlan.patientId} onChange={e => setNewPlan(p => ({ ...p, patientId: e.target.value }))} className={inp + " w-full"}>
-                    <option value="">Seçiniz…</option>
-                    {patients.map(p => <option key={p.id} value={p.id}>{p.fullName}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor</label>
-                  <select value={newPlan.doctorId} onChange={e => setNewPlan(p => ({ ...p, doctorId: e.target.value }))} className={inp + " w-full"}>
-                    <option value="">Seçiniz…</option>
-                    {doctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Plan Başlığı</label>
-                <input value={newPlan.title} onChange={e => setNewPlan(p => ({ ...p, title: e.target.value }))} placeholder="Örn: İmplant + Kuron Tedavisi" className={inp + " w-full"} />
-              </div>
-              <div>
-                <div className="mb-2 flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-600">Tedavi Adımları</label>
-                  <button onClick={() => setNewSteps(s => [...s, { treatmentName: "", toothNo: "", amount: "" }])} className="rounded-lg border border-blue-200 px-3 py-1.5 text-xs font-semibold text-primary hover:bg-blue-50">Adım Ekle</button>
-                </div>
-                <div className="space-y-2">
-                  {newSteps.map((step, i) => (
-                    <div key={i} className="grid gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[auto_minmax(0,1fr)_90px_110px_auto] sm:items-center">
-                      <span className="shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-500">{i + 1}</span>
-                      <input value={step.treatmentName} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, treatmentName: e.target.value } : x))} placeholder="Tedavi adı" className={inp + " flex-1"} />
-                      <input value={step.toothNo} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, toothNo: e.target.value } : x))} placeholder="Diş no" className={inp + " w-full"} />
-                      <input type="number" value={step.amount} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} placeholder="Tutar" className={inp + " w-full"} />
-                      {newSteps.length > 1 && <button onClick={() => setNewSteps(s => s.filter((_, j) => j !== i))} className="rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50">Sil</button>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Notlar</label>
-                <textarea value={newPlan.notes} onChange={e => setNewPlan(p => ({ ...p, notes: e.target.value }))} rows={2} className={inp + " w-full resize-none"} placeholder="İsteğe bağlı not…" />
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button onClick={() => setShowNew(false)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">İptal</button>
-                <button onClick={submitNew} disabled={saving} className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-60">
-                  {saving ? "Kaydediliyor…" : "Oluştur"}
-                </button>
-              </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor</label>
+              <select value={newPlan.doctorId} onChange={e => setNewPlan(p => ({ ...p, doctorId: e.target.value }))} className={inp + " w-full"}>
+                <option value="">Seçiniz…</option>
+                {doctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+              </select>
             </div>
           </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Plan Başlığı</label>
+            <input value={newPlan.title} onChange={e => setNewPlan(p => ({ ...p, title: e.target.value }))} placeholder="Örn: İmplant + Kuron Tedavisi" className={inp + " w-full"} />
+          </div>
+          <div>
+            <div className="mb-2 flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-600">Tedavi Adımları</label>
+              <Button variant="ghost" size="sm" onClick={() => setNewSteps(s => [...s, { treatmentName: "", toothNo: "", amount: "" }])}>Adım Ekle</Button>
+            </div>
+            <div className="space-y-2">
+              {newSteps.map((step, i) => (
+                <div key={i} className="grid gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[auto_minmax(0,1fr)_90px_110px_auto] sm:items-center">
+                  <span className="shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-500">{i + 1}</span>
+                  <input value={step.treatmentName} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, treatmentName: e.target.value } : x))} placeholder="Tedavi adı" className={inp + " flex-1"} />
+                  <input value={step.toothNo} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, toothNo: e.target.value } : x))} placeholder="Diş no" className={inp + " w-full"} />
+                  <input type="number" value={step.amount} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} placeholder="Tutar" className={inp + " w-full"} />
+                  {newSteps.length > 1 && <Button variant="danger" size="sm" onClick={() => setNewSteps(s => s.filter((_, j) => j !== i))}>Sil</Button>}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Notlar</label>
+            <textarea value={newPlan.notes} onChange={e => setNewPlan(p => ({ ...p, notes: e.target.value }))} rows={2} className={inp + " w-full resize-none"} placeholder="İsteğe bağlı not…" />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <Button variant="secondary" onClick={() => setShowNew(false)} fullWidth>İptal</Button>
+            <Button variant="primary" onClick={() => void submitNew()} loading={saving} fullWidth>
+              Oluştur
+            </Button>
+          </div>
         </div>
-      )}
+      </Modal>
     </div>
   );
 }

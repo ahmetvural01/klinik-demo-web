@@ -3,6 +3,12 @@ import { rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import "./ensure-postgres.mjs";
 
+// `dev:next` bilerek `--turbo` KULLANMIYOR: Turbopack, en büyük sayfamızda
+// (hasta-detay, ssr:false ile tembel yüklenen ~5000 satırlık modül) her
+// istekte ~3sn'lik sabit bir gecikme yaratıyordu — sayfa zaten derlenmiş
+// olsa bile. Aynı senaryo düz webpack `next dev` ile ilk istekten sonra
+// <100ms'e düşüyor (üretim derlemesiyle aynı hız). Ölçüldü, tekrarlanabilir.
+
 const PORT = process.env.PORT || "3000";
 let stopping = false;
 let restartCount = 0;

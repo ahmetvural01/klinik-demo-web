@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { cachedGet } from "@/lib/client-cache";
 
 type Doctor = { id: string; fullName: string; role?: string; institutionId?: string; profile?: { hideAsDoctor?: boolean | null } | null };
 type FinanceData = { receivable: number; received: number; toReceive: number; totalTreatments: number; labCost: number; earned: number; topExaminations: any[]; topTeeth: any[]; payments: any[]; patientPayments: any[] };
@@ -17,13 +18,12 @@ export default function FinansPage() {
   const [userRole, setUserRole] = useState("");
 
   useEffect(() => {
-    fetch("/api/staff")
-      .then((r) => r.json())
+    cachedGet<Doctor[]>("/api/staff", 60_000)
       .then((s) => {
-        const doctors = s.filter((x: Doctor) => x.role === "DOKTOR" || (x.role === "YONETICI" && x.profile?.hideAsDoctor === false));
+        const doctors = (Array.isArray(s) ? s : []).filter((x: Doctor) => x.role === "DOKTOR" || (x.role === "YONETICI" && x.profile?.hideAsDoctor === false));
         setStaff(doctors);
       });
-    fetch("/api/auth/me").then(r=>r.json()).then(d=>{
+    cachedGet<{ role?: string; id?: string }>("/api/auth/me", 60_000).then(d=>{
       const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
       const effectiveRole = preview || d?.role || "";
       if (effectiveRole) setUserRole(effectiveRole);

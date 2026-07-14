@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("superadmin");
@@ -19,10 +19,12 @@ export async function POST(request: NextRequest) {
   }
 
   if (password !== masterPassword) {
+    await writeAudit(auth.user.id, "SUPERADMIN_SMTP_UNLOCK_FAILED", "SMTP kilit açma denemesi başarısız");
     return NextResponse.json({ message: "Şifre hatalı" }, { status: 401 });
   }
 
   // Token: kısa süreli bir hash döndür (client sessionStorage'da saklar)
   const token = Buffer.from(`smtp-unlocked:${Date.now()}`).toString("base64");
+  await writeAudit(auth.user.id, "SUPERADMIN_SMTP_UNLOCK", "SMTP şifre alanı geçici olarak açıldı");
   return NextResponse.json({ token });
 }

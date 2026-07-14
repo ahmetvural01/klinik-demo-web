@@ -16,8 +16,12 @@ export async function GET(request: NextRequest) {
   const limit     = 50;
   const skip      = (page - 1) * limit;
 
-  // Süperadmin oversight paneli: kendi işlemleri ve ghost oturumları dahil TÜM kayıtlar görünür.
-  const where: Record<string, unknown> = {};
+  // Bu ekran superadmin'in kendi hesap verimliliği/uyum denetimi içindir — kurum
+  // bazlı /api/logs'un aksine, superadmin/ghost işlemlerini DIŞLAMAZ; tam tersine
+  // asıl amacı bunları görünür kılmaktır (bkz. src/lib/api.ts writeAudit).
+  const where: Record<string, unknown> = {
+    user: { role: { not: "SUPERADMIN" } },
+  };
   if (userId) where.userId = userId;
   if (search) {
     where.OR = [

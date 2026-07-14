@@ -1,16 +1,19 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import { TableRowsSkeleton } from "@/components/ui/ListSkeleton";
+import { Eye, Plus, Download } from "lucide-react";
 import { downloadCsv } from "@/lib/csv-export";
 import { useSlashFocus } from "@/lib/use-slash-focus";
-import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
+import { showToastSafe } from "@/lib/toast-client";
+import { Button, IconButton } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { Badge } from "@/components/ui/Badge";
+import { FormField, inputErrorClass } from "@/components/ui/FormField";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import {
-  usePurchaseModals, fmt, formLabel, formInput, modalAction,
+  usePurchaseModals, fmt,
   type StockItem,
 } from "./purchase-shared";
-
-type Toast = { type: "success" | "error" | "info"; text: string };
 
 type FirmaKontakt = { id: string; ad: string };
 
@@ -57,11 +60,9 @@ export default function FirmaPage() {
   });
   const [loading, setLoading] = useState(false);
   const [isSubmittingFirma, setIsSubmittingFirma] = useState(false);
-  const [toast, setToast] = useState<Toast | null>(null);
 
-  const showToast = useCallback((type: Toast["type"], text: string) => {
-    setToast({ type, text });
-    setTimeout(() => setToast(null), 3500);
+  const showToast = useCallback((type: "success" | "error" | "info", text: string) => {
+    showToastSafe({ message: text, type });
   }, []);
 
   const [search, setSearch] = useState("");
@@ -69,7 +70,6 @@ export default function FirmaPage() {
   useSlashFocus(searchInputRef);
 
   const [showAddFirma, setShowAddFirma] = useState(false);
-  useEscapeClose(() => setShowAddFirma(false), showAddFirma);
   const [firmaForm, setFirmaForm] = useState({
     name: "", phone: "", iban: "", ibanName: "", notes: "",
     kategori: "TEDARICI", paymentTerms: "NET_30"
@@ -196,162 +196,143 @@ export default function FirmaPage() {
     setIsSubmittingFirma(false);
   };
 
+  const firmaColumns: ListTableColumn<Firma>[] = [
+    {
+      key: "name",
+      header: "Firma",
+      cellClassName: "max-w-[280px]",
+      render: (f) => (
+        <>
+          <Link href={`/firma-detay?id=${f.id}`} className="block truncate font-black text-slate-900 hover:text-primary">{f.name}</Link>
+          {f.notes && <p className="mt-0.5 truncate text-xs text-slate-400">{f.notes}</p>}
+        </>
+      ),
+    },
+    {
+      key: "kategori",
+      header: "Tür",
+      render: (f) => <Badge tone="neutral">{FIRMA_KATEGORILERI[f.kategori] || f.kategori}</Badge>,
+    },
+    {
+      key: "iletisim",
+      header: "İletişim",
+      render: (f) => (
+        <div className="text-xs text-slate-500">
+          <div>{f.phone || "-"}</div>
+          {f.primaryKontakt?.ad ? <div className="mt-0.5 truncate">{f.primaryKontakt.ad}</div> : null}
+        </div>
+      ),
+    },
+    { key: "borc", header: "Borç", align: "right", render: (f) => <span className="font-semibold text-slate-700">{fmt(f.borc)}</span> },
+    { key: "odenen", header: "Ödenen", align: "right", render: (f) => <span className="font-semibold text-emerald-700">{fmt(f.odenen)}</span> },
+    { key: "bakiye", header: "Kalan", align: "right", render: (f) => <span className="font-black text-slate-900">{fmt(f.bakiye)}</span> },
+    {
+      key: "islem",
+      header: "İşlem",
+      align: "right",
+      render: (f) => (
+        <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+          <IconButton icon={Eye} title="Detay" href={`/firma-detay?id=${f.id}`} />
+          {f.kategori === "LAB" ? (
+            <Button variant="secondary" size="sm" href={`/lab?new=1&labName=${encodeURIComponent(f.name)}`}>Lab Siparişi Oluştur</Button>
+          ) : (
+            <Button variant="danger" size="sm" onClick={() => purchaseManager.openAddPurchase(f.id)}>Alım</Button>
+          )}
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div className="space-y-3">
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed right-5 top-5 z-[100] flex items-center gap-2.5 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg transition ${
-          toast.type === "success" ? "bg-emerald-500" : toast.type === "error" ? "bg-red-500" : "bg-blue-500"
-        }`}>
-          {toast.text}
-        </div>
-      )}
-
       <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-lg font-black text-slate-900">Satın Alma & Tedarikçiler</h1>
-            <p className="mt-0.5 text-xs text-slate-500">Firmalar, laboratuvarlar ve cari bakiye takibi.</p>
+            <h1 className="text-lg font-black text-slate-900">Satın Alma</h1>
           </div>
-          <button onClick={() => purchaseManager.openAddPurchase()} className="rounded-lg bg-slate-950 px-3 py-2 text-xs font-bold text-white shadow-sm hover:bg-slate-800">
-            Malzeme Alımı Kaydet
-          </button>
+          <Button variant="secondary" onClick={() => purchaseManager.openAddPurchase()}>
+            Satın Alma Kaydet
+          </Button>
         </div>
       </div>
 
       <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           <input ref={searchInputRef} value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Firma veya tedarikçi ara ( / )" className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400" />
-          <button onClick={() => setShowAddFirma(true)}
-            className="shrink-0 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-white shadow-sm shadow-blue-200 transition hover:bg-blue-700">
-            + Yeni Firma
-          </button>
-          <button onClick={exportFirmasCsv} disabled={filteredFirmas.length === 0}
-            className="shrink-0 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
+            placeholder="Firma veya tedarikçi ara ( / )" className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
+          <Button icon={Plus} onClick={() => setShowAddFirma(true)}>
+            Yeni Firma
+          </Button>
+          <Button variant="secondary" icon={Download} onClick={exportFirmasCsv} disabled={filteredFirmas.length === 0}>
             CSV
-          </button>
+          </Button>
         </div>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-700">{firmas.length} firma</span>
-          <span className="rounded-full bg-red-50 px-2 py-1 text-[11px] font-bold text-red-700">Borç {fmt(topBorc)}</span>
-          <span className="rounded-full bg-emerald-50 px-2 py-1 text-[11px] font-bold text-emerald-700">Ödenen {fmt(topOdeme)}</span>
-          <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-700">Kalan {fmt(topBakiye)}</span>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-bold text-slate-500">
+          <span>{filteredFirmas.length}/{firmas.length} firma</span>
+          <span>Borç {fmt(topBorc)}</span>
+          <span>Ödenen {fmt(topOdeme)}</span>
+          <span className={topBakiye > 0 ? "text-red-700" : "text-emerald-700"}>Kalan {fmt(topBakiye)}</span>
         </div>
       </div>
 
-          {loading && filteredFirmas.length === 0 ? (
-            <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-              <table className="min-w-full text-left text-sm">
-                <tbody>
-                  <TableRowsSkeleton rows={6} columns={7} />
-                </tbody>
-              </table>
-            </div>
-          ) : filteredFirmas.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-slate-200 bg-white py-10 text-center text-sm text-slate-500">Firma bulunamadı</div>
-          ) : (
-            <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-left text-sm">
-                  <thead className="bg-slate-50 text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                    <tr>
-                      <th className="px-3 py-3">Firma</th>
-                      <th className="px-3 py-3">Tür</th>
-                      <th className="px-3 py-3">İletişim</th>
-                      <th className="px-3 py-3 text-right">Borç</th>
-                      <th className="px-3 py-3 text-right">Ödenen</th>
-                      <th className="px-3 py-3 text-right">Kalan</th>
-                      <th className="px-3 py-3 text-right">İşlem</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {filteredFirmas.map(f => (
-                        <tr key={f.id} className="transition hover:bg-slate-50">
-                          <td className="max-w-[280px] px-3 py-3">
-                            <Link href={`/firma-detay?id=${f.id}`} className="block truncate font-black text-slate-900 hover:text-primary">{f.name}</Link>
-                            {f.notes && <p className="mt-0.5 truncate text-xs text-slate-400">{f.notes}</p>}
-                          </td>
-                          <td className="px-3 py-3">
-                            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">{FIRMA_KATEGORILERI[f.kategori] || f.kategori}</span>
-                          </td>
-                          <td className="px-3 py-3 text-xs text-slate-500">
-                            <div>{f.phone || "-"}</div>
-                            {f.primaryKontakt?.ad ? <div className="mt-0.5 truncate">{f.primaryKontakt.ad}</div> : null}
-                          </td>
-                          <td className="px-3 py-3 text-right font-semibold text-slate-700">{fmt(f.borc)}</td>
-                          <td className="px-3 py-3 text-right font-semibold text-emerald-700">{fmt(f.odenen)}</td>
-                          <td className="px-3 py-3 text-right">
-                            <div className="font-black text-slate-900">{fmt(f.bakiye)}</div>
-                          </td>
-                          <td className="px-3 py-3">
-                            <div className="flex justify-end gap-2">
-                              <Link href={`/firma-detay?id=${f.id}`}
-                                className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50">Detay</Link>
-                              {f.kategori === "LAB" ? (
-                                <Link href={`/lab?new=1&labName=${encodeURIComponent(f.name)}`}
-                                  className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-700">Lab İşi</Link>
-                              ) : (
-                                <button onClick={() => purchaseManager.openAddPurchase(f.id)}
-                                  className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-red-700">Alım</button>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-      {/* Modal: Firma Ekle */}
-      {showAddFirma && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" {...backdropClose(() => setShowAddFirma(false))}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg p-6 space-y-4">
-            <h3 className="text-xl font-black text-slate-900">Yeni Firma Ekle</h3>
-            {[
-              { key: "name", label: "Firma Adı *", placeholder: "" },
-              { key: "phone", label: "Telefon", placeholder: "" },
-              { key: "iban", label: "IBAN", placeholder: "TR00 0000 ..." },
-              { key: "ibanName", label: "IBAN Hesap Sahibi", placeholder: "" },
-            ].map(f => (
-              <div key={f.key}>
-                <label className={formLabel}>{f.label}</label>
-                <input value={(firmaForm as Record<string, string>)[f.key]}
-                  onChange={e => setFirmaForm({ ...firmaForm, [f.key]: e.target.value })}
-                  placeholder={f.placeholder}
-                  className={formInput} />
-              </div>
-            ))}
-            <div>
-              <div>
-                <label className={formLabel}>Firma Türü *</label>
-                <select
-                  value={firmaForm.kategori}
-                  onChange={(e) => setFirmaForm({ ...firmaForm, kategori: e.target.value })}
-                  className={formInput}
-                >
-                  {Object.entries(FIRMA_KATEGORILERI).map(([key, label]) => (
-                    <option key={key} value={key}>{label}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-            <div>
-              <label className={formLabel}>Notlar</label>
-              <textarea value={firmaForm.notes} onChange={e => setFirmaForm({ ...firmaForm, notes: e.target.value })}
-                rows={3} className={formInput} />
-            </div>
-            <div className="flex gap-2 pt-1">
-              <button onClick={() => setShowAddFirma(false)}
-                className={`${modalAction} border border-slate-200 text-slate-700 hover:bg-slate-50`}>Vazgeç</button>
-              <button onClick={handleAddFirma}
-                disabled={isSubmittingFirma}
-                className={`${modalAction} bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-60`}>{isSubmittingFirma ? "Kaydediliyor..." : "Kaydet"}</button>
-            </div>
-          </div>
+      <ListTable<Firma>
+        columns={firmaColumns}
+        rows={filteredFirmas}
+        rowKey={(f) => f.id}
+        loading={loading}
+        emptyText="Firma bulunamadı"
+      />
+
+      <Modal
+        open={showAddFirma}
+        onClose={() => setShowAddFirma(false)}
+        title="Yeni Firma Ekle"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowAddFirma(false)}>Vazgeç</Button>
+            <Button onClick={handleAddFirma} loading={isSubmittingFirma}>Kaydet</Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <FormField label="Firma Adı" required>
+            <input value={firmaForm.name}
+              onChange={e => setFirmaForm({ ...firmaForm, name: e.target.value })}
+              className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(false)}`} />
+          </FormField>
+          <FormField label="Telefon">
+            <input value={firmaForm.phone}
+              onChange={e => setFirmaForm({ ...firmaForm, phone: e.target.value })}
+              className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(false)}`} />
+          </FormField>
+          <FormField label="IBAN">
+            <input value={firmaForm.iban}
+              onChange={e => setFirmaForm({ ...firmaForm, iban: e.target.value })}
+              placeholder="TR00 0000 ..."
+              className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(false)}`} />
+          </FormField>
+          <FormField label="IBAN Hesap Sahibi">
+            <input value={firmaForm.ibanName}
+              onChange={e => setFirmaForm({ ...firmaForm, ibanName: e.target.value })}
+              className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(false)}`} />
+          </FormField>
+          <FormField label="Firma Türü" required>
+            <select
+              value={firmaForm.kategori}
+              onChange={(e) => setFirmaForm({ ...firmaForm, kategori: e.target.value })}
+              className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(false)}`}
+            >
+              {Object.entries(FIRMA_KATEGORILERI).map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Notlar">
+            <textarea value={firmaForm.notes} onChange={e => setFirmaForm({ ...firmaForm, notes: e.target.value })}
+              rows={3} className={`w-full rounded-lg border px-3 py-2 text-sm outline-none transition focus:ring-2 ${inputErrorClass(false)}`} />
+          </FormField>
         </div>
-      )}
+      </Modal>
 
       {purchaseManager.modals}
     </div>

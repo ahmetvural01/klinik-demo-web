@@ -4,21 +4,17 @@ import Link from "next/link";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  AlertTriangle,
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
-  BadgeCheck,
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  ClipboardList,
   Eye,
   Filter,
   Pencil,
   Phone,
   Search,
-  ShieldAlert,
   Trash2,
   UserPlus,
   X,
@@ -26,12 +22,14 @@ import {
 import { confirmDialog } from "@/lib/confirm-client";
 import { useSlashFocus } from "@/lib/use-slash-focus";
 import { ListRowSkeleton, TableRowsSkeleton } from "@/components/ui/ListSkeleton";
+import { cachedGet } from "@/lib/client-cache";
 
 type Patient = {
   id: string;
   tcNo: string;
   fullName: string;
   phone: string;
+  profession?: string | null;
   gender: string;
   birthDate?: string | null;
   insurance?: string | null;
@@ -44,6 +42,8 @@ type Patient = {
   hasDiabetes?: boolean;
   hasHeart?: boolean;
   hasBloodIssue?: boolean;
+  hasContagiousDisease?: boolean;
+  contagiousDiseaseNote?: string | null;
   surgeries?: string | null;
   medications?: string | null;
   otherDiseases?: string | null;
@@ -67,7 +67,7 @@ type PatientResponse = {
 };
 
 type AuthCache = { id?: string; fullName?: string; role?: string };
-type SortKey = "fullName" | "tcNo" | "phone" | "gender" | "birthDate" | "insurance" | "createdAt" | "updatedAt";
+type SortKey = "fullName" | "tcNo" | "phone" | "gender" | "birthDate" | "insurance" | "profession" | "createdAt" | "updatedAt";
 
 const PAGE_SIZES = [15, 25, 50, 100];
 
@@ -115,11 +115,6 @@ function hasMedicalRisk(patient: Patient) {
       patient.medications ||
       patient.otherDiseases,
   );
-}
-
-function hasMissingInfo(patient: Patient) {
-  const phoneMissing = patient.phone !== "***" && !patient.phone;
-  return !patient.tcNo || phoneMissing || !patient.gender || !patient.birthDate || !patient.address;
 }
 
 function patientInitials(name: string) {
@@ -180,8 +175,7 @@ function HastaContent() {
         return;
       }
       try {
-        const meRes = await fetch("/api/auth/me");
-        const me = await meRes.json().catch(() => ({}));
+        const me = await cachedGet<AuthCache | null>("/api/auth/me", 60_000);
         if (me?.role) setUserRole(me.role);
       } catch {}
     };
@@ -306,44 +300,34 @@ function HastaContent() {
 
   const visibleSummary = useMemo(
     () => [
-      { label: "Toplam Hasta", value: summary?.total ?? total, icon: ClipboardList, color: "text-slate-700" },
-      { label: "Medikal Uyarı", value: summary?.medicalRisk ?? 0, icon: ShieldAlert, color: "text-red-700" },
-      { label: "Eksik Bilgi", value: summary?.missingInfo ?? 0, icon: AlertTriangle, color: "text-amber-700" },
-      { label: "Bu Ay Yeni", value: summary?.newThisMonth ?? 0, icon: BadgeCheck, color: "text-emerald-700" },
+      { label: "Toplam Hasta", value: summary?.total ?? total, color: "text-slate-800" },
+      { label: "Bu Ay Yeni", value: summary?.newThisMonth ?? 0, color: "text-emerald-700" },
     ],
     [summary, total],
   );
 
   return (
     <section className="space-y-4">
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+      <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-lg font-black text-slate-900">Hastalar</h1>
-            <p className="mt-1 text-sm text-slate-500">Hasta kartları, iletişim bilgileri, medikal uyarılar ve hızlı erişim.</p>
           </div>
-          <Link
-            href="/hasta-ekle"
-            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90"
-          >
-            <UserPlus className="h-4 w-4" />
-            Yeni Hasta
-          </Link>
-        </div>
-
-        <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          {visibleSummary.map((item) => {
-            const Icon = item.icon;
-            return (
-              <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-3">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-xs font-semibold text-slate-500">{item.label}</span>
-                  <Icon className={`h-4 w-4 ${item.color}`} />
-                </div>
-                <p className={`mt-2 text-2xl font-black ${item.color}`}>{Number(item.value || 0).toLocaleString("tr-TR")}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            {visibleSummary.map((item) => (
+              <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
+                <span className="block text-[11px] font-bold uppercase text-slate-400">{item.label}</span>
+                <span className={`text-base font-black ${item.color}`}>{Number(item.value || 0).toLocaleString("tr-TR")}</span>
               </div>
-            );
-          })}
+            ))}
+            <Link
+              href="/hasta-ekle"
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90"
+            >
+              <UserPlus className="h-4 w-4" />
+              Yeni Hasta
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -440,7 +424,6 @@ function HastaContent() {
             patients.map((patient) => {
               const age = calculateAge(patient.birthDate);
               const riskFlag = hasMedicalRisk(patient);
-              const missingFlag = hasMissingInfo(patient);
               return (
                 <div key={patient.id} className="p-4">
                   <div className="flex items-start gap-3">
@@ -452,6 +435,7 @@ function HastaContent() {
                         {patient.fullName}
                       </Link>
                       <p className="mt-1 font-mono text-xs text-slate-500">TC: {patient.tcNo || "-"}</p>
+                      {patient.profession && <p className="mt-0.5 text-xs font-semibold text-slate-500">Meslek: {patient.profession}</p>}
                       {!hidePhone && (
                         <p className="mt-1 inline-flex items-center gap-1 text-sm text-slate-600">
                           <Phone className="h-3.5 w-3.5" />
@@ -464,8 +448,8 @@ function HastaContent() {
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{patient.gender || "Cinsiyet yok"}</span>
                     <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{age !== null ? `${age} yaş` : "Yaş yok"}</span>
                     {patient.insurance && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">{patient.insurance}</span>}
+                    {patient.hasContagiousDisease && <span className="rounded-full bg-red-600 px-2 py-0.5 text-xs font-black text-white" title={patient.contagiousDiseaseNote || undefined}>⚠ Bulaşıcı Hastalık</span>}
                     {riskFlag && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Medikal uyarı</span>}
-                    {missingFlag && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-700">Eksik bilgi</span>}
                   </div>
                   <div className={`mt-4 grid gap-2 ${canDeletePatients ? "grid-cols-3" : "grid-cols-2"}`}>
                     <Link href={`/hasta-detay?id=${patient.id}`} className="rounded-lg bg-primary px-3 py-2 text-center text-sm font-bold text-white">Kart</Link>
@@ -499,15 +483,14 @@ function HastaContent() {
                 <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">
                   <SortButton col="insurance" label="Kurum" />
                 </th>
-                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">Durum</th>
                 <th className="px-4 py-3 text-right text-[11px] font-bold uppercase text-slate-500">İşlem</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {loading && patients.length === 0 && <TableRowsSkeleton rows={7} columns={hidePhone ? 6 : 7} />}
+              {loading && patients.length === 0 && <TableRowsSkeleton rows={7} columns={hidePhone ? 5 : 6} />}
               {!loading && patients.length === 0 && (
                 <tr>
-                  <td colSpan={hidePhone ? 6 : 7} className="px-4 py-14 text-center text-sm text-slate-400">
+                  <td colSpan={hidePhone ? 5 : 6} className="px-4 py-14 text-center text-sm text-slate-400">
                     Hasta bulunamadı
                   </td>
                 </tr>
@@ -515,7 +498,6 @@ function HastaContent() {
               {patients.map((patient) => {
                 const age = calculateAge(patient.birthDate);
                 const riskFlag = hasMedicalRisk(patient);
-                const missingFlag = hasMissingInfo(patient);
                 return (
                   <tr key={patient.id} className="transition hover:bg-slate-50/80">
                     <td className="px-4 py-3">
@@ -528,6 +510,12 @@ function HastaContent() {
                             {patient.fullName}
                           </Link>
                           <p className="mt-0.5 text-xs text-slate-400">{patient.gender === "ERKEK" ? "Erkek" : patient.gender === "KADIN" ? "Kadın" : "Cinsiyet yok"}</p>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {patient.profession && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{patient.profession}</span>}
+                            {patient.hasContagiousDisease && <span className="rounded-full bg-red-600 px-2 py-0.5 text-[11px] font-black text-white" title={patient.contagiousDiseaseNote || undefined}>⚠ Bulaşıcı Hastalık</span>}
+                            {riskFlag && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-700">Medikal uyarı</span>}
+                            {patient.discountRate ? <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-bold text-orange-700">%{patient.discountRate} indirim</span> : null}
+                          </div>
                         </div>
                       </div>
                     </td>
@@ -545,14 +533,6 @@ function HastaContent() {
                       ) : (
                         <span className="text-slate-300">-</span>
                       )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex flex-wrap gap-1.5">
-                        {riskFlag && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">Medikal uyarı</span>}
-                        {missingFlag && <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700">Eksik bilgi</span>}
-                        {patient.discountRate ? <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-bold text-orange-700">%{patient.discountRate} indirim</span> : null}
-                        {!riskFlag && !missingFlag && !patient.discountRate && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-500">Normal</span>}
-                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">

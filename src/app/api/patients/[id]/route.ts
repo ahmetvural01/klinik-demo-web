@@ -1,7 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { patientSchema } from "@/lib/validators";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { reverseLabInvoiceFirmaIntegration } from "@/lib/lab-firma-integration";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 
@@ -10,6 +10,7 @@ type Params = { params: { id: string } };
 const FIELD_LABELS: Record<string, string> = {
   fullName: "Ad Soyad",
   phone: "Telefon",
+  profession: "Meslek",
   birthDate: "Doğum Tarihi",
   address: "Adres",
   insurance: "Sigorta",
@@ -27,6 +28,8 @@ const FIELD_LABELS: Record<string, string> = {
   hasDiabetes: "Diyabet",
   hasHeart: "Kalp Rahatsızlığı",
   hasBloodIssue: "Kan Hastalığı",
+  hasContagiousDisease: "Bulaşıcı Hastalık",
+  contagiousDiseaseNote: "Bulaşıcı Hastalık Notu",
 };
 
 const TOOTH_STATUS_LABELS: Record<string, string> = {
@@ -111,7 +114,7 @@ function buildPatientUpdateAuditDetail(
   ].join("\n");
 }
 
-export async function GET(_: NextRequest, { params }: Params) {
+export const GET = withApiTiming("patients-detail", async function GET(_: NextRequest, { params }: Params) {
   const auth = await requireAuth("patients:read");
   if (auth.error) return auth.error;
 
@@ -120,19 +123,108 @@ export async function GET(_: NextRequest, { params }: Params) {
       id: params.id,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
     },
-    include: {
-      appointments: { include: { doctor: { select: { fullName: true } } }, orderBy: { startAt: "desc" } },
-      examinations: { include: { doctor: { select: { fullName: true } } }, orderBy: { diagnosedAt: "desc" } },
-      payments: { include: { doctor: { select: { id: true, fullName: true } } }, orderBy: { createdAt: "desc" } },
-      prescriptions: { orderBy: { createdAt: "desc" } },
+    select: {
+      id: true,
+      institutionId: true,
+      tcNo: true,
+      fullName: true,
+      phone: true,
+      profession: true,
+      address: true,
+      gender: true,
+      birthDate: true,
+      insurance: true,
+      referrer: true,
+      discountRate: true,
+      notes: true,
+      surgeries: true,
+      medications: true,
+      otherDiseases: true,
+      hasAllergy: true,
+      hasHepatitis: true,
+      hasKidney: true,
+      hasDiabetes: true,
+      hasHeart: true,
+      hasBloodIssue: true,
+      hasContagiousDisease: true,
+      contagiousDiseaseNote: true,
+      bloodType: true,
+      toothChart: true,
+      createdAt: true,
+      updatedAt: true,
+      appointments: {
+        select: {
+          id: true,
+          startAt: true,
+          endAt: true,
+          type: true,
+          status: true,
+          doctor: { select: { fullName: true } },
+        },
+        orderBy: { startAt: "desc" },
+      },
+      examinations: {
+        select: {
+          id: true,
+          treatmentName: true,
+          toothNo: true,
+          amount: true,
+          status: true,
+          diagnosedAt: true,
+          doctorId: true,
+          doctor: { select: { id: true, fullName: true } },
+        },
+        orderBy: { diagnosedAt: "desc" },
+      },
+      payments: {
+        select: {
+          id: true,
+          amount: true,
+          method: true,
+          description: true,
+          createdAt: true,
+          doctorId: true,
+          posId: true,
+          doctor: { select: { id: true, fullName: true } },
+        },
+        orderBy: { createdAt: "desc" },
+      },
+      prescriptions: {
+        select: { id: true, drugs: true, note: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+      },
       labOrders: {
-        include: { doctor: { select: { id: true, fullName: true } } },
+        select: {
+          id: true,
+          labName: true,
+          labType: true,
+          teeth: true,
+          notes: true,
+          status: true,
+          price: true,
+          invoiceNo: true,
+          createdAt: true,
+          doctor: { select: { id: true, fullName: true } },
+        },
         orderBy: { createdAt: "desc" }
       },
       taksitPlanlari: {
-        include: {
+        select: {
+          id: true,
+          baslik: true,
+          toplamBorc: true,
+          pesnat: true,
+          taksitSayisi: true,
+          period: true,
+          startDate: true,
+          notes: true,
+          status: true,
+          createdAt: true,
           doctor: { select: { id: true, fullName: true } },
-          taksitler: { orderBy: { vadeDate: "asc" } }
+          taksitler: {
+            select: { id: true, siraNo: true, vadeDate: true, tutar: true, odenen: true, kalan: true, status: true },
+            orderBy: { vadeDate: "asc" },
+          },
         },
         orderBy: { createdAt: "desc" }
       }
@@ -149,7 +241,7 @@ export async function GET(_: NextRequest, { params }: Params) {
   }
 
   return NextResponse.json(patient);
-}
+});
 
 export async function PUT(request: NextRequest, { params }: Params) {
   const auth = await requireAuth("patients:write");
@@ -176,6 +268,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     tcNo: typeof body.tcNo === "string" ? body.tcNo : existing.tcNo,
     fullName: typeof body.fullName === "string" ? body.fullName : existing.fullName,
     phone: typeof body.phone === "string" ? body.phone : existing.phone,
+    profession: normalizeOptional(body.profession, existing.profession),
     address: normalizeOptional(body.address, existing.address),
     gender: typeof body.gender === "string" ? body.gender : existing.gender,
     birthDate: body.birthDate === null ? undefined : (typeof body.birthDate === "string" ? body.birthDate : (existing.birthDate ? existing.birthDate.toISOString() : undefined)),
@@ -192,6 +285,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
     hasDiabetes: typeof body.hasDiabetes === "boolean" ? body.hasDiabetes : existing.hasDiabetes,
     hasHeart: typeof body.hasHeart === "boolean" ? body.hasHeart : existing.hasHeart,
     hasBloodIssue: typeof body.hasBloodIssue === "boolean" ? body.hasBloodIssue : existing.hasBloodIssue,
+    hasContagiousDisease: typeof body.hasContagiousDisease === "boolean" ? body.hasContagiousDisease : existing.hasContagiousDisease,
+    contagiousDiseaseNote: normalizeOptional(body.contagiousDiseaseNote, existing.contagiousDiseaseNote),
     bloodType: normalizeOptional(body.bloodType, existing.bloodType),
     toothChart: normalizeOptional(body.toothChart, existing.toothChart),
   });

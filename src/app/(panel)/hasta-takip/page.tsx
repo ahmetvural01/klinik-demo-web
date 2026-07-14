@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   FollowUpKey,
@@ -9,10 +8,15 @@ import {
   getFollowUpMeta,
   parseAppointmentNote,
 } from "@/lib/appointment-follow-up";
+import { Plus } from "lucide-react";
 import { useToast } from "@/components/ui/ToastProvider";
+import { cachedGet } from "@/lib/client-cache";
 import { confirmDialog } from "@/lib/confirm-client";
-import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { FormField } from "@/components/ui/FormField";
 
 type Appointment = {
   id: string;
@@ -190,16 +194,16 @@ function dayDiff(iso: string) {
   return Math.max(0, Math.floor((now - target) / 86_400_000));
 }
 
-function getAgeBadge(days: number) {
-  if (days <= 3) return "bg-emerald-100 text-emerald-700";
-  if (days <= 7) return "bg-amber-100 text-amber-700";
-  return "bg-rose-100 text-rose-700";
+function getAgeTone(days: number): BadgeTone {
+  if (days <= 3) return "success";
+  if (days <= 7) return "warning";
+  return "critical";
 }
 
-function getPriorityBadge(priority: number) {
-  if (priority >= 3) return "bg-rose-100 text-rose-700";
-  if (priority === 2) return "bg-amber-100 text-amber-700";
-  return "bg-sky-100 text-sky-700";
+function getPriorityTone(priority: number): BadgeTone {
+  if (priority >= 3) return "critical";
+  if (priority === 2) return "warning";
+  return "info";
 }
 
 function shortText(value: string, max = 110) {
@@ -357,7 +361,6 @@ export default function HastaTakipPage() {
   const [statusFilter, setStatusFilter] = useState<"TUMU" | "ACIK" | "KAPALI">("ACIK");
   const [doctorFilter, setDoctorFilter] = useState("");
   const [showManualCreate, setShowManualCreate] = useState(false);
-  useEscapeClose(() => setShowManualCreate(false), showManualCreate);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [denseView, setDenseView] = useState(true);
   const [selectedDetailKey, setSelectedDetailKey] = useState("");
@@ -437,13 +440,12 @@ export default function HastaTakipPage() {
     from.setDate(from.getDate() - Number(rangeDays));
 
     try {
-      const [meRes, apptRes, followRes] = await Promise.all([
-        fetch("/api/auth/me", { cache: "no-store" }),
+      const [meData, apptRes, followRes] = await Promise.all([
+        cachedGet<{ role?: string } | null>("/api/auth/me", 60_000),
         fetch(`/api/appointments?from=${from.toISOString()}&to=${to.toISOString()}`, { cache: "no-store" }),
         fetch(`/api/patient-follow-ups?from=${from.toISOString()}&to=${to.toISOString()}`, { cache: "no-store" }),
       ]);
 
-      const meData = await meRes.json();
       const apptData = await apptRes.json();
       const followData = await followRes.json();
 
@@ -464,8 +466,7 @@ export default function HastaTakipPage() {
       setManualFollowUps(nextFollowUps);
 
       void Promise.allSettled([
-        fetch("/api/staff", { cache: "no-store" })
-          .then((r) => r.json())
+        cachedGet<unknown>("/api/staff", 60_000)
           .then((staffData) => {
             const nextStaff = Array.isArray(staffData) ? staffData : [];
             setStaff(nextStaff);
@@ -538,7 +539,7 @@ export default function HastaTakipPage() {
   useEffect(() => {
     const onPreview = () => {
       const preview = sessionStorage.getItem("dev-preview-role");
-      fetch("/api/auth/me").then((r) => r.json()).then((d) => setUserRole(preview || d?.role || "")).catch(() => {});
+      cachedGet<{ role?: string }>("/api/auth/me", 60_000).then((d) => setUserRole(preview || d?.role || "")).catch(() => {});
     };
     window.addEventListener("preview-role-change", onPreview);
     return () => window.removeEventListener("preview-role-change", onPreview);
@@ -1073,8 +1074,6 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
     resetEventForm();
   };
 
-  useEscapeClose(closeDetailModal, Boolean(detailItem));
-
   const resetEventForm = () => {
     setEditingEventId("");
     setEventForm({
@@ -1284,10 +1283,10 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
           <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{items.length} açık kayıt</span>
         </div>
         <div className="flex flex-wrap gap-2">
-          <button onClick={printReport} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">PDF</button>
-          <button onClick={downloadExcelReport} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">Excel</button>
-          <Link href="/gorevler" className="h-8 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">Görev Merkezi</Link>
-          <Link href="/randevu" className="h-8 rounded-lg bg-primary px-3 py-1.5 text-sm font-semibold text-white hover:bg-blue-700">Randevular</Link>
+          <Button variant="secondary" size="sm" onClick={printReport}>PDF</Button>
+          <Button variant="secondary" size="sm" onClick={downloadExcelReport}>Excel</Button>
+          <Button variant="secondary" size="sm" href="/gorevler">Görev Merkezi</Button>
+          <Button size="sm" href="/randevu">Randevular</Button>
         </div>
       </div>
 
@@ -1306,10 +1305,10 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                 placeholder="Hasta, doktor, not veya takip tipi ara..."
                 className="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:outline-none"
               />
-              <button type="button" onClick={() => setShowAdvancedFilters((v) => !v)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">{showAdvancedFilters ? "Filtreleri Gizle" : "Gelişmiş Filtreler"}</button>
-              <button type="button" onClick={() => setDenseView((v) => !v)} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">{denseView ? "Detaylı Görünüm" : "Sade Görünüm"}</button>
-              <button type="button" onClick={resetListFilters} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Temizle</button>
-              <button type="button" onClick={() => { setSelectedPatient(null); setPatientSearch(""); setPatientResults([]); setPatientSearchError(""); setShowManualCreate(true); }} className="rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700">Manuel Takip Ekle</button>
+              <Button variant="secondary" size="sm" onClick={() => setShowAdvancedFilters((v) => !v)}>{showAdvancedFilters ? "Filtreleri Gizle" : "Gelişmiş Filtreler"}</Button>
+              <Button variant="secondary" size="sm" onClick={() => setDenseView((v) => !v)}>{denseView ? "Detaylı Görünüm" : "Sade Görünüm"}</Button>
+              <Button variant="secondary" size="sm" onClick={resetListFilters}>Temizle</Button>
+              <Button size="sm" icon={Plus} onClick={() => { setSelectedPatient(null); setPatientSearch(""); setPatientResults([]); setPatientSearchError(""); setShowManualCreate(true); }}>Manuel Takip Ekle</Button>
             </div>
 
             {showAdvancedFilters && (
@@ -1351,8 +1350,8 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
               <div className="px-4 py-10 text-center">
                 <p className="text-sm font-semibold text-slate-700">Seçili filtrede takip kaydı bulunmuyor.</p>
                 <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-                  <button type="button" onClick={resetListFilters} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Filtreleri Temizle</button>
-                  <button type="button" onClick={() => setStatusFilter("TUMU")} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Tüm Durumlar</button>
+                  <Button variant="secondary" size="sm" onClick={resetListFilters}>Filtreleri Temizle</Button>
+                  <Button variant="secondary" size="sm" onClick={() => setStatusFilter("TUMU")}>Tüm Durumlar</Button>
                 </div>
               </div>
             ) : (
@@ -1364,7 +1363,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                         <div className="flex flex-wrap items-center gap-2">
                           <p className="text-sm font-semibold text-slate-900">{item.patientName}</p>
                           <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + item.followBadgeClass}>{item.followUpLabel}</span>
-                          <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + (item.isOpen ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600")}>{item.statusLabel}</span>
+                          <Badge tone={item.isOpen ? "success" : "neutral"}>{item.statusLabel}</Badge>
                         </div>
                         <p className="mt-0.5 text-xs text-slate-500">{item.doctorName} · {item.ageDays} gün · Öncelik {item.priority}</p>
                         {item.isLabProva && item.labContext && (
@@ -1380,7 +1379,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                         {item.nextActionAt && <p className="mt-0.5 text-xs text-amber-700">Sonraki adım: {new Date(item.nextActionAt).toLocaleString("tr-TR")}</p>}
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <button type="button" onClick={() => void openDetailModal(item)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Detay</button>
+                        <Button variant="secondary" size="sm" onClick={() => void openDetailModal(item)}>Detay</Button>
                         {!hidePhone && item.patientPhone && <a href={`tel:${item.patientPhone}`} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Ara</a>}
                       </div>
                     </div>
@@ -1391,225 +1390,226 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
           </div>
         </>
 
-      {showManualCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" {...backdropClose(() => setShowManualCreate(false))}>
-          <div className="w-full max-w-4xl rounded-2xl bg-white p-4 shadow-2xl">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-lg font-bold text-slate-900">Manuel Takip Ekle</h3>
-              <button type="button" onClick={() => setShowManualCreate(false)} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Kapat</button>
-            </div>
-
-            <div className="grid gap-3 lg:grid-cols-5">
-              <div className="lg:col-span-2">
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Hasta</label>
-                <input value={patientSearch} onChange={(e) => { setPatientSearch(e.target.value); setSelectedPatient(null); setPatientSearchError(""); }} placeholder="Ad, telefon veya TC ile ara" className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
-                {patientSearchLoading && <p className="mt-2 text-xs text-slate-600">Hasta aranıyor...</p>}
-                {selectedPatient ? (
-                  <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Seçili hasta: <span className="font-semibold">{selectedPatient.fullName}</span>{!hidePhone && selectedPatient.phone ? ` - ${selectedPatient.phone}` : ""}</div>
-                ) : patientResults.length > 0 ? (
-                  <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white">
-                    {patientResults.map((p) => (
-                      <button key={p.id} type="button" onClick={() => { setSelectedPatient(p); setPatientSearch(p.fullName); setPatientResults([]); }} className="flex w-full items-center justify-between border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
-                        <span>{p.fullName}</span>
-                        {!hidePhone && <span className="text-xs text-slate-400">{p.phone || "-"}</span>}
-                      </button>
-                    ))}
-                  </div>
-                ) : patientSearch.trim().length >= 2 && patientSearchError ? (
-                  <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{patientSearchError}</div>
-                ) : null}
-              </div>
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Doktor</label>
-                <select value={manualDoctorId} onChange={(e) => setManualDoctorId(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                  <option value="">Seçilmedi</option>
-                  {doctors.map((d) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Takip Tipi</label>
-                <select value={manualTypeInput} onChange={(e) => setManualTypeInput(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm">
-                  {followTypeOptions.length === 0 ? <option value={manualTypeInput}>{manualTypeInput || "Sonuç bulunamadı"}</option> : followTypeOptions.map((opt) => (<option key={opt} value={opt}>{opt}</option>))}
-                </select>
-              </div>
-              <div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-slate-600">Öncelik</label>
-                <select value={manualPriority} onChange={(e) => setManualPriority(Number(e.target.value) as 1 | 2 | 3)} className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                  <option value={1}>Düşük</option>
-                  <option value={2}>Orta</option>
-                  <option value={3}>Yüksek</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_220px_160px]">
-              <textarea value={manualNote} onChange={(e) => setManualNote(e.target.value)} rows={2} placeholder="Takip notu" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
-              <div>
-                <label className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Sonraki Aksiyon</label>
-                <input type="datetime-local" value={manualNextActionAt} onChange={(e) => setManualNextActionAt(e.target.value)} className="mt-1 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
-              </div>
-              <button onClick={() => void createManualFollowUp()} disabled={Boolean(manualSubmitDisabledReason)} className="mt-auto rounded-lg bg-primary px-3 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:opacity-60">{creatingManual ? "Kaydediliyor..." : "Kaydet"}</button>
-            </div>
-            {manualSubmitDisabledReason && <p className="mt-2 text-xs font-medium text-amber-700">{manualSubmitDisabledReason}</p>}
+      <Modal
+        open={showManualCreate}
+        onClose={() => setShowManualCreate(false)}
+        title="Manuel Takip Ekle"
+        size="xl"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowManualCreate(false)}>İptal</Button>
+            <Button onClick={() => void createManualFollowUp()} disabled={Boolean(manualSubmitDisabledReason)} loading={creatingManual}>Kaydet</Button>
+          </>
+        }
+      >
+        <div className="grid gap-3 lg:grid-cols-5">
+          <div className="lg:col-span-2">
+            <FormField label="Hasta">
+              <input value={patientSearch} onChange={(e) => { setPatientSearch(e.target.value); setSelectedPatient(null); setPatientSearchError(""); }} placeholder="Ad, telefon veya TC ile ara" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+              {patientSearchLoading && <p className="mt-2 text-xs text-slate-600">Hasta aranıyor...</p>}
+              {selectedPatient ? (
+                <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Seçili hasta: <span className="font-semibold">{selectedPatient.fullName}</span>{!hidePhone && selectedPatient.phone ? ` - ${selectedPatient.phone}` : ""}</div>
+              ) : patientResults.length > 0 ? (
+                <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                  {patientResults.map((p) => (
+                    <button key={p.id} type="button" onClick={() => { setSelectedPatient(p); setPatientSearch(p.fullName); setPatientResults([]); }} className="flex w-full items-center justify-between border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
+                      <span>{p.fullName}</span>
+                      {!hidePhone && <span className="text-xs text-slate-400">{p.phone || "-"}</span>}
+                    </button>
+                  ))}
+                </div>
+              ) : patientSearch.trim().length >= 2 && patientSearchError ? (
+                <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{patientSearchError}</div>
+              ) : null}
+            </FormField>
           </div>
+          <FormField label="Doktor">
+            <select value={manualDoctorId} onChange={(e) => setManualDoctorId(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+              <option value="">Seçilmedi</option>
+              {doctors.map((d) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+            </select>
+          </FormField>
+          <FormField label="Takip Tipi">
+            <select value={manualTypeInput} onChange={(e) => setManualTypeInput(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm">
+              {followTypeOptions.length === 0 ? <option value={manualTypeInput}>{manualTypeInput || "Sonuç bulunamadı"}</option> : followTypeOptions.map((opt) => (<option key={opt} value={opt}>{opt}</option>))}
+            </select>
+          </FormField>
+          <FormField label="Öncelik">
+            <select value={manualPriority} onChange={(e) => setManualPriority(Number(e.target.value) as 1 | 2 | 3)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+              <option value={1}>Düşük</option>
+              <option value={2}>Orta</option>
+              <option value={3}>Yüksek</option>
+            </select>
+          </FormField>
         </div>
-      )}
 
-      {detailItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" {...backdropClose(closeDetailModal)}>
-          <div className="max-h-[90vh] w-full max-w-5xl overflow-y-auto rounded-3xl bg-white shadow-2xl">
-            <div className="sticky top-0 flex items-center justify-between border-b border-slate-200 bg-white px-5 py-4">
-              <div>
-                <h3 className="text-lg font-bold text-slate-900">{detailItem.patientName}</h3>
-                <p className="text-sm text-slate-500">{detailItem.followUpLabel} · {detailItem.statusLabel}</p>
+        <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_220px]">
+          <FormField label="Takip Notu">
+            <textarea value={manualNote} onChange={(e) => setManualNote(e.target.value)} rows={2} placeholder="Takip notu" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+          </FormField>
+          <FormField label="Sonraki Aksiyon">
+            <input type="datetime-local" value={manualNextActionAt} onChange={(e) => setManualNextActionAt(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
+          </FormField>
+        </div>
+        {manualSubmitDisabledReason && <p className="mt-2 text-xs font-medium text-amber-700">{manualSubmitDisabledReason}</p>}
+      </Modal>
+
+      <Modal
+        open={Boolean(detailItem)}
+        onClose={closeDetailModal}
+        title={detailItem?.patientName ?? ""}
+        description={detailItem ? `${detailItem.followUpLabel} · ${detailItem.statusLabel}` : undefined}
+        size="xl"
+      >
+        {detailItem && (() => {
+          const isManual = detailItem.source === "MANUAL" && Boolean(detailItem.followUpId);
+          const noteDuplicatesLabTitle = detailItem.isLabProva && detailItem.labContext && detailItem.note === detailItem.labContext.title;
+          return (
+          <div className="space-y-4">
+            {/* Üst satır: durum özeti + sayfa gezinme aksiyonları aynı hizada */}
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone={getPriorityTone(detailItem.priority)}>Öncelik {detailItem.priority}</Badge>
+                <Badge tone={getAgeTone(detailItem.ageDays)}>{detailItem.ageDays} gün önce</Badge>
+                <span className="text-xs text-slate-400">{detailItem.source === "MANUAL" ? "Manuel takip" : "Randevu kaynaklı"}</span>
               </div>
-              <button type="button" onClick={closeDetailModal} className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">Kapat</button>
+              <div className="flex flex-wrap gap-2">
+                {isManual && (
+                  <Button variant="secondary" size="sm" onClick={() => void printFollowUpHistory(detailItem)}>PDF Al</Button>
+                )}
+                {detailItem.patientId && <Button size="sm" href={`/hasta-detay?id=${detailItem.patientId}`}>Hasta Kartı</Button>}
+                <Button variant="secondary" size="sm" href={detailItem.patientId ? `/randevu?patientId=${detailItem.patientId}` : "/randevu"}>Randevuya Git</Button>
+              </div>
             </div>
 
-            <div className="space-y-5 p-5">
-              <div className="grid gap-3 lg:grid-cols-[1.4fr_0.8fr_1fr_auto] lg:items-start">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + getPriorityBadge(detailItem.priority)}>Öncelik {detailItem.priority}</span>
-                    <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + detailItem.followBadgeClass}>{detailItem.followUpLabel}</span>
-                    <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + (detailItem.isOpen ? "bg-emerald-100 text-emerald-700" : "bg-slate-200 text-slate-600")}>{detailItem.statusLabel}</span>
-                    <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + getAgeBadge(detailItem.ageDays)}>{detailItem.ageDays} gün</span>
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{detailItem.source === "MANUAL" ? "Manuel" : "Randevu"}</span>
-                  </div>
-                  <p className="mt-1 text-xs text-slate-500">{detailItem.appointmentDateLabel} · {detailItem.doctorName}</p>
-                  {detailItem.isLabProva && detailItem.labContext && (
-                    <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 px-3 py-3">
-                      <p className="text-[11px] font-black uppercase tracking-wide text-violet-600">Laboratuvar Prova Takibi</p>
-                      <p className="mt-1 text-sm font-bold text-violet-950">{detailItem.labContext.title}</p>
-                      <div className="mt-2 grid gap-2 text-xs text-violet-800 sm:grid-cols-3">
-                        <p><span className="font-bold">İş:</span> {detailItem.labContext.labType || "-"}</p>
-                        <p><span className="font-bold">Laboratuvar:</span> {detailItem.labContext.labName || "-"}</p>
-                        <p><span className="font-bold">Prova:</span> {detailItem.labContext.receivedStep || "-"}</p>
-                      </div>
-                    </div>
-                  )}
-                  <div className="mt-3 rounded-xl bg-slate-50 px-3 py-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Not</p>
-                    <p className="mt-1 text-sm text-slate-700">{detailItem.note}</p>
-                  </div>
-                  {detailItem.nextActionAt && <p className="mt-2 text-xs text-amber-700">Sonraki adım: {new Date(detailItem.nextActionAt).toLocaleString("tr-TR")}</p>}
-                </div>
+            <p className="text-xs text-slate-500">{detailItem.appointmentDateLabel} · {detailItem.doctorName}</p>
 
-                <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">İletişim</p>
-                  {hidePhone ? (
-                    <p className="mt-1 text-sm text-slate-400 italic">Telefon gizli</p>
-                  ) : (
-                    <p className="mt-1 text-sm font-medium text-slate-700">{detailItem.patientPhone || "Kayıtlı telefon yok"}</p>
-                  )}
-                  {!hidePhone && detailItem.patientPhone && (
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      <a href={`tel:${detailItem.patientPhone}`} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Ara</a>
-                      <a href={`https://wa.me/90${detailItem.patientPhone.replace(/\D/g, "").replace(/^0/, "")}`} target="_blank" rel="noreferrer" className="rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">WhatsApp</a>
-                    </div>
-                  )}
+            {detailItem.isLabProva && detailItem.labContext ? (
+              <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-3">
+                <p className="text-[11px] font-black uppercase tracking-wide text-primary">Laboratuvar Prova Takibi</p>
+                <p className="mt-1 text-sm font-bold text-primary-strong">{detailItem.labContext.title}</p>
+                <div className="mt-2 grid gap-2 text-xs text-primary-strong sm:grid-cols-3">
+                  <p><span className="font-bold">İş:</span> {detailItem.labContext.labType || "-"}</p>
+                  <p><span className="font-bold">Laboratuvar:</span> {detailItem.labContext.labName || "-"}</p>
+                  <p><span className="font-bold">Prova:</span> {detailItem.labContext.receivedStep || "-"}</p>
                 </div>
-
-                <div className="space-y-2">
-                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Hızlı İşlemler</p>
-                  {detailItem.source === "MANUAL" && detailItem.followUpId ? (
-                    <>
-                      <div className="flex flex-wrap gap-2">
-                        <button disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { type: "GERI_ARA", note: buildManualNote("", detailItem.note), lastContactAt: new Date().toISOString(), nextActionAt: new Date(Date.now() + 86400000).toISOString() })} className="rounded-lg border border-rose-200 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-50">Tekrar Ara</button>
-                        <button disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { type: "ULASILAMADI", note: buildManualNote("", detailItem.note), lastContactAt: new Date().toISOString(), nextActionAt: new Date(Date.now() + 2 * 86400000).toISOString() })} className="rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50">Ulaşılamadı</button>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <button disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { type: "DONUS_BEKLENIYOR", note: buildManualNote("", detailItem.note), nextActionAt: new Date(Date.now() + 3 * 86400000).toISOString() })} className="rounded-lg border border-violet-200 px-2.5 py-1.5 text-xs font-semibold text-violet-700 hover:bg-violet-50 disabled:opacity-50">Dönüş Bekleniyor</button>
-                        <button disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { close: true, resolutionNote: "Takip kapatildi", lastContactAt: new Date().toISOString() })} className="rounded-lg border border-emerald-200 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50">Takibi Kapat</button>
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <button disabled={busyId === detailItem.key} onClick={() => void convertAppointmentToManual(detailItem)} className="rounded-lg border border-sky-200 px-2.5 py-1.5 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50">Manuel Takibe Dönüştür</button>
-                      <button disabled={busyId === detailItem.key} onClick={() => void markAppointmentNote(detailItem, "GERI_ARA", detailItem.note)} className="rounded-lg border border-amber-200 px-2.5 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50 disabled:opacity-50">Notu Geri Ara Yap</button>
-                    </>
-                  )}
-                </div>
-
-                <div className="flex flex-wrap gap-2 lg:justify-end">
-                  {detailItem.source === "MANUAL" && detailItem.followUpId && (
-                    <button type="button" onClick={() => void printFollowUpHistory(detailItem)} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">PDF Al</button>
-                  )}
-                  {detailItem.patientId && <Link href={`/hasta-detay?id=${detailItem.patientId}`} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white hover:bg-blue-700">Hasta Kartı</Link>}
-                  <Link href={detailItem.patientId ? `/randevu?patientId=${detailItem.patientId}` : "/randevu"} className="rounded-lg border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">Randevuya Git</Link>
-                </div>
+                {!noteDuplicatesLabTitle && detailItem.note && (
+                  <p className="mt-2 border-t border-primary/10 pt-2 text-sm text-primary-strong">{detailItem.note}</p>
+                )}
               </div>
+            ) : detailItem.note ? (
+              <div className="rounded-xl bg-slate-50 px-3 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Not</p>
+                <p className="mt-1 text-sm text-slate-700">{detailItem.note}</p>
+              </div>
+            ) : null}
 
-              {detailItem.source === "MANUAL" && detailItem.followUpId && (
-                <div className="rounded-xl border border-indigo-100 bg-indigo-50/40 p-4">
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-sm font-bold text-indigo-900">Hasta Bazlı Görüşme ve Süreç Notları</h3>
-                    <span className="text-xs text-indigo-700">{followUpEvents.length} kayıt</span>
-                  </div>
+            {detailItem.nextActionAt && <p className="text-xs text-amber-700">Sonraki adım: {new Date(detailItem.nextActionAt).toLocaleString("tr-TR")}</p>}
 
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    {EVENT_PRESETS.map((preset) => (
-                      <button key={preset.label} type="button" onClick={() => applyEventPreset(preset)} className="rounded-full border border-indigo-200 bg-white px-3 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-50">{preset.label}</button>
-                    ))}
-                  </div>
-
-                  <div className="grid gap-2 md:grid-cols-3">
-                    <input type="datetime-local" value={eventForm.occurredAt} onChange={(e) => setEventForm((prev) => ({ ...prev, occurredAt: e.target.value }))} className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" />
-                    <select value={eventForm.channel} onChange={(e) => setEventForm((prev) => ({ ...prev, channel: e.target.value }))} className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm">
-                      {EVENT_CHANNEL_OPTIONS.map((opt) => (
-                        <option key={opt} value={opt}>{opt}</option>
-                      ))}
-                    </select>
-                    <input value={eventForm.summary} onChange={(e) => setEventForm((prev) => ({ ...prev, summary: e.target.value }))} placeholder="Kısa sonuç, örnek: Arandı, açmadı" className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm md:col-span-1" />
-                    <textarea value={eventForm.patientResponse} onChange={(e) => setEventForm((prev) => ({ ...prev, patientResponse: e.target.value }))} rows={2} placeholder="Hasta ne söyledi?" className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" />
-                    <textarea value={eventForm.nextStep} onChange={(e) => setEventForm((prev) => ({ ...prev, nextStep: e.target.value }))} rows={2} placeholder="Bu hastada sonraki adım ne olacak?" className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" />
-                    <textarea value={eventForm.detail} onChange={(e) => setEventForm((prev) => ({ ...prev, detail: e.target.value }))} rows={2} placeholder="Detaylı görüşme notu" className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm" />
-                  </div>
-
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">İletişim</p>
+                {hidePhone ? (
+                  <p className="mt-1 text-sm text-slate-400 italic">Telefon gizli</p>
+                ) : (
+                  <p className="mt-1 text-sm font-medium text-slate-700">{detailItem.patientPhone || "Kayıtlı telefon yok"}</p>
+                )}
+                {!hidePhone && detailItem.patientPhone && (
                   <div className="mt-2 flex flex-wrap gap-2">
-                    <button type="button" onClick={() => void saveFollowUpEvent()} disabled={eventBusy || eventsLoading} className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60">{eventBusy ? "Kaydediliyor..." : editingEventId ? "Hasta Notunu Güncelle" : "Hasta Notu Ekle"}</button>
-                    {editingEventId && <button type="button" onClick={resetEventForm} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Düzenlemeyi İptal Et</button>}
+                    <a href={`tel:${detailItem.patientPhone}`} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Ara</a>
+                    <a href={`https://wa.me/90${detailItem.patientPhone.replace(/\D/g, "").replace(/^0/, "")}`} target="_blank" rel="noreferrer" className="rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">WhatsApp</a>
                   </div>
+                )}
+              </div>
 
-                  {eventsLoading ? (
-                    <div className="mt-3 space-y-2" aria-busy="true">
-                      <div className="h-3 w-44 animate-pulse rounded bg-slate-100" />
-                      <div className="h-3 w-56 animate-pulse rounded bg-slate-100" />
-                    </div>
-                  ) : followUpEvents.length === 0 ? (
-                    <p className="mt-3 text-xs text-slate-500">Bu hasta için henüz görüşme notu yok. İlk hasta notunu ekleyin.</p>
-                  ) : (
-                    <div className="mt-3 rounded-xl border border-indigo-100 bg-white">
-                      <div className="border-b border-indigo-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                        Kayıt Geçmişi
-                      </div>
-                      <div className="max-h-[34vh] space-y-2 overflow-y-auto p-3">
-                        {followUpEvents.map((ev, idx) => (
-                          <div key={ev.id} className="rounded-lg border border-indigo-100 bg-slate-50/70 p-3">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <p className="text-xs font-semibold text-indigo-900">
-                                #{followUpEvents.length - idx} · {new Date(ev.occurredAt).toLocaleString("tr-TR")} {ev.channel ? `· ${ev.channel}` : ""}
-                              </p>
-                              <div className="flex gap-2">
-                                <button type="button" onClick={() => startEditFollowUpEvent(ev)} className="rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50">Düzenle</button>
-                                <button type="button" onClick={() => void deleteFollowUpEvent(ev.id)} className="rounded-md border border-rose-200 bg-white px-2 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-50">Sil</button>
-                              </div>
-                            </div>
-                            <p className="mt-1 text-sm font-semibold text-slate-800">{ev.summary}</p>
-                            {ev.patientResponse && <p className="mt-1 text-xs text-slate-700"><span className="font-semibold">Hasta söyledi:</span> {ev.patientResponse}</p>}
-                            {ev.nextStep && <p className="mt-1 text-xs text-slate-700"><span className="font-semibold">Planlanan sonraki adım:</span> {ev.nextStep}</p>}
-                            {ev.detail && <p className="mt-1 text-xs text-slate-600">{ev.detail}</p>}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
+              <div className="rounded-xl border border-slate-100 px-3 py-3">
+                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Bu görüşmenin sonucu</p>
+                {isManual ? (
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" size="sm" disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { type: "GERI_ARA", note: buildManualNote("", detailItem.note), lastContactAt: new Date().toISOString(), nextActionAt: new Date(Date.now() + 86400000).toISOString() })}>Tekrar Ara</Button>
+                    <Button variant="secondary" size="sm" disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { type: "ULASILAMADI", note: buildManualNote("", detailItem.note), lastContactAt: new Date().toISOString(), nextActionAt: new Date(Date.now() + 2 * 86400000).toISOString() })}>Ulaşılamadı</Button>
+                    <Button variant="secondary" size="sm" disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { type: "DONUS_BEKLENIYOR", note: buildManualNote("", detailItem.note), nextActionAt: new Date(Date.now() + 3 * 86400000).toISOString() })}>Dönüş Bekleniyor</Button>
+                    <Button variant="primary" size="sm" disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { close: true, resolutionNote: "Takip kapatildi", lastContactAt: new Date().toISOString() })}>Takibi Kapat</Button>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="secondary" size="sm" disabled={busyId === detailItem.key} onClick={() => void convertAppointmentToManual(detailItem)}>Manuel Takibe Dönüştür</Button>
+                    <Button variant="secondary" size="sm" disabled={busyId === detailItem.key} onClick={() => void markAppointmentNote(detailItem, "GERI_ARA", detailItem.note)}>Notu Geri Ara Yap</Button>
+                  </div>
+                )}
+              </div>
             </div>
+
+            {isManual && (
+              <div className="rounded-xl border border-slate-100 p-4">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-bold text-slate-800">Hasta Bazlı Görüşme ve Süreç Notları</h3>
+                  <span className="text-xs text-slate-500">{followUpEvents.length} kayıt</span>
+                </div>
+
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {EVENT_PRESETS.map((preset) => (
+                    <button key={preset.label} type="button" onClick={() => applyEventPreset(preset)} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50">{preset.label}</button>
+                  ))}
+                </div>
+
+                <div className="grid gap-2 md:grid-cols-3">
+                  <input type="datetime-local" value={eventForm.occurredAt} onChange={(e) => setEventForm((prev) => ({ ...prev, occurredAt: e.target.value }))} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
+                  <select value={eventForm.channel} onChange={(e) => setEventForm((prev) => ({ ...prev, channel: e.target.value }))} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
+                    {EVENT_CHANNEL_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>{opt}</option>
+                    ))}
+                  </select>
+                  <input value={eventForm.summary} onChange={(e) => setEventForm((prev) => ({ ...prev, summary: e.target.value }))} placeholder="Kısa sonuç, örnek: Arandı, açmadı" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm md:col-span-1" />
+                  <textarea value={eventForm.patientResponse} onChange={(e) => setEventForm((prev) => ({ ...prev, patientResponse: e.target.value }))} rows={2} placeholder="Hasta ne söyledi?" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
+                  <textarea value={eventForm.nextStep} onChange={(e) => setEventForm((prev) => ({ ...prev, nextStep: e.target.value }))} rows={2} placeholder="Bu hastada sonraki adım ne olacak?" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
+                  <textarea value={eventForm.detail} onChange={(e) => setEventForm((prev) => ({ ...prev, detail: e.target.value }))} rows={2} placeholder="Detaylı görüşme notu" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
+                </div>
+
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Button size="sm" onClick={() => void saveFollowUpEvent()} disabled={eventBusy || eventsLoading} loading={eventBusy}>{editingEventId ? "Hasta Notunu Güncelle" : "Hasta Notu Ekle"}</Button>
+                  {editingEventId && <Button variant="secondary" size="sm" onClick={resetEventForm}>Düzenlemeyi İptal Et</Button>}
+                </div>
+
+                {eventsLoading ? (
+                  <div className="mt-3 space-y-2" aria-busy="true">
+                    <div className="h-3 w-44 animate-pulse rounded bg-slate-100" />
+                    <div className="h-3 w-56 animate-pulse rounded bg-slate-100" />
+                  </div>
+                ) : followUpEvents.length === 0 ? (
+                  <p className="mt-3 text-xs text-slate-500">Bu hasta için henüz görüşme notu yok. İlk hasta notunu ekleyin.</p>
+                ) : (
+                  <div className="mt-3 rounded-xl border border-slate-100 bg-white">
+                    <div className="border-b border-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                      Kayıt Geçmişi
+                    </div>
+                    <div className="max-h-[34vh] space-y-2 overflow-y-auto p-3">
+                      {followUpEvents.map((ev, idx) => (
+                        <div key={ev.id} className="rounded-lg border border-slate-100 bg-slate-50/70 p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-xs font-semibold text-slate-700">
+                              #{followUpEvents.length - idx} · {new Date(ev.occurredAt).toLocaleString("tr-TR")} {ev.channel ? `· ${ev.channel}` : ""}
+                            </p>
+                            <div className="flex gap-2">
+                              <Button variant="secondary" size="sm" onClick={() => startEditFollowUpEvent(ev)}>Düzenle</Button>
+                              <Button variant="danger" size="sm" onClick={() => void deleteFollowUpEvent(ev.id)}>Sil</Button>
+                            </div>
+                          </div>
+                          <p className="mt-1 text-sm font-semibold text-slate-800">{ev.summary}</p>
+                          {ev.patientResponse && <p className="mt-1 text-xs text-slate-700"><span className="font-semibold">Hasta söyledi:</span> {ev.patientResponse}</p>}
+                          {ev.nextStep && <p className="mt-1 text-xs text-slate-700"><span className="font-semibold">Planlanan sonraki adım:</span> {ev.nextStep}</p>}
+                          {ev.detail && <p className="mt-1 text-xs text-slate-600">{ev.detail}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+          );
+        })()}
+      </Modal>
 
     </section>
   );

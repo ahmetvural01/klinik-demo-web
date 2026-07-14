@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { writeAudit } from "@/lib/api";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 
 const DEMO_DAYS = 14;
@@ -359,8 +360,14 @@ export async function POST(request: NextRequest) {
         data: { demoInstitutionId: institution.id },
       });
 
-      return { institution, requestRecord };
+      return { institution, requestRecord, manager: users[0] };
     });
+
+    await writeAudit(
+      result.manager.id,
+      "DEMO_REQUEST_CREATE",
+      `Demo kurum oluşturuldu: ${result.institution.name} / Yetkili: ${contactName} / Talep: ${result.requestRecord.id}`,
+    );
 
     return NextResponse.json({
       ok: true,

@@ -36,6 +36,10 @@ export type ThemePackage = {
   name: string;
   description: string;
   fontSans: string;
+  // Başlıklar (h1) için ayrı bir yazı tipi — verilmezse fontSans'a düşer.
+  // globals.css'teki `h1 { font-family: var(--font-display); }` kuralı
+  // bunu uygulama genelinde otomatik uygular, sayfa dosyalarına dokunmadan.
+  fontDisplay?: string;
   vars: ThemeVars;
 };
 
@@ -47,6 +51,20 @@ const STATUS = {
 };
 
 export const THEME_PACKAGES: ThemePackage[] = [
+  {
+    id: "porselen",
+    name: "Porselen Klinik",
+    description: "Yeni varsayılan — sıcak porselen beyazı zemin, derin klinik yeşil-teal vurgu, başlıklarda serif.",
+    fontSans: "'Segoe UI', ui-sans-serif, system-ui, -apple-system, sans-serif",
+    fontDisplay: "Georgia, 'Iowan Old Style', 'Palatino Linotype', serif",
+    vars: {
+      bg: "246 244 239", surface: "251 249 245", border: "234 234 230", text: "35 35 31", muted: "132 130 108",
+      primary: "14 107 99", primaryStrong: "10 79 73", accent: "177 86 47",
+      slate: { "50": "250 250 249", "100": "246 245 244", "200": "234 234 230", "300": "215 215 208", "400": "175 173 157", "500": "132 130 108", "600": "98 97 85", "700": "79 78 69", "800": "55 54 47", "900": "35 35 31", "950": "22 22 19" },
+      primaryRamp: { "50": "243 252 251", "100": "226 248 246", "200": "197 241 237", "300": "156 232 224", "400": "102 219 207", "500": "57 208 193", "600": "43 182 168", "700": "36 153 141", "800": "30 128 118", "900": "24 103 95", "950": "17 74 69" },
+      accentRamp: { "50": "252 246 243", "100": "248 233 227", "200": "240 211 199", "300": "229 180 158", "400": "215 139 106", "500": "204 104 62", "600": "177 86 47", "700": "149 72 40", "800": "125 61 33", "900": "101 49 27", "950": "73 35 19" },
+    },
+  },
   {
     id: "klasik",
     name: "Klasik Mavi",
@@ -179,7 +197,7 @@ export const THEME_PACKAGES: ThemePackage[] = [
   },
 ];
 
-export const DEFAULT_THEME_ID = "klasik";
+export const DEFAULT_THEME_ID = "porselen";
 
 export function getThemePackage(id: string | null | undefined): ThemePackage {
   return THEME_PACKAGES.find((t) => t.id === id) || THEME_PACKAGES[0];
@@ -214,5 +232,6 @@ export function themeCssVars(pkg: ThemePackage) {
     ...rampVars("primary", v.primaryRamp),
     ...rampVars("accent", v.accentRamp),
     "--font-sans": pkg.fontSans,
+    "--font-display": pkg.fontDisplay || pkg.fontSans,
   } as Record<string, string>;
 }

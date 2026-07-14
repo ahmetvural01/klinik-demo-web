@@ -6,7 +6,7 @@
  */
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, bumpRealtimeInstitution } from "@/lib/api";
+import { requireAuth, bumpRealtimeInstitution, writeAudit } from "@/lib/api";
 import { turkeyTodayStartUtc } from "@/lib/tz";
 
 export async function POST() {
@@ -52,6 +52,11 @@ export async function POST() {
 
     if (result.count > 0) {
       bumpRealtimeInstitution(auth.user.institutionId);
+      await writeAudit(
+        auth.user.id,
+        "TAKSIT_MARK_OVERDUE",
+        `${result.count} taksit otomatik olarak gecikti durumuna alındı. Kesim tarihi: ${cutoff.toISOString()}`
+      );
     }
     return NextResponse.json({ updated: result.count });
   } catch {

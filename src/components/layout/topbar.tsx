@@ -3,9 +3,27 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 
 import { useRouter, usePathname } from "next/navigation";
-import Link from "next/link";
 import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  Menu,
+  Search,
+  X,
+  Bell,
+  CalendarPlus,
+  UserPlus,
+  ClipboardList,
+  ChevronRight,
+  CheckCircle2,
+  AlertCircle,
+  PackageSearch,
+  FlaskConical,
+  Loader2,
+} from "lucide-react";
+import type { ComponentType } from "react";
 import { getAlertPermissions, usePanelAlerts } from "@/components/layout/use-panel-alerts";
+import { cachedGet } from "@/lib/client-cache";
+import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
 
 type Props = { user: { fullName: string; role: string; photoUrl?: string | null } };
 
@@ -16,15 +34,6 @@ const roleLabel: Record<string, string> = {
   BANKO:      "Banko Görevlisi",
   MUHASEBE:   "Muhasebe",
   SUPERADMIN: "Süper Admin",
-};
-
-const roleBg: Record<string, string> = {
-  YONETICI:   "bg-violet-100 text-violet-700",
-  DOKTOR:     "bg-cyan-100 text-cyan-700",
-  ASISTAN:    "bg-emerald-100 text-emerald-700",
-  BANKO:      "bg-amber-100 text-amber-700",
-  MUHASEBE:   "bg-blue-100 text-blue-700",
-  SUPERADMIN: "bg-red-100 text-red-700",
 };
 
 const PAGE_TITLES: Record<string, string> = {
@@ -51,7 +60,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/personel":      "Personeller",
   "/personel-ekle": "Yeni Personel",
   "/fiyat":         "Fiyat Listesi",
-  "/sms":           "SMS Modülü",
+  "/sms":           "SMS Kayıtları",
   "/sistem-izleme": "Sistem İzleme",
   "/ayar":          "Sistem Ayarları",
   "/log":           "İşlem Kayıtları",
@@ -62,7 +71,7 @@ const PAGE_TITLES: Record<string, string> = {
 
 type MessageLite = { id: string; userId: string; createdAt: string };
 
-type TopbarQuickAction = { href: string; label: string; className: string };
+type TopbarQuickAction = { href: string; label: string; icon: ComponentType<{ className?: string }> };
 type TopbarPageConfig = {
   showDateTime: boolean;
   showAlerts: boolean;
@@ -74,7 +83,6 @@ type TopbarPageConfig = {
 };
 
 function getTopbarConfig(pathname: string): TopbarPageConfig {
-  const actionBase = "rounded-xl border px-4 py-2 text-sm font-semibold transition";
   const base: TopbarPageConfig = {
     showDateTime: true,
     showAlerts: true,
@@ -83,44 +91,29 @@ function getTopbarConfig(pathname: string): TopbarPageConfig {
     compact: false,
     searchPlaceholder: "İsim, TC veya telefon ile hasta ara...",
     quickActions: [
-      { href: "/randevu", label: "Randevu Oluştur", className: `${actionBase} border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100` },
-      { href: "/hasta-ekle", label: "Hasta Ekle", className: `${actionBase} border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100` },
+      { href: "/randevu", label: "Randevu Oluştur", icon: CalendarPlus },
+      { href: "/hasta-ekle", label: "Hasta Ekle", icon: UserPlus },
     ],
   };
 
   if (pathname.startsWith("/hasta-takip")) {
-    return {
-      ...base,
-      quickActions: [
-        { href: "/gorevler", label: "Görev Merkezi", className: `${actionBase} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100` },
-      ],
-    };
+    return { ...base, quickActions: [{ href: "/gorevler", label: "Görev Merkezi", icon: ClipboardList }] };
   }
 
   if (pathname.startsWith("/randevu")) {
-    return {
-      ...base,
-      quickActions: [
-        { href: "/hasta-ekle", label: "Yeni Hasta", className: `${actionBase} border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100` },
-      ],
-    };
+    return { ...base, quickActions: [{ href: "/hasta-ekle", label: "Yeni Hasta", icon: UserPlus }] };
   }
 
   if (pathname.startsWith("/gorevler")) {
-    return {
-      ...base,
-      quickActions: [
-        { href: "/hasta-takip", label: "Hasta Takip", className: `${actionBase} border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100` },
-      ],
-    };
+    return { ...base, quickActions: [{ href: "/hasta-takip", label: "Hasta Takip", icon: ClipboardList }] };
   }
 
   if (pathname.startsWith("/hasta-detay")) {
     return {
       ...base,
       quickActions: [
-        { href: "/randevu", label: "Randevular", className: `${actionBase} border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100` },
-        { href: "/gorevler", label: "Görev Merkezi", className: `${actionBase} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100` },
+        { href: "/randevu", label: "Randevular", icon: CalendarPlus },
+        { href: "/gorevler", label: "Görev Merkezi", icon: ClipboardList },
       ],
     };
   }
@@ -131,9 +124,7 @@ function getTopbarConfig(pathname: string): TopbarPageConfig {
       showPageTitle: pathname.startsWith("/lab") ? false : base.showPageTitle,
       showSearch: pathname.startsWith("/lab") ? true : base.showSearch,
       compact: pathname.startsWith("/lab") ? true : base.compact,
-      quickActions: [
-        { href: "/gorevler", label: "Görev Merkezi", className: `${actionBase} border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100` },
-      ],
+      quickActions: [{ href: "/gorevler", label: "Görev Merkezi", icon: ClipboardList }],
     };
   }
 
@@ -193,8 +184,7 @@ export function Topbar({ user }: Props) {
   }, []);
 
   useEffect(() => {
-    fetch("/api/auth/me")
-      .then((r) => (r.ok ? r.json() : null))
+    cachedGet<{ id?: string }>("/api/auth/me", 60_000)
       .then((d) => setCurrentUserId(d?.id || ""))
       .catch(() => {});
   }, []);
@@ -329,7 +319,6 @@ export function Topbar({ user }: Props) {
   const displayName = user.fullName || "Kullanıcı";
   const initials = displayName.split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase();
   const displayRole = roleLabel[effectiveRole] || user.role;
-  const displayRoleClass = roleBg[effectiveRole] || "bg-slate-100 text-slate-600";
 
   return (
     <header className={`flex items-center justify-between border-b border-slate-200 bg-white shadow-sm ${pageConfig.compact ? "min-h-14 gap-2 px-3 py-2 sm:gap-3 sm:px-4" : "min-h-16 gap-2 px-3 py-2 sm:gap-4 sm:px-5"}`}>
@@ -340,21 +329,15 @@ export function Topbar({ user }: Props) {
           aria-label="Menüyü aç"
           className="mr-2 inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 md:hidden"
         >
-          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-            <line x1="3" y1="12" x2="21" y2="12" />
-            <line x1="3" y1="6" x2="21" y2="6" />
-            <line x1="3" y1="18" x2="21" y2="18" />
-          </svg>
+          <Menu className="h-4 w-4" />
         </button>
         {pageConfig.showPageTitle && pageTitle && (
           <span className="hidden text-base font-bold text-slate-800 md:block">{pageTitle}</span>
         )}
         {pageConfig.showSearch && <div className="relative flex max-w-sm flex-1">
           <form onSubmit={search} className="w-full">
-            <div ref={searchRef} className="relative flex min-h-11 items-center gap-2 rounded-xl border-2 border-blue-200 bg-blue-50 px-3 py-2 shadow-sm">
-              <svg className="h-4 w-4 text-blue-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-              </svg>
+            <div ref={searchRef} className="relative flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 transition focus-within:border-primary focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15">
+              <Search className="h-4 w-4 shrink-0 text-slate-400" />
               <input
                 value={q}
                 onChange={(e) => { setQ(e.target.value); setShowSearchDropdown(true); setSelectedResultIdx(-1); }}
@@ -366,20 +349,20 @@ export function Topbar({ user }: Props) {
                 aria-label="Hasta ara - ad, TC no veya telefon ile"
                 aria-expanded={showSearchDropdown}
                 aria-autocomplete="list"
-                className="flex-1 border-none bg-transparent text-sm font-semibold outline-none placeholder-blue-400"
+                className="flex-1 border-none bg-transparent text-sm font-medium text-slate-700 outline-none placeholder-slate-400"
               />
               {q && (
                 <button
                   type="button"
                   onClick={() => { setQ(""); setSearchResults([]); setShowSearchDropdown(false); }}
-                  className="text-blue-400 hover:text-blue-600"
+                  className="text-slate-400 hover:text-slate-600"
                 >
-                  ✕
+                  <X className="h-3.5 w-3.5" />
                 </button>
               )}
                 {searchResults.length > 0 && showSearchDropdown && (
-                <div id="search-results" className="absolute top-full left-0 right-0 z-50 mt-2 rounded-lg border border-blue-200 bg-white shadow-xl" role="listbox">
-                  <div className="flex items-center justify-between border-b border-blue-100 px-4 py-2 text-xs font-bold text-blue-600">
+                <div id="search-results" className="absolute top-full left-0 right-0 z-50 mt-2 rounded-xl border border-slate-200 bg-white shadow-xl">
+                  <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2 text-xs font-bold text-slate-500">
                     <span>{searchResults.length} sonuç</span>
                   </div>
                   {searchResults.map((p, idx) => (
@@ -397,25 +380,25 @@ export function Topbar({ user }: Props) {
                         setSelectedResultIdx(-1);
                       }}
                       className={`flex w-full items-center gap-3 px-4 py-3 text-left transition ${
-                        selectedResultIdx === idx ? "bg-blue-100" : "hover:bg-blue-50"
-                      } ${idx < searchResults.length - 1 ? "border-b border-blue-50" : ""}`}
+                        selectedResultIdx === idx ? "bg-primary/10" : "hover:bg-slate-50"
+                      } ${idx < searchResults.length - 1 ? "border-b border-slate-50" : ""}`}
                     >
-                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
                         {p.fullName.split(" ").map(w => w[0]).slice(0, 1).join("")}
                       </div>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-bold text-slate-800 truncate">{p.fullName}</p>
                         <p className="text-xs text-slate-500 truncate">{p.tcNo}{!hidePhone ? ` · ${p.phone}` : ""}</p>
                       </div>
-                      <svg className="h-4 w-4 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><polyline points="9 18 15 12 9 6"/></svg>
+                      <ChevronRight className="h-4 w-4 text-slate-400" />
                     </button>
                   ))}
                 </div>
               )}
               {showSearchDropdown && q.length >= 2 && searchResults.length === 0 && (
-                <div className="absolute top-full left-0 right-0 z-50 mt-2 rounded-lg border border-blue-200 bg-white px-4 py-3 text-center text-sm text-slate-500 shadow-lg">
+                <div className="absolute top-full left-0 right-0 z-50 mt-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-center text-sm text-slate-500 shadow-lg">
                   <div className="inline-flex items-center gap-2">
-                    <div className="h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
                     Hastalar aranıyor…
                   </div>
                 </div>
@@ -431,46 +414,39 @@ export function Topbar({ user }: Props) {
         {pageConfig.quickActions.length > 0 && (
           <div className="hidden items-center gap-2 md:flex">
             {pageConfig.quickActions.map((action) => (
-              <Link key={action.href + action.label} href={action.href} className={action.className}>
+              <Button key={action.href + action.label} href={action.href} variant="secondary" size="sm" icon={action.icon}>
                 {action.label}
-              </Link>
+              </Button>
             ))}
           </div>
         )}
 
-        {pageConfig.quickActions.length > 0 && (pageConfig.showDateTime || pageConfig.showAlerts) && <span className="h-5 w-px bg-slate-200" />}
-
         {/* Tarih & Saat */}
         {pageConfig.showDateTime && (
-          <div className="hidden items-center gap-2 text-xs text-slate-400 md:flex">
+          <div className="hidden items-center gap-2 border-l border-slate-100 pl-3 text-xs text-slate-400 md:flex">
             <span className="text-slate-500">{today}</span>
             <span className="h-3.5 w-px bg-slate-200" />
             <Clock />
           </div>
         )}
 
-        {pageConfig.showDateTime && pageConfig.showAlerts && <span className="h-5 w-px bg-slate-200" />}
-
         {/* Alarm zili */}
         {pageConfig.showAlerts && <div className="relative" ref={alertRef}>
           <button
             onClick={() => setShowAlerts(v => !v)}
-            className="relative flex h-8 w-8 items-center justify-center rounded-full hover:bg-slate-100 transition"
+            className="relative flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100"
             title="Uyarılar"
           >
-            <svg className="h-5 w-5 text-slate-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-              <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-            </svg>
+            <Bell className="h-4 w-4" />
             {totalAlerts > 0 && (
-              <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-bold text-white">
+              <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
                 {totalAlerts > 9 ? "9+" : totalAlerts}
               </span>
             )}
           </button>
           {/* Dropdown */}
           {showAlerts && (
-            <div className="absolute right-0 top-10 z-50 w-72 rounded-2xl border border-slate-200 bg-white shadow-xl">
+            <div className="absolute right-0 top-11 z-50 w-72 rounded-2xl border border-slate-200 bg-white shadow-xl">
               <div className="border-b border-slate-100 px-4 py-3">
                 <p className="text-sm font-bold text-slate-800">Sistem Uyarıları</p>
               </div>
@@ -478,10 +454,8 @@ export function Topbar({ user }: Props) {
                 {/* Taksit bildirimi — sadece yetkili roller */}
                 {canSeeTaksit && (alerts.taksit > 0 ? (
                   <a href="/muhasebe?tab=taksit" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-red-100">
-                      <svg className="h-4 w-4 text-red-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-                      </svg>
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-red-50">
+                      <AlertCircle className="h-4 w-4 text-red-500" />
                     </span>
                     <div>
                       <p className="text-sm font-semibold text-slate-800">{alerts.taksit} Gecikmiş Taksit</p>
@@ -490,8 +464,8 @@ export function Topbar({ user }: Props) {
                   </a>
                 ) : (
                   <div className="flex items-center gap-3 px-4 py-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100">
-                      <svg className="h-4 w-4 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                     </span>
                     <p className="text-sm text-slate-600">Gecikmiş taksit yok</p>
                   </div>
@@ -499,10 +473,8 @@ export function Topbar({ user }: Props) {
                 {/* Stok bildirimi — sadece yetkili roller */}
                 {canSeeStok && (alerts.stok > 0 ? (
                   <a href="/stok" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-100">
-                      <svg className="h-4 w-4 text-amber-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
-                      </svg>
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-50">
+                      <PackageSearch className="h-4 w-4 text-amber-500" />
                     </span>
                     <div>
                       <p className="text-sm font-semibold text-slate-800">{alerts.stok} Kritik Stok Kalemi</p>
@@ -511,8 +483,8 @@ export function Topbar({ user }: Props) {
                   </a>
                 ) : (
                   <div className="flex items-center gap-3 px-4 py-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100">
-                      <svg className="h-4 w-4 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                     </span>
                     <p className="text-sm text-slate-600">Stok seviyesi normal</p>
                   </div>
@@ -520,10 +492,8 @@ export function Topbar({ user }: Props) {
                 {/* Lab bildirimi — sadece yetkili roller */}
                 {canSeeLab && (alerts.lab > 0 ? (
                   <a href="/lab" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100">
-                      <svg className="h-4 w-4 text-blue-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M9 3H5a2 2 0 0 0-2 2v4m6-6h10a2 2 0 0 1 2 2v4M9 3v11m0 0H5m4 0h10m0-11v11m0 0h-4"/>
-                      </svg>
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
+                      <FlaskConical className="h-4 w-4 text-primary" />
                     </span>
                     <div>
                       <p className="text-sm font-semibold text-slate-800">{alerts.lab} Bekleyen Lab Siparişi</p>
@@ -532,8 +502,8 @@ export function Topbar({ user }: Props) {
                   </a>
                 ) : (
                   <div className="flex items-center gap-3 px-4 py-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100">
-                      <svg className="h-4 w-4 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
                     </span>
                     <p className="text-sm text-slate-600">Bekleyen lab siparişi yok</p>
                   </div>
@@ -554,28 +524,21 @@ export function Topbar({ user }: Props) {
           )}
         </div>}
 
-        {pageConfig.showAlerts && <span className="h-5 w-px bg-slate-200" />}
-
         {/* Kullanıcı */}
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 border-l border-slate-100 pl-3">
           <div className="hidden text-right md:block">
             <p className="text-sm font-semibold leading-tight text-slate-800">{displayName}</p>
-            <span className={"inline-block rounded-full px-2.5 py-1 text-xs font-bold " + displayRoleClass}>
-              {displayRole}
-            </span>
+            <Badge tone="info" size="sm">{displayRole}</Badge>
           </div>
-          <a href="/profil" className="block h-8 w-8 shrink-0 overflow-hidden rounded-full ring-2 ring-blue-200 transition hover:ring-blue-400" title="Profilim">
+          <a href="/profil" className="relative block h-9 w-9 shrink-0 overflow-hidden rounded-full ring-2 ring-primary/20 transition hover:ring-primary/50" title="Profilim">
             {user.photoUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={user.photoUrl} alt={displayName} className="h-full w-full object-cover" />
             ) : (
               <span className="flex h-full w-full items-center justify-center bg-primary text-xs font-bold text-white">{initials}</span>
             )}
+            <span className="absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-500" />
           </a>
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-            <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
-          </span>
         </div>
       </div>
     </header>

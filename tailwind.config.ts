@@ -34,8 +34,12 @@ const config = {
         danger: withOpacity("--color-danger"),
         // Uygulama genelinde binlerce yerde kullanılan Tailwind `slate`
         // paleti, aktif temanın nötr tonuna göre değişir (bkz. Superadmin >
-        // Tema). `white` kasıtlı olarak dokunulmadan bırakıldı: `text-white`
-        // renkli butonlarda okunabilirlik için her zaman gerçek beyaz kalmalı.
+        // Tema). `white` de temanın `surface` değişkenine bağlanır — 430+
+        // yerde kullanılan `bg-white` kart zeminleri artık göz yormayan
+        // hafif tonlu bir "beyaz" alır (bkz. theme-packages.ts `surface`).
+        // Fark kasıtlı olarak minimal (birkaç RGB birimi): `text-white`
+        // renkli butonlarda okunabilirliği bozmaz.
+        white: withOpacity("--color-surface"),
         slate: ramp("slate"),
         // `bg-primary` kadar (hatta daha sık) `bg-blue-*`/`bg-indigo-*`/
         // `bg-sky-*` de "marka rengi" olarak kullanılıyor — bunlar da temanın

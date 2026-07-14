@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 
 export async function GET() {
@@ -82,6 +82,7 @@ export async function POST(request: NextRequest) {
     });
   });
 
+  await writeAudit(auth.user.id, "SUPERADMIN_SMS_PROVIDER_CREATE", `${created.name} sağlayıcısı oluşturuldu${created.isActive ? " ve aktif edildi" : ""}`);
   return NextResponse.json(created);
 }
 
@@ -148,5 +149,6 @@ export async function PUT(request: NextRequest) {
     });
   });
 
+  await writeAudit(auth.user.id, "SUPERADMIN_SMS_PROVIDER_UPDATE", `${updated.name} sağlayıcısı güncellendi${updated.isActive ? " (aktif)" : ""}`);
   return NextResponse.json(updated);
 }

@@ -3,10 +3,15 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { confirmDialog } from "@/lib/confirm-client";
-import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
+import { showToastSafe } from "@/lib/toast-client";
+import { ListPager } from "@/components/ui/ListPager";
+import { Modal } from "@/components/ui/Modal";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { stripSystemTags } from "@/lib/format-text";
 import { addPdfSection, addPdfTitle, createPdfDoc } from "@/lib/pdf-export";
 import { useRouter, useSearchParams } from "next/navigation";
+import { cachedGet } from "@/lib/client-cache";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Payment = {
@@ -47,7 +52,20 @@ type Doctor = { id: string; fullName: string; role: string; profile?: { hideAsDo
 const isEffectiveDoctor = (u: Doctor) => u.role === "DOKTOR" || (u.role === "YONETICI" && !u.profile?.hideAsDoctor);
 type StockItem = { id: string; quantity: number; minQuantity: number };
 type TrendMonth = { label: string; gelir: number; gider: number };
-type AlacakRow = { id: string; fullName: string; phone: string; brutTedavi: number; indirim: number; netTedavi: number; odenen: number; bakiye: number; discountRate: number; };
+type AlacakRow = {
+  id: string;
+  fullName: string;
+  phone: string;
+  brutTedavi: number;
+  indirim: number;
+  netTedavi: number;
+  odenen: number;
+  bakiye: number;
+  discountRate: number;
+  doctorNames?: string[];
+  lastPaymentAt?: string | null;
+  lastTreatmentAt?: string | null;
+};
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 const MONEY = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 2 });
@@ -65,6 +83,12 @@ const DOCTOR_PAYOUT_METHOD_LABELS: Record<string, string> = {
   NAKIT: "Nakit", HAVALE_EFT: "Havale/EFT",
 };
 const POS_REQUIRED_METHODS = new Set(["KREDI_KARTI", "MAIL_ORDER"]);
+const AGING4_META: Record<string, { label: string; tone: string; bg: string; border: string }> = {
+  current: { label: "Vadesi Gelmemiş", tone: "text-slate-700", bg: "bg-slate-50", border: "border-slate-100" },
+  d0_30: { label: "0-30 Gün", tone: "text-amber-700", bg: "bg-amber-50", border: "border-amber-100" },
+  d31_60: { label: "31-60 Gün", tone: "text-orange-700", bg: "bg-orange-50", border: "border-orange-100" },
+  d60p: { label: "60+ Gün", tone: "text-red-700", bg: "bg-red-50", border: "border-red-100" },
+};
 const requiresPos = (method: string) => POS_REQUIRED_METHODS.has(method);
 const AY_ADLARI = [
   "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
@@ -80,17 +104,17 @@ const PERIODS: Record<string, string> = {
   AYLIK: "Aylık", IKIAYLIK: "2 Aylık",
   UCAYLIK: "3 Aylık", ALTIAYLIK: "6 Aylık", YILLIK: "Yıllık",
 };
-const TAKSIT_STATUS_BADGE: Record<string, string> = {
-  AKTIF: "bg-blue-100 text-blue-700",
-  DEVAM_EDIYOR: "bg-amber-100 text-amber-700",
-  TAMAMLANDI: "bg-emerald-100 text-emerald-700",
-  IPTAL: "bg-red-100 text-red-700",
-  BEKLIYOR: "bg-slate-100 text-slate-700",
-  ODENDI: "bg-emerald-100 text-emerald-700",
-  GECIKTI: "bg-red-100 text-red-700",
+const TAKSIT_STATUS_TONE: Record<string, BadgeTone> = {
+  AKTIF: "info",
+  DEVAM_EDIYOR: "warning",
+  TAMAMLANDI: "success",
+  IPTAL: "critical",
+  BEKLIYOR: "neutral",
+  ODENDI: "success",
+  GECIKTI: "critical",
 };
 
-const INP = "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-blue-400 focus:bg-white focus:outline-none";
+const INP = "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none";
 const MUHASEBE_CACHE_KEY = "muhasebe:page:v1";
 
 function readMuhasebeCache() {
@@ -218,9 +242,8 @@ export default function MuhasebePage() {
     setActiveTab(tab);
     router.replace(`/muhasebe?tab=${tab}`, { scroll: false });
   }, [router]);
-  const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const showToast = useCallback((type: "success" | "error", text: string) => {
-    setToast({ type, text }); setTimeout(() => setToast(null), 3500);
+    showToastSafe({ message: text, type });
   }, []);
 
   // ── Summary state ─────────────────────────────────────────────────────────
@@ -252,8 +275,8 @@ export default function MuhasebePage() {
     const [k, gt, gm, fr, sr, tr] = await Promise.all([
       fetch(`/api/kasa?date=${today}`, { cache: "no-store" }).then(r => r.json()).catch(() => ({})),
       // BANKO için /api/gider yasak — çekilmez
-      !isBankoRole ? fetch(`/api/gider?from=${today}&to=${today}`, { cache: "no-store" }).then(r => r.json()).catch(() => ({})) : Promise.resolve({}),
-      !isBankoRole ? fetch(`/api/gider?from=${monthStart}&to=${today}`, { cache: "no-store" }).then(r => r.json()).catch(() => ({})) : Promise.resolve({}),
+      !isBankoRole ? fetch(`/api/gider?from=${today}&to=${today}&take=50`, { cache: "no-store" }).then(r => r.json()).catch(() => ({})) : Promise.resolve({}),
+      !isBankoRole ? fetch(`/api/gider?from=${monthStart}&to=${today}&take=50`, { cache: "no-store" }).then(r => r.json()).catch(() => ({})) : Promise.resolve({}),
       // BANKO için /api/firma ve /api/stock yasak — çekilmez
       !isBankoRole ? fetch("/api/firma", { cache: "no-store" }).then(r => r.json()).catch(() => []) : Promise.resolve([]),
       !isBankoRole ? fetch("/api/stock", { cache: "no-store" }).then(r => r.json()).catch(() => []) : Promise.resolve([]),
@@ -283,24 +306,22 @@ export default function MuhasebePage() {
 
   useEffect(() => {
     const syncRole = () => {
-      fetch("/api/auth/me")
-        .then(r => r.ok ? r.json() : null)
+      cachedGet<{ role?: string } | null>("/api/auth/me", 60_000)
         .then(d => {
           const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
-          if (preview || d?.role) setUserRole(preview || d.role);
+          if (preview || d?.role) setUserRole(preview || d?.role || "");
         })
         .catch(() => null);
     };
 
     syncRole();
     fetch("/api/taksit-plani/mark-gecikti", { method: "POST" }).catch(() => null);
-    refreshSummary().finally(() => setLoading(false));
-    loadTrend();
+    setLoading(false);
 
     const onPreview = () => syncRole();
     window.addEventListener("preview-role-change", onPreview);
     return () => window.removeEventListener("preview-role-change", onPreview);
-  }, [refreshSummary, loadTrend]);
+  }, []);
 
   useEffect(() => {
     if (userRole === "DOKTOR" || userRole === "ASISTAN") {
@@ -331,27 +352,42 @@ export default function MuhasebePage() {
   const filteredAlacaklar = useMemo(() => {
     if (!alacakSearch) return alacaklar;
     const q = alacakSearch.toLowerCase();
-    return alacaklar.filter(a => a.fullName.toLowerCase().includes(q) || a.phone.includes(q));
+    return alacaklar.filter(a =>
+      a.fullName.toLowerCase().includes(q) ||
+      a.phone.includes(q) ||
+      (a.doctorNames || []).some((doctor) => doctor.toLowerCase().includes(q))
+    );
   }, [alacaklar, alacakSearch]);
 
   // ── Shared: patients & pos ────────────────────────────────────────────────
   const [patients,   setPatients]   = useState<PatientOption[]>([]);
   const [posDevices, setPosDevices] = useState<PosDevice[]>([]);
 
+  const loadPatientOptions = useCallback((query = "") => {
+    const params = new URLSearchParams({
+      q: query.trim(),
+      take: "20",
+      sortBy: "fullName",
+      sortDir: "asc",
+    });
+    fetch(`/api/patients?${params.toString()}`, { cache: "no-store" })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => setPatients(Array.isArray(d) ? d : (Array.isArray(d?.patients) ? d.patients : [])))
+      .catch(() => {});
+  }, []);
+
   const ensurePatients = useCallback(() => {
-    if (patients.length === 0)
-      fetch("/api/patients").then(r => r.json()).then(d => setPatients(Array.isArray(d) ? d : (d.patients || []))).catch(() => {});
-  }, [patients.length]);
+    if (patients.length === 0) loadPatientOptions("");
+  }, [loadPatientOptions, patients.length]);
 
   const ensurePos = useCallback(() => {
     fetch("/api/pos-devices").then(r => r.ok ? r.json() : []).then((devs: PosDevice[]) => setPosDevices((devs || []).filter(d => d.isActive))).catch(() => {});
   }, []);
 
-  // Sayfa açılınca hemen yükle — form açıkken boş dropdown sorununu önler
+  // Sayfa açılışını hafif tut: hasta listesi işlem formunda arandıkça yüklenir.
   useEffect(() => {
-    ensurePatients();
     ensurePos();
-    fetch("/api/staff").then(r => r.json()).then(d => setTaksitDoctors((Array.isArray(d) ? d : []).filter(isEffectiveDoctor))).catch(() => {});
+    cachedGet<unknown>("/api/staff", 60_000).then(d => setTaksitDoctors((Array.isArray(d) ? d : []).filter(isEffectiveDoctor))).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -366,6 +402,8 @@ export default function MuhasebePage() {
   const [pmtSearch,    setPmtSearch]    = useState("");
   const [pmtFrom,      setPmtFrom]      = useState("");
   const [pmtTo,        setPmtTo]        = useState("");
+  const [pmtPage,      setPmtPage]      = useState(1);
+  const PMT_PAGE_SIZE = 50;
 
   const loadPayments = useCallback(async () => {
     const r = await fetch("/api/payments", { cache: "no-store" }).catch(() => null);
@@ -416,13 +454,15 @@ export default function MuhasebePage() {
     if (pmtTo   && pDate > pmtTo)   return false;
     return true;
   }), [allPayments, pmtSearch, pmtFrom, pmtTo]);
+  useEffect(() => { setPmtPage(1); }, [pmtSearch, pmtFrom, pmtTo]);
+  const pmtPageCount = Math.max(1, Math.ceil(filteredPayments.length / PMT_PAGE_SIZE));
+  const pagedPayments = useMemo(() => filteredPayments.slice((pmtPage - 1) * PMT_PAGE_SIZE, pmtPage * PMT_PAGE_SIZE), [filteredPayments, pmtPage]);
 
   // ── TAB: Gider ────────────────────────────────────────────────────────────
   const [allExpenses,   setAllExpenses]   = useState<Expense[]>([]);
   const [giderKats,     setGiderKats]     = useState<GiderKategori[]>([]);
   const [showGiderForm, setShowGiderForm] = useState(false);
   const [showCatMgr,    setShowCatMgr]    = useState(false);
-  useEscapeClose(() => setShowCatMgr(false), showCatMgr);
   const [newCatName,    setNewCatName]    = useState("");
   const [editingCatNames, setEditingCatNames] = useState<Record<string, string>>({});
   const [giderForm,     setGiderForm]     = useState({
@@ -437,12 +477,14 @@ export default function MuhasebePage() {
   const [expSearch,   setExpSearch]   = useState("");
   const [expFrom,     setExpFrom]     = useState("");
   const [expTo,       setExpTo]       = useState("");
+  const [expPage,     setExpPage]     = useState(1);
+  const EXP_PAGE_SIZE = 50;
 
   const loadExpenses = useCallback(async () => {
     const m3 = new Date(); m3.setMonth(m3.getMonth() - 3);
     const from = m3.toISOString().split("T")[0];
     const to   = new Date().toISOString().split("T")[0];
-    const r = await fetch(`/api/gider?from=${from}&to=${to}`, { cache: "no-store" }).catch(() => null);
+    const r = await fetch(`/api/gider?from=${from}&to=${to}&take=300`, { cache: "no-store" }).catch(() => null);
     if (r?.ok) { const d = await r.json(); setAllExpenses(Array.isArray(d?.expenses) ? d.expenses : []); }
   }, []);
 
@@ -591,6 +633,9 @@ export default function MuhasebePage() {
     if (expTo   && e.tarih > expTo + "T23:59:59") return false;
     return true;
   }), [allExpenses, expSearch, expFrom, expTo]);
+  useEffect(() => { setExpPage(1); }, [expSearch, expFrom, expTo]);
+  const expPageCount = Math.max(1, Math.ceil(filteredExpenses.length / EXP_PAGE_SIZE));
+  const pagedExpenses = useMemo(() => filteredExpenses.slice((expPage - 1) * EXP_PAGE_SIZE, expPage * EXP_PAGE_SIZE), [filteredExpenses, expPage]);
 
   // ── Unified transaction entry ────────────────────────────────────────────
   const [transactionOpen, setTransactionOpen] = useState(false);
@@ -610,7 +655,12 @@ export default function MuhasebePage() {
   const [firmaPayErrors, setFirmaPayErrors] = useState<{ firmaId?: string; tutar?: string; tarih?: string }>({});
   const [firmaPaySaving, setFirmaPaySaving] = useState(false);
 
-  useEscapeClose(() => setTransactionOpen(false), transactionOpen);
+  useEffect(() => {
+    if (!transactionOpen || transactionKind !== "gelir") return;
+    const timer = setTimeout(() => loadPatientOptions(patientSearch), 250);
+    return () => clearTimeout(timer);
+  }, [loadPatientOptions, patientSearch, transactionKind, transactionOpen]);
+
 
   const openTransaction = useCallback((kind: TransactionKind | "firma" = "gelir") => {
     setTransactionKind(kind === "firma" ? "gider" : kind);
@@ -697,8 +747,6 @@ export default function MuhasebePage() {
   const [showRemModal, setShowRemModal] = useState(false);
   const [remForm,      setRemForm]      = useState({ patientId: "", note: "", reminderDate: new Date().toISOString().split("T")[0] });
 
-  useEscapeClose(() => setShowOdeModal(null), Boolean(showOdeModal));
-  useEscapeClose(() => setShowRemModal(false), showRemModal);
 
   const patientSearchOptions = useMemo(() => {
     const q = patientSearch.trim().toLowerCase();
@@ -848,12 +896,6 @@ export default function MuhasebePage() {
   // taksitPlans artık sadece geçerli sayfayı içeriyor, tam liste değil.
   const taksitKPIs = taksitStats;
 
-  const AGING4_META: Record<string, { label: string; tone: string; bg: string; border: string }> = {
-    current: { label: "Vadesi Gelmemiş", tone: "text-slate-700", bg: "bg-slate-50", border: "border-slate-100" },
-    d0_30: { label: "0-30 Gün", tone: "text-amber-700", bg: "bg-amber-50", border: "border-amber-100" },
-    d31_60: { label: "31-60 Gün", tone: "text-orange-700", bg: "bg-orange-50", border: "border-orange-100" },
-    d60p: { label: "60+ Gün", tone: "text-red-700", bg: "bg-red-50", border: "border-red-100" },
-  };
   const alacakAging = useMemo(
     () => (taksitStats.aging4 || []).map((b) => ({ ...AGING4_META[b.key], ...b })),
     [taksitStats]
@@ -890,6 +932,8 @@ export default function MuhasebePage() {
   const [ledgerMethod, setLedgerMethod] = useState("HEPSI");
   const [ledgerFrom, setLedgerFrom] = useState("");
   const [ledgerTo, setLedgerTo] = useState("");
+  const [ledgerPage, setLedgerPage] = useState(1);
+  const LEDGER_PAGE_SIZE = 50;
   const ledgerRows = useMemo(() => {
     // Eski "Hakediş Öde" akışıyla oluşturulmuş (patientId'siz, doctorId'li) Payment
     // kayıtları burada hariç tutulur — bunlar gelir değil, kurumun doktora yaptığı
@@ -902,7 +946,7 @@ export default function MuhasebePage() {
       label: "Tahsilat",
       name: payment.patient?.fullName || "Hasta seçilmemiş",
       description: stripFinanceTags(payment.description),
-      incomeType: "Hasta Tahsilatı",
+      incomeType: payment.doctor?.fullName ? `Dr. ${payment.doctor.fullName}` : "Hasta Tahsilatı",
       method: METHOD_LABELS[payment.method] || payment.method,
       amount: Number(payment.amount || 0),
       tone: "text-emerald-700",
@@ -943,6 +987,9 @@ export default function MuhasebePage() {
       .filter((row) => !q || row.name.toLowerCase().includes(q) || row.description.toLowerCase().includes(q) || row.method.toLowerCase().includes(q))
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [allExpenses, allPayments, ledgerFrom, ledgerMethod, ledgerSearch, ledgerTo, ledgerType]);
+  useEffect(() => { setLedgerPage(1); }, [ledgerFrom, ledgerMethod, ledgerSearch, ledgerTo, ledgerType]);
+  const ledgerPageCount = Math.max(1, Math.ceil(ledgerRows.length / LEDGER_PAGE_SIZE));
+  const pagedLedgerRows = useMemo(() => ledgerRows.slice((ledgerPage - 1) * LEDGER_PAGE_SIZE, ledgerPage * LEDGER_PAGE_SIZE), [ledgerRows, ledgerPage]);
 
   const [editingKind, setEditingKind] = useState<"TAHSILAT" | "GIDER" | null>(null);
   const [editingId, setEditingId] = useState("");
@@ -960,7 +1007,6 @@ export default function MuhasebePage() {
     tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0", doctorId: "" as string | null,
   });
   const [editSaving, setEditSaving] = useState(false);
-  useEscapeClose(() => setEditingKind(null), Boolean(editingKind));
 
   const startEditPayment = (payment: Payment) => {
     ensurePos();
@@ -1157,7 +1203,6 @@ export default function MuhasebePage() {
   const [hakedisDetailOpen, setHakedisDetailOpen] = useState(false);
   const [hakedisDetail, setHakedisDetail] = useState<HakedisDetail | null>(null);
   const [hakedisDetailLoading, setHakedisDetailLoading] = useState(false);
-  useEscapeClose(() => setHakedisDetailOpen(false), hakedisDetailOpen);
 
   const openHakedisDetail = async (doctorId: string, year: number, month: number) => {
     setHakedisDetailOpen(true);
@@ -1223,10 +1268,18 @@ export default function MuhasebePage() {
   const exportHakedisDetailPdf = () => {
     if (!hakedisDetail) return;
     const d = hakedisDetail;
-    const doc = createPdfDoc("p");
+    const doc = createPdfDoc("l");
     addPdfTitle(doc, `Hakediş Detayı — ${d.doctor.fullName}`,
       `${AY_ADLARI[d.month - 1]} ${d.year} · Hakedilen: ${fmt(d.summary.hakedilen)} · Ödenen: ${fmt(d.summary.odenen)} · Kalan: ${fmt(d.summary.kalan)}`);
     let y = 28;
+    y = addPdfSection(doc, y, "Dönem Özeti", ["Kalem", "Tutar"], [
+      ["Toplam hakediş", fmt(d.summary.hakedilen)],
+      ["Ödenen", fmt(d.summary.odenen)],
+      ["Kalan", fmt(d.summary.kalan)],
+      ["Muayene / tedavi kaydı", d.examinations.length],
+      ["Hasta ödeme kaydı", d.patientPayments.length],
+      ["Laboratuvar faturası", d.labInvoices.length],
+    ]);
     y = addPdfSection(doc, y, "Hakediş Hesaplama Dökümü", ["Kalem", "Tutar"], hakedisBreakdownRows(d));
     y = addPdfSection(doc, y, "Muayeneler / Tedaviler", ["Tarih", "Hasta", "Tedavi", "Diş", "Tutar"],
       d.examinations.map(e => [fmtDate(e.tarih), e.hasta, e.tedavi, e.dis || "-", fmt(e.tutar)]));
@@ -1241,7 +1294,7 @@ export default function MuhasebePage() {
 
   const summaryCards = [
     { label: "Bugün Gelir",     value: fmt(kasaToday.total),       tone: "text-emerald-700", bg: "bg-emerald-50",  border: "border-emerald-100", banko: true,  tab: "defter" as TabId | undefined },
-    { label: "Bugün Net",       value: fmt(todayNet),              tone: todayNet >= 0 ? "text-blue-700" : "text-red-700", bg: "bg-blue-50", border: "border-blue-100", banko: true, tab: undefined as TabId | undefined },
+    { label: "Bugün Net",       value: fmt(todayNet),              tone: todayNet >= 0 ? "text-primary" : "text-red-700", bg: "bg-primary/10", border: "border-primary/20", banko: true, tab: undefined as TabId | undefined },
     { label: "Gecikmiş Taksit", value: `${taksitOverdue.count} adet`, tone: "text-violet-700", bg: "bg-violet-50", border: "border-violet-100", banko: true,  tab: "alacak" as TabId | undefined, view: "taksit" as typeof alacakView, alert: taksitOverdue.count > 0 },
     { label: "Firma Borcu",     value: fmt(supplierDebt),          tone: "text-amber-700",   bg: "bg-amber-50",    border: "border-amber-100",   banko: false, tab: undefined as TabId | undefined, alert: supplierDebt > 0 },
     { label: "Bugün Gider",     value: fmt(expenseToday.total),    tone: "text-red-700",     bg: "bg-red-50",      border: "border-red-100",     banko: false, tab: "defter" as TabId | undefined },
@@ -1390,6 +1443,8 @@ export default function MuhasebePage() {
   // ── Lazy tab data loading ─────────────────────────────────────────────────
   useEffect(() => {
     if (activeTab === "genel") {
+      refreshSummary();
+      if (trendData.length === 0) loadTrend();
       if (taksitPlans.length === 0) loadTaksitPlans();
     }
     if (activeTab === "defter" || activeTab === "gelir") {
@@ -1405,7 +1460,7 @@ export default function MuhasebePage() {
       ensurePatients();
     }
     if (activeTab === "hakedis" && hakDoctors.length === 0)
-      fetch("/api/staff").then(r => r.json()).then(d => setHakDoctors((Array.isArray(d) ? d : []).filter(isEffectiveDoctor))).catch(() => {});
+      cachedGet<unknown>("/api/staff", 60_000).then(d => setHakDoctors((Array.isArray(d) ? d : []).filter(isEffectiveDoctor))).catch(() => {});
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
@@ -1455,36 +1510,24 @@ export default function MuhasebePage() {
     <div className="space-y-2">
 
       {/* Toast */}
-      {toast && (
-        <div className={`fixed right-5 top-5 z-[100] flex items-center gap-2.5 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${toast.type === "success" ? "bg-emerald-500" : "bg-red-500"}`}>
-          {toast.text}
-        </div>
-      )}
-
       {/* Tab Navigation */}
       <div className="sticky top-0 z-30 -mx-1 flex gap-1 overflow-x-auto border-b border-slate-200 bg-slate-50/95 px-1 py-2 backdrop-blur">
         {visibleTabs.map(tab => (
           <button key={tab.id} onClick={() => changeTab(tab.id)} title={tab.hint}
-            className={`relative shrink-0 rounded-xl px-4 py-2.5 text-sm font-black transition ${activeTab === tab.id ? "bg-slate-950 text-white shadow-sm" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100 hover:text-slate-900"}`}>
+            className={`relative shrink-0 rounded-xl px-4 py-2.5 text-sm font-black transition ${activeTab === tab.id ? "bg-primary text-white shadow-sm" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100 hover:text-slate-900"}`}>
             {tab.label}
             {(tab.id === "alacak" && taksitOverdue.count > 0) && (
               <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ${activeTab === tab.id ? "bg-white" : "bg-red-500"}`} />
             )}
           </button>
         ))}
-        <button onClick={() => openTransaction("gelir")} className="ml-auto h-10 shrink-0 rounded-xl bg-slate-950 px-4 text-sm font-black text-white shadow-sm hover:bg-slate-800">İşlem Ekle</button>
+        <Button onClick={() => openTransaction("gelir")} variant="primary" className="ml-auto">İşlem Ekle</Button>
       </div>
 
       {/* Page Header */}
 
-      {transactionOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" {...backdropClose(() => setTransactionOpen(false))}>
-          <section className="max-h-[88vh] w-full max-w-3xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-          <div className="flex flex-col gap-3 border-b border-slate-100 pb-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-base font-black text-slate-900">İşlem Ekle</h2>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
+      <Modal open={transactionOpen} onClose={() => setTransactionOpen(false)} title="İşlem Ekle" size="xl">
+          <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-4">
               {([
                 { id: "gelir", label: "Gelir", disabled: false },
                 { id: "gider", label: "Gider", disabled: userRole === "BANKO" },
@@ -1499,15 +1542,13 @@ export default function MuhasebePage() {
                   }}
                   className={`h-8 rounded-lg px-3 text-xs font-bold transition disabled:cursor-not-allowed disabled:opacity-40 ${
                     transactionKind === item.id
-                      ? "bg-slate-950 text-white"
+                      ? "bg-primary text-white"
                       : "border border-slate-200 bg-slate-50 text-slate-600 hover:bg-white"
                   }`}
                 >
                   {item.label}
                 </button>
               ))}
-              <button onClick={() => setTransactionOpen(false)} className="h-8 rounded-lg px-2.5 text-xs font-bold text-slate-500 hover:bg-slate-100">Kapat</button>
-            </div>
           </div>
 
           {transactionKind === "gelir" && (
@@ -1585,7 +1626,7 @@ export default function MuhasebePage() {
                 <input value={tahForm.description} onChange={e => setTahForm(f => ({ ...f, description: e.target.value }))} placeholder="Tedavi, protokol veya kasa notu" className={INP} />
               </div>
               <div className="flex justify-end gap-2 sm:col-span-2">
-                <button onClick={() => setTransactionOpen(false)} className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">İptal</button>
+                <Button variant="secondary" onClick={() => setTransactionOpen(false)}>İptal</Button>
                 <button onClick={submitTahsilat} disabled={tahSaving} className="h-9 rounded-lg bg-emerald-600 px-5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-60">
                   {tahSaving ? "Kaydediliyor..." : "Gelir Kaydet"}
                 </button>
@@ -1608,7 +1649,7 @@ export default function MuhasebePage() {
               <div>
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <label className="block text-xs font-semibold text-slate-600">Gider Türü <span className="text-red-500">*</span></label>
-                  <button type="button" onClick={() => setShowCatMgr(true)} className="text-xs font-bold text-blue-700 hover:underline">Türleri Yönet</button>
+                  <button type="button" onClick={() => setShowCatMgr(true)} className="text-xs font-bold text-primary hover:underline">Türleri Yönet</button>
                 </div>
                 <SearchSelect
                   query={giderTurSearch}
@@ -1624,7 +1665,7 @@ export default function MuhasebePage() {
                   className={INP + (giderFormErrors.category ? " border-red-400" : "")}
                 />
                 {isDoctorPayoutCategory && (
-                  <p className="mt-1 text-[11px] font-semibold text-blue-700">Bu tür bir doktora bağlıdır — aşağıda doktor ve dönem seçin, tutar o doktorun hakedişinden düşülecek.</p>
+                  <p className="mt-1 text-[11px] font-semibold text-primary">Bu tür bir doktora bağlıdır — aşağıda doktor ve dönem seçin, tutar o doktorun hakedişinden düşülecek.</p>
                 )}
               </div>
               {isDoctorPayoutCategory && (
@@ -1702,7 +1743,7 @@ export default function MuhasebePage() {
                 <input value={giderForm.description} onChange={e => setGiderForm(f => ({ ...f, description: e.target.value }))} placeholder="Gider detayı" className={INP} />
               </div>
               <div className="flex justify-end gap-2 sm:col-span-2">
-                <button onClick={() => setTransactionOpen(false)} className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">İptal</button>
+                <Button variant="secondary" onClick={() => setTransactionOpen(false)}>İptal</Button>
                 <button onClick={submitGider} disabled={giderSaving} className="h-9 rounded-lg bg-red-600 px-5 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-60">
                   {giderSaving ? "Kaydediliyor..." : (isDoctorPayoutCategory ? "Hakediş Ödemesi Kaydet" : "Gider Kaydet")}
                 </button>
@@ -1759,29 +1800,16 @@ export default function MuhasebePage() {
                 <input value={firmaPayForm.aciklama} onChange={e => setFirmaPayForm(f => ({ ...f, aciklama: e.target.value }))} placeholder="Ödeme açıklaması" className={INP} />
               </div>
               <div className="flex justify-end gap-2 sm:col-span-2">
-                <button onClick={() => setTransactionOpen(false)} className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">İptal</button>
+                <Button variant="secondary" onClick={() => setTransactionOpen(false)}>İptal</Button>
                 <button onClick={submitFirmaPayment} disabled={firmaPaySaving} className="h-9 rounded-lg bg-amber-600 px-5 text-sm font-bold text-white hover:bg-amber-700 disabled:opacity-60">
                   {firmaPaySaving ? "Kaydediliyor..." : "Firma Ödemesi Kaydet"}
                 </button>
               </div>
             </div>
           )}
+      </Modal>
 
-          </section>
-        </div>
-      )}
-
-      {editingKind && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" {...backdropClose(() => setEditingKind(null))}>
-          <section className="w-full max-w-2xl rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
-              <div>
-                <h2 className="text-base font-black text-slate-900">{editingKind === "TAHSILAT" ? "Tahsilatı Düzenle" : "Gideri Düzenle"}</h2>
-                <p className="text-xs text-slate-500">Kayıt değişiklikleri muhasebe geçmişine işlenir.</p>
-              </div>
-              <button onClick={() => setEditingKind(null)} className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-500 hover:bg-slate-100">Kapat</button>
-            </div>
-
+      <Modal open={Boolean(editingKind)} onClose={() => setEditingKind(null)} title={editingKind === "TAHSILAT" ? "Tahsilatı Düzenle" : "Gideri Düzenle"} description="Kayıt değişiklikleri muhasebe geçmişine işlenir." size="lg">
             {editingKind === "TAHSILAT" && (
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <div>
@@ -1830,8 +1858,8 @@ export default function MuhasebePage() {
                   <input value={editPaymentForm.description} onChange={e => setEditPaymentForm(f => ({ ...f, description: e.target.value }))} className={INP} />
                 </div>
                 <div className="flex justify-end gap-2 sm:col-span-2">
-                  <button onClick={() => setEditingKind(null)} className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">İptal</button>
-                  <button onClick={savePaymentEdit} disabled={editSaving} className="h-9 rounded-lg bg-slate-950 px-4 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60">{editSaving ? "Kaydediliyor..." : "Kaydet"}</button>
+                  <Button variant="secondary" onClick={() => setEditingKind(null)}>İptal</Button>
+                  <Button variant="primary" onClick={savePaymentEdit} loading={editSaving}>{editSaving ? "Kaydediliyor..." : "Kaydet"}</Button>
                 </div>
               </div>
             )}
@@ -1845,7 +1873,7 @@ export default function MuhasebePage() {
                 <div className="sm:col-span-2">
                   <div className="mb-1 flex items-center justify-between gap-2">
                     <label className="block text-xs font-semibold text-slate-600">Gider Türü</label>
-                    <button type="button" onClick={() => setShowCatMgr(true)} className="text-xs font-bold text-blue-700 hover:underline">Türleri Yönet</button>
+                    <button type="button" onClick={() => setShowCatMgr(true)} className="text-xs font-bold text-primary hover:underline">Türleri Yönet</button>
                   </div>
                   <SearchSelect
                     query={editGiderTurSearch}
@@ -1891,27 +1919,17 @@ export default function MuhasebePage() {
                   <input value={editExpenseForm.description} onChange={e => setEditExpenseForm(f => ({ ...f, description: e.target.value }))} className={INP} />
                 </div>
                 <div className="flex justify-end gap-2 sm:col-span-2">
-                  <button onClick={() => setEditingKind(null)} className="h-9 rounded-lg border border-slate-200 bg-white px-4 text-sm font-bold text-slate-600 hover:bg-slate-50">İptal</button>
-                  <button onClick={saveExpenseEdit} disabled={editSaving} className="h-9 rounded-lg bg-slate-950 px-4 text-sm font-bold text-white hover:bg-slate-800 disabled:opacity-60">{editSaving ? "Kaydediliyor..." : "Kaydet"}</button>
+                  <Button variant="secondary" onClick={() => setEditingKind(null)}>İptal</Button>
+                  <Button variant="primary" onClick={saveExpenseEdit} loading={editSaving}>{editSaving ? "Kaydediliyor..." : "Kaydet"}</Button>
                 </div>
               </div>
             )}
-          </section>
-        </div>
-      )}
+      </Modal>
 
-      {showCatMgr && activeTab !== "gider" && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/45 p-4" {...backdropClose(() => setShowCatMgr(false))}>
-          <section className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
-              <div>
-                <h2 className="text-base font-black text-slate-900">Gider Türleri</h2>
-              </div>
-              <button onClick={() => setShowCatMgr(false)} className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-500 hover:bg-slate-100">Kapat</button>
-            </div>
-            <div className="mt-4 flex gap-2">
+      <Modal open={Boolean(showCatMgr && activeTab !== "gider")} onClose={() => setShowCatMgr(false)} title="Gider Türleri" size="sm">
+            <div className="flex gap-2">
               <input value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddCategory()} placeholder="Yeni gider türü" className={INP} />
-              <button onClick={handleAddCategory} className="h-10 rounded-lg bg-slate-950 px-4 text-sm font-bold text-white hover:bg-slate-800">Ekle</button>
+              <Button onClick={handleAddCategory} variant="primary">Ekle</Button>
             </div>
             <div className="mt-4 max-h-72 space-y-2 overflow-y-auto">
               {giderKats.length === 0 ? (
@@ -1923,11 +1941,9 @@ export default function MuhasebePage() {
                     onChange={e => setEditingCatNames(prev => ({ ...prev, [item.id]: e.target.value }))}
                     onBlur={() => updateExpenseTypeName(item.id, item.name)}
                     onKeyDown={e => e.key === "Enter" && updateExpenseTypeName(item.id, item.name)}
-                    className="h-8 rounded-md border border-slate-200 bg-slate-50 px-2 text-sm outline-none focus:border-blue-400 focus:bg-white"
+                    className="h-8 rounded-md border border-slate-200 bg-slate-50 px-2 text-sm outline-none focus:border-primary focus:bg-white"
                   />
-                  <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${item.isActive ? "bg-emerald-100 text-emerald-700" : "bg-slate-100 text-slate-500"}`}>
-                    {item.isActive ? "Aktif" : "Pasif"}
-                  </span>
+                  <Badge tone={item.isActive ? "success" : "neutral"}>{item.isActive ? "Aktif" : "Pasif"}</Badge>
                   <button
                     onClick={async () => {
                       await fetch(`/api/gider-kategorileri/${item.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: !item.isActive }) });
@@ -1940,9 +1956,7 @@ export default function MuhasebePage() {
                 </div>
               ))}
             </div>
-          </section>
-        </div>
-      )}
+      </Modal>
 
       {/* ════════════════════════════════════════════════════════════════════
           TAB: GENEL BAKIŞ
@@ -1973,7 +1987,7 @@ export default function MuhasebePage() {
                           <p className="font-bold text-slate-800 mb-1">{m.label}</p>
                           <p className="text-emerald-600">Gelir: {fmt(m.gelir)}</p>
                           <p className="text-red-600">Gider: {fmt(m.gider)}</p>
-                          <p className={`font-bold ${net >= 0 ? "text-blue-700" : "text-red-700"}`}>Net: {fmt(net)}</p>
+                          <p className={`font-bold ${net >= 0 ? "text-primary" : "text-red-700"}`}>Net: {fmt(net)}</p>
                         </div>
                         <div className="flex w-full items-end justify-center gap-0.5">
                           <div className="w-[45%] rounded-t-md bg-emerald-400 transition-all" style={{ height: `${gelirH}px` }} />
@@ -1995,7 +2009,7 @@ export default function MuhasebePage() {
                   <h2 className="text-sm font-black text-slate-900">İşlem Defteri</h2>
                   <p className="text-xs text-slate-500">Son tahsilat ve gider hareketleri tek akışta.</p>
                 </div>
-                <button onClick={() => changeTab("defter")} className="text-xs font-bold text-blue-700 hover:underline">Defteri Aç</button>
+                <button onClick={() => changeTab("defter")} className="text-xs font-bold text-primary hover:underline">Defteri Aç →</button>
               </div>
               <div className="overflow-hidden rounded-xl border border-slate-100">
                 <table className="w-full text-xs">
@@ -2025,46 +2039,39 @@ export default function MuhasebePage() {
               </div>
             </section>
 
-            <div className="space-y-4">
-              <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <h2 className="text-sm font-black text-slate-900">Alacak Yaşlandırma</h2>
-                    <p className="text-xs text-slate-500">Vadesi yaklaşan ve geciken tahsilatlar.</p>
-                  </div>
-                  <button onClick={() => { changeTab("alacak"); setAlacakView("taksit"); }} className="text-xs font-bold text-blue-700 hover:underline">Detay</button>
+            <section className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+              <div className="flex items-center justify-between border-b border-slate-50 px-4 py-3">
+                <div>
+                  <h2 className="text-sm font-black text-slate-900">Alacak Yaşlandırma</h2>
+                  <p className="text-xs text-slate-500">Vadesi yaklaşan ve geciken tahsilatlar.</p>
                 </div>
-                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-1">
-                  {alacakAging.map((bucket) => (
-                    <button key={bucket.key} onClick={() => { changeTab("alacak"); setAlacakView("taksit"); }} className={`${bucket.bg} ${bucket.border} rounded-xl border px-3 py-2 text-left transition hover:shadow-sm`}>
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="text-xs font-bold text-slate-500">{bucket.label}</span>
-                        <span className="text-xs font-semibold text-slate-400">{bucket.count} taksit</span>
-                      </div>
-                      <p className={`mt-1 text-base font-black ${bucket.tone}`}>{fmt(bucket.amount)}</p>
-                    </button>
-                  ))}
-                </div>
-              </section>
-
-              <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-                <div className="mb-3 flex items-center justify-between">
-                  <div>
-                    <h2 className="text-sm font-black text-slate-900">Kasa Kontrolü</h2>
-                    <p className="text-xs text-slate-500">Gün sonu mutabakat için yöntem dağılımı.</p>
-                  </div>
-                  <button onClick={() => changeTab("defter")} className="text-xs font-bold text-blue-700 hover:underline">Defter</button>
-                </div>
-                <div className="space-y-2">
-                  {(["NAKIT","KREDI_KARTI","HAVALE_EFT"] as const).map((method) => (
-                    <div key={method} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5">
-                      <span className="text-sm font-semibold text-slate-700">{METHOD_LABELS[method]}</span>
-                      <span className="text-sm font-black text-slate-900">{fmt(kasaToday.byMethod?.[method] || 0)}</span>
+                <button onClick={() => { changeTab("alacak"); setAlacakView("taksit"); }} className="shrink-0 text-xs font-bold text-primary hover:underline">Detay →</button>
+              </div>
+              <div className="grid gap-2 p-3 sm:grid-cols-2 xl:grid-cols-1">
+                {alacakAging.map((bucket) => (
+                  <button key={bucket.key} onClick={() => { changeTab("alacak"); setAlacakView("taksit"); }} className={`${bucket.bg} ${bucket.border} rounded-xl border px-3 py-2 text-left transition hover:shadow-sm`}>
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-xs font-bold text-slate-500">{bucket.label}</span>
+                      <span className="text-xs font-semibold text-slate-400">{bucket.count} taksit</span>
                     </div>
-                  ))}
-                </div>
-              </section>
-            </div>
+                    <p className={`mt-1 text-base font-black ${bucket.tone}`}>{fmt(bucket.amount)}</p>
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center justify-between border-y border-slate-50 bg-slate-50/60 px-4 py-2">
+                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Kasa Kontrolü — bugün</p>
+                <button onClick={() => changeTab("defter")} className="text-xs font-bold text-primary hover:underline">Defter →</button>
+              </div>
+              <div className="space-y-2 p-3">
+                {(["NAKIT","KREDI_KARTI","HAVALE_EFT"] as const).map((method) => (
+                  <div key={method} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5">
+                    <span className="text-sm font-semibold text-slate-700">{METHOD_LABELS[method]}</span>
+                    <span className="text-sm font-black text-slate-900">{fmt(kasaToday.byMethod?.[method] || 0)}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
           </div>
         </div>
       )}
@@ -2084,23 +2091,23 @@ export default function MuhasebePage() {
                 </button>
               ))}
             </div>
-            <input value={ledgerSearch} onChange={e => setLedgerSearch(e.target.value)} placeholder="Hasta, gider türü, açıklama veya yöntem ara..." className="h-8 min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none focus:border-blue-400 focus:bg-white" />
-            <input type="date" value={ledgerFrom} onChange={e => setLedgerFrom(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-blue-400" />
-            <input type="date" value={ledgerTo} onChange={e => setLedgerTo(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-blue-400" />
-            <select value={ledgerMethod} onChange={e => setLedgerMethod(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 outline-none focus:border-blue-400">
+            <input value={ledgerSearch} onChange={e => setLedgerSearch(e.target.value)} placeholder="Hasta, gider türü, açıklama veya yöntem ara..." className="h-8 min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none focus:border-primary focus:bg-white" />
+            <input type="date" value={ledgerFrom} onChange={e => setLedgerFrom(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-primary" />
+            <input type="date" value={ledgerTo} onChange={e => setLedgerTo(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-primary" />
+            <select value={ledgerMethod} onChange={e => setLedgerMethod(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 outline-none focus:border-primary">
               <option value="HEPSI">Tüm yöntemler</option>
               {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
-            <button onClick={() => {
+            <Button size="sm" variant="secondary" className="h-8" onClick={() => {
               loadPayments();
               loadExpenses();
               refreshSummary();
-            }} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 hover:bg-slate-50">Yenile</button>
+            }}>Yenile</Button>
             {(ledgerSearch || ledgerFrom || ledgerTo || ledgerMethod !== "HEPSI" || ledgerType !== "HEPSI") && (
-              <button onClick={() => { setLedgerSearch(""); setLedgerFrom(""); setLedgerTo(""); setLedgerMethod("HEPSI"); setLedgerType("HEPSI"); }} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-500 hover:bg-slate-50">Temizle</button>
+              <Button size="sm" variant="secondary" className="h-8" onClick={() => { setLedgerSearch(""); setLedgerFrom(""); setLedgerTo(""); setLedgerMethod("HEPSI"); setLedgerType("HEPSI"); }}>Temizle</Button>
             )}
-            <button onClick={exportLedgerExcel} className="h-8 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-xs font-bold text-emerald-700 hover:bg-emerald-100">Excel</button>
-            <button onClick={exportLedgerPdf} className="h-8 rounded-lg border border-blue-200 bg-blue-50 px-3 text-xs font-bold text-blue-700 hover:bg-blue-100">PDF</button>
+            <Button size="sm" variant="secondary" className="h-8 border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" onClick={exportLedgerExcel}>Excel</Button>
+            <Button size="sm" variant="secondary" className="h-8 border-primary/30 bg-primary/10 text-primary hover:bg-primary/20" onClick={exportLedgerPdf}>PDF</Button>
           </div>
 
           <div className="overflow-x-auto">
@@ -2120,11 +2127,11 @@ export default function MuhasebePage() {
               <tbody className="divide-y divide-slate-100">
                 {ledgerRows.length === 0 ? (
                   <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
-                ) : ledgerRows.slice(0, 250).map((row) => (
+                ) : pagedLedgerRows.map((row) => (
                   <tr key={row.id} className="hover:bg-slate-50">
                     <td className="whitespace-nowrap px-4 py-3 text-slate-500">{fmtDate(row.date)}</td>
                     <td className="px-4 py-3">
-                      <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${row.type === "TAHSILAT" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>{row.label}</span>
+                      <Badge tone={row.type === "TAHSILAT" ? "success" : "critical"}>{row.label}</Badge>
                     </td>
                     <td className="px-4 py-3 font-semibold text-slate-800">{row.name}</td>
                     <td className="px-4 py-3 text-slate-600">{row.type === "TAHSILAT" ? row.incomeType : row.name}</td>
@@ -2154,6 +2161,7 @@ export default function MuhasebePage() {
               </tbody>
             </table>
           </div>
+          <ListPager page={ledgerPage} pageCount={ledgerPageCount} pageSize={LEDGER_PAGE_SIZE} total={ledgerRows.length} onPageChange={setLedgerPage} />
         </div>
       )}
 
@@ -2269,13 +2277,13 @@ export default function MuhasebePage() {
                 <tbody className="divide-y divide-slate-100">
                   {filteredPayments.length === 0
                     ? <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
-                    : filteredPayments.slice(0, 150).map(p => (
+                    : pagedPayments.map(p => (
                       <tr key={p.id} className="hover:bg-slate-50">
                         <td className="whitespace-nowrap px-4 py-3 text-slate-400">{fmtDate(p.createdAt)}</td>
                         <td className="px-4 py-3 font-semibold text-slate-800">{p.patient?.fullName || "—"}</td>
                         <td className="px-4 py-3 text-slate-600">{p.doctor?.fullName || "—"}</td>
                         <td className="px-4 py-3">
-                          <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">{METHOD_LABELS[p.method] || p.method}</span>
+                          <Badge tone="success">{METHOD_LABELS[p.method] || p.method}</Badge>
                         </td>
                         <td className="px-4 py-3 text-slate-500">{stripFinanceTags(p.description) || "—"}</td>
                         <td className="px-4 py-3 text-right font-black text-emerald-700">{fmt(p.amount)}</td>
@@ -2295,6 +2303,7 @@ export default function MuhasebePage() {
               <span className="text-xs text-slate-500">{filteredPayments.length} kayıt</span>
               <span className="text-sm font-black text-emerald-700">{fmt(filteredPayments.reduce((s, p) => s + Number(p.amount), 0))} toplam</span>
             </div>
+            <ListPager page={pmtPage} pageCount={pmtPageCount} pageSize={PMT_PAGE_SIZE} total={filteredPayments.length} onPageChange={setPmtPage} />
           </div>
         </div>
       )}
@@ -2411,7 +2420,7 @@ export default function MuhasebePage() {
                 <tbody className="divide-y divide-slate-100">
                   {filteredExpenses.length === 0
                     ? <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
-                    : filteredExpenses.slice(0, 150).map(e => (
+                    : pagedExpenses.map(e => (
                       <tr key={e.id} className="hover:bg-slate-50">
                         <td className="whitespace-nowrap px-4 py-3 text-slate-400">{fmtDate(e.tarih)}</td>
                         <td className="px-4 py-3">
@@ -2435,19 +2444,17 @@ export default function MuhasebePage() {
               <span className="text-xs text-slate-500">{filteredExpenses.length} kayıt</span>
               <span className="text-sm font-black text-red-700">{fmt(filteredExpenses.reduce((s, e) => s + Number(e.tutar), 0))} toplam</span>
             </div>
+            <ListPager page={expPage} pageCount={expPageCount} pageSize={EXP_PAGE_SIZE} total={filteredExpenses.length} onPageChange={setExpPage} />
           </div>
 
           {/* Kategori Yönetimi Modal */}
-          {showCatMgr && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowCatMgr(false))}>
-              <div className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
-                <h3 className="text-base font-black text-slate-900">Gider Kategorileri</h3>
+          <Modal open={showCatMgr} onClose={() => setShowCatMgr(false)} title="Gider Kategorileri" size="sm">
                 <div className="flex gap-2">
                   <input value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddCategory()}
-                    placeholder="Yeni kategori adı…" className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-blue-400 focus:outline-none" />
-                  <button onClick={handleAddCategory} className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700">Ekle</button>
+                    placeholder="Yeni kategori adı…" className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
+                  <button onClick={handleAddCategory} className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary/90">Ekle</button>
                 </div>
-                <div className="max-h-56 space-y-1.5 overflow-y-auto">
+                <div className="mt-4 max-h-56 space-y-1.5 overflow-y-auto">
                   {giderKats.map(c => (
                     <div key={c.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
                       <span className={`text-sm ${c.isActive ? "text-slate-700" : "text-slate-400 line-through"}`}>{c.name}</span>
@@ -2460,10 +2467,7 @@ export default function MuhasebePage() {
                     </div>
                   ))}
                 </div>
-                <button onClick={() => setShowCatMgr(false)} className="w-full rounded-lg border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">Kapat</button>
-              </div>
-            </div>
-          )}
+          </Modal>
         </div>
       )}
 
@@ -2475,11 +2479,11 @@ export default function MuhasebePage() {
           {/* Alt sekme: Tüm Bakiyeler / Taksitli Planlar */}
           <div className="flex w-fit gap-1 rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
             <button onClick={() => setAlacakView("bakiye")}
-              className={`rounded-xl px-4 py-2 text-sm font-bold transition ${alacakView === "bakiye" ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"}`}>
+              className={`rounded-xl px-4 py-2 text-sm font-bold transition ${alacakView === "bakiye" ? "bg-primary text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"}`}>
               Tüm Bakiyeler
             </button>
             <button onClick={() => setAlacakView("taksit")}
-              className={`relative rounded-xl px-4 py-2 text-sm font-bold transition ${alacakView === "taksit" ? "bg-slate-900 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"}`}>
+              className={`relative rounded-xl px-4 py-2 text-sm font-bold transition ${alacakView === "taksit" ? "bg-primary text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"}`}>
               Taksitli Planlar
               {taksitOverdue.count > 0 && (
                 <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ${alacakView === "taksit" ? "bg-white" : "bg-red-500"}`} />
@@ -2490,14 +2494,14 @@ export default function MuhasebePage() {
       {alacakView === "taksit" && (
         <div className="space-y-4">
           {/* KPI */}
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm sm:grid-cols-4 sm:divide-y-0">
             {[
-              { label: "Toplam Kalan",  value: fmt(taksitKPIs.toplamKalan), color: "text-blue-700",    bg: "bg-blue-50"    },
-              { label: "Bekleyen",      value: String(taksitKPIs.bekleyen), color: "text-amber-700",   bg: "bg-amber-50"   },
-              { label: "Gecikmiş Plan", value: String(taksitKPIs.geciken),  color: "text-red-700",     bg: "bg-red-50"     },
-              { label: "Bugün Vadeli",  value: String(taksitKPIs.bugunVade),color: "text-emerald-700", bg: "bg-emerald-50" },
+              { label: "Toplam Kalan",  value: fmt(taksitKPIs.toplamKalan), color: "text-primary"    },
+              { label: "Bekleyen",      value: String(taksitKPIs.bekleyen), color: "text-amber-700"   },
+              { label: "Gecikmiş Plan", value: String(taksitKPIs.geciken),  color: "text-red-700"     },
+              { label: "Bugün Vadeli",  value: String(taksitKPIs.bugunVade),color: "text-emerald-700" },
             ].map(k => (
-              <div key={k.label} className={`${k.bg} rounded-2xl border border-slate-100 p-4`}>
+              <div key={k.label} className="p-4">
                 <p className="text-xs font-bold uppercase text-slate-500">{k.label}</p>
                 <p className={`mt-0.5 text-xl font-black ${k.color}`}>{k.value}</p>
               </div>
@@ -2545,7 +2549,7 @@ export default function MuhasebePage() {
               { key: "hatirlatma", label: `Hatırlatmalar (${reminders.filter(r => r.status === "AKTIF").length})` },
             ] as const).map(t => (
               <button key={t.key} onClick={() => setTaksitSubTab(t.key)}
-                className={`rounded-xl px-4 py-2.5 text-sm font-bold transition ${taksitSubTab === t.key ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-800"}`}>
+                className={`rounded-xl px-4 py-2.5 text-sm font-bold transition ${taksitSubTab === t.key ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-800"}`}>
                 {t.label}
               </button>
             ))}
@@ -2557,9 +2561,9 @@ export default function MuhasebePage() {
               <div className="min-w-0 flex-1">
                 <div className="mb-3 flex flex-wrap gap-2">
                   <input value={taksitSearch} onChange={e => setTaksitSearch(e.target.value)}
-                    placeholder="Hasta, doktor veya plan ara" className="min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-400 sm:w-64" />
+                    placeholder="Hasta, doktor veya plan ara" className="min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30 sm:w-64" />
                   <select value={taksitStatus} onChange={e => setTaksitStatus(e.target.value)}
-                    className="min-h-11 rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-blue-400">
+                    className="min-h-11 rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30">
                     <option value="HEPSI">Tüm Durumlar</option>
                     <option value="AKTIF">Aktif</option>
                     <option value="DEVAM_EDIYOR">Devam Ediyor</option>
@@ -2577,13 +2581,13 @@ export default function MuhasebePage() {
                           const bek    = plan.taksitler.filter(t => t.status === "BEKLIYOR").length;
                           return (
                             <div key={plan.id} onClick={() => { setSelectedPlan(plan); loadPlanDetail(plan.id); }}
-                              className={`cursor-pointer rounded-2xl border p-4 transition-all ${selectedPlan?.id === plan.id ? "border-blue-400 bg-blue-50" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                              className={`cursor-pointer rounded-2xl border p-4 transition-all ${selectedPlan?.id === plan.id ? "border-primary/40 bg-primary/10" : "border-slate-200 bg-white hover:border-slate-300"}`}>
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex flex-wrap items-center gap-2">
                                     <span className="text-sm font-black text-slate-900">{plan.patient.fullName}</span>
                                     {plan.baslik && <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs text-slate-600">{plan.baslik}</span>}
-                                    <span className={`rounded-lg px-2 py-1 text-xs font-bold ${TAKSIT_STATUS_BADGE[plan.status]}`}>{plan.status}</span>
+                                    <Badge tone={TAKSIT_STATUS_TONE[plan.status] ?? "neutral"}>{plan.status}</Badge>
                                   </div>
                                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
                                     <span>Dr: {plan.doctor.fullName}</span>
@@ -2636,7 +2640,7 @@ export default function MuhasebePage() {
                         <div key={t.id} className={`rounded-xl border p-3 text-xs ${t.status === "GECIKTI" ? "border-red-200 bg-red-50" : "border-slate-100 bg-slate-50"}`}>
                           <div className="flex items-center justify-between">
                             <span className="font-semibold text-slate-700">#{t.siraNo} — {fmtDate(t.vadeDate)}</span>
-                            <span className={`rounded-lg px-2 py-1 text-xs font-bold ${TAKSIT_STATUS_BADGE[t.status] ?? ""}`}>{t.status}</span>
+                            <Badge tone={TAKSIT_STATUS_TONE[t.status] ?? "neutral"}>{t.status}</Badge>
                           </div>
                           <div className="mt-0.5 flex justify-between text-slate-500">
                             <span>Tutar: {fmt(t.tutar)}</span>
@@ -2704,7 +2708,7 @@ export default function MuhasebePage() {
                 </div>
               </div>
               {newPlanForm.toplamBorc && Number(newPlanForm.toplamBorc) > 0 && Number(newPlanForm.taksitSayisi) > 0 && Number(newPlanForm.toplamBorc) > Number(newPlanForm.pesnat || 0) && (
-                <div className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs text-blue-700">
+                <div className="rounded-xl border border-primary/20 bg-primary/10 p-3 text-xs text-primary">
                   <p className="font-bold mb-1">Önizleme</p>
                   <p>Kalan borç: {fmt(Number(newPlanForm.toplamBorc) - Number(newPlanForm.pesnat || 0))}</p>
                   <p>Her taksit: {fmt((Number(newPlanForm.toplamBorc) - Number(newPlanForm.pesnat || 0)) / Number(newPlanForm.taksitSayisi))}</p>
@@ -2713,7 +2717,7 @@ export default function MuhasebePage() {
               )}
               <div className="flex gap-2">
                 <button onClick={() => setTaksitSubTab("liste")} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">İptal</button>
-                <button onClick={handleCreatePlan} className="flex-1 rounded-xl bg-blue-600 py-2.5 text-sm font-bold text-white hover:bg-blue-700">Plan Oluştur</button>
+                <button onClick={handleCreatePlan} className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-bold text-white hover:bg-primary/90">Plan Oluştur</button>
               </div>
             </div>
           )}
@@ -2723,7 +2727,7 @@ export default function MuhasebePage() {
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-bold text-slate-800">Hatırlatmalar</h2>
-                <button onClick={() => setShowRemModal(true)} className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700">Hatırlatma Ekle</button>
+                <button onClick={() => setShowRemModal(true)} className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary/90">Hatırlatma Ekle</button>
               </div>
               {reminders.length === 0
                 ? <div className="py-10 text-center text-sm text-slate-400">Hatırlatma bulunamadı</div>
@@ -2739,7 +2743,7 @@ export default function MuhasebePage() {
                             <div className="mt-1 flex flex-wrap gap-3 text-xs text-slate-500">
                               {r.patient && <span>Hasta: {r.patient.fullName}</span>}
                               <span>Tarih: {fmtDate(r.reminderDate)}</span>
-                              <span className={`rounded px-1.5 py-0.5 font-semibold ${r.status === "AKTIF" ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{r.status}</span>
+                              <Badge tone={r.status === "AKTIF" ? "warning" : "success"} size="sm">{r.status}</Badge>
                             </div>
                           </div>
                           {r.status === "AKTIF" && (
@@ -2755,10 +2759,9 @@ export default function MuhasebePage() {
           )}
 
           {/* Modal: Taksit Tahsilat */}
-          {showOdeModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowOdeModal(null))}>
-              <div className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
-                <h3 className="text-sm font-black text-slate-900">Taksit Tahsilatı — #{showOdeModal.siraNo}</h3>
+          <Modal open={Boolean(showOdeModal)} onClose={() => setShowOdeModal(null)} title={showOdeModal ? `Taksit Tahsilatı — #${showOdeModal.siraNo}` : "Taksit Tahsilatı"} size="sm">
+              {showOdeModal && (
+                <div className="space-y-4">
                 <div className="rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-600 space-y-1">
                   <p>Vade: {fmtDate(showOdeModal.vadeDate)}</p>
                   <p>Taksit Tutarı: <b>{fmt(showOdeModal.tutar)}</b></p>
@@ -2779,18 +2782,16 @@ export default function MuhasebePage() {
                   <input value={odeForm.note} onChange={e => setOdeForm(f => ({ ...f, note: e.target.value }))} placeholder="Opsiyonel…" className={INP} />
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => setShowOdeModal(null)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600">Vazgeç</button>
+                  <Button variant="secondary" fullWidth onClick={() => setShowOdeModal(null)}>Vazgeç</Button>
                   <button onClick={handleOde} className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white hover:bg-emerald-700">Tahsil Et</button>
                 </div>
-              </div>
-            </div>
-          )}
+                </div>
+              )}
+          </Modal>
 
           {/* Modal: Hatırlatma Ekle */}
-          {showRemModal && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowRemModal(false))}>
-              <div className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
-                <h3 className="text-sm font-black text-slate-900">Hatırlatma Ekle</h3>
+          <Modal open={showRemModal} onClose={() => setShowRemModal(false)} title="Hatırlatma Ekle" size="sm">
+                <div className="space-y-4">
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta (opsiyonel)</label>
                   <select value={remForm.patientId} onChange={e => setRemForm(f => ({ ...f, patientId: e.target.value }))} className={INP}>
@@ -2807,12 +2808,11 @@ export default function MuhasebePage() {
                   <input type="date" value={remForm.reminderDate} onChange={e => setRemForm(f => ({ ...f, reminderDate: e.target.value }))} className={INP} />
                 </div>
                 <div className="flex gap-2">
-                  <button onClick={() => setShowRemModal(false)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600">Vazgeç</button>
-                  <button onClick={handleAddReminder} className="flex-1 rounded-xl bg-blue-600 py-2.5 text-sm font-bold text-white hover:bg-blue-700">Kaydet</button>
+                  <Button variant="secondary" fullWidth onClick={() => setShowRemModal(false)}>Vazgeç</Button>
+                  <Button variant="primary" fullWidth onClick={handleAddReminder}>Kaydet</Button>
                 </div>
-              </div>
-            </div>
-          )}
+                </div>
+          </Modal>
         </div>
       )}
 
@@ -2827,7 +2827,7 @@ export default function MuhasebePage() {
               <input placeholder="Hasta / tel ara…" value={alacakSearch} onChange={e => setAlacakSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-violet-400" />
               <button onClick={loadAlacaklar} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">↻ Yenile</button>
               <button onClick={() => {
-                const rows = [["Hasta","Tel","Tedavi Toplamı","İndirim","Net Tedavi","Ödenen","Bakiye"], ...filteredAlacaklar.map(a => [a.fullName, a.phone, String(a.brutTedavi), String(a.indirim), String(a.netTedavi), String(a.odenen), String(a.bakiye)])];
+                const rows = [["Hasta","Tel","Hekimler","Ödenen","Kalan","Son Hareket"], ...filteredAlacaklar.map(a => [a.fullName, a.phone, (a.doctorNames || []).join(" / "), String(a.odenen), String(a.bakiye), a.lastPaymentAt ? fmtDate(a.lastPaymentAt) : (a.lastTreatmentAt ? fmtDate(a.lastTreatmentAt) : "-")])];
                 const csv = rows.map(r => r.map(c => `"${c}"`).join(",")).join("\n");
                 const el = document.createElement("a"); el.href = "data:text/csv;charset=utf-8,\uFEFF" + encodeURIComponent(csv); el.download = "hasta-alacaklar.csv"; el.click();
               }} className="rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 hover:bg-violet-100">
@@ -2837,16 +2837,16 @@ export default function MuhasebePage() {
           </div>
 
           {/* Özet KPI */}
-          <div className="grid grid-cols-3 gap-3">
-            <div className="rounded-2xl border border-violet-100 bg-violet-50 p-4">
+          <div className="grid grid-cols-3 divide-x divide-slate-100 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+            <div className="p-4">
               <p className="text-xs font-bold uppercase text-slate-500">Toplam Alacak</p>
               <p className="mt-1 text-xl font-black text-violet-700">{fmt(alacakTotal)}</p>
             </div>
-            <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+            <div className="p-4">
               <p className="text-xs font-bold uppercase text-slate-500">Borçlu Hasta</p>
               <p className="mt-1 text-xl font-black text-slate-800">{alacaklar.length} kişi</p>
             </div>
-            <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4">
+            <div className="p-4">
               <p className="text-xs font-bold uppercase text-slate-500">Ortalama Bakiye</p>
               <p className="mt-1 text-xl font-black text-amber-700">{fmt(alacaklar.length > 0 ? alacakTotal / alacaklar.length : 0)}</p>
             </div>
@@ -2860,30 +2860,32 @@ export default function MuhasebePage() {
                   <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                     <th className="px-4 py-3 text-left">Hasta</th>
                     <th className="px-4 py-3 text-left">Telefon</th>
-                    <th className="px-4 py-3 text-right">Tedavi Toplamı</th>
-                    <th className="px-4 py-3 text-right">İndirim</th>
-                    <th className="px-4 py-3 text-right">Net Tedavi</th>
+                    <th className="px-4 py-3 text-left">Hekimler</th>
                     <th className="px-4 py-3 text-right">Ödenen</th>
-                    <th className="px-4 py-3 text-right font-black">Bakiye (Alacak)</th>
+                    <th className="px-4 py-3 text-right font-black">Kalan</th>
+                    <th className="px-4 py-3 text-left">Son Hareket</th>
                     <th className="px-4 py-3" />
                   </tr></thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredAlacaklar.length === 0
-                      ? <tr><td colSpan={8} className="py-10 text-center text-slate-400">
+                      ? <tr><td colSpan={7} className="py-10 text-center text-slate-400">
                           {alacaklar.length === 0 ? "Alacak kaydı bulunamadı" : "Arama sonucu yok"}
                         </td></tr>
                       : filteredAlacaklar.map(a => {
                         const pctOdendi = a.netTedavi > 0 ? Math.min(100, Math.round((a.odenen / a.netTedavi) * 100)) : 0;
+                        const doctorText = (a.doctorNames || []).length > 0 ? (a.doctorNames || []).join(", ") : "-";
+                        const lastDate = a.lastPaymentAt || a.lastTreatmentAt;
                         return (
                           <tr key={a.id} className="hover:bg-slate-50">
                             <td className="px-4 py-3">
-                              <Link href={`/hasta-detay/${a.id}`} className="font-semibold text-slate-800 hover:text-blue-700 hover:underline">{a.fullName}</Link>
+                              <Link href={`/hasta-detay?id=${a.id}`} className="font-semibold text-slate-800 hover:text-primary hover:underline">{a.fullName}</Link>
                               {a.discountRate > 0 && <span className="ml-1.5 rounded-lg bg-green-100 px-2 py-1 text-xs text-green-700">%{a.discountRate} indirim</span>}
+                              <div className="mt-1 text-[11px] text-slate-400">Net tedavi: {fmt(a.netTedavi)}</div>
                             </td>
                             <td className="px-4 py-3 text-slate-500">{a.phone}</td>
-                            <td className="px-4 py-3 text-right text-slate-700">{fmt(a.brutTedavi)}</td>
-                            <td className="px-4 py-3 text-right text-green-600">{a.indirim > 0 ? `-${fmt(a.indirim)}` : "—"}</td>
-                            <td className="px-4 py-3 text-right font-semibold text-slate-800">{fmt(a.netTedavi)}</td>
+                            <td className="max-w-[260px] px-4 py-3 text-slate-600">
+                              <span className="line-clamp-2">{doctorText}</span>
+                            </td>
                             <td className="px-4 py-3 text-right">
                               <div>
                                 <span className="font-semibold text-emerald-600">{fmt(a.odenen)}</span>
@@ -2893,6 +2895,10 @@ export default function MuhasebePage() {
                               </div>
                             </td>
                             <td className="px-4 py-3 text-right font-black text-violet-700">{fmt(a.bakiye)}</td>
+                            <td className="px-4 py-3 text-slate-600">
+                              <span className="block font-semibold">{lastDate ? fmtDate(lastDate) : "-"}</span>
+                              <span className="text-[11px] text-slate-400">{a.lastPaymentAt ? "Son ödeme" : "Tedavi tarihi"}</span>
+                            </td>
                             <td className="px-4 py-3">
                               <button onClick={() => { openTransaction("gelir"); setPatientSearch(a.fullName); setTahForm(f => ({ ...f, patientId: a.id })); ensurePatients(); ensurePos(); }}
                                 className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">
@@ -2925,17 +2931,17 @@ export default function MuhasebePage() {
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-black text-slate-900">Tedarikçi Cari Hesaplar</h2>
             <div className="flex gap-2">
-              <input placeholder="Firma ara…" value={cariSearch} onChange={e => setCariSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-blue-400" />
-              <Link href="/firma" className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-bold text-white hover:bg-blue-700">Satın Alma / Ödeme</Link>
+              <input placeholder="Firma ara…" value={cariSearch} onChange={e => setCariSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-primary/30" />
+              <Link href="/firma" className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary/90">Satın Alma / Ödeme</Link>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-3 divide-x divide-slate-100 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
             {[
-              { label: "Toplam Tedarikçi Borcu", value: fmt(filteredFirmas.reduce((s, f) => s + f.bakiye, 0)), tone: "text-amber-700",   bg: "bg-amber-50",   border: "border-amber-100"   },
-              { label: "Toplam Alınan",           value: fmt(filteredFirmas.reduce((s, f) => s + f.borc, 0)),  tone: "text-red-700",     bg: "bg-red-50",     border: "border-red-100"     },
-              { label: "Toplam Ödenen",           value: fmt(filteredFirmas.reduce((s, f) => s + f.odenen, 0)),tone: "text-emerald-700", bg: "bg-emerald-50", border: "border-emerald-100" },
+              { label: "Toplam Tedarikçi Borcu", value: fmt(filteredFirmas.reduce((s, f) => s + f.bakiye, 0)), tone: "text-amber-700"   },
+              { label: "Toplam Alınan",           value: fmt(filteredFirmas.reduce((s, f) => s + f.borc, 0)),  tone: "text-red-700"     },
+              { label: "Toplam Ödenen",           value: fmt(filteredFirmas.reduce((s, f) => s + f.odenen, 0)),tone: "text-emerald-700" },
             ].map(c => (
-              <div key={c.label} className={`${c.bg} ${c.border} rounded-2xl border p-4`}>
+              <div key={c.label} className="p-4">
                 <p className="text-xs font-bold uppercase text-slate-500">{c.label}</p>
                 <p className={`mt-1 text-xl font-black ${c.tone}`}>{c.value}</p>
               </div>
@@ -2966,7 +2972,7 @@ export default function MuhasebePage() {
                         </span>
                       </td>
                       <td className="px-4 py-3">
-                        <Link href="/firma" className="text-xs font-bold text-blue-600 hover:underline">Detay</Link>
+                        <Link href="/firma" className="text-xs font-bold text-primary hover:underline">Detay</Link>
                       </td>
                     </tr>
                   ))
@@ -2997,7 +3003,7 @@ export default function MuhasebePage() {
                 onSelect={opt => { setSelectedDoctor(opt.id); setHakedisDoctorSearch(opt.label); }}
                 placeholder="Doktor adı yazın…"
                 emptyText="Doktor bulunamadı"
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
           </div>
@@ -3006,13 +3012,13 @@ export default function MuhasebePage() {
             : (
                 <div className="space-y-4">
                   {doctorFinance && (
-                    <div className="grid gap-4 sm:grid-cols-3">
+                    <div className="grid divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm sm:grid-cols-3 sm:divide-x sm:divide-y-0">
                       {[
-                        { label: "Bu Ay Üretim (ay başından bugüne)", value: fmt(Number(doctorFinance.totalTreatments) || 0), tone: "text-blue-700",    bg: "bg-blue-50"    },
-                        { label: "Tahsil Edilen",                     value: fmt(Number(doctorFinance.received) || 0),        tone: "text-emerald-700", bg: "bg-emerald-50" },
-                        { label: "Tahsil Bekleyen",                   value: fmt(Number(doctorFinance.toReceive) || 0),       tone: "text-amber-700",   bg: "bg-amber-50"   },
+                        { label: "Bu Ay Ciro (ay başından bugüne)", value: fmt(Number(doctorFinance.totalTreatments) || 0), tone: "text-primary"      },
+                        { label: "Tahsil Edilen",                     value: fmt(Number(doctorFinance.received) || 0),        tone: "text-emerald-700" },
+                        { label: "Tahsil Bekleyen",                   value: fmt(Number(doctorFinance.toReceive) || 0),       tone: "text-amber-700"   },
                       ].map(c => (
-                        <div key={c.label} className={`${c.bg} rounded-2xl p-5`}>
+                        <div key={c.label} className="p-5">
                           <p className="text-xs font-bold uppercase text-slate-500">{c.label}</p>
                           <p className={`mt-1 text-2xl font-black ${c.tone}`}>{c.value}</p>
                         </div>
@@ -3024,7 +3030,7 @@ export default function MuhasebePage() {
                   <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
                     <div className="border-b border-slate-100 px-5 py-4">
                       <h3 className="text-sm font-black text-slate-900">Aylık Hakediş Dökümü (son 12 ay)</h3>
-                      <p className="mt-0.5 text-xs text-slate-500">Hakedilen: o ayki üretimden hesaplanan hakediş tutarı. Ödenen: o aya etiketlenmiş gider kayıtlarının toplamı. Kalan: hakedilen - ödenen.</p>
+                      <p className="mt-0.5 text-xs text-slate-500">Hakedilen: o ayki cirodan hesaplanan hakediş tutarı. Ödenen: o aya etiketlenmiş gider kayıtlarının toplamı. Kalan: hakedilen - ödenen.</p>
                     </div>
                     {hakedisLoading ? (
                       <div className="p-8 text-center text-sm text-slate-400">Yükleniyor…</div>
@@ -3048,7 +3054,7 @@ export default function MuhasebePage() {
                               <tr key={`${m.year}-${m.month}`} className="hover:bg-slate-50">
                                 <td className="px-4 py-3 font-bold text-slate-800">
                                   {AY_ADLARI[m.month - 1]} {m.year}
-                                  {isCurrentMonth && <span className="ml-1.5 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600">devam ediyor</span>}
+                                  {isCurrentMonth && <span className="ml-1.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">devam ediyor</span>}
                                 </td>
                                 <td className="px-4 py-3 text-right font-medium text-slate-700">{fmt(m.hakedilen)}</td>
                                 <td className="px-4 py-3 text-right font-medium text-emerald-700">{fmt(m.odenen)}</td>
@@ -3059,7 +3065,7 @@ export default function MuhasebePage() {
                                   <div className="flex items-center justify-end gap-1.5">
                                     <button onClick={() => openHakedisDetail(selectedDoctor, m.year, m.month)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-50">Detay</button>
                                     {isPayable && (
-                                      <button onClick={() => openDoctorPayoutFor(selectedDoctor, m.year, m.month, m.kalan)} className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1 text-[11px] font-bold text-blue-700 hover:bg-blue-100">Öde</button>
+                                      <button onClick={() => openDoctorPayoutFor(selectedDoctor, m.year, m.month, m.kalan)} className="rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-bold text-primary hover:bg-primary/20">Öde</button>
                                     )}
                                   </div>
                                 </td>
@@ -3099,21 +3105,16 @@ export default function MuhasebePage() {
       )}
 
       {/* Modal: Hakediş Detayı */}
-      {hakedisDetailOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/45 p-4" {...backdropClose(() => setHakedisDetailOpen(false))}>
-          <section className="max-h-[88vh] w-full max-w-4xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-slate-100 pb-4">
-              <div>
-                <h2 className="text-base font-black text-slate-900">
-                  Hakediş Detayı{hakedisDetail ? ` — ${hakedisDetail.doctor.fullName}` : ""}
-                </h2>
-                {hakedisDetail && <p className="text-xs text-slate-500">{AY_ADLARI[hakedisDetail.month - 1]} {hakedisDetail.year}</p>}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <button onClick={exportHakedisDetailExcel} disabled={!hakedisDetail} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">Excel</button>
-                <button onClick={exportHakedisDetailPdf} disabled={!hakedisDetail} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">PDF</button>
-                <button onClick={() => setHakedisDetailOpen(false)} className="h-8 rounded-lg px-2.5 text-xs font-bold text-slate-500 hover:bg-slate-100">Kapat</button>
-              </div>
+      <Modal
+        open={hakedisDetailOpen}
+        onClose={() => setHakedisDetailOpen(false)}
+        title={`Hakediş Detayı${hakedisDetail ? ` — ${hakedisDetail.doctor.fullName}` : ""}`}
+        description={hakedisDetail ? `${AY_ADLARI[hakedisDetail.month - 1]} ${hakedisDetail.year}` : undefined}
+        size="xl"
+      >
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <button onClick={exportHakedisDetailExcel} disabled={!hakedisDetail} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">Excel</button>
+              <button onClick={exportHakedisDetailPdf} disabled={!hakedisDetail} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">PDF</button>
             </div>
 
             {hakedisDetailLoading ? (
@@ -3122,16 +3123,16 @@ export default function MuhasebePage() {
               <div className="py-16 text-center text-sm text-slate-400">Detay yüklenemedi</div>
             ) : (
               <div className="mt-4 space-y-5">
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-2xl bg-blue-50 p-4">
+                <div className="grid divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                  <div className="p-4">
                     <p className="text-xs font-bold uppercase text-slate-500">Hakedilen</p>
-                    <p className="mt-1 text-xl font-black text-blue-700">{fmt(hakedisDetail.summary.hakedilen)}</p>
+                    <p className="mt-1 text-xl font-black text-primary">{fmt(hakedisDetail.summary.hakedilen)}</p>
                   </div>
-                  <div className="rounded-2xl bg-emerald-50 p-4">
+                  <div className="p-4">
                     <p className="text-xs font-bold uppercase text-slate-500">Ödenen</p>
                     <p className="mt-1 text-xl font-black text-emerald-700">{fmt(hakedisDetail.summary.odenen)}</p>
                   </div>
-                  <div className="rounded-2xl bg-amber-50 p-4">
+                  <div className="p-4">
                     <p className="text-xs font-bold uppercase text-slate-500">Kalan</p>
                     <p className="mt-1 text-xl font-black text-amber-700">{fmt(hakedisDetail.summary.kalan)}</p>
                   </div>
@@ -3143,9 +3144,9 @@ export default function MuhasebePage() {
                     <table className="w-full text-xs">
                       <tbody className="divide-y divide-slate-100">
                         {hakedisBreakdownRows(hakedisDetail).map(([label, value], i, arr) => (
-                          <tr key={label} className={i === arr.length - 1 ? "bg-blue-50" : ""}>
+                          <tr key={label} className={i === arr.length - 1 ? "bg-primary/10" : ""}>
                             <td className="px-4 py-2 text-slate-600">{label}</td>
-                            <td className={`px-4 py-2 text-right font-bold ${i === arr.length - 1 ? "text-blue-700" : "text-slate-800"}`}>{value}</td>
+                            <td className={`px-4 py-2 text-right font-bold ${i === arr.length - 1 ? "text-primary" : "text-slate-800"}`}>{value}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -3238,7 +3239,7 @@ export default function MuhasebePage() {
                               <td className="whitespace-nowrap px-3 py-2 text-slate-500">{fmtDate(p.tarih)}</td>
                               <td className="px-3 py-2 text-slate-600">{p.aciklama || "—"}</td>
                               <td className="px-3 py-2 text-slate-600">{METHOD_LABELS[p.yontem] || p.yontem}</td>
-                              <td className="px-3 py-2 text-right font-bold text-blue-700">{fmt(p.tutar)}</td>
+                              <td className="px-3 py-2 text-right font-bold text-primary">{fmt(p.tutar)}</td>
                             </tr>
                           ))}
                       </tbody>
@@ -3247,9 +3248,7 @@ export default function MuhasebePage() {
                 </div>
               </div>
             )}
-          </section>
-        </div>
-      )}
+      </Modal>
 
     </div>
   );

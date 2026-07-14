@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { testProviderBalance } from "@/lib/sms";
 
 function parseBalance(raw: string): string | null {
@@ -30,6 +30,7 @@ export async function POST(request: Request) {
   }
 
   const result = await testProviderBalance(body.providerId);
+  await writeAudit(auth.user.id, "SUPERADMIN_SMS_PROVIDER_BALANCE_TEST", `SMS bakiye sorgusu: ${body.providerId} / ${result.success ? "başarılı" : "başarısız"}`);
 
   return NextResponse.json({
     ok: result.success,

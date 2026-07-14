@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 
 type AdPayload = {
@@ -122,6 +122,7 @@ export async function POST(request: NextRequest) {
   }
 
   const ad = await prisma.advertisement.create({ data: normalized.data as any });
+  await writeAudit(auth.user.id, "SUPERADMIN_AD_CREATE", `Reklam oluşturuldu: ${ad.title}`);
   return NextResponse.json(ad);
 }
 
@@ -146,6 +147,7 @@ export async function PUT(request: NextRequest) {
     data: normalized.data,
   });
 
+  await writeAudit(auth.user.id, "SUPERADMIN_AD_UPDATE", `Reklam güncellendi: ${updated.title} (${updated.id})`);
   return NextResponse.json(updated);
 }
 
@@ -157,8 +159,10 @@ export async function DELETE(request: NextRequest) {
   const body = await request.json() as { id?: string };
   if (!body.id) return NextResponse.json({ message: "id zorunlu" }, { status: 400 });
 
+  const existing = await prisma.advertisement.findUnique({ where: { id: body.id }, select: { title: true } });
   await prisma.institutionAdAssignment.deleteMany({ where: { advertisementId: body.id } });
   await prisma.advertisement.delete({ where: { id: body.id } });
 
+  await writeAudit(auth.user.id, "SUPERADMIN_AD_DELETE", `Reklam silindi: ${existing?.title || body.id}`);
   return NextResponse.json({ ok: true });
 }

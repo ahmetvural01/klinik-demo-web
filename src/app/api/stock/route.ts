@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { applyStockMovement } from "@/lib/stock-ledger";
 import { formatZodError, stockItemCreateSchema } from "@/lib/validators";
 
@@ -54,7 +54,7 @@ function enrichStockItem(item: any, purchaseLines?: any[]) {
   };
 }
 
-export async function GET(req: NextRequest) {
+export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
   const auth = await requireAuth("finance:read");
   if (auth.error) return auth.error;
 
@@ -108,7 +108,7 @@ export async function GET(req: NextRequest) {
   }
 
   return NextResponse.json(items.map((item) => enrichStockItem(item, linesByItem.get(item.id) || [])));
-}
+});
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth("finance:write");

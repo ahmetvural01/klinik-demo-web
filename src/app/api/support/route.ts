@@ -21,15 +21,18 @@ export async function POST(request: NextRequest) {
   if (auth.error) return auth.error;
 
   const body = await request.json();
+  const subject = String(body.subject || "Genel").trim().slice(0, 120);
+  const message = String(body.message || "").trim();
+  if (!message) return NextResponse.json({ message: "Mesaj zorunlu" }, { status: 400 });
 
   const ticket = await prisma.supportTicket.create({
     data: {
       userId: auth.user.id,
-      subject: body.subject || "Genel",
-      message: body.message
+      subject: subject || "Genel",
+      message
     }
   });
 
-  await writeAudit(auth.user.id, "SUPPORT_CREATE", "Destek talebi oluşturuldu");
+  await writeAudit(auth.user.id, "SUPPORT_CREATE", `Destek talebi oluşturuldu: ${subject || "Genel"}`);
   return NextResponse.json(ticket, { status: 201 });
 }

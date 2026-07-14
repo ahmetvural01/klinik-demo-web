@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { writeAudit } from "@/lib/api";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 import { formatZodError, publicBookingSchema } from "@/lib/validators";
 
@@ -23,7 +24,7 @@ export async function POST(req: NextRequest) {
 
     const institution = await prisma.institution.findFirst({
       where: { name: { equals: kurum, mode: "insensitive" }, isActive: true },
-      select: { id: true },
+      select: { id: true, ownerId: true },
     });
     if (!institution) return NextResponse.json({ error: "Kurum bulunamadı" }, { status: 404 });
 
@@ -43,6 +44,13 @@ export async function POST(req: NextRequest) {
         note,
       },
     });
+    const auditUserId = institution.ownerId || (await prisma.user.findFirst({
+      where: { institutionId: institution.id, isActive: true, role: { in: ["YONETICI", "BANKO", "SUPERADMIN"] } },
+      select: { id: true },
+    }))?.id;
+    if (auditUserId) {
+      await writeAudit(auditUserId, "PUBLIC_BOOKING_REQUEST_CREATE", `Online randevu talebi: ${fullName} / ${phone} / ${preferredDate.toLocaleString("tr-TR")}`);
+    }
 
     return NextResponse.json({ ok: true, id: request.id }, { status: 201 });
   } catch (error) {

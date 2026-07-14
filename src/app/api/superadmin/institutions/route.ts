@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 
@@ -136,5 +136,6 @@ export async function POST(request: NextRequest) {
     return updatedInstitution;
   });
 
+  await writeAudit(auth.user.id, "SUPERADMIN_INSTITUTION_CREATE", `Kurum oluşturuldu: ${created.name} / Owner: ${ownerName}`);
   return NextResponse.json(created);
 }

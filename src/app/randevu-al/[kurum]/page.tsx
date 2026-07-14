@@ -143,7 +143,7 @@ export default function RandevuAlPage() {
 
           {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{error}</p>}
 
-          <button onClick={submit} disabled={submitting} className="w-full rounded-xl bg-primary py-3 text-sm font-bold text-white transition hover:bg-blue-700 disabled:opacity-50">
+          <button onClick={submit} disabled={submitting} className="w-full rounded-xl bg-primary py-3 text-sm font-bold text-white transition hover:bg-primary-strong disabled:opacity-50">
             {submitting ? "Gönderiliyor…" : "Randevu Talebi Gönder"}
           </button>
           <p className="text-center text-[11px] text-slate-400">Bu bir kesin randevu değildir; talebiniz klinik tarafından onaylandığında randevunuz oluşturulur.</p>

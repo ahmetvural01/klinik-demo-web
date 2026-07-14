@@ -5,7 +5,7 @@ import {
 } from "@/lib/firma-integration";
 
 type TxClient = any;
-const LAB_SOURCE_PREFIX = "[SISTEM:LAB_FATURA:";
+export const LAB_SOURCE_PREFIX = "[SISTEM:LAB_FATURA:";
 
 type LabFirmaInput = {
   tx: TxClient;
@@ -35,7 +35,7 @@ export type LabFirmaIntegrationResult = {
   summary: IntegrationSummary;
 };
 
-function labSourceToken(input: {
+export function labSourceToken(input: {
   labInvoiceId?: string | null;
   labOrderId?: string | null;
   invoiceNo?: string | null;

@@ -3,12 +3,16 @@
 import { useEffect, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { showToastSafe } from "@/lib/toast-client";
-import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
 import { useSlashFocus } from "@/lib/use-slash-focus";
 import { stripSystemTags } from "@/lib/format-text";
 import { downloadCsv } from "@/lib/csv-export";
 import JsBarcode from "jsbarcode";
 import { ProfessionalDataTable } from "@/components/ui/ProfessionalDataTable";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { Badge } from "@/components/ui/Badge";
+import { FormField } from "@/components/ui/FormField";
+import { Download, Plus, Printer } from "lucide-react";
 
 type StockItem = {
   id: string; name: string; category: string; unit: string;
@@ -52,15 +56,11 @@ export default function StokPage() {
   const [editItem,   setEditItem]   = useState<StockItem | null>(null);
   const [editForm, setEditForm] = useState({ name: "", category: "Sarf", unit: "adet", minQuantity: "5", barcode: "", expiresAt: "", storageLocation: "" });
 
-  useEscapeClose(() => setShowNew(false), showNew);
-  useEscapeClose(() => setMoveItem(null), Boolean(moveItem));
-  useEscapeClose(() => setEditItem(null), Boolean(editItem));
   const [saving,     setSaving]     = useState(false);
 
   const [historyItem, setHistoryItem] = useState<StockItem | null>(null);
   const [historyMovements, setHistoryMovements] = useState<StockMovement[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
-  useEscapeClose(() => setHistoryItem(null), Boolean(historyItem));
 
   const [newItem, setNewItem] = useState({ name: "", category: "Sarf", unit: "adet", quantity: "", minQuantity: "5", barcode: "", expiresAt: "", storageLocation: "" });
   const [move,    setMove]    = useState<StockMoveForm>({ type: "CIKIS", quantity: "", note: "" });
@@ -308,11 +308,11 @@ export default function StokPage() {
             <p className="truncate font-semibold text-slate-900">{item.name}</p>
             <div className="mt-1 flex flex-wrap gap-1.5">
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">{item.category}</span>
-              {item.storageLocation && <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-700">{item.storageLocation}</span>}
+              {item.storageLocation && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">{item.storageLocation}</span>}
               {item.expiresAt && (
-                <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${isExpired(item.expiresAt) ? "bg-red-50 text-red-700" : isExpiringSoon(item.expiresAt) ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-500"}`}>
+                <Badge tone={isExpired(item.expiresAt) ? "critical" : isExpiringSoon(item.expiresAt) ? "warning" : "neutral"}>
                   SKT {formatDate(item.expiresAt)}
-                </span>
+                </Badge>
               )}
             </div>
           </div>
@@ -378,22 +378,26 @@ export default function StokPage() {
         const item = row.original;
         return (
           <div className="flex items-center justify-end gap-1 whitespace-nowrap">
-            <button onClick={() => {
-              setMoveItem(item);
-              setMove({
-                type: "CIKIS",
-                quantity: "",
-                note: "",
-              });
-            }} className="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-slate-700">
+            <Button
+              size="sm"
+              variant="primary"
+              onClick={() => {
+                setMoveItem(item);
+                setMove({
+                  type: "CIKIS",
+                  quantity: "",
+                  note: "",
+                });
+              }}
+            >
               Düş
-            </button>
-            <button onClick={() => void openHistory(item)} className="rounded-md border border-slate-200 px-2.5 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50">
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => void openHistory(item)}>
               Geçmiş
-            </button>
-            <button onClick={() => openEdit(item)} className="rounded-md border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-xs font-semibold text-blue-700 transition hover:bg-blue-100">
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => openEdit(item)}>
               Düzenle
-            </button>
+            </Button>
           </div>
         );
       },
@@ -403,37 +407,35 @@ export default function StokPage() {
   const inp = "rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none";
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-3">
       <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-48">
           <svg className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
           <input ref={searchInputRef} value={search} onChange={e => setSearch(e.target.value)} placeholder="Malzeme, barkod, raf veya son tedarikçi ara… ( / )" className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none" />
         </div>
-        <select value={category} onChange={(e) => setCategory(e.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-blue-400">
+        <select value={category} onChange={(e) => setCategory(e.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-primary/30">
           {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-blue-400">
+        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-primary/30">
           <option value="TUMU">Tüm durumlar</option>
           <option value="KRITIK">Kritik stok</option>
           <option value="SKT_YAKIN">SKT yakın</option>
           <option value="SKT_GECMIS">SKT geçmiş</option>
         </select>
-        <button onClick={exportStockCsv} disabled={filtered.length === 0} className="flex min-h-8 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-bold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">
+        <Button size="sm" variant="secondary" icon={Download} onClick={exportStockCsv} disabled={filtered.length === 0}>
           CSV
-        </button>
-        <button onClick={() => setShowNew(true)} className="flex min-h-8 items-center gap-2 rounded-md bg-slate-900 px-3 py-1.5 text-sm font-bold text-white shadow-sm transition hover:bg-slate-800">
-          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </Button>
+        <Button size="sm" variant="primary" icon={Plus} onClick={() => setShowNew(true)}>
           Yeni Kart
-        </button>
+        </Button>
       </div>
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-700">{items.length} kalem</span>
-          <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${lowStock > 0 ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`}>{lowStock} kritik</span>
-          <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${expiringSoon > 0 ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-600"}`}>{expiringSoon} SKT yakın</span>
-          <span className={`rounded-full px-2 py-1 text-[11px] font-bold ${expiredCount > 0 ? "bg-red-50 text-red-700" : "bg-slate-100 text-slate-600"}`}>{expiredCount} SKT geçmiş</span>
-          <span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-bold text-blue-700">{CURRENCY.format(totalValue)} stok değeri</span>
-          <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-bold text-slate-600">{filtered.length} sonuç</span>
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-bold text-slate-500">
+          <span>{filtered.length}/{items.length} kalem</span>
+          {lowStock > 0 && <span className="text-red-600">{lowStock} kritik</span>}
+          {expiringSoon > 0 && <span className="text-amber-700">{expiringSoon} SKT yakın</span>}
+          {expiredCount > 0 && <span className="text-red-700">{expiredCount} SKT geçmiş</span>}
+          <span className="text-slate-700">Değer: {CURRENCY.format(totalValue)}</span>
         </div>
       </div>
 
@@ -446,214 +448,176 @@ export default function StokPage() {
       )}
 
       {/* New Item Modal */}
-      {showNew && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setShowNew(false))}>
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-              <h2 className="text-lg font-black text-slate-900">Yeni Stok Kalemi</h2>
-              <button onClick={() => setShowNew(false)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100">
-                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Malzeme Adı *</label>
-                <input value={newItem.name} onChange={e => setNewItem(i => ({ ...i, name: e.target.value }))} className={inp + " w-full"} placeholder="Anestezi kartuşu, implant…" />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Kategori</label>
-                  <select value={newItem.category} onChange={e => setNewItem(i => ({ ...i, category: e.target.value }))} className={inp + " w-full"}>
-                    {CATEGORIES.slice(1).map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Birim</label>
-                  <select value={newItem.unit} onChange={e => setNewItem(i => ({ ...i, unit: e.target.value }))} className={inp + " w-full"}>
-                    {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Başlangıç Stok</label>
-                  <input type="number" value={newItem.quantity} onChange={e => setNewItem(i => ({ ...i, quantity: e.target.value }))} className={inp + " w-full"} placeholder="0" />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Min. Stok</label>
-                  <input type="number" value={newItem.minQuantity} onChange={e => setNewItem(i => ({ ...i, minQuantity: e.target.value }))} className={inp + " w-full"} placeholder="5" />
-                </div>
-              </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Barkod</label>
-                  <input value={newItem.barcode} onChange={e => setNewItem(i => ({ ...i, barcode: e.target.value }))} className={inp + " w-full font-mono"} placeholder="CODE128" />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Son Kullanma</label>
-                  <input type="date" value={newItem.expiresAt} onChange={e => setNewItem(i => ({ ...i, expiresAt: e.target.value }))} className={inp + " w-full"} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Raf / Konum</label>
-                  <input value={newItem.storageLocation} onChange={e => setNewItem(i => ({ ...i, storageLocation: e.target.value }))} className={inp + " w-full"} placeholder="A-2, depo" />
-                </div>
-              </div>
-              <p className="text-xs text-slate-500">Bu form yalnızca ürün kartı açar. Tedarikçi, fatura, alış miktarı ve fiyatı Satın Alma & Tedarikçiler ekranındaki satın alma kaydında tutulur.</p>
-              <div className="flex gap-3 pt-2">
-                <button onClick={() => setShowNew(false)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">İptal</button>
-                <button onClick={submitNew} disabled={saving} className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-60">
-                  {saving ? "Kaydediliyor…" : "Stok Kartını Aç"}
-                </button>
-              </div>
-            </div>
+      <Modal
+        open={showNew}
+        onClose={() => setShowNew(false)}
+        title="Yeni Stok Kalemi"
+        footer={(
+          <>
+            <Button variant="secondary" onClick={() => setShowNew(false)}>İptal</Button>
+            <Button variant="primary" loading={saving} onClick={submitNew}>
+              {saving ? "Kaydediliyor…" : "Stok Kartını Aç"}
+            </Button>
+          </>
+        )}
+      >
+        <div className="space-y-4">
+          <FormField label="Malzeme Adı" required>
+            <input value={newItem.name} onChange={e => setNewItem(i => ({ ...i, name: e.target.value }))} className={inp + " w-full"} placeholder="Anestezi kartuşu, implant…" />
+          </FormField>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Kategori">
+              <select value={newItem.category} onChange={e => setNewItem(i => ({ ...i, category: e.target.value }))} className={inp + " w-full"}>
+                {CATEGORIES.slice(1).map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </FormField>
+            <FormField label="Birim">
+              <select value={newItem.unit} onChange={e => setNewItem(i => ({ ...i, unit: e.target.value }))} className={inp + " w-full"}>
+                {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </FormField>
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Başlangıç Stok">
+              <input type="number" value={newItem.quantity} onChange={e => setNewItem(i => ({ ...i, quantity: e.target.value }))} className={inp + " w-full"} placeholder="0" />
+            </FormField>
+            <FormField label="Min. Stok">
+              <input type="number" value={newItem.minQuantity} onChange={e => setNewItem(i => ({ ...i, minQuantity: e.target.value }))} className={inp + " w-full"} placeholder="5" />
+            </FormField>
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <FormField label="Barkod">
+              <input value={newItem.barcode} onChange={e => setNewItem(i => ({ ...i, barcode: e.target.value }))} className={inp + " w-full font-mono"} placeholder="CODE128" />
+            </FormField>
+            <FormField label="Son Kullanma">
+              <input type="date" value={newItem.expiresAt} onChange={e => setNewItem(i => ({ ...i, expiresAt: e.target.value }))} className={inp + " w-full"} />
+            </FormField>
+            <FormField label="Raf / Konum">
+              <input value={newItem.storageLocation} onChange={e => setNewItem(i => ({ ...i, storageLocation: e.target.value }))} className={inp + " w-full"} placeholder="A-2, depo" />
+            </FormField>
+          </div>
+          <p className="text-xs text-slate-500">Bu form yalnızca ürün kartı açar. Tedarikçi, fatura, alış miktarı ve fiyatı Satın Alma & Tedarikçiler ekranındaki satın alma kaydında tutulur.</p>
         </div>
-      )}
+      </Modal>
 
       {/* Edit Item Modal */}
-      {editItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setEditItem(null))}>
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-              <div>
-                <h2 className="text-lg font-black text-slate-900">Stok Kartını Düzenle</h2>
-                <p className="text-xs text-slate-500">Bu form ürün kimliğini düzenler. Alış fiyatı ve tedarikçi satın alma satırlarında tutulur.</p>
-              </div>
-              <button onClick={() => setEditItem(null)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100">
-                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
-            </div>
-            <div className="space-y-4 p-6">
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Malzeme Adı *</label>
-                <input value={editForm.name} onChange={e => setEditForm(i => ({ ...i, name: e.target.value }))} className={inp + " w-full"} />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Kategori</label>
-                  <select value={editForm.category} onChange={e => setEditForm(i => ({ ...i, category: e.target.value }))} className={inp + " w-full"}>
-                    {CATEGORIES.slice(1).map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Birim</label>
-                  <select value={editForm.unit} onChange={e => setEditForm(i => ({ ...i, unit: e.target.value }))} className={inp + " w-full"}>
-                    {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Minimum Stok</label>
-                <input type="number" value={editForm.minQuantity} onChange={e => setEditForm(i => ({ ...i, minQuantity: e.target.value }))} className={inp + " w-full"} />
-              </div>
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Barkod</label>
-                  <input value={editForm.barcode} onChange={e => setEditForm(i => ({ ...i, barcode: e.target.value }))} className={inp + " w-full font-mono"} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Son Kullanma</label>
-                  <input type="date" value={editForm.expiresAt} onChange={e => setEditForm(i => ({ ...i, expiresAt: e.target.value }))} className={inp + " w-full"} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Raf / Konum</label>
-                  <input value={editForm.storageLocation} onChange={e => setEditForm(i => ({ ...i, storageLocation: e.target.value }))} className={inp + " w-full"} />
-                </div>
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button onClick={() => setEditItem(null)} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">Vazgeç</button>
-                <button onClick={submitEdit} disabled={saving || !editForm.name.trim()} className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-60">
-                  {saving ? "Kaydediliyor…" : "Kartı Güncelle"}
-                </button>
-              </div>
-            </div>
+      <Modal
+        open={Boolean(editItem)}
+        onClose={() => setEditItem(null)}
+        title="Stok Kartını Düzenle"
+        description="Bu form ürün kimliğini düzenler. Alış fiyatı ve tedarikçi satın alma satırlarında tutulur."
+        footer={(
+          <>
+            <Button variant="secondary" onClick={() => setEditItem(null)}>Vazgeç</Button>
+            <Button variant="primary" loading={saving} disabled={saving || !editForm.name.trim()} onClick={submitEdit}>
+              {saving ? "Kaydediliyor…" : "Kartı Güncelle"}
+            </Button>
+          </>
+        )}
+      >
+        <div className="space-y-4">
+          <FormField label="Malzeme Adı" required>
+            <input value={editForm.name} onChange={e => setEditForm(i => ({ ...i, name: e.target.value }))} className={inp + " w-full"} />
+          </FormField>
+          <div className="grid grid-cols-2 gap-3">
+            <FormField label="Kategori">
+              <select value={editForm.category} onChange={e => setEditForm(i => ({ ...i, category: e.target.value }))} className={inp + " w-full"}>
+                {CATEGORIES.slice(1).map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </FormField>
+            <FormField label="Birim">
+              <select value={editForm.unit} onChange={e => setEditForm(i => ({ ...i, unit: e.target.value }))} className={inp + " w-full"}>
+                {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </FormField>
+          </div>
+          <FormField label="Minimum Stok">
+            <input type="number" value={editForm.minQuantity} onChange={e => setEditForm(i => ({ ...i, minQuantity: e.target.value }))} className={inp + " w-full"} />
+          </FormField>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <FormField label="Barkod">
+              <input value={editForm.barcode} onChange={e => setEditForm(i => ({ ...i, barcode: e.target.value }))} className={inp + " w-full font-mono"} />
+            </FormField>
+            <FormField label="Son Kullanma">
+              <input type="date" value={editForm.expiresAt} onChange={e => setEditForm(i => ({ ...i, expiresAt: e.target.value }))} className={inp + " w-full"} />
+            </FormField>
+            <FormField label="Raf / Konum">
+              <input value={editForm.storageLocation} onChange={e => setEditForm(i => ({ ...i, storageLocation: e.target.value }))} className={inp + " w-full"} />
+            </FormField>
           </div>
         </div>
-      )}
+      </Modal>
 
       {/* Movement Modal */}
-      {moveItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setMoveItem(null))}>
-          <div className="w-full max-w-md rounded-2xl bg-white shadow-2xl">
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-              <h2 className="text-lg font-black text-slate-900">Stok Çıkışı</h2>
-              <button onClick={() => setMoveItem(null)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100">
-                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-              </button>
+      <Modal
+        open={Boolean(moveItem)}
+        onClose={() => setMoveItem(null)}
+        title="Stok Çıkışı"
+        footer={(
+          <>
+            <Button variant="secondary" onClick={() => { setMoveItem(null); setMove({ type: "CIKIS", quantity: "", note: "" }); }}>İptal</Button>
+            <Button variant="primary" loading={saving} onClick={submitMove}>
+              {saving ? "Kaydediliyor…" : "Çıkışı Kaydet"}
+            </Button>
+          </>
+        )}
+      >
+        <div className="space-y-4">
+          {moveItem && (
+            <div className="rounded-xl bg-slate-50 p-3">
+              <p className="font-semibold text-slate-800">{moveItem.name}</p>
+              <p className="text-xs text-slate-500">Mevcut: {moveItem.quantity} {moveItem.unit}</p>
             </div>
-            <div className="p-6 space-y-4">
-              <div className="rounded-xl bg-slate-50 p-3">
-                <p className="font-semibold text-slate-800">{moveItem.name}</p>
-                <p className="text-xs text-slate-500">Mevcut: {moveItem.quantity} {moveItem.unit}</p>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Çıkış Miktarı</label>
-                <input type="number" value={move.quantity} onChange={e => setMove(m => ({ ...m, quantity: e.target.value }))} min="1" className={inp + " w-full"} placeholder="0" />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
-                <input value={move.note} onChange={e => setMove(m => ({ ...m, note: e.target.value }))} className={inp + " w-full"} placeholder="Hangi işlemde kullanıldı?" />
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button onClick={() => { setMoveItem(null); setMove({ type: "CIKIS", quantity: "", note: "" }); }} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">İptal</button>
-                <button onClick={submitMove} disabled={saving} className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-bold text-white hover:bg-blue-700 disabled:opacity-60">
-                  {saving ? "Kaydediliyor…" : "Çıkışı Kaydet"}
-                </button>
-              </div>
-            </div>
-          </div>
+          )}
+          <FormField label="Çıkış Miktarı">
+            <input type="number" value={move.quantity} onChange={e => setMove(m => ({ ...m, quantity: e.target.value }))} min="1" className={inp + " w-full"} placeholder="0" />
+          </FormField>
+          <FormField label="Açıklama">
+            <input value={move.note} onChange={e => setMove(m => ({ ...m, note: e.target.value }))} className={inp + " w-full"} placeholder="Hangi işlemde kullanıldı?" />
+          </FormField>
         </div>
-      )}
+      </Modal>
 
       {/* History Modal */}
-      {historyItem && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setHistoryItem(null))}>
-          <div className="max-h-[85vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white shadow-2xl">
-            <div className="sticky top-0 flex items-center justify-between border-b border-slate-100 bg-white px-6 py-4">
-              <div>
-                <h2 className="text-lg font-black text-slate-900">{historyItem.name} — Hareket Geçmişi</h2>
-                <p className="text-xs text-slate-500">Son 50 hareket · Güncel stok: {historyItem.quantity} {historyItem.unit}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button onClick={() => printBarcode(historyItem)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-                  Barkod
-                </button>
-                <button onClick={() => setHistoryItem(null)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100">
-                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-              </div>
-            </div>
-            <div className="p-4">
-              {historyLoading ? (
-                <div className="space-y-2">
-                  {[0, 1, 2, 3].map(i => <div key={i} className="h-14 animate-pulse rounded-xl bg-slate-100" />)}
-                </div>
-              ) : historyMovements.length === 0 ? (
-                <p className="py-10 text-center text-sm text-slate-400">Bu kalem için henüz hareket kaydı yok.</p>
-              ) : (
-                <div className="space-y-2">
-                  {historyMovements.map(m => (
-                    <div key={m.id} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3.5 py-2.5">
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${m.type === "GIRIS" ? "bg-emerald-100 text-emerald-700" : "bg-red-100 text-red-700"}`}>
-                            {m.type === "GIRIS" ? "Giriş" : "Çıkış"}
-                          </span>
-                          <span className="font-black text-slate-800">{m.type === "GIRIS" ? "+" : "-"}{m.quantity} {historyItem.unit}</span>
-                          {m.unitPrice ? <span className="text-xs text-slate-500">· {CURRENCY.format(Number(m.unitPrice))}/{historyItem.unit}</span> : null}
-                          {m.supplier ? <span className="text-xs text-slate-500">· {m.supplier}</span> : null}
-                        </div>
-                        {stripSystemTags(m.note) && <p className="mt-1 text-xs text-slate-500">{stripSystemTags(m.note)}</p>}
-                        <p className="mt-1 text-[11px] text-slate-400">{new Date(m.createdAt).toLocaleString("tr-TR")}{m.user?.fullName ? ` · ${m.user.fullName}` : ""}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+      <Modal
+        open={Boolean(historyItem)}
+        onClose={() => setHistoryItem(null)}
+        title={historyItem ? `${historyItem.name} — Hareket Geçmişi` : "Hareket Geçmişi"}
+        description={historyItem ? `Son 50 hareket · Güncel stok: ${historyItem.quantity} ${historyItem.unit}` : undefined}
+        size="lg"
+        footer={historyItem ? (
+          <Button variant="secondary" size="sm" icon={Printer} onClick={() => printBarcode(historyItem)}>
+            Barkod
+          </Button>
+        ) : undefined}
+      >
+        {historyLoading ? (
+          <div className="space-y-2">
+            {[0, 1, 2, 3].map(i => <div key={i} className="h-14 animate-pulse rounded-xl bg-slate-100" />)}
           </div>
-        </div>
-      )}
+        ) : historyMovements.length === 0 ? (
+          <p className="py-10 text-center text-sm text-slate-400">Bu kalem için henüz hareket kaydı yok.</p>
+        ) : (
+          <div className="space-y-2">
+            {historyMovements.map(m => (
+              <div key={m.id} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3.5 py-2.5">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge tone={m.type === "GIRIS" ? "success" : "critical"}>
+                      {m.type === "GIRIS" ? "Giriş" : "Çıkış"}
+                    </Badge>
+                    <span className="font-black text-slate-800">{m.type === "GIRIS" ? "+" : "-"}{m.quantity} {historyItem?.unit}</span>
+                    {m.unitPrice ? <span className="text-xs text-slate-500">· {CURRENCY.format(Number(m.unitPrice))}/{historyItem?.unit}</span> : null}
+                    {m.supplier ? <span className="text-xs text-slate-500">· {m.supplier}</span> : null}
+                  </div>
+                  {stripSystemTags(m.note) && <p className="mt-1 text-xs text-slate-500">{stripSystemTags(m.note)}</p>}
+                  <p className="mt-1 text-[11px] text-slate-400">{new Date(m.createdAt).toLocaleString("tr-TR")}{m.user?.fullName ? ` · ${m.user.fullName}` : ""}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

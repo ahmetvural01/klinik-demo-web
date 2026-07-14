@@ -1,4 +1,5 @@
 import { getMetricsSnapshot } from "@/lib/metrics";
+import { SLOW_ROUTE_WARNING_MS, SLOW_ROUTE_CRITICAL_MS } from "@/lib/system-alert-thresholds";
 
 export type SystemAlert = {
   id: string;
@@ -26,7 +27,7 @@ export function evaluateSystemAlerts() {
   const slowRoutes = Object.entries(m.timers)
     .filter(([key]) => key.startsWith("api_request_ms:"))
     .map(([key, stat]) => ({ route: key.slice("api_request_ms:".length), ...stat }))
-    .filter((r) => r.maxMs > 1500)
+    .filter((r) => r.maxMs > SLOW_ROUTE_WARNING_MS)
     .sort((a, b) => b.maxMs - a.maxMs);
 
   if (apiErrors > 100) {
@@ -52,7 +53,7 @@ export function evaluateSystemAlerts() {
   for (const r of slowRoutes) {
     alerts.push({
       id: `api-latency-high:${r.route}`,
-      level: r.maxMs > 5000 ? "critical" : "warning",
+      level: r.maxMs > SLOW_ROUTE_CRITICAL_MS ? "critical" : "warning",
       title: `API gecikmesi yuksek: ${r.route}`,
       detail: `Maks sure: ${r.maxMs} ms (ort: ${r.avgMs} ms, ${r.count} istek)`,
       at: now,
