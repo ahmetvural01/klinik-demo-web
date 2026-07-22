@@ -4,7 +4,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, Plus, User, PauseCircle, XCircle } from "lucide-react";
+import { RefreshCw, Plus, User, XCircle } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
 import { cachedGet } from "@/lib/client-cache";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -46,10 +46,9 @@ const TASK_TYPE_LABELS: Record<StaffTask["type"], string> = {
 };
 
 function getStatusTone(status: StaffTask["status"]): BadgeTone {
-  if (status === "ACIK") return "success";
   if (status === "BEKLEMEDE") return "warning";
-  if (status === "TAMAMLANDI") return "neutral";
-  return "critical";
+  if (status === "TAMAMLANDI") return "success";
+  return "critical"; // IPTAL
 }
 
 function getPriorityTone(priority: number): BadgeTone {
@@ -73,8 +72,8 @@ function readCachedTasks(scope: string, status: string) {
 
 export default function GorevlerPage() {
   const [scope, setScope] = useState<"mine" | "all">("mine");
-  const [status, setStatus] = useState<"ACIK" | "BEKLEMEDE" | "TAMAMLANDI" | "IPTAL" | "TUMU">("ACIK");
-  const [tasks, setTasks] = useState<StaffTask[]>(() => readCachedTasks("mine", "ACIK"));
+  const [status, setStatus] = useState<"ACIK" | "BEKLEMEDE" | "TAMAMLANDI" | "IPTAL" | "TUMU">("TUMU");
+  const [tasks, setTasks] = useState<StaffTask[]>(() => readCachedTasks("mine", "TUMU"));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState("");
@@ -281,8 +280,13 @@ export default function GorevlerPage() {
   };
 
   const sorted = useMemo(() => {
+    // Basit mantık: bir görev ya "yapılmadı" (aksiyon bekliyor) ya "yapıldı"
+    // (Tamamlandı) ya da "yapılmayacak" (İptal). Açık/Beklemede ayrımı
+    // kullanıcıyı karıştırdığı için sıralamada ikisi de aynı "yapılmadı"
+    // grubunda üstte, Tamamlandı/İptal altta gösterilir.
+    const isDone = (t: StaffTask) => t.status === "TAMAMLANDI" || t.status === "IPTAL";
     return [...tasks].sort((a, b) => {
-      if (a.status !== b.status) return a.status === "ACIK" ? -1 : 1;
+      if (isDone(a) !== isDone(b)) return isDone(a) ? 1 : -1;
       if (a.priority !== b.priority) return b.priority - a.priority;
       const ad = a.dueAt ? new Date(a.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
       const bd = b.dueAt ? new Date(b.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
@@ -325,7 +329,10 @@ export default function GorevlerPage() {
       header: "Durum",
       render: (task) => (
         <div className="flex flex-wrap gap-1.5">
-          <Badge tone={getStatusTone(task.status)}>{TASK_STATUS_LABELS[task.status]}</Badge>
+          {/* "Açık" (yapılmadı) varsayılan/beklenen durumdur, rozet gerektirmez —
+              sadece gerçekten bilgi taşıyan durumlar (Tamamlandı/İptal/eski
+              Beklemede kayıtları) işaretlenir. */}
+          {task.status !== "ACIK" && <Badge tone={getStatusTone(task.status)}>{TASK_STATUS_LABELS[task.status]}</Badge>}
           <Badge tone={getPriorityTone(task.priority)}>Öncelik {task.priority}</Badge>
         </div>
       ),
@@ -347,9 +354,6 @@ export default function GorevlerPage() {
           {task.status !== "TAMAMLANDI" && task.status !== "IPTAL" && (
             <Button size="sm" variant="primary" disabled={busyId === task.id} onClick={() => void updateStatus(task.id, "TAMAMLANDI")}>Tamamla</Button>
           )}
-          {task.status !== "BEKLEMEDE" && task.status !== "TAMAMLANDI" && task.status !== "IPTAL" && (
-            <IconButton icon={PauseCircle} title="Beklemeye al" tone="neutral" disabled={busyId === task.id} onClick={() => void updateStatus(task.id, "BEKLEMEDE")} />
-          )}
           {task.status !== "TAMAMLANDI" && task.status !== "IPTAL" && (
             <IconButton icon={XCircle} title="Görevi iptal et" tone="danger" disabled={busyId === task.id} onClick={() => void updateStatus(task.id, "IPTAL")} />
           )}
@@ -368,11 +372,10 @@ export default function GorevlerPage() {
             </select>
           )}
           <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm">
-            <option value="ACIK">Açık</option>
-            <option value="BEKLEMEDE">Beklemede</option>
+            <option value="TUMU">Tüm Görevler</option>
+            <option value="ACIK">Yapılmadı</option>
             <option value="TAMAMLANDI">Tamamlandı</option>
             <option value="IPTAL">İptal</option>
-            <option value="TUMU">Tümü</option>
           </select>
           <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{sorted.length} kayıt</span>
           {sorted.some((task) => task.priority >= 4) && (
