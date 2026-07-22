@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { checkStaffLimit } from "@/lib/staff-limits";
 
 export async function GET(request: NextRequest) {
   try {
@@ -40,6 +41,19 @@ export async function POST(request: NextRequest) {
   if (body.role === "SUPERADMIN") {
     return NextResponse.json({ message: "Bu rol olusturulamaz" }, { status: 403 });
   }
+
+  const targetInstitutionId = auth.user.institutionId || body.institutionId || null;
+  if (targetInstitutionId) {
+    const limitError = await checkStaffLimit({
+      institutionId: targetInstitutionId,
+      role: body.role || "ASISTAN",
+      isActive: true,
+    });
+    if (limitError) {
+      return NextResponse.json({ message: limitError }, { status: 409 });
+    }
+  }
+
   const passwordHash = await bcrypt.hash(body.password || "12345678", 10);
 
   let created;
@@ -53,7 +67,7 @@ export async function POST(request: NextRequest) {
         // ÖNCEKİ HATA: role==="SUPERADMIN" kontrolü, gizli erişimle kliniğe girmiş
         // bir superadmin'in eklediği personeli institutionId=null ile oluşturuyordu
         // — bu personel daha sonra o kliniğe giriş yapamıyordu ("Kullanıcı bulunamadı").
-        institutionId: auth.user.institutionId || body.institutionId || null,
+        institutionId: targetInstitutionId,
         identityNo: body.identityNo,
         fullName: body.fullName,
         role: (body.role || "ASISTAN") as Role,

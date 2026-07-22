@@ -176,7 +176,7 @@ Not: Hasta onam imzası `PatientConsent.signatureDataUrl` alanında veritabanın
 
 ## 9. Diğer Yerel Dosya Yazımları
 
-`src/lib/role-permission-store.ts` çalışma zamanında `data/role-permissions.json` dosyasına yazabilir. Render'da bu dosyaya yapılan runtime değişiklikleri kalıcı kabul edilmemelidir. Kalıcı production kullanımında bu yapı DB tabanlı hale taşınmalıdır.
+~~`src/lib/role-permission-store.ts` çalışma zamanında `data/role-permissions.json` dosyasına yazıyordu~~ — artık `RolePermissionConfig` tablosunda (DB) tutuluyor, Render'daki redeploy'larda kaybolmaz.
 
 ## 10. Realtime, Redis ve Worker
 

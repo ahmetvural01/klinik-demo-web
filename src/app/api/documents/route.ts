@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   const auth = await requireAuth();
   if (auth.error) return auth.error;
 
-  const canRead = can(auth.user.role as Role, "documents:read") || can(auth.user.role as Role, "xray:read");
+  const canRead = (await can(auth.user.role as Role, "documents:read")) || (await can(auth.user.role as Role, "xray:read"));
   if (!canRead) {
     return NextResponse.json({ error: "Bu işlem için yetkiniz yok." }, { status: 403 });
   }
@@ -32,8 +32,8 @@ export async function GET(req: NextRequest) {
     });
     if (!patient) return NextResponse.json({ error: "Hasta bulunamadı" }, { status: 404 });
 
-    const canReadDocuments = can(auth.user.role as Role, "documents:read");
-    const canReadXray = can(auth.user.role as Role, "xray:read");
+    const canReadDocuments = await can(auth.user.role as Role, "documents:read");
+    const canReadXray = await can(auth.user.role as Role, "xray:read");
     const allowedCategories: DocumentCategory[] = [
       ...(canReadDocuments ? (["BELGE"] as DocumentCategory[]) : []),
       ...(canReadXray ? (["RONTGEN", "FOTOGRAF"] as DocumentCategory[]) : []),
@@ -73,7 +73,7 @@ export async function POST(req: NextRequest) {
     }
 
     const requiredPermission = permissionForCategory(category, "write");
-    if (!can(auth.user.role as Role, requiredPermission)) {
+    if (!(await can(auth.user.role as Role, requiredPermission))) {
       return NextResponse.json({ error: "Bu işlem için yetkiniz yok." }, { status: 403 });
     }
 

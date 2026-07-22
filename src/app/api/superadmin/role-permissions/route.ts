@@ -10,7 +10,7 @@ export async function GET() {
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;
 
-  return NextResponse.json(getPermissionPanelPayload());
+  return NextResponse.json(await getPermissionPanelPayload());
 }
 
 export async function PUT(req: NextRequest) {
@@ -20,7 +20,7 @@ export async function PUT(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const map = body?.map ?? {};
 
-  const next = saveRolePermissionMap(map, auth.user.fullName || auth.user.id);
+  const next = await saveRolePermissionMap(map, auth.user.fullName || auth.user.id);
   await writeAudit(auth.user.id, "SUPERADMIN_ROLE_PERMISSIONS_UPDATE", `Rol yetki matrisi güncellendi. Versiyon: ${next.version}`);
   return NextResponse.json({
     ok: true,
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Geçersiz işlem" }, { status: 400 });
   }
 
-  const next = resetRolePermissionMap(auth.user.fullName || auth.user.id);
+  const next = await resetRolePermissionMap(auth.user.fullName || auth.user.id);
   await writeAudit(auth.user.id, "SUPERADMIN_ROLE_PERMISSIONS_RESET", `Rol yetki matrisi varsayılana döndürüldü. Versiyon: ${next.version}`);
   return NextResponse.json({
     ok: true,

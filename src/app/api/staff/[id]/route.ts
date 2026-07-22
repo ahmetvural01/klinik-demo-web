@@ -2,6 +2,7 @@
 import { Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { checkStaffLimit } from "@/lib/staff-limits";
 
 type Params = { params: { id: string } };
 
@@ -60,6 +61,20 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
   if (body.role === "SUPERADMIN") {
     return NextResponse.json({ message: "Bu rol atanamaz" }, { status: 403 });
+  }
+
+  const newRole = (body.role || existing.role) as string;
+  const newIsActive = typeof body.isActive === "boolean" ? body.isActive : existing.isActive;
+  if (existing.institutionId) {
+    const limitError = await checkStaffLimit({
+      institutionId: existing.institutionId,
+      role: newRole,
+      isActive: newIsActive,
+      excludeUserId: existing.id,
+    });
+    if (limitError) {
+      return NextResponse.json({ message: limitError }, { status: 409 });
+    }
   }
 
   let updated;

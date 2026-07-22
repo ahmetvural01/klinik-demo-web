@@ -23,7 +23,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
     if (!document) return NextResponse.json({ error: "Belge bulunamadı" }, { status: 404 });
 
     const requiredPermission = permissionForCategory(document.category, "delete");
-    if (!can(auth.user.role as Role, requiredPermission)) {
+    if (!(await can(auth.user.role as Role, requiredPermission))) {
       return NextResponse.json({ error: "Bu işlem için yetkiniz yok." }, { status: 403 });
     }
 

@@ -12,6 +12,11 @@ export type SubscriptionPlanInfo = {
   label: string;
   monthlyPrice: number | null;
   features: string[];
+  // Aktif doktor / toplam aktif kullanıcı üst sınırı — null = sınırsız.
+  // Institution.maxActiveDoctors / maxActiveUsers bu değerlerden senkronlanır
+  // (bkz. syncInstitutionPlanLimits, src/lib/subscription-plans.ts).
+  maxDoctors: number | null;
+  maxUsers: number | null;
 };
 
 export const SUBSCRIPTION_PLANS: Record<SubscriptionPlanId, SubscriptionPlanInfo> = {
@@ -19,19 +24,25 @@ export const SUBSCRIPTION_PLANS: Record<SubscriptionPlanId, SubscriptionPlanInfo
     id: "TEMEL",
     label: "Temel",
     monthlyPrice: 1990,
-    features: ["Hasta ve randevu yönetimi", "Temel ödeme takibi", "Standart destek"],
+    maxDoctors: 2,
+    maxUsers: 6,
+    features: ["En fazla 2 doktor", "Hasta ve randevu yönetimi", "Temel ödeme takibi", "Standart destek"],
   },
   PROFESYONEL: {
     id: "PROFESYONEL",
     label: "Profesyonel",
     monthlyPrice: 3490,
-    features: ["Tüm Temel paket özellikleri", "SMS/e-posta otomasyonları", "Gelişmiş raporlar", "Öncelikli destek"],
+    maxDoctors: 5,
+    maxUsers: 15,
+    features: ["En fazla 5 doktor", "Tüm Temel paket özellikleri", "SMS/e-posta otomasyonları", "Gelişmiş raporlar", "Öncelikli destek"],
   },
   KURUMSAL: {
     id: "KURUMSAL",
     label: "Kurumsal",
     monthlyPrice: null,
-    features: ["Özel entegrasyonlar", "Özel SLA", "Sınırsız kullanıcı", "Öncelikli destek hattı"],
+    maxDoctors: null,
+    maxUsers: null,
+    features: ["Sınırsız doktor ve kullanıcı", "Özel entegrasyonlar", "Özel SLA", "Öncelikli destek hattı"],
   },
 };
 
@@ -44,4 +55,14 @@ export function getPlanPrice(planId: SubscriptionPlanId, cycle: BillingCycleId):
   if (plan.monthlyPrice === null) return null;
   if (cycle === "YILLIK") return Math.round(plan.monthlyPrice * 12 * YEARLY_DISCOUNT);
   return plan.monthlyPrice;
+}
+
+// Süperadmin bir kurumun planını değiştirdiğinde, o kurum için elle özel bir
+// limit girilmemişse (maxActiveDoctors/maxActiveUsers body'de gönderilmemişse)
+// yeni planın varsayılan limitlerine döner. Elle girilmiş bir özel limit varsa
+// (body'de alan gönderildiyse) her zaman ona öncelik verilir — bu fonksiyon o
+// durumda hiç çağrılmaz.
+export function getPlanDefaultLimits(planId: SubscriptionPlanId): { maxActiveDoctors: number | null; maxActiveUsers: number | null } {
+  const plan = SUBSCRIPTION_PLANS[planId];
+  return { maxActiveDoctors: plan.maxDoctors, maxActiveUsers: plan.maxUsers };
 }

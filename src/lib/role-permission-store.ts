@@ -1,6 +1,5 @@
-import fs from "node:fs";
-import path from "node:path";
 import { Role } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 import {
   ALL_PERMISSIONS,
   DEFAULT_ROLE_PERMISSIONS,
@@ -18,93 +17,82 @@ type RolePermissionState = {
   map: Record<Role, string[]>;
 };
 
-const ROLE_PERMISSION_FILE = path.join(process.cwd(), "data", "role-permissions.json");
-
+// Önceden data/role-permissions.json dosyasına yazılıyordu — Render'ın
+// ephemeral dosya sisteminde her redeploy'da özel yetki değişiklikleri
+// kayboluyordu. Artık RolePermissionConfig (id=1 tek satır) tablosunda,
+// kısa süreli in-process cache ile tutuluyor (rbac.can() her istekte
+// çağrıldığı için her seferinde DB'ye gitmemek gerekiyor).
 let cache: RolePermissionState | null = null;
 let cacheAt = 0;
 const CACHE_TTL_MS = 3000;
 
-function buildDefaultState(updatedBy = "system"): RolePermissionState {
+function toState(row: { version: number; updatedAt: Date; updatedBy: string; map: unknown }): RolePermissionState {
   return {
-    version: 1,
-    updatedAt: new Date().toISOString(),
-    updatedBy,
-    map: { ...DEFAULT_ROLE_PERMISSIONS },
+    version: row.version,
+    updatedAt: row.updatedAt.toISOString(),
+    updatedBy: row.updatedBy,
+    map: normalizeRolePermissionMap(row.map),
   };
 }
 
-function ensureDir() {
-  const dir = path.dirname(ROLE_PERMISSION_FILE);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-}
-
-function readState(): RolePermissionState {
+async function readState(): Promise<RolePermissionState> {
   if (cache && Date.now() - cacheAt < CACHE_TTL_MS) return cache;
 
   try {
-    if (!fs.existsSync(ROLE_PERMISSION_FILE)) {
-      const initial = buildDefaultState();
-      ensureDir();
-      fs.writeFileSync(ROLE_PERMISSION_FILE, JSON.stringify(initial, null, 2), "utf-8");
-      cache = initial;
-      cacheAt = Date.now();
-      return initial;
+    let row = await prisma.rolePermissionConfig.findUnique({ where: { id: 1 } });
+    if (!row) {
+      row = await prisma.rolePermissionConfig.create({
+        data: { id: 1, version: 1, updatedBy: "system", map: DEFAULT_ROLE_PERMISSIONS },
+      });
     }
-
-    const parsed = JSON.parse(fs.readFileSync(ROLE_PERMISSION_FILE, "utf-8")) as Partial<RolePermissionState>;
-    const state: RolePermissionState = {
-      version: typeof parsed.version === "number" ? parsed.version : 1,
-      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
-      updatedBy: typeof parsed.updatedBy === "string" ? parsed.updatedBy : "unknown",
-      map: normalizeRolePermissionMap(parsed.map),
-    };
-
+    const state = toState(row);
     cache = state;
     cacheAt = Date.now();
     return state;
   } catch {
-    const fallback = buildDefaultState();
-    cache = fallback;
-    cacheAt = Date.now();
-    return fallback;
+    // DB erişilemezse (örn. build/migrate sırasında) varsayılana düş —
+    // cache'e yazılmaz ki DB tekrar erişilebilir olunca güncel veri alınsın.
+    return { version: 1, updatedAt: new Date().toISOString(), updatedBy: "system", map: { ...DEFAULT_ROLE_PERMISSIONS } };
   }
 }
 
-export function getRolePermissionState() {
+export async function getRolePermissionState() {
   return readState();
 }
 
-export function getPermissionMap(): Record<Role, string[]> {
-  return readState().map;
+export async function getPermissionMap(): Promise<Record<Role, string[]>> {
+  return (await readState()).map;
 }
 
-export function saveRolePermissionMap(map: unknown, updatedBy: string) {
-  const current = readState();
-  const next: RolePermissionState = {
-    version: current.version + 1,
-    updatedAt: new Date().toISOString(),
-    updatedBy,
-    map: normalizeRolePermissionMap(map),
-  };
-
-  ensureDir();
-  fs.writeFileSync(ROLE_PERMISSION_FILE, JSON.stringify(next, null, 2), "utf-8");
+export async function saveRolePermissionMap(map: unknown, updatedBy: string) {
+  const current = await readState();
+  const normalized = normalizeRolePermissionMap(map);
+  const row = await prisma.rolePermissionConfig.upsert({
+    where: { id: 1 },
+    update: { version: current.version + 1, updatedBy, map: normalized },
+    create: { id: 1, version: current.version + 1, updatedBy, map: normalized },
+  });
+  const next = toState(row);
   cache = next;
   cacheAt = Date.now();
   return next;
 }
 
-export function resetRolePermissionMap(updatedBy: string) {
-  const next = buildDefaultState(updatedBy);
-  ensureDir();
-  fs.writeFileSync(ROLE_PERMISSION_FILE, JSON.stringify(next, null, 2), "utf-8");
+export async function resetRolePermissionMap(updatedBy: string) {
+  const current = await readState();
+  const row = await prisma.rolePermissionConfig.upsert({
+    where: { id: 1 },
+    update: { version: current.version + 1, updatedBy, map: DEFAULT_ROLE_PERMISSIONS },
+    create: { id: 1, version: current.version + 1, updatedBy, map: DEFAULT_ROLE_PERMISSIONS },
+  });
+  const next = toState(row);
   cache = next;
   cacheAt = Date.now();
   return next;
 }
 
-export function getPermissionPanelPayload() {
-  const state = readState();
+export async function getPermissionPanelPayload() {
+  const state = await readState();
   return {
     version: state.version,
     updatedAt: state.updatedAt,

@@ -347,7 +347,6 @@ export default function RolePermissionsPage() {
                           <td className="px-4 py-3 align-top">
                             <p className="font-semibold leading-snug text-slate-800">{detail.title}</p>
                             <p className="mt-0.5 text-[12px] leading-snug text-slate-500">{detail.description}</p>
-                            <code className="mt-1 inline-block rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-400">{perm}</code>
                           </td>
                           <td className="px-3 py-3 text-center align-top">
                             <Badge tone={risk.tone}>{risk.label}</Badge>

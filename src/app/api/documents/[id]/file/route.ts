@@ -25,7 +25,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     if (!document) return NextResponse.json({ error: "Belge bulunamadı" }, { status: 404 });
 
     const requiredPermission = permissionForCategory(document.category, "read");
-    if (!can(auth.user.role as Role, requiredPermission)) {
+    if (!(await can(auth.user.role as Role, requiredPermission))) {
       return NextResponse.json({ error: "Bu işlem için yetkiniz yok." }, { status: 403 });
     }
 

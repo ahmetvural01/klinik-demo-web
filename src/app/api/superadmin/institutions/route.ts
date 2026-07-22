@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { getPlanDefaultLimits } from "@/lib/subscription-plans";
 import bcrypt from "bcryptjs";
 
 export async function GET() {
@@ -92,6 +93,9 @@ export async function POST(request: NextRequest) {
 
   const passwordHash = await bcrypt.hash(ownerPassword, 10);
 
+  const plan = body.subscriptionPlan || "TEMEL";
+  const planLimits = getPlanDefaultLimits(plan);
+
   const created = await prisma.$transaction(async (tx) => {
     const institution = await tx.institution.create({
       data: {
@@ -100,10 +104,12 @@ export async function POST(request: NextRequest) {
         phone,
         address: body.address?.trim() || null,
         taxNo: body.taxNo?.trim() || null,
-        subscriptionPlan: body.subscriptionPlan || "TEMEL",
+        subscriptionPlan: plan,
         smsBalance: typeof body.smsBalance === "number" ? body.smsBalance : 0,
         serviceMode: "NORMAL",
         throttleMs: 0,
+        maxActiveDoctors: planLimits.maxActiveDoctors,
+        maxActiveUsers: planLimits.maxActiveUsers,
       },
     });
 

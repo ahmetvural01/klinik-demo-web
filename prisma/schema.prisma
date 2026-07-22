@@ -253,6 +253,18 @@ model SmtpConfig {
   updatedAt DateTime @updatedAt
 }
 
+// Rol bazlı yetki matrisi — tüm platform için tek, sistem geneli kayıt.
+// ÖNCEDEN data/role-permissions.json dosyasında tutuluyordu; Render'ın
+// ephemeral dosya sisteminde her redeploy'da süperadmin'in yaptığı özel
+// yetki değişiklikleri sessizce kayboluyordu (bkz. README_DEPLOYMENT.md).
+model RolePermissionConfig {
+  id        Int      @id @default(1)
+  version   Int      @default(1)
+  updatedBy String   @default("system")
+  map       Json
+  updatedAt DateTime @updatedAt
+}
+
 // Tüm platform için tek, sistem geneli aktif görsel tema (renk paleti + yazı
 // tipi). Kurum bazlı değil — SiteContent gibi tek satırlık bir singleton.
 model PlatformTheme {

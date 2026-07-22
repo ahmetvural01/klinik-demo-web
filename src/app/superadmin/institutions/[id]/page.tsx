@@ -552,6 +552,16 @@ export default function InstitutionDetailPage() {
             <span className="text-sm font-semibold text-slate-800">{nextDue ? formatDate(nextDue.dueDate.toISOString()) : "-"}</span>
             <Badge tone={dueBadge.tone}>{dueBadge.label}</Badge>
           </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            <StatBox
+              label="Doktor Kullanımı"
+              value={`${institution.users.filter((u) => u.role === "DOKTOR" && u.isActive).length} / ${institution.maxActiveDoctors ?? "∞"}`}
+            />
+            <StatBox
+              label="Kullanıcı Kullanımı"
+              value={`${institution.users.filter((u) => u.isActive).length} / ${institution.maxActiveUsers ?? "∞"}`}
+            />
+          </div>
         </section>
 
         {/* Invoices */}
@@ -637,11 +647,22 @@ export default function InstitutionDetailPage() {
 
             <FormSection icon={ShieldAlert} title="Abonelik">
               <div className="grid gap-3 md:grid-cols-2">
-                <FormField label="Plan">
+                <FormField label="Plan" hint={`Bu plan en fazla ${SUBSCRIPTION_PLANS[editForm.subscriptionPlan].maxDoctors ?? "sınırsız"} doktor / ${SUBSCRIPTION_PLANS[editForm.subscriptionPlan].maxUsers ?? "sınırsız"} kullanıcı içerir`}>
                   <select
                     className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
                     value={editForm.subscriptionPlan}
-                    onChange={(e) => setEditForm((f) => f && { ...f, subscriptionPlan: e.target.value as SubscriptionPlanId })}
+                    onChange={(e) => {
+                      const nextPlan = e.target.value as SubscriptionPlanId;
+                      const limits = SUBSCRIPTION_PLANS[nextPlan];
+                      setEditForm((f) => f && {
+                        ...f,
+                        subscriptionPlan: nextPlan,
+                        // Plan değişince limitler otomatik yeni planın varsayılanına
+                        // döner — süperadmin isterse aşağıdan elle özelleştirebilir.
+                        maxActiveUsers: limits.maxUsers != null ? String(limits.maxUsers) : "",
+                        maxActiveDoctors: limits.maxDoctors != null ? String(limits.maxDoctors) : "",
+                      });
+                    }}
                   >
                     <option value="TEMEL">Temel</option>
                     <option value="PROFESYONEL">Profesyonel</option>
@@ -658,7 +679,7 @@ export default function InstitutionDetailPage() {
                     <option value="YILLIK">Yıllık</option>
                   </select>
                 </FormField>
-                <FormField label="Maks. Aktif Kullanıcı" hint="Boş bırakılırsa sınırsız">
+                <FormField label="Maks. Aktif Kullanıcı" hint="Boş bırakılırsa sınırsız — plan değişince otomatik dolar, elle de değiştirebilirsiniz">
                   <input
                     type="number"
                     className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
@@ -666,7 +687,7 @@ export default function InstitutionDetailPage() {
                     onChange={(e) => setEditForm((f) => f && { ...f, maxActiveUsers: e.target.value })}
                   />
                 </FormField>
-                <FormField label="Maks. Aktif Doktor" hint="Boş bırakılırsa sınırsız">
+                <FormField label="Maks. Aktif Doktor" hint="Boş bırakılırsa sınırsız — plan değişince otomatik dolar, elle de değiştirebilirsiniz">
                   <input
                     type="number"
                     className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}

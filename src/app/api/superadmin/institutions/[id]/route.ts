@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { getPlanDefaultLimits, type SubscriptionPlanId } from "@/lib/subscription-plans";
 
 // GET /api/superadmin/institutions/[id] - Klinik detayını getir
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
@@ -101,6 +102,11 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
     return NextResponse.json({ message: "suspendedUntil ISO tarih formatında olmalı" }, { status: 400 });
   }
 
+  // Plan değiştiyse ve limitler elle gönderilmediyse, yeni planın varsayılan
+  // doktor/kullanıcı limitlerine düş — süperadmin özel bir sayı girdiyse
+  // (body.maxActiveDoctors/maxActiveUsers gönderildiyse) o değer her zaman kazanır.
+  const planLimits = body.subscriptionPlan ? getPlanDefaultLimits(body.subscriptionPlan as SubscriptionPlanId) : null;
+
   const updated = await prisma.institution.update({
     where: { id: params.id },
     data: {
@@ -116,8 +122,12 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
       ...(body.serviceMode && { serviceMode: body.serviceMode }),
       ...(body.serviceNote !== undefined && { serviceNote: body.serviceNote || null }),
       ...(body.throttleMs !== undefined && { throttleMs: Math.max(0, Math.min(Number(body.throttleMs) || 0, 3000)) }),
-      ...(body.maxActiveUsers !== undefined && { maxActiveUsers: body.maxActiveUsers ? Number(body.maxActiveUsers) : null }),
-      ...(body.maxActiveDoctors !== undefined && { maxActiveDoctors: body.maxActiveDoctors ? Number(body.maxActiveDoctors) : null }),
+      ...(body.maxActiveUsers !== undefined
+        ? { maxActiveUsers: body.maxActiveUsers ? Number(body.maxActiveUsers) : null }
+        : planLimits ? { maxActiveUsers: planLimits.maxActiveUsers } : {}),
+      ...(body.maxActiveDoctors !== undefined
+        ? { maxActiveDoctors: body.maxActiveDoctors ? Number(body.maxActiveDoctors) : null }
+        : planLimits ? { maxActiveDoctors: planLimits.maxActiveDoctors } : {}),
       ...(body.adsEnabled !== undefined && { adsEnabled: Boolean(body.adsEnabled) }),
       ...(body.adIntensity !== undefined && { adIntensity: body.adIntensity }),
       ...(body.paymentGraceUntil !== undefined && { paymentGraceUntil }),

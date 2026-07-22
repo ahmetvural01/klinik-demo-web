@@ -107,7 +107,7 @@ export async function requireAuth(permission?: string) {
     return { error: NextResponse.json({ message: "Bu işlem için süper yönetici yetkisi gerekli." }, { status: 403 }) };
   }
 
-  if (permission && !can(user.role as import("@prisma/client").Role, permission)) {
+  if (permission && !(await can(user.role as import("@prisma/client").Role, permission))) {
     return { error: NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 }) };
   }
 
