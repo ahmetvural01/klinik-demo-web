@@ -6,6 +6,7 @@ import { Topbar } from "@/components/layout/topbar";
 import { PanelRouteWarmup } from "@/components/layout/panel-route-warmup";
 import { PanelRealtimeSync } from "@/components/realtime/panel-realtime-sync";
 import { PanelCacheReset } from "@/components/layout/panel-cache-reset";
+import { BillingStatusBanner } from "@/components/layout/billing-status-banner";
 import ToastWrapper from "@/components/ui/ToastWrapper";
 import ConfirmProvider from "@/components/ui/ConfirmProvider";
 
@@ -29,6 +30,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
       <Sidebar user={{ fullName: user.fullName, role: user.rawRole, photoUrl }} />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Topbar user={{ fullName: user.fullName, role: user.role, photoUrl }} />
+        {user.rawRole !== "SUPERADMIN" && <BillingStatusBanner />}
         <main className="panel-content flex-1 overflow-y-auto px-3 pb-4 pt-0 sm:px-5 sm:pb-5">
           <ToastWrapper>
             <ConfirmProvider>{children}</ConfirmProvider>

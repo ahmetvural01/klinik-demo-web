@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Plug, CheckCircle2 } from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { FormField, inputErrorClass } from "@/components/ui/FormField";
+import { showToastSafe } from "@/lib/toast-client";
 
 type ProviderConfig = {
   provider: string;
@@ -15,7 +19,6 @@ export default function SmsProviderPage() {
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ provider: "", apiUrl: "", apiKey: "", sender: "" });
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     fetch("/api/superadmin/sms-provider")
@@ -35,34 +38,39 @@ export default function SmsProviderPage() {
 
   const handleSave = async () => {
     setSaving(true);
-    await fetch("/api/superadmin/sms-provider", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
-    });
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+    try {
+      await fetch("/api/superadmin/sms-provider", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
+      showToastSafe({ title: "Kaydedildi", message: "SMS API ayarları güncellendi", type: "success" });
+    } catch {
+      showToastSafe({ title: "Hata", message: "Ayarlar kaydedilemedi", type: "error" });
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
     <section className="space-y-5">
-      <div className="flex items-center gap-3">
-        <span className="text-3xl">🔌</span>
-        <h2 className="text-2xl font-bold text-gray-900">SMS API Tanımlamaları</h2>
+      <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <Plug className="h-4 w-4" />
+        </span>
+        <h1 className="text-lg font-black text-slate-900">SMS API Tanımlamaları</h1>
       </div>
 
-      <div className="rounded-xl bg-white shadow-sm border border-gray-100 p-6">
+      <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
         {loading ? (
           <div className="flex items-center justify-center py-10">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+            <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
           </div>
         ) : (
-          <div className="space-y-4 max-w-lg">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">SMS Sağlayıcısı</label>
+          <div className="max-w-lg space-y-4">
+            <FormField label="SMS Sağlayıcısı">
               <select
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ${inputErrorClass(false)}`}
                 value={form.provider}
                 onChange={(e) => setForm({ ...form, provider: e.target.value })}
               >
@@ -73,51 +81,42 @@ export default function SmsProviderPage() {
                 <option value="MUTLUCELL">Mutlucell</option>
                 <option value="CUSTOM">Özel</option>
               </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">API URL</label>
+            </FormField>
+            <FormField label="API URL">
               <input
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono"
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm font-mono outline-none ${inputErrorClass(false)}`}
                 placeholder="https://api.provider.com/sms/send"
                 value={form.apiUrl}
                 onChange={(e) => setForm({ ...form, apiUrl: e.target.value })}
               />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">API Anahtarı</label>
+            </FormField>
+            <FormField label="API Anahtarı">
               <input
                 type="password"
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono"
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm font-mono outline-none ${inputErrorClass(false)}`}
                 placeholder="••••••••••••••••"
                 value={form.apiKey}
                 onChange={(e) => setForm({ ...form, apiKey: e.target.value })}
               />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Gönderici Başlığı</label>
+            </FormField>
+            <FormField label="Gönderici Başlığı">
               <input
-                className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ${inputErrorClass(false)}`}
                 placeholder="KlinikPanel"
                 value={form.sender}
                 onChange={(e) => setForm({ ...form, sender: e.target.value })}
               />
-            </div>
+            </FormField>
 
             <div className="flex items-center gap-3 pt-2">
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                {saving ? "Kaydediliyor..." : "Kaydet"}
-              </button>
-              {saved && <span className="text-sm text-green-600 font-medium">✓ Kaydedildi</span>}
+              <Button onClick={handleSave} loading={saving}>Kaydet</Button>
             </div>
 
             {config?.isActive && (
-              <div className="mt-4 rounded-lg bg-green-50 border border-green-200 p-3">
-                <p className="text-sm text-green-700">
-                  ✓ SMS API bağlantısı aktif — Sağlayıcı: <strong>{config.provider}</strong>
+              <div className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                <p className="text-sm text-emerald-700">
+                  SMS API bağlantısı aktif — Sağlayıcı: <strong>{config.provider}</strong>
                 </p>
               </div>
             )}

@@ -1,6 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Mail, CheckCircle2 } from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { FormField, FormSection } from "@/components/ui/FormField";
+import { Badge } from "@/components/ui/Badge";
+import { showToastSafe } from "@/lib/toast-client";
 
 type SmtpConfig = {
   host: string;
@@ -11,6 +16,8 @@ type SmtpConfig = {
   fromEmail: string;
   isActive: boolean;
 };
+
+const inputClass = "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
 
 export default function SmtpPage() {
   const [form, setForm] = useState({
@@ -26,7 +33,7 @@ export default function SmtpPage() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [testResult, setTestResult] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
     fetch("/api/superadmin/smtp")
@@ -50,14 +57,22 @@ export default function SmtpPage() {
 
   const handleSave = async () => {
     setSaving(true);
-    await fetch("/api/superadmin/smtp", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...form, port: parseInt(form.port) }),
-    });
-    setSaving(false);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 3000);
+    try {
+      const res = await fetch("/api/superadmin/smtp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...form, port: parseInt(form.port) }),
+      });
+      if (!res.ok) throw new Error("Kaydedilemedi");
+      setSaved(true);
+      showToastSafe({ title: "Kaydedildi", message: "SMTP ayarları güncellendi", type: "success" });
+      setTimeout(() => setSaved(false), 3000);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
+      showToastSafe({ title: "Hata", message: msg, type: "error" });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleTest = async () => {
@@ -66,9 +81,13 @@ export default function SmtpPage() {
     try {
       const res = await fetch("/api/superadmin/smtp/test", { method: "POST" });
       const d = await res.json();
-      setTestResult(res.ok ? "✓ Test maili başarıyla gönderildi" : `✗ ${d.message ?? "Hata"}`);
+      setTestResult(
+        res.ok
+          ? { ok: true, message: "Test maili başarıyla gönderildi" }
+          : { ok: false, message: d.message ?? "Hata" }
+      );
     } catch {
-      setTestResult("✗ Bağlantı hatası");
+      setTestResult({ ok: false, message: "Bağlantı hatası" });
     } finally {
       setTesting(false);
     }
@@ -76,119 +95,108 @@ export default function SmtpPage() {
 
   return (
     <section className="space-y-5">
-      <div className="flex items-center gap-3">
-        <span className="text-3xl">📧</span>
-        <h2 className="text-2xl font-bold text-gray-900">SMTP Ayarları</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <h1 className="text-lg font-black text-slate-900">SMTP Ayarları</h1>
       </div>
 
-      <div className="rounded-xl bg-white shadow-sm border border-gray-100 p-6">
-        {loading ? (
-          <div className="flex items-center justify-center py-10">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
-          </div>
-        ) : (
-          <div className="space-y-4 max-w-lg">
+      {loading ? (
+        <div className="flex items-center justify-center rounded-2xl border border-slate-100 bg-white py-16 shadow-sm">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+        </div>
+      ) : (
+        <FormSection icon={Mail} title="Sunucu Bilgileri" description="Mail gönderimi için SMTP sunucu ayarları">
+          <div className="max-w-lg space-y-4">
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">SMTP Sunucu</label>
-                <input
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
-                  placeholder="smtp.gmail.com"
-                  value={form.host}
-                  onChange={(e) => setForm({ ...form, host: e.target.value })}
-                />
+                <FormField label="SMTP Sunucu">
+                  <input
+                    className={inputClass}
+                    placeholder="smtp.gmail.com"
+                    value={form.host}
+                    onChange={(e) => setForm({ ...form, host: e.target.value })}
+                  />
+                </FormField>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Port</label>
+              <FormField label="Port">
                 <input
                   type="number"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                  className={inputClass}
                   value={form.port}
                   onChange={(e) => setForm({ ...form, port: e.target.value })}
                 />
-              </div>
+              </FormField>
               <div className="flex items-end pb-2">
-                <label className="flex items-center gap-2 cursor-pointer">
+                <label className="flex cursor-pointer items-center gap-2">
                   <input
                     type="checkbox"
                     checked={form.secure}
                     onChange={(e) => setForm({ ...form, secure: e.target.checked })}
-                    className="rounded"
+                    className="rounded border-slate-300 text-primary focus:ring-primary/30"
                   />
-                  <span className="text-sm text-gray-700">SSL/TLS</span>
+                  <span className="text-sm text-slate-700">SSL/TLS</span>
                 </label>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Kullanıcı Adı</label>
+              <FormField label="Kullanıcı Adı">
                 <input
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                  className={inputClass}
                   placeholder="info@example.com"
                   value={form.user}
                   onChange={(e) => setForm({ ...form, user: e.target.value })}
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Şifre</label>
+              </FormField>
+              <FormField label="Şifre">
                 <input
                   type="password"
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                  className={inputClass}
                   placeholder="••••••••"
                   value={form.password}
                   onChange={(e) => setForm({ ...form, password: e.target.value })}
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Gönderici Adı</label>
+              </FormField>
+              <FormField label="Gönderici Adı">
                 <input
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                  className={inputClass}
                   placeholder="Klinik Yönetim Paneli"
                   value={form.fromName}
                   onChange={(e) => setForm({ ...form, fromName: e.target.value })}
                 />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Gönderici E-posta</label>
+              </FormField>
+              <FormField label="Gönderici E-posta">
                 <input
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm"
+                  className={inputClass}
                   placeholder="noreply@example.com"
                   value={form.fromEmail}
                   onChange={(e) => setForm({ ...form, fromEmail: e.target.value })}
                 />
-              </div>
+              </FormField>
             </div>
 
-            <div className="flex items-center gap-3 pt-2">
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="rounded-lg bg-blue-600 px-5 py-2 text-sm font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                {saving ? "Kaydediliyor..." : "Kaydet"}
-              </button>
-              <button
-                onClick={handleTest}
-                disabled={testing}
-                className="rounded-lg border border-gray-200 px-5 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-50 disabled:opacity-50"
-              >
-                {testing ? "Test ediliyor..." : "Test Gönder"}
-              </button>
-              {saved && <span className="text-sm text-green-600 font-medium">✓ Kaydedildi</span>}
+            <div className="flex flex-wrap items-center gap-3 pt-2">
+              <Button onClick={handleSave} loading={saving}>
+                Kaydet
+              </Button>
+              <Button variant="secondary" onClick={handleTest} loading={testing}>
+                Test Gönder
+              </Button>
+              {saved && (
+                <Badge tone="success" icon={CheckCircle2}>Kaydedildi</Badge>
+              )}
             </div>
 
             {testResult && (
               <div
-                className={`rounded-lg p-3 text-sm font-medium ${
-                  testResult.startsWith("✓")
-                    ? "bg-green-50 text-green-700 border border-green-200"
-                    : "bg-red-50 text-red-700 border border-red-200"
+                className={`rounded-lg border p-3 text-sm font-medium ${
+                  testResult.ok
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                    : "border-red-200 bg-red-50 text-red-700"
                 }`}
               >
-                {testResult}
+                {testResult.message}
               </div>
             )}
           </div>
-        )}
-      </div>
+        </FormSection>
+      )}
     </section>
   );
 }

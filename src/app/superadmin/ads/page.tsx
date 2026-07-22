@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Megaphone } from "lucide-react";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { showToastSafe } from "@/lib/toast-client";
 
 type Ad = {
   id: string;
@@ -30,62 +34,56 @@ export default function AdsPage() {
   useEffect(() => { load(); }, []);
 
   const toggle = async (id: string, current: boolean) => {
-    await fetch(`/api/superadmin/ads/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isActive: !current }),
-    });
-    load();
+    try {
+      await fetch(`/api/superadmin/ads/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !current }),
+      });
+      showToastSafe({ title: current ? "Durduruldu" : "Yayınlandı", message: "Reklam durumu güncellendi", type: "success" });
+      load();
+    } catch {
+      showToastSafe({ title: "Hata", message: "Reklam durumu güncellenemedi", type: "error" });
+    }
   };
 
   return (
     <section className="space-y-5">
-      <div className="flex items-center gap-3">
-        <span className="text-3xl">📣</span>
-        <h2 className="text-2xl font-bold text-gray-900">Reklamlar</h2>
+      <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <Megaphone className="h-4 w-4" />
+        </span>
+        <h1 className="text-lg font-black text-slate-900">Reklamlar</h1>
       </div>
 
-      <div className="rounded-xl bg-white shadow-sm border border-gray-100 overflow-hidden">
+      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
         {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+          <div className="divide-y divide-slate-100">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <div key={i} className="h-20 animate-pulse bg-slate-50" style={{ animationDelay: `${i * 40}ms` }} />
+            ))}
           </div>
+        ) : ads.length === 0 ? (
+          <div className="px-6 py-14 text-center text-sm text-slate-400">Reklam bulunamadı</div>
         ) : (
-          <div className="divide-y divide-gray-100">
-            {ads.length === 0 ? (
-              <div className="px-6 py-10 text-center text-gray-400">Reklam bulunamadı</div>
-            ) : (
-              ads.map((ad) => (
-                <div key={ad.id} className="p-4 flex items-start justify-between gap-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-semibold text-gray-900">{ad.title}</span>
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
-                          ad.isActive ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-500"
-                        }`}
-                      >
-                        {ad.isActive ? "Aktif" : "Pasif"}
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-600">{ad.content}</p>
-                    {ad.targetUrl && (
-                      <p className="text-xs text-blue-500 mt-1">{ad.targetUrl}</p>
-                    )}
+          <div className="divide-y divide-slate-100">
+            {ads.map((ad) => (
+              <div key={ad.id} className="flex items-start justify-between gap-4 p-4 transition hover:bg-slate-50/80">
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1.5 flex items-center gap-2">
+                    <span className="font-bold text-slate-900">{ad.title}</span>
+                    <Badge tone={ad.isActive ? "success" : "neutral"}>{ad.isActive ? "Aktif" : "Pasif"}</Badge>
                   </div>
-                  <button
-                    onClick={() => toggle(ad.id, ad.isActive)}
-                    className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-semibold ${
-                      ad.isActive
-                        ? "bg-red-50 text-red-600 hover:bg-red-100"
-                        : "bg-green-50 text-green-600 hover:bg-green-100"
-                    }`}
-                  >
-                    {ad.isActive ? "Durdur" : "Yayınla"}
-                  </button>
+                  <p className="text-sm text-slate-600">{ad.content}</p>
+                  {ad.targetUrl && (
+                    <p className="mt-1 truncate text-xs text-primary">{ad.targetUrl}</p>
+                  )}
                 </div>
-              ))
-            )}
+                <Button variant={ad.isActive ? "danger" : "secondary"} size="sm" onClick={() => toggle(ad.id, ad.isActive)}>
+                  {ad.isActive ? "Durdur" : "Yayınla"}
+                </Button>
+              </div>
+            ))}
           </div>
         )}
       </div>

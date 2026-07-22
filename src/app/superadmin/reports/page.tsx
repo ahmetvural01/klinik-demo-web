@@ -1,6 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {
+  Building2,
+  CheckCircle2,
+  Users,
+  Wallet,
+  Smartphone,
+  Sparkles,
+} from "lucide-react";
+import { ListTable } from "@/components/ui/ListTable";
 
 type ReportData = {
   totalInstitutions?: number;
@@ -28,88 +37,89 @@ export default function ReportsPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-32">
-        <div className="h-10 w-10 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+        <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent" />
       </div>
     );
   }
 
+  const stats = [
+    { label: "Toplam Klinik", value: data.totalInstitutions ?? 0, icon: Building2 },
+    { label: "Aktif Klinik", value: data.activeInstitutions ?? 0, icon: CheckCircle2 },
+    { label: "Toplam Kullanıcı", value: data.totalUsers ?? 0, icon: Users },
+    { label: "Toplam Gelir (₺)", value: (data.totalRevenue ?? 0).toLocaleString("tr-TR"), icon: Wallet },
+    { label: "Toplam SMS Gönderim", value: (data.totalSmsSent ?? 0).toLocaleString("tr-TR"), icon: Smartphone },
+    { label: "Bu Ay Yeni Klinik", value: data.newInstitutionsThisMonth ?? 0, icon: Sparkles },
+  ];
+
   return (
     <section className="space-y-5">
-      <div className="flex items-center gap-3">
-        <span className="text-3xl">📈</span>
-        <h2 className="text-2xl font-bold text-gray-900">Sistem Raporları</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <h1 className="text-lg font-black text-slate-900">Sistem Raporları</h1>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        {[
-          { label: "Toplam Klinik", value: data.totalInstitutions ?? 0, icon: "🏢", color: "blue" },
-          { label: "Aktif Klinik", value: data.activeInstitutions ?? 0, icon: "✅", color: "green" },
-          { label: "Toplam Kullanıcı", value: data.totalUsers ?? 0, icon: "👥", color: "purple" },
-          { label: "Toplam Gelir (₺)", value: (data.totalRevenue ?? 0).toLocaleString("tr-TR"), icon: "💰", color: "yellow" },
-          { label: "Toplam SMS Gönderim", value: (data.totalSmsSent ?? 0).toLocaleString("tr-TR"), icon: "📱", color: "indigo" },
-          { label: "Bu Ay Yeni Klinik", value: data.newInstitutionsThisMonth ?? 0, icon: "🆕", color: "teal" },
-        ].map((stat) => (
-          <div key={stat.label} className="rounded-xl bg-white shadow-sm border border-gray-100 p-4 flex items-center gap-4">
-            <span className="text-3xl">{stat.icon}</span>
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+        {stats.map((stat) => (
+          <div key={stat.label} className="flex items-center gap-4 rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <stat.icon className="h-5 w-5" />
+            </span>
             <div>
-              <p className="text-xs text-gray-500">{stat.label}</p>
-              <p className="text-xl font-bold text-gray-900">{stat.value}</p>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{stat.label}</p>
+              <p className="text-xl font-black text-slate-900">{stat.value}</p>
             </div>
           </div>
         ))}
       </div>
 
       {data.topInstitutions && data.topInstitutions.length > 0 && (
-        <div className="rounded-xl bg-white shadow-sm border border-gray-100 overflow-hidden">
-          <div className="p-4 border-b border-gray-100">
-            <h3 className="font-semibold text-gray-800">En Yüksek Gelirli Klinikler</h3>
-          </div>
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-xs uppercase text-gray-500">
-              <tr>
-                <th className="px-4 py-3 text-left">#</th>
-                <th className="px-4 py-3 text-left">Klinik</th>
-                <th className="px-4 py-3 text-right">Toplam Gelir</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {data.topInstitutions.map((inst, i) => (
-                <tr key={inst.name} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 font-bold text-gray-400">{i + 1}</td>
-                  <td className="px-4 py-3 font-medium text-gray-900">{inst.name}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-green-600">
-                    ₺{inst.revenue.toLocaleString("tr-TR")}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-3">
+          <h3 className="text-sm font-black text-slate-900">En Yüksek Gelirli Klinikler</h3>
+          <ListTable
+            columns={[
+              {
+                key: "rank",
+                header: "#",
+                headerClassName: "w-10",
+                render: (inst) => <span className="font-bold text-slate-400">{inst._rank}</span>,
+              },
+              {
+                key: "name",
+                header: "Klinik",
+                render: (inst) => <span className="font-bold text-slate-900">{inst.name}</span>,
+              },
+              {
+                key: "revenue",
+                header: "Toplam Gelir",
+                align: "right",
+                render: (inst) => <span className="font-bold text-emerald-600">₺{inst.revenue.toLocaleString("tr-TR")}</span>,
+              },
+            ]}
+            rows={data.topInstitutions.map((inst, i) => ({ ...inst, _rank: i + 1 }))}
+            rowKey={(inst) => inst.name}
+          />
         </div>
       )}
 
       {data.monthlyRevenue && data.monthlyRevenue.length > 0 && (
-        <div className="rounded-xl bg-white shadow-sm border border-gray-100 overflow-hidden">
-          <div className="p-4 border-b border-gray-100">
-            <h3 className="font-semibold text-gray-800">Aylık Gelir</h3>
-          </div>
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-xs uppercase text-gray-500">
-              <tr>
-                <th className="px-4 py-3 text-left">Ay</th>
-                <th className="px-4 py-3 text-right">Gelir</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {data.monthlyRevenue.map((row) => (
-                <tr key={row.month} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-gray-700">{row.month}</td>
-                  <td className="px-4 py-3 text-right font-semibold text-gray-900">
-                    ₺{row.amount.toLocaleString("tr-TR")}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="space-y-3">
+          <h3 className="text-sm font-black text-slate-900">Aylık Gelir</h3>
+          <ListTable
+            columns={[
+              {
+                key: "month",
+                header: "Ay",
+                render: (row) => <span className="text-slate-700">{row.month}</span>,
+              },
+              {
+                key: "amount",
+                header: "Gelir",
+                align: "right",
+                render: (row) => <span className="font-bold text-slate-900">₺{row.amount.toLocaleString("tr-TR")}</span>,
+              },
+            ]}
+            rows={data.monthlyRevenue}
+            rowKey={(row) => row.month}
+          />
         </div>
       )}
     </section>

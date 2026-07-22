@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { syncInstitutionPaymentGate } from "@/lib/billing";
 
 export async function PATCH(request: NextRequest, { params }: { params: { id: string } }) {
   const auth = await requireAuth("superadmin");
@@ -19,6 +20,11 @@ export async function PATCH(request: NextRequest, { params }: { params: { id: st
       paidAt: body.status === "PAID" ? new Date() : null,
     },
   });
+
+  // Ödendi/iptal işaretlendiğinde veya tekrar açıldığında kurumun yazma
+  // kısıtlaması (paymentGraceUntil) kalan ödenmemiş faturalara göre yeniden
+  // hesaplanır — süperadmin ayrıca elle kısıtlamayı kaldırmak zorunda kalmaz.
+  await syncInstitutionPaymentGate(invoice.institutionId).catch(() => {});
 
   return NextResponse.json(invoice);
 }

@@ -1,8 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Eye, Plus } from "lucide-react";
 import { cachedGet } from "@/lib/client-cache";
+import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
+import { Badge } from "@/components/ui/Badge";
+import { FormField, inputErrorClass } from "@/components/ui/FormField";
 
 type Institution = {
   id: string;
@@ -151,12 +157,9 @@ export default function InstitutionsPage() {
               <h1 className="text-2xl font-black text-slate-900">Klinik Yönetimi</h1>
               <p className="text-sm text-slate-500">Tüm klinikleri buradan yönetin.</p>
             </div>
-            <button
-              onClick={() => setShowNew((v) => !v)}
-              className="rounded-xl bg-slate-900 px-4 py-2 text-sm font-bold text-white"
-            >
+            <Button variant="primary" size="sm" icon={Plus} onClick={() => setShowNew((v) => !v)}>
               {showNew ? "Formu Kapat" : "Yeni Klinik"}
-            </button>
+            </Button>
           </div>
 
           <div className="mt-4">
@@ -164,56 +167,10 @@ export default function InstitutionsPage() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Klinik, sahip veya e-posta ara"
-              className="w-full rounded-xl border px-3 py-2.5 text-sm"
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
             />
           </div>
         </header>
-
-        {showNew && (
-          <section className="rounded-2xl bg-white p-5 shadow-sm border space-y-3">
-            <h2 className="font-bold text-slate-900">Yeni Klinik Oluştur</h2>
-            <div className="grid gap-3 md:grid-cols-2">
-              <Input label="Klinik Adı" value={form.name} onChange={(v) => setForm((f) => ({ ...f, name: v }))} />
-              <Input label="Sahip Ad Soyad" value={form.ownerName} onChange={(v) => setForm((f) => ({ ...f, ownerName: v }))} />
-              <Input label="Sahip TC" value={form.ownerIdentityNo} onChange={(v) => setForm((f) => ({ ...f, ownerIdentityNo: v }))} />
-              <Input label="Sahip Şifre" value={form.ownerPassword} onChange={(v) => setForm((f) => ({ ...f, ownerPassword: v }))} type="password" />
-              <Input label="E-posta" value={form.email} onChange={(v) => setForm((f) => ({ ...f, email: v }))} />
-              <Input label="Telefon" value={form.phone} onChange={(v) => setForm((f) => ({ ...f, phone: v }))} />
-              <Input label="Vergi No" value={form.taxNo} onChange={(v) => setForm((f) => ({ ...f, taxNo: v }))} />
-              <Input label="Adres" value={form.address} onChange={(v) => setForm((f) => ({ ...f, address: v }))} />
-              <label className="text-sm font-semibold text-slate-700">
-                Plan
-                <select
-                  className="mt-1 w-full rounded-xl border px-3 py-2.5 text-sm"
-                  value={form.subscriptionPlan}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, subscriptionPlan: e.target.value as FormState["subscriptionPlan"] }))
-                  }
-                >
-                  <option value="TEMEL">TEMEL</option>
-                  <option value="PROFESYONEL">PROFESYONEL</option>
-                  <option value="KURUMSAL">KURUMSAL</option>
-                </select>
-              </label>
-              <label className="text-sm font-semibold text-slate-700">
-                İlk SMS Bakiye
-                <input
-                  type="number"
-                  className="mt-1 w-full rounded-xl border px-3 py-2.5 text-sm"
-                  value={form.smsBalance}
-                  onChange={(e) => setForm((f) => ({ ...f, smsBalance: Number(e.target.value) || 0 }))}
-                />
-              </label>
-            </div>
-            <button
-              disabled={saving}
-              onClick={() => void createInstitution()}
-              className="rounded-xl bg-emerald-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60"
-            >
-              {saving ? "Kaydediliyor..." : "Kliniği Kaydet"}
-            </button>
-          </section>
-        )}
 
         {message && <div className="rounded-xl border bg-white p-3 text-sm text-slate-700">{message}</div>}
 
@@ -246,29 +203,31 @@ export default function InstitutionsPage() {
                 filtered.map((inst) => (
                   <tr key={inst.id} className="border-b hover:bg-slate-50">
                     <td className="px-4 py-3">
-                      <p className="font-semibold text-slate-900">{inst.name}</p>
+                      <Link href={`/superadmin/institutions/${inst.id}`} className="font-semibold text-slate-900 hover:text-primary hover:underline">
+                        {inst.name}
+                      </Link>
                       <p className="text-xs text-slate-500">{inst.email}</p>
                     </td>
                     <td className="px-4 py-3 text-slate-700">{inst.owner?.fullName || "-"}</td>
                     <td className="px-4 py-3">{inst.subscriptionPlan}</td>
                     <td className="px-4 py-3 text-right font-semibold">{inst.smsBalance.toLocaleString()}</td>
                     <td className="px-4 py-3 text-center">
-                      <span
-                        className={`rounded-full px-2 py-1 text-xs font-semibold ${
-                          inst.isActive ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
-                        }`}
-                      >
-                        {inst.isActive ? "Aktif" : "Pasif"}
-                      </span>
+                      <Badge tone={inst.isActive ? "success" : "critical"}>{inst.isActive ? "Aktif" : "Pasif"}</Badge>
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <button
-                        onClick={() => { setGhostTarget(inst); setGhostPassword(""); setGhostError(null); }}
-                        className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-indigo-700"
-                        title="Kliniğe gizli giriş yap"
-                      >
-                        Kliniğe Gir
-                      </button>
+                      <div className="flex items-center justify-center gap-2">
+                        <Button variant="secondary" size="sm" href={`/superadmin/institutions/${inst.id}`}>
+                          Detay
+                        </Button>
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          icon={Eye}
+                          onClick={() => { setGhostTarget(inst); setGhostPassword(""); setGhostError(null); }}
+                        >
+                          Kliniğe Gir
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -276,71 +235,137 @@ export default function InstitutionsPage() {
             </tbody>
           </table>
         </section>
-
-        {/* Ghost giriş şifre modal */}
-        {ghostTarget && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-            <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-2xl border space-y-4">
-              <h3 className="text-lg font-black text-slate-900">Kliniğe Gizli Giriş</h3>
-              <p className="text-sm text-slate-600">
-                <span className="font-semibold text-indigo-700">{ghostTarget.name}</span> kliniğine giriş yapmak için superadmin şifrenizi girin.
-              </p>
-              <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 border border-amber-200">
-                Bu giriş hiçbir log kaydına yansımaz.
-              </p>
-              <input
-                type="password"
-                placeholder="Superadmin şifresi"
-                value={ghostPassword}
-                onChange={(e) => setGhostPassword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && void enterAsGhost()}
-                className="w-full rounded-xl border px-3 py-2.5 text-sm"
-                autoFocus
-              />
-              {ghostError && <p className="text-sm text-rose-600">{ghostError}</p>}
-              <div className="flex gap-2">
-                <button
-                  onClick={() => void enterAsGhost()}
-                  disabled={ghostLoading || !ghostPassword}
-                  className="flex-1 rounded-xl bg-indigo-600 py-2.5 text-sm font-bold text-white hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {ghostLoading ? "Giriliyor..." : "Giriş Yap"}
-                </button>
-                <button
-                  onClick={() => { setGhostTarget(null); setGhostPassword(""); }}
-                  className="flex-1 rounded-xl border py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                >
-                  İptal
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
-    </main>
-  );
-}
 
-function Input({
-  label,
-  value,
-  onChange,
-  type = "text",
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  type?: string;
-}) {
-  return (
-    <label className="text-sm font-semibold text-slate-700">
-      {label}
-      <input
-        className="mt-1 w-full rounded-xl border px-3 py-2.5 text-sm"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        type={type}
-      />
-    </label>
+      {/* Yeni klinik oluşturma modal */}
+      <Modal
+        open={showNew}
+        onClose={() => setShowNew(false)}
+        title="Yeni Klinik Oluştur"
+        size="lg"
+        footer={
+          <Button variant="primary" loading={saving} onClick={() => void createInstitution()}>
+            Kliniği Kaydet
+          </Button>
+        }
+      >
+        <div className="grid gap-3 md:grid-cols-2">
+          <FormField label="Klinik Adı">
+            <input
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
+              value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+            />
+          </FormField>
+          <FormField label="Sahip Ad Soyad">
+            <input
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
+              value={form.ownerName}
+              onChange={(e) => setForm((f) => ({ ...f, ownerName: e.target.value }))}
+            />
+          </FormField>
+          <FormField label="Sahip TC">
+            <input
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
+              value={form.ownerIdentityNo}
+              onChange={(e) => setForm((f) => ({ ...f, ownerIdentityNo: e.target.value }))}
+            />
+          </FormField>
+          <FormField label="Sahip Şifre">
+            <input
+              type="password"
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
+              value={form.ownerPassword}
+              onChange={(e) => setForm((f) => ({ ...f, ownerPassword: e.target.value }))}
+            />
+          </FormField>
+          <FormField label="E-posta">
+            <input
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
+              value={form.email}
+              onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+            />
+          </FormField>
+          <FormField label="Telefon">
+            <input
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
+              value={form.phone}
+              onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
+            />
+          </FormField>
+          <FormField label="Vergi No">
+            <input
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
+              value={form.taxNo}
+              onChange={(e) => setForm((f) => ({ ...f, taxNo: e.target.value }))}
+            />
+          </FormField>
+          <FormField label="Adres">
+            <input
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
+              value={form.address}
+              onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
+            />
+          </FormField>
+          <FormField label="Plan">
+            <select
+              className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
+              value={form.subscriptionPlan}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, subscriptionPlan: e.target.value as FormState["subscriptionPlan"] }))
+              }
+            >
+              <option value="TEMEL">TEMEL</option>
+              <option value="PROFESYONEL">PROFESYONEL</option>
+              <option value="KURUMSAL">KURUMSAL</option>
+            </select>
+          </FormField>
+          <FormField label="İlk SMS Bakiye">
+            <input
+              type="number"
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
+              value={form.smsBalance}
+              onChange={(e) => setForm((f) => ({ ...f, smsBalance: Number(e.target.value) || 0 }))}
+            />
+          </FormField>
+        </div>
+      </Modal>
+
+      {/* Ghost giriş şifre modal */}
+      <Modal
+        open={!!ghostTarget}
+        onClose={() => { setGhostTarget(null); setGhostPassword(""); }}
+        title="Kliniğe Gizli Giriş"
+        description={ghostTarget ? `${ghostTarget.name} kliniğine giriş yapmak için superadmin şifrenizi girin.` : undefined}
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => { setGhostTarget(null); setGhostPassword(""); }}>
+              İptal
+            </Button>
+            <Button variant="primary" loading={ghostLoading} disabled={!ghostPassword} onClick={() => void enterAsGhost()}>
+              Giriş Yap
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+            Bu giriş hiçbir log kaydına yansımaz.
+          </p>
+          <FormField label="Superadmin Şifresi">
+            <input
+              type="password"
+              autoFocus
+              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
+              value={ghostPassword}
+              onChange={(e) => setGhostPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && void enterAsGhost()}
+            />
+          </FormField>
+          {ghostError && <p className="text-sm text-red-600">{ghostError}</p>}
+        </div>
+      </Modal>
+    </main>
   );
 }

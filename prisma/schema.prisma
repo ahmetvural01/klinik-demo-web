@@ -18,6 +18,7 @@ model Institution {
   website             String?
   logo                String?
   subscriptionPlan    SubscriptionPlan          @default(TEMEL)
+  billingCycle        BillingCycle              @default(AYLIK)
   smsBalance          Int                       @default(0)
   isActive            Boolean                   @default(true)
   ownerId             String?                   @unique
@@ -1182,6 +1183,11 @@ enum ServiceMode {
   LIMITED
   READ_ONLY
   SUSPENDED
+}
+
+enum BillingCycle {
+  AYLIK
+  YILLIK
 }
 
 enum AdIntensity {

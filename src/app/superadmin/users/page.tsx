@@ -1,6 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Search } from "lucide-react";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { Badge } from "@/components/ui/Badge";
 
 type User = {
   id: string;
@@ -32,93 +35,73 @@ export default function UsersPage() {
       u.institution?.name?.toLowerCase().includes(search.toLowerCase())
   );
 
+  const columns: ListTableColumn<User>[] = [
+    {
+      key: "fullName",
+      header: "Ad Soyad",
+      render: (u) => <span className="font-bold text-slate-900">{u.fullName}</span>,
+    },
+    {
+      key: "identityNo",
+      header: "TC Kimlik",
+      render: (u) => <span className="font-mono text-slate-600">{u.identityNo}</span>,
+    },
+    {
+      key: "role",
+      header: "Rol",
+      render: (u) => (
+        <Badge tone={u.role === "DOCTOR" ? "info" : u.role === "ADMIN" ? "warning" : "neutral"}>
+          {u.role}
+        </Badge>
+      ),
+    },
+    {
+      key: "institution",
+      header: "Klinik",
+      render: (u) => <span className="text-slate-600">{u.institution?.name ?? "—"}</span>,
+    },
+    {
+      key: "isActive",
+      header: "Durum",
+      render: (u) => (
+        <Badge tone={u.isActive ? "success" : "critical"}>{u.isActive ? "Aktif" : "Pasif"}</Badge>
+      ),
+    },
+    {
+      key: "createdAt",
+      header: "Kayıt",
+      render: (u) => <span className="text-slate-500">{new Date(u.createdAt).toLocaleDateString("tr-TR")}</span>,
+    },
+  ];
+
   return (
     <section className="space-y-5">
-      <div className="flex items-center gap-3">
-        <span className="text-3xl">👥</span>
-        <h2 className="text-2xl font-bold text-gray-900">Kullanıcılar</h2>
-      </div>
-
-      <div className="rounded-xl bg-white shadow-sm border border-gray-100 overflow-hidden">
-        <div className="p-4 border-b border-gray-100">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-lg font-black text-slate-900">Kullanıcılar</h1>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">
+            {filtered.length} kullanıcı
+          </span>
+        </div>
+        <div className="relative w-full max-w-sm">
+          <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             placeholder="Ad, TC veya klinik ara..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-full max-w-sm rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20"
           />
         </div>
-
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
-          </div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-gray-50 text-xs uppercase text-gray-500">
-                <tr>
-                  <th className="px-4 py-3 text-left">Ad Soyad</th>
-                  <th className="px-4 py-3 text-left">TC Kimlik</th>
-                  <th className="px-4 py-3 text-left">Rol</th>
-                  <th className="px-4 py-3 text-left">Klinik</th>
-                  <th className="px-4 py-3 text-left">Durum</th>
-                  <th className="px-4 py-3 text-left">Kayıt</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {filtered.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
-                      Kullanıcı bulunamadı
-                    </td>
-                  </tr>
-                ) : (
-                  filtered.map((u) => (
-                    <tr key={u.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-medium text-gray-900">{u.fullName}</td>
-                      <td className="px-4 py-3 font-mono text-gray-600">{u.identityNo}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
-                            u.role === "DOCTOR"
-                              ? "bg-blue-100 text-blue-700"
-                              : u.role === "ADMIN"
-                              ? "bg-purple-100 text-purple-700"
-                              : "bg-gray-100 text-gray-700"
-                          }`}
-                        >
-                          {u.role}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">{u.institution?.name ?? "—"}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
-                            u.isActive ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"
-                          }`}
-                        >
-                          {u.isActive ? "Aktif" : "Pasif"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 text-gray-500">
-                        {new Date(u.createdAt).toLocaleDateString("tr-TR")}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {!loading && (
-          <div className="px-4 py-2 border-t border-gray-100 text-xs text-gray-400">
-            Toplam {filtered.length} kullanıcı
-          </div>
-        )}
       </div>
+
+      <ListTable
+        columns={columns}
+        rows={filtered}
+        rowKey={(u) => u.id}
+        loading={loading}
+        emptyText="Kullanıcı bulunamadı"
+      />
     </section>
   );
 }

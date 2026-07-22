@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Package } from "lucide-react";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 
 type WalletEntry = {
   id: string;
@@ -25,64 +27,49 @@ export default function SmsStockPage() {
   const totalBalance = wallets.reduce((sum, w) => sum + (w.balance ?? 0), 0);
   const totalUsed = wallets.reduce((sum, w) => sum + (w.usedCount ?? 0), 0);
 
+  const columns: ListTableColumn<WalletEntry>[] = [
+    { key: "institution", header: "Klinik", render: (w) => <span className="font-bold text-slate-900">{w.institution?.name ?? "—"}</span> },
+    {
+      key: "balance",
+      header: "Kalan Kredi",
+      align: "right",
+      render: (w) => (
+        <span className={`font-semibold ${w.balance < 50 ? "text-red-600" : "text-emerald-600"}`}>
+          {w.balance.toLocaleString("tr-TR")}
+        </span>
+      ),
+    },
+    { key: "usedCount", header: "Kullanılan", align: "right", render: (w) => <span className="text-slate-600">{w.usedCount.toLocaleString("tr-TR")}</span> },
+    { key: "updatedAt", header: "Güncelleme", render: (w) => <span className="text-slate-500">{new Date(w.updatedAt).toLocaleDateString("tr-TR")}</span> },
+  ];
+
   return (
     <section className="space-y-5">
-      <div className="flex items-center gap-3">
-        <span className="text-3xl">📦</span>
-        <h2 className="text-2xl font-bold text-gray-900">SMS Stok</h2>
+      <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+          <Package className="h-4 w-4" />
+        </span>
+        <h1 className="text-lg font-black text-slate-900">SMS Stok</h1>
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div className="rounded-xl bg-white shadow-sm border border-gray-100 p-4">
-          <p className="text-xs text-gray-500">Toplam Kalan Kredi</p>
-          <p className="text-2xl font-bold text-blue-600">{totalBalance.toLocaleString("tr-TR")}</p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam Kalan Kredi</p>
+          <p className="mt-1 text-2xl font-black text-primary">{totalBalance.toLocaleString("tr-TR")}</p>
         </div>
-        <div className="rounded-xl bg-white shadow-sm border border-gray-100 p-4">
-          <p className="text-xs text-gray-500">Toplam Kullanılan</p>
-          <p className="text-2xl font-bold text-gray-700">{totalUsed.toLocaleString("tr-TR")}</p>
+        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam Kullanılan</p>
+          <p className="mt-1 text-2xl font-black text-slate-900">{totalUsed.toLocaleString("tr-TR")}</p>
         </div>
       </div>
 
-      <div className="rounded-xl bg-white shadow-sm border border-gray-100 overflow-hidden">
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
-          </div>
-        ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 text-xs uppercase text-gray-500">
-              <tr>
-                <th className="px-4 py-3 text-left">Klinik</th>
-                <th className="px-4 py-3 text-right">Kalan Kredi</th>
-                <th className="px-4 py-3 text-right">Kullanılan</th>
-                <th className="px-4 py-3 text-left">Güncelleme</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {wallets.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-gray-400">Veri bulunamadı</td>
-                </tr>
-              ) : (
-                wallets.map((w) => (
-                  <tr key={w.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium text-gray-900">{w.institution?.name ?? "—"}</td>
-                    <td className="px-4 py-3 text-right">
-                      <span className={`font-semibold ${w.balance < 50 ? "text-red-600" : "text-green-600"}`}>
-                        {w.balance.toLocaleString("tr-TR")}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right text-gray-600">{w.usedCount.toLocaleString("tr-TR")}</td>
-                    <td className="px-4 py-3 text-gray-500">
-                      {new Date(w.updatedAt).toLocaleDateString("tr-TR")}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        )}
-      </div>
+      <ListTable<WalletEntry>
+        columns={columns}
+        rows={wallets}
+        rowKey={(w) => w.id}
+        loading={loading}
+        emptyText="Veri bulunamadı"
+      />
     </section>
   );
 }

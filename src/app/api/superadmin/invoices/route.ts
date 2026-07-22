@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { syncInstitutionPaymentGate } from "@/lib/billing";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth("superadmin");
@@ -81,6 +82,9 @@ export async function POST(request: NextRequest) {
   });
 
   const institution = await prisma.institution.findUnique({ where: { id: body.institutionId }, select: { name: true } });
+  if (invoice.status !== "PAID") {
+    await syncInstitutionPaymentGate(body.institutionId).catch(() => {});
+  }
   await writeAudit(auth.user.id, "SUPERADMIN_INVOICE_CREATE", `${institution?.name || body.institutionId} için ${invoice.invoiceNo} oluşturuldu: ₺${Number(invoice.amount).toLocaleString("tr-TR")}`);
   return NextResponse.json(invoice);
 }

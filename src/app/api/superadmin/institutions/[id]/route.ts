@@ -111,6 +111,7 @@ export async function PUT(request: NextRequest, { params }: { params: { id: stri
       ...(body.taxNo !== undefined && { taxNo: body.taxNo }),
       ...(body.website !== undefined && { website: body.website }),
       ...(body.subscriptionPlan && { subscriptionPlan: body.subscriptionPlan }),
+      ...(body.billingCycle && { billingCycle: body.billingCycle }),
       ...(body.isActive !== undefined && { isActive: body.isActive }),
       ...(body.serviceMode && { serviceMode: body.serviceMode }),
       ...(body.serviceNote !== undefined && { serviceNote: body.serviceNote || null }),

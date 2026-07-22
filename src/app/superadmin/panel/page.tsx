@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { cachedGet } from "@/lib/client-cache";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 
 type Dashboard = {
   totalInstitutions: number;
@@ -48,17 +49,42 @@ export default function SuperadminPanelPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const columns: ListTableColumn<Dashboard["recentTransactions"][number]>[] = [
+    {
+      key: "institution",
+      header: "Klinik",
+      render: (t) => <span className="font-bold text-slate-900">{t.institution}</span>,
+    },
+    {
+      key: "smsCount",
+      header: "SMS Adeti",
+      align: "right",
+      render: (t) => <span className="text-slate-700">{t.smsCount.toLocaleString("tr-TR")}</span>,
+    },
+    {
+      key: "amount",
+      header: "Tutarı",
+      align: "right",
+      render: (t) => <span className="font-bold text-emerald-700">₺{Number(t.amount).toLocaleString("tr-TR")}</span>,
+    },
+    {
+      key: "createdAt",
+      header: "Tarih",
+      render: (t) => <span className="text-slate-500">{new Date(t.createdAt).toLocaleDateString("tr-TR")}</span>,
+    },
+  ];
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-gray-400">Yükleniyor...</p>
+      <div className="flex h-64 items-center justify-center">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="rounded-lg bg-red-50 border border-red-200 p-4 text-red-600">
+      <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
         {error}
       </div>
     );
@@ -66,76 +92,47 @@ export default function SuperadminPanelPage() {
 
   return (
     <section className="space-y-6">
-      <div className="flex items-center gap-3">
-        <span className="text-3xl">📊</span>
-        <h2 className="text-2xl font-bold text-gray-900">Sistem Kontrol Paneli</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+        <h1 className="text-lg font-black text-slate-900">Sistem Kontrol Paneli</h1>
       </div>
 
       {/* KPI Kartları */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <article className="rounded-xl bg-white p-5 shadow-sm border">
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Toplam Klinik</p>
-          <p className="text-3xl font-bold text-blue-600 mt-1">{data?.totalInstitutions ?? 0}</p>
-          <p className="text-xs text-green-600 mt-1">✓ {data?.activeInstitutions ?? 0} aktif</p>
+        <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam Klinik</p>
+          <p className="mt-1 text-3xl font-black text-primary">{data?.totalInstitutions ?? 0}</p>
+          <p className="mt-1 text-xs font-semibold text-emerald-600">{data?.activeInstitutions ?? 0} aktif</p>
         </article>
 
-        <article className="rounded-xl bg-white p-5 shadow-sm border">
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Toplam SMS Kredisi</p>
-          <p className="text-3xl font-bold text-purple-600 mt-1">
+        <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam SMS Kredisi</p>
+          <p className="mt-1 text-3xl font-black text-slate-900">
             {(data?.totalSmsBalance ?? 0).toLocaleString("tr-TR")}
           </p>
         </article>
 
-        <article className="rounded-xl bg-white p-5 shadow-sm border">
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Beklemede Fatura</p>
-          <p className="text-3xl font-bold text-orange-600 mt-1">{data?.pendingInvoices ?? 0}</p>
+        <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Beklemede Fatura</p>
+          <p className="mt-1 text-3xl font-black text-amber-600">{data?.pendingInvoices ?? 0}</p>
         </article>
 
-        <article className="rounded-xl bg-white p-5 shadow-sm border">
-          <p className="text-xs text-gray-500 uppercase tracking-wide">Toplam Gelir</p>
-          <p className="text-3xl font-bold text-green-600 mt-1">
+        <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam Gelir</p>
+          <p className="mt-1 text-3xl font-black text-emerald-600">
             ₺{(data?.totalRevenue ?? 0).toLocaleString("tr-TR")}
           </p>
         </article>
       </div>
 
       {/* Son SMS Satışları */}
-      <div className="rounded-xl bg-white p-6 shadow-sm border">
-        <h3 className="font-bold text-gray-800 mb-4">Son SMS Satışları</h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="border-b bg-gray-50">
-              <tr>
-                <th className="px-4 py-2 text-left text-gray-600">Klinik</th>
-                <th className="px-4 py-2 text-right text-gray-600">SMS Adeti</th>
-                <th className="px-4 py-2 text-right text-gray-600">Tutarı</th>
-                <th className="px-4 py-2 text-left text-gray-600">Tarih</th>
-              </tr>
-            </thead>
-            <tbody>
-              {!data?.recentTransactions || data.recentTransactions.length === 0 ? (
-                <tr>
-                  <td colSpan={4} className="px-4 py-8 text-center text-gray-400">
-                    İşlem bulunmadı
-                  </td>
-                </tr>
-              ) : (
-                data.recentTransactions.map((t) => (
-                  <tr key={t.id} className="border-b hover:bg-gray-50">
-                    <td className="px-4 py-3 font-medium">{t.institution}</td>
-                    <td className="px-4 py-3 text-right">{t.smsCount.toLocaleString("tr-TR")}</td>
-                    <td className="px-4 py-3 text-right font-semibold text-green-700">
-                      ₺{Number(t.amount).toLocaleString("tr-TR")}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500">
-                      {new Date(t.createdAt).toLocaleDateString("tr-TR")}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+      <div className="space-y-3">
+        <h3 className="text-sm font-black text-slate-900">Son SMS Satışları</h3>
+        <ListTable
+          columns={columns}
+          rows={data?.recentTransactions ?? []}
+          rowKey={(t) => t.id}
+          emptyText="İşlem bulunmadı"
+        />
       </div>
     </section>
   );
