@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import BulkSendTab from "./_tabs/BulkSendTab";
+import TemplatesTab from "./_tabs/TemplatesTab";
 
 type SmsSettings = {
   smsEnabled: boolean;
@@ -192,7 +193,7 @@ function SmsManagement() {
 }
 
 export default function SmsPage() {
-  const [tab, setTab] = useState<"kayitlar" | "toplu">("kayitlar");
+  const [tab, setTab] = useState<"kayitlar" | "toplu" | "sablonlar">("kayitlar");
 
   return (
     <div className="space-y-4">
@@ -203,8 +204,11 @@ export default function SmsPage() {
         <Button variant={tab === "toplu" ? "primary" : "secondary"} size="sm" onClick={() => setTab("toplu")}>
           Toplu Gönderim
         </Button>
+        <Button variant={tab === "sablonlar" ? "primary" : "secondary"} size="sm" onClick={() => setTab("sablonlar")}>
+          Şablonlar
+        </Button>
       </div>
-      {tab === "kayitlar" ? <SmsManagement /> : <BulkSendTab />}
+      {tab === "kayitlar" ? <SmsManagement /> : tab === "toplu" ? <BulkSendTab /> : <TemplatesTab />}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { sendSms } from "@/lib/sms";
 import { writeAudit } from "@/lib/api";
 import { metricIncrement, metricObserve } from "@/lib/metrics";
+import { resolveSmsTemplate } from "@/lib/sms-templates";
 
 const SMS_QUEUE_KEY = process.env.SMS_QUEUE_KEY || "ks:sms:jobs";
 
@@ -93,9 +94,7 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
     };
   }
 
-  const smsTemplate = await prisma.smsTemplate.findFirst({
-    where: { code: job.smsType, isActive: true },
-  });
+  const smsTemplate = await resolveSmsTemplate(job.institutionId, job.smsType);
 
   let sent = 0;
   const failedRecipients: { appointmentId: string; phone: string; reason: string }[] = [];

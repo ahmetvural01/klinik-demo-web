@@ -78,6 +78,7 @@ function buildNavGroups(role: string): NavGroup[] {
         { href: "/hasta",       label: "Hastalar",    icon: "users" },
         ...(isYonetici || isDoktor || isAsistan || isBanko ? [{ href: "/gorevler", label: "Görev Merkezi", icon: "clipboard" }] : []),
         ...(isYonetici || isDoktor || isAsistan || isBanko ? [{ href: "/hasta-takip", label: "Hasta Takip", icon: "follow" }] : []),
+        ...(isYonetici || isBanko ? [{ href: "/sms", label: "SMS Yönetimi", icon: "sms" }] : []),
       ],
     });
   }

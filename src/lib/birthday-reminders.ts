@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { sendSms } from "@/lib/sms";
+import { resolveSmsTemplate } from "@/lib/sms-templates";
 
 // Doğum günü olan hastalara otomatik kutlama SMS'i — klinik Ayarlar > SMS
 // ekranından açıp kapatabilir (Setting.birthdaySmsEnabled). Yılda bir kez
@@ -75,9 +76,7 @@ export async function runBirthdaySmsSweep(): Promise<{
 
       const institutionName = setting.institutionName || institution.name;
       const institutionPhone = setting.institutionPhone || institution.phone || "";
-      const smsTemplate = await prisma.smsTemplate.findFirst({
-        where: { code: "DOGUM_GUNU", isActive: true },
-      });
+      const smsTemplate = await resolveSmsTemplate(institution.id, "DOGUM_GUNU");
       const fallbackMessage = `Sayın ${patient.fullName}, doğum gününüzü candan kutlar, sağlık ve mutluluk dolu bir yıl dileriz. ${institutionName} ailesi olarak sizinle birlikte olmaktan mutluluk duyarız.`;
       const message = smsTemplate
         ? renderTemplate(smsTemplate.content, {

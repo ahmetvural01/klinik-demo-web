@@ -45,7 +45,7 @@ const ROLE_DENIED_PAGES: Record<string, string[]> = {
   BANKO: [
     "/gider", "/firma", "/firma-detay", "/rapor",
     "/personel", "/personel-ekle", "/ayar", "/log",
-    "/fiyat", "/sms", "/finans", "/tedavi-plani",
+    "/fiyat", "/finans", "/tedavi-plani",
     "/muayene", "/dashboard",
   ],
   MUHASEBE: [
@@ -65,7 +65,7 @@ const API_ROLE_DENIED: Record<string, string[]> = {
   DOKTOR:   ["/api/gider", "/api/firma", "/api/purchases", "/api/kasa", "/api/muhasebe", "/api/reports", "/api/settings", "/api/logs", "/api/sms", "/api/prices"],
   ASISTAN:  ["/api/gider", "/api/firma", "/api/purchases", "/api/kasa", "/api/muhasebe", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/sms"],
   // NOT: /api/examinations ASISTAN için izinli — requireAuth("examinations:read") ile GET, requireAuth("examinations:write") ile POST kontrolü yapılır
-  BANKO:    ["/api/gider", "/api/firma", "/api/purchases", "/api/muhasebe/trend", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/prices", "/api/sms", "/api/treatment-plans", "/api/examinations"],
+  BANKO:    ["/api/gider", "/api/firma", "/api/purchases", "/api/muhasebe/trend", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/prices", "/api/treatment-plans", "/api/examinations"],
   MUHASEBE: ["/api/settings", "/api/logs", "/api/sms", "/api/prices", "/api/appointments", "/api/patients", "/api/examinations", "/api/treatment-plans", "/api/prescriptions"],
 };
 

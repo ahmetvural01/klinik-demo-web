@@ -1,22 +1,23 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Pencil, PlusCircle } from "lucide-react";
+import { Pencil, PlusCircle, RotateCcw } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { FormField } from "@/components/ui/FormField";
 import { SmsMessageEditor } from "@/components/sms/SmsMessageEditor";
 import { showToastSafe } from "@/lib/toast-client";
+import { confirmDialog } from "@/lib/confirm-client";
 import { SMS_PLACEHOLDERS, renderSmsPreview, toReadableText, toStoredText } from "@/lib/sms-template-placeholders";
 
 type Template = {
-  id: string;
   code: string;
   title: string;
   content: string;
   isActive: boolean;
-  createdAt: string;
+  isCustom: boolean;
+  updatedAt: string;
 };
 
 const inputClass = "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
@@ -33,9 +34,9 @@ export default function TemplatesTab() {
 
   const load = () => {
     setLoading(true);
-    fetch("/api/superadmin/sms-templates")
+    fetch("/api/sms/templates")
       .then((r) => r.json())
-      .then((d) => setTemplates(Array.isArray(d) ? d : d.templates ?? []))
+      .then((d) => setTemplates(Array.isArray(d?.templates) ? d.templates : []))
       .catch(() => setTemplates([]))
       .finally(() => setLoading(false));
   };
@@ -61,15 +62,10 @@ export default function TemplatesTab() {
     }
     setSaving(true);
     try {
-      const storedContent = toStoredText(form.content);
-      const res = await fetch("/api/superadmin/sms-templates", {
-        method: editing ? "PUT" : "POST",
+      const res = await fetch("/api/sms/templates", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          editing
-            ? { id: editing.id, title: form.title, content: storedContent, isActive: form.isActive }
-            : { code: form.code, title: form.title, content: storedContent, isActive: form.isActive }
-        ),
+        body: JSON.stringify({ code: form.code, title: form.title, content: toStoredText(form.content), isActive: form.isActive }),
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.message || "Kaydedilemedi");
@@ -84,10 +80,28 @@ export default function TemplatesTab() {
     }
   };
 
+  const resetToDefault = async (t: Template) => {
+    const ok = await confirmDialog({
+      title: "Varsayılana Sıfırla",
+      message: `"${t.title}" şablonu kendi özelleştirmeniz silinip sistem varsayılanına döndürülecek. Emin misiniz?`,
+      confirmText: "Sıfırla",
+    });
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/sms/templates?code=${encodeURIComponent(t.code)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Sıfırlanamadı");
+      showToastSafe({ title: "Sıfırlandı", message: "Şablon sistem varsayılanına döndürüldü", type: "success" });
+      load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
+      showToastSafe({ title: "Hata", message: msg, type: "error" });
+    }
+  };
+
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">Bu şablonlar tüm klinikler için sistem varsayılanıdır. Bir klinik kendi Ayarlar &gt; SMS ekranından kendi şablonunu oluşturursa, o klinik için kendi şablonu geçerli olur.</p>
+        <p className="text-sm text-slate-500">Sistem varsayılanları burada listelenir. Dilerseniz kendi metninizle özelleştirebilir veya tamamen yeni bir şablon ekleyebilirsiniz.</p>
         <Button icon={PlusCircle} size="sm" onClick={openCreate}>Yeni Şablon</Button>
       </div>
 
@@ -103,20 +117,21 @@ export default function TemplatesTab() {
         ) : (
           <div className="divide-y divide-slate-100">
             {templates.map((t) => (
-              <div key={t.id} className="p-4 transition hover:bg-slate-50/80">
+              <div key={t.code} className="p-4 transition hover:bg-slate-50/80">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="mb-1.5 flex flex-wrap items-center gap-2">
                       <span className="font-bold text-slate-900">{t.title}</span>
-                      {!t.isActive && <Badge tone="neutral">Pasif</Badge>}
+                      <Badge tone={t.isCustom ? "info" : "neutral"} size="sm">{t.isCustom ? "Özelleştirilmiş" : "Varsayılan Kullanılıyor"}</Badge>
+                      {!t.isActive && <Badge tone="neutral" size="sm">Pasif</Badge>}
                     </div>
                     <p className="rounded-lg bg-slate-50 p-2 text-sm text-slate-600">{renderSmsPreview(t.content)}</p>
                     <p className="mt-1 text-xs text-slate-400">Örnek bir hastaya böyle görünür</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2">
-                    <span className="whitespace-nowrap text-xs text-slate-400">
-                      {new Date(t.createdAt).toLocaleDateString("tr-TR")}
-                    </span>
+                    {t.isCustom && (
+                      <IconButton icon={RotateCcw} title="Varsayılana Sıfırla" tone="neutral" onClick={() => resetToDefault(t)} />
+                    )}
                     <IconButton icon={Pencil} title="Düzenle" tone="neutral" onClick={() => openEdit(t)} />
                   </div>
                 </div>
@@ -139,11 +154,11 @@ export default function TemplatesTab() {
         }
       >
         <div className="space-y-3">
-          <FormField label="Başlık" required hint="Bu şablonu tanımak için kısa bir ad, örn. Randevu Hatırlatması">
+          <FormField label="Başlık" required hint="Bu şablonu tanımak için kısa bir ad">
             <input className={inputClass} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
           </FormField>
           {!editing && (
-            <FormField label="Kod" required hint="Sistem içi kısa tanımlayıcı, sonradan değiştirilemez — örn. OZEL_HATIRLATMA">
+            <FormField label="Kod" required hint="Sistemdeki bilinen bir kodu yazarsanız (BILGI, HATIRLATMA, ANKET, ODEME_YAKLASIYOR, ODEME_GECIKTI, DOGUM_GUNU) o şablonu kendi metninizle değiştirirsiniz; farklı bir kod yazarsanız yeni, tamamen size özel bir şablon oluşturursunuz">
               <input className={inputClass} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} />
             </FormField>
           )}

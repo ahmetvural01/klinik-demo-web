@@ -60,7 +60,10 @@ export default function ReportsPage() {
   return (
     <section className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <h1 className="text-lg font-black text-slate-900">Sistem Raporları</h1>
+        <div>
+          <h1 className="text-lg font-black text-slate-900">Sistem Raporları</h1>
+          <p className="mt-0.5 text-xs text-slate-500">Geçmişe dönük analiz — anlık durum için Kontrol Paneli&apos;ne bakın.</p>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">

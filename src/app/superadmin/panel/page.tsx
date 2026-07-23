@@ -2,15 +2,22 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AlertTriangle, Building2, FileWarning, MessageSquare, Wallet } from "lucide-react";
 import { cachedGet } from "@/lib/client-cache";
-import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { Badge } from "@/components/ui/Badge";
 
 type Dashboard = {
   totalInstitutions: number;
   activeInstitutions: number;
+  suspendedInstitutions: number;
   totalSmsBalance: number;
+  platformSmsStock: number;
   totalRevenue: number;
   pendingInvoices: number;
+  overdueInvoices: number;
+  unpaidAmount: number;
+  lowSmsInstitutions: { id: string; name: string; smsBalance: number }[];
+  recentInstitutions: { id: string; name: string; subscriptionPlan: string; createdAt: string }[];
   recentTransactions: {
     id: string;
     institution: string;
@@ -49,31 +56,6 @@ export default function SuperadminPanelPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const columns: ListTableColumn<Dashboard["recentTransactions"][number]>[] = [
-    {
-      key: "institution",
-      header: "Klinik",
-      render: (t) => <span className="font-bold text-slate-900">{t.institution}</span>,
-    },
-    {
-      key: "smsCount",
-      header: "SMS Adeti",
-      align: "right",
-      render: (t) => <span className="text-slate-700">{t.smsCount.toLocaleString("tr-TR")}</span>,
-    },
-    {
-      key: "amount",
-      header: "Tutarı",
-      align: "right",
-      render: (t) => <span className="font-bold text-emerald-700">₺{Number(t.amount).toLocaleString("tr-TR")}</span>,
-    },
-    {
-      key: "createdAt",
-      header: "Tarih",
-      render: (t) => <span className="text-slate-500">{new Date(t.createdAt).toLocaleDateString("tr-TR")}</span>,
-    },
-  ];
-
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -82,57 +64,121 @@ export default function SuperadminPanelPage() {
     );
   }
 
-  if (error) {
+  if (error || !data) {
     return (
       <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
-        {error}
+        {error || "Veri yüklenemedi"}
       </div>
     );
   }
 
+  const hasAttention = data.lowSmsInstitutions.length > 0 || data.overdueInvoices > 0 || data.suspendedInstitutions > 0;
+
   return (
     <section className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <h1 className="text-lg font-black text-slate-900">Sistem Kontrol Paneli</h1>
+        <p className="mt-0.5 text-xs text-slate-500">Şu anki durum — geçmişe dönük analiz için Raporlar sayfasına bakın.</p>
       </div>
 
-      {/* KPI Kartları */}
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+          <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><Building2 className="h-4 w-4" /></span>
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam Klinik</p>
-          <p className="mt-1 text-3xl font-black text-primary">{data?.totalInstitutions ?? 0}</p>
-          <p className="mt-1 text-xs font-semibold text-emerald-600">{data?.activeInstitutions ?? 0} aktif</p>
-        </article>
-
-        <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam SMS Kredisi</p>
-          <p className="mt-1 text-3xl font-black text-slate-900">
-            {(data?.totalSmsBalance ?? 0).toLocaleString("tr-TR")}
+          <p className="mt-1 text-2xl font-black text-slate-900">{data.totalInstitutions}</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">
+            <span className="text-emerald-600">{data.activeInstitutions} aktif</span>
+            {data.suspendedInstitutions > 0 && <span className="text-amber-600"> · {data.suspendedInstitutions} askıda</span>}
           </p>
         </article>
 
         <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Beklemede Fatura</p>
-          <p className="mt-1 text-3xl font-black text-amber-600">{data?.pendingInvoices ?? 0}</p>
+          <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600"><FileWarning className="h-4 w-4" /></span>
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Bekleyen Fatura</p>
+          <p className="mt-1 text-2xl font-black text-slate-900">{data.pendingInvoices}</p>
+          <p className="mt-1 text-xs font-semibold text-red-600">{data.overdueInvoices} gecikmiş</p>
         </article>
 
         <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+          <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><MessageSquare className="h-4 w-4" /></span>
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Platform SMS Stoku</p>
+          <p className="mt-1 text-2xl font-black text-slate-900">{data.platformSmsStock.toLocaleString("tr-TR")}</p>
+          <p className="mt-1 text-xs font-semibold text-slate-500">Kliniklere ayrılan: {data.totalSmsBalance.toLocaleString("tr-TR")}</p>
+        </article>
+
+        <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+          <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><Wallet className="h-4 w-4" /></span>
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam Gelir</p>
-          <p className="mt-1 text-3xl font-black text-emerald-600">
-            ₺{(data?.totalRevenue ?? 0).toLocaleString("tr-TR")}
-          </p>
+          <p className="mt-1 text-2xl font-black text-emerald-600">₺{data.totalRevenue.toLocaleString("tr-TR")}</p>
+          {data.unpaidAmount > 0 && <p className="mt-1 text-xs font-semibold text-red-600">₺{data.unpaidAmount.toLocaleString("tr-TR")} tahsil edilmedi</p>}
         </article>
       </div>
 
-      {/* Son SMS Satışları */}
-      <div className="space-y-3">
-        <h3 className="text-sm font-black text-slate-900">Son SMS Satışları</h3>
-        <ListTable
-          columns={columns}
-          rows={data?.recentTransactions ?? []}
-          rowKey={(t) => t.id}
-          emptyText="İşlem bulunmadı"
-        />
+      {hasAttention && (
+        <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="h-4 w-4 text-amber-600" />
+            <h3 className="text-sm font-black text-amber-900">Dikkat Gerektirenler</h3>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {data.suspendedInstitutions > 0 && (
+              <Badge tone="warning">{data.suspendedInstitutions} klinik hizmeti kısıtlı/askıda</Badge>
+            )}
+            {data.overdueInvoices > 0 && (
+              <Badge tone="critical">{data.overdueInvoices} fatura gecikmiş (₺{data.unpaidAmount.toLocaleString("tr-TR")})</Badge>
+            )}
+          </div>
+          {data.lowSmsInstitutions.length > 0 && (
+            <div>
+              <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-amber-700">SMS Kredisi Az Olan Klinikler</p>
+              <div className="flex flex-wrap gap-1.5">
+                {data.lowSmsInstitutions.map((i) => (
+                  <span key={i.id} className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800">
+                    {i.name}: {i.smsBalance} SMS
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="space-y-2">
+          <h3 className="text-sm font-black text-slate-900">Son Kaydolan Klinikler</h3>
+          <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+            {data.recentInstitutions.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-slate-400">Kayıt yok</p>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {data.recentInstitutions.map((i) => (
+                  <div key={i.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
+                    <span className="font-bold text-slate-900">{i.name}</span>
+                    <span className="text-xs text-slate-500">{new Date(i.createdAt).toLocaleDateString("tr-TR")}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <h3 className="text-sm font-black text-slate-900">Son SMS Satışları</h3>
+          <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+            {data.recentTransactions.length === 0 ? (
+              <p className="px-4 py-8 text-center text-sm text-slate-400">İşlem yok</p>
+            ) : (
+              <div className="divide-y divide-slate-100">
+                {data.recentTransactions.map((t) => (
+                  <div key={t.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
+                    <span className="font-bold text-slate-900">{t.institution}</span>
+                    <span className="text-xs text-slate-500">{t.smsCount.toLocaleString("tr-TR")} SMS · ₺{t.amount.toLocaleString("tr-TR")}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </section>
   );

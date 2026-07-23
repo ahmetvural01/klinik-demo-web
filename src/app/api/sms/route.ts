@@ -4,6 +4,7 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { sendSms } from "@/lib/sms";
 import { metricIncrement, metricObserve } from "@/lib/metrics";
 import { enqueueSmsDispatchJob } from "@/lib/sms-jobs";
+import { resolveSmsTemplate } from "@/lib/sms-templates";
 
 function renderTemplate(template: string, vars: Record<string, string>) {
   return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
@@ -161,9 +162,7 @@ export async function POST(request: NextRequest) {
   else if (smsType === "HATIRLATMA") updateData.smsReminder = true;
   else if (smsType === "ANKET") updateData.smsSurvey = true;
 
-  const smsTemplate = await prisma.smsTemplate.findFirst({
-    where: { code: smsType, isActive: true },
-  });
+  const smsTemplate = await resolveSmsTemplate(auth.user.institutionId, smsType);
 
   let sent = 0;
   const failedRecipients: { appointmentId: string; phone: string; reason: string }[] = [];

@@ -140,38 +140,32 @@ async function main() {
     },
   });
 
-  await prisma.smsTemplate.upsert({
-    where: { code: "BILGI" },
-    update: {},
-    create: {
+  // institutionId=null (sistem varsayılanı) satırlarda Postgres NULL'ları
+  // @@unique([institutionId, code]) karşılaştırmasında eşit saymaz — native
+  // upsert/ON CONFLICT bu durumda güvenilmez, bu yüzden elle findFirst+create/update.
+  const defaultTemplates = [
+    {
       code: "BILGI",
       title: "Bilgi SMS",
       content: "{{institutionName}}: Sayin {{patientName}}, randevunuz olusturuldu. Tarih: {{dateTime}}.",
-      isActive: true,
     },
-  });
-
-  await prisma.smsTemplate.upsert({
-    where: { code: "HATIRLATMA" },
-    update: {},
-    create: {
+    {
       code: "HATIRLATMA",
       title: "Hatirlatma SMS",
       content: "{{institutionName}}: Sayin {{patientName}}, randevu hatirlatmasi. Tarih: {{dateTime}}, Doktor: {{doctorName}}.",
-      isActive: true,
     },
-  });
-
-  await prisma.smsTemplate.upsert({
-    where: { code: "ANKET" },
-    update: {},
-    create: {
+    {
       code: "ANKET",
       title: "Anket SMS",
       content: "{{institutionName}}: Sayin {{patientName}}, randevunuz tamamlandi. Geri bildiriminiz bizim icin degerli.",
-      isActive: true,
     },
-  });
+  ];
+  for (const t of defaultTemplates) {
+    const existing = await prisma.smsTemplate.findFirst({ where: { institutionId: null, code: t.code } });
+    if (!existing) {
+      await prisma.smsTemplate.create({ data: { ...t, isActive: true } });
+    }
+  }
 
   await prisma.smsProviderConfig.upsert({
     where: { code: "MOCK" },

@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { sendSms } from "@/lib/sms";
+import { resolveSmsTemplate } from "@/lib/sms-templates";
 
 // Hastanın taksit/ödeme vadesi yaklaştığında veya geciktiğinde SMS hatırlatması
 // — süperadmin'in kurumlara gönderdiği fatura hatırlatmasından (billing-reminders.ts)
@@ -96,9 +97,7 @@ export async function runPatientPaymentReminderSweep(): Promise<{
       const daysLeftText = String(Math.max(0, Math.ceil((taksit.vadeDate.getTime() - now.getTime()) / DAY_MS)));
       const daysLateText = String(Math.max(0, Math.ceil((now.getTime() - taksit.vadeDate.getTime()) / DAY_MS)));
 
-      const smsTemplate = await prisma.smsTemplate.findFirst({
-        where: { code: isOverdue ? "ODEME_GECIKTI" : "ODEME_YAKLASIYOR", isActive: true },
-      });
+      const smsTemplate = await resolveSmsTemplate(institution.id, isOverdue ? "ODEME_GECIKTI" : "ODEME_YAKLASIYOR");
       const fallbackMessage = isOverdue
         ? `Sayın ${patient.fullName}, ${institutionName} nezdindeki ${amountText} TL tutarındaki ödemenizin vadesi ${daysLateText} gün geçmiştir. En kısa sürede tamamlamanızı rica ederiz.`
         : `Sayın ${patient.fullName}, ${institutionName} nezdindeki ${amountText} TL tutarındaki ödemenizin son ${daysLeftText} gün içinde tamamlanmasını rica ederiz.`;

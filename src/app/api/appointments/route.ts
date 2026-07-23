@@ -7,6 +7,7 @@ import { turkeyDayRangeUtc } from "@/lib/tz";
 import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 import { getDailySchedules, checkWithinWorkingHours } from "@/lib/working-hours";
+import { resolveSmsTemplate } from "@/lib/sms-templates";
 
 const APPT_REMINDER_PREFIX = "[APPT_REMINDER]";
 
@@ -40,7 +41,7 @@ async function sendAppointmentInfoSms(params: {
   const [settings, institution, smsTemplate] = await Promise.all([
     prisma.setting.findUnique({ where: { institutionId: params.institutionId } }),
     prisma.institution.findUnique({ where: { id: params.institutionId } }),
-    prisma.smsTemplate.findFirst({ where: { code: "BILGI", isActive: true } }),
+    resolveSmsTemplate(params.institutionId, "BILGI"),
   ]);
 
   if (!settings?.smsEnabled) return { status: "skipped", message: "Kurum SMS gönderimi kapalı." };

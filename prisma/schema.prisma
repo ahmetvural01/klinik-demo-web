@@ -59,6 +59,7 @@ model Institution {
   treatmentTypes      TreatmentType[]
   consentTemplates    ConsentTemplate[]
   patientConsents     PatientConsent[]
+  smsTemplates        SmsTemplate[]
 }
 
 model DemoRequest {
@@ -166,14 +167,27 @@ model PlatformSmsPurchase {
   wallet    PlatformSmsWallet @relation(fields: [walletId], references: [id])
 }
 
+// institutionId null = sistem varsayılanı (süperadmin yönetir, tüm klinikler
+// için geçerli); dolu = kliniğin kendi özelleştirdiği/eklediği şablon. Aynı
+// code için klinik satırı varsa o öncelikli, yoksa null (varsayılan) satır
+// kullanılır — bkz. src/lib/sms-templates.ts resolveSmsTemplate().
+// NOT: Postgres'te NULL @@unique karşılaştırmasında eşit sayılmaz, yani bu
+// kısıt kliniğe-özel satırlarda gerçek bir DB kısıtı sağlar ama sistem
+// varsayılanları (institutionId=null) arasındaki code benzersizliğini DB
+// garanti etmez — bu, süperadmin route'unda uygulama seviyesinde kontrol edilir.
 model SmsTemplate {
-  id        String   @id @default(cuid())
-  code      String   @unique
-  title     String
-  content   String
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String       @id @default(cuid())
+  institutionId String?
+  code          String
+  title         String
+  content       String
+  isActive      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  institution   Institution? @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@unique([institutionId, code])
+  @@index([code])
 }
 
 model SmsProviderConfig {

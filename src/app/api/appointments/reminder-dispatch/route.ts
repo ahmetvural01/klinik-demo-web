@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { sendSms } from "@/lib/sms";
+import { resolveSmsTemplate } from "@/lib/sms-templates";
 
 const APPT_REMINDER_PREFIX = "[APPT_REMINDER]";
 
@@ -36,7 +37,7 @@ export const POST = withApiTiming("reminder-dispatch", async function POST(reque
     return NextResponse.json({ processed: 0, sent: 0, skipped: 0, failed: 0, reason: "SMS pasif veya kurum yok" });
   }
 
-  const smsTemplate = await prisma.smsTemplate.findFirst({ where: { code: "HATIRLATMA", isActive: true } });
+  const smsTemplate = await resolveSmsTemplate(auth.user.institutionId, "HATIRLATMA");
 
   const dueReminders = await prisma.reminder.findMany({
     where: {

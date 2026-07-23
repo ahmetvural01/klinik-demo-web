@@ -18,10 +18,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Sadece klinik kullanicilari toplu SMS gonderebilir" }, { status: 403 });
   }
 
-  const body = await request.json() as { patientIds?: string[]; content?: string };
-  const { patientIds = [], content = "" } = body;
+  const body = await request.json() as { audience?: "ALL" | "SELECTED"; patientIds?: string[]; content?: string };
+  const { audience = "SELECTED", patientIds = [], content = "" } = body;
 
-  if (!patientIds.length) {
+  if (audience === "SELECTED" && !patientIds.length) {
     return NextResponse.json({ message: "En az bir hasta secin" }, { status: 400 });
   }
   if (!content.trim()) {
@@ -41,14 +41,20 @@ export async function POST(request: NextRequest) {
   }
 
   // institutionId filtresi kritik: bu filtre olmadan baska bir kurumun hasta
-  // ID'si gonderilirse cross-tenant SMS gonderimi riski olurdu.
-  const patients = await prisma.patient.findMany({
-    where: { id: { in: patientIds }, institutionId: auth.user.institutionId },
-    select: { id: true, fullName: true, phone: true },
-  });
+  // ID'si gonderilirse cross-tenant SMS gonderimi riski olurdu. "ALL" modunda
+  // da ayni filtre kullanilir, sadece patientIds yerine kurumun tum hastalari.
+  const patients = audience === "ALL"
+    ? await prisma.patient.findMany({
+        where: { institutionId: auth.user.institutionId },
+        select: { id: true, fullName: true, phone: true },
+      })
+    : await prisma.patient.findMany({
+        where: { id: { in: patientIds }, institutionId: auth.user.institutionId },
+        select: { id: true, fullName: true, phone: true },
+      });
 
   if (!patients.length) {
-    return NextResponse.json({ message: "Secili hastalar bulunamadi" }, { status: 404 });
+    return NextResponse.json({ message: "Hedeflenecek hasta bulunamadi" }, { status: 404 });
   }
 
   const withPhone = patients.filter((p) => p.phone);

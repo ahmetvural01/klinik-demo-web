@@ -217,7 +217,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
     "payments:read", "payments:write",
     "installments:read", "installments:write",
     "hastatracking:read", "hastatracking:write",
-    "sms:read", "sms:write",
+    "sms:read", "sms:write", "sms:bulk",
     "stock:read", "stock:write", "stock:delete",
     "announcements:read",
     "messages:read", "messages:write",
