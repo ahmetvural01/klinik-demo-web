@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/Badge";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import BulkSendTab from "./_tabs/BulkSendTab";
 import TemplatesTab from "./_tabs/TemplatesTab";
+import SettingsTab from "./_tabs/SettingsTab";
 
 type SmsSettings = {
   smsEnabled: boolean;
@@ -193,7 +194,15 @@ function SmsManagement() {
 }
 
 export default function SmsPage() {
-  const [tab, setTab] = useState<"kayitlar" | "toplu" | "sablonlar">("kayitlar");
+  const [tab, setTab] = useState<"kayitlar" | "toplu" | "sablonlar" | "ayarlar">("kayitlar");
+  const [isYonetici, setIsYonetici] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/auth/me")
+      .then((r) => r.json())
+      .then((d) => setIsYonetici(d?.role === "YONETICI"))
+      .catch(() => setIsYonetici(false));
+  }, []);
 
   return (
     <div className="space-y-4">
@@ -207,8 +216,13 @@ export default function SmsPage() {
         <Button variant={tab === "sablonlar" ? "primary" : "secondary"} size="sm" onClick={() => setTab("sablonlar")}>
           Şablonlar
         </Button>
+        {isYonetici && (
+          <Button variant={tab === "ayarlar" ? "primary" : "secondary"} size="sm" onClick={() => setTab("ayarlar")}>
+            Ayarlar
+          </Button>
+        )}
       </div>
-      {tab === "kayitlar" ? <SmsManagement /> : tab === "toplu" ? <BulkSendTab /> : <TemplatesTab />}
+      {tab === "kayitlar" ? <SmsManagement /> : tab === "toplu" ? <BulkSendTab /> : tab === "sablonlar" ? <TemplatesTab /> : <SettingsTab />}
     </div>
   );
 }
