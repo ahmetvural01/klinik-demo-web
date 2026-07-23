@@ -5,10 +5,8 @@ import ConfirmProvider from "@/components/ui/ConfirmProvider";
 export default function SuperadminLayout({ children }: { children: React.ReactNode }) {
   const user = decodeTokenUser();
 
-  // Login sayfası (/superadmin) ve zorunlu 2FA kurulum ekranı için sidebar
-  // olmadan render et — henüz 2FA kurulmamış bir oturuma tüm menüyü gösterip
-  // sonra her tıklamada engellemek kafa karıştırır, o ekran kendi başına durur.
-  if (!user || user.role !== "SUPERADMIN" || user.mustSetup2fa) {
+  // Login sayfası (/superadmin) için sidebar olmadan render et
+  if (!user || user.role !== "SUPERADMIN") {
     return <>{children}</>;
   }
 

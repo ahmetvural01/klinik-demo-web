@@ -1,4 +1,5 @@
 import { runDueInvoiceReminderSweep } from "@/lib/billing-reminders";
+import { runPatientPaymentReminderSweep } from "@/lib/patient-payment-reminders";
 
 // Render'da tek, sürekli çalışan bir Node süreci olarak barındırıyoruz
 // (next start, custom sunucu değil) — bu yüzden ayrı bir cron servisi
@@ -11,7 +12,7 @@ const FIRST_RUN_DELAY_MS = 30 * 1000; // sunucu ayağa kalkarken DB bağlantıs�
 
 type GlobalWithFlag = typeof globalThis & { [FLAG]?: boolean };
 
-async function runSweepSafely() {
+async function runBillingSweepSafely() {
   try {
     const result = await runDueInvoiceReminderSweep();
     if (result.checked > 0) {
@@ -24,15 +25,32 @@ async function runSweepSafely() {
   }
 }
 
+async function runPatientReminderSweepSafely() {
+  try {
+    const result = await runPatientPaymentReminderSweep();
+    if (result.checked > 0) {
+      console.log(
+        `[scheduler] Hasta taksit hatırlatma taraması: ${result.institutionsChecked} kurum, ${result.checked} taksit kontrol edildi, ${result.sent} SMS gönderildi, ${result.failed} başarısız, ${result.skippedRecent} yakın zamanda hatırlatıldı, ${result.skippedNoBalance} SMS bakiyesi yetersiz.`
+      );
+    }
+  } catch (error) {
+    console.error("[scheduler] Hasta taksit hatırlatma taraması başarısız:", error);
+  }
+}
+
 export function startBillingReminderScheduler() {
   const g = globalThis as GlobalWithFlag;
   if (g[FLAG]) return;
   g[FLAG] = true;
 
   setTimeout(() => {
-    void runSweepSafely();
-    setInterval(() => void runSweepSafely(), SWEEP_INTERVAL_MS);
+    void runBillingSweepSafely();
+    void runPatientReminderSweepSafely();
+    setInterval(() => {
+      void runBillingSweepSafely();
+      void runPatientReminderSweepSafely();
+    }, SWEEP_INTERVAL_MS);
   }, FIRST_RUN_DELAY_MS);
 
-  console.log("[scheduler] Fatura hatırlatma zamanlayıcısı başlatıldı (saatte bir çalışacak).");
+  console.log("[scheduler] Fatura ve hasta taksit hatırlatma zamanlayıcıları başlatıldı (saatte bir çalışacak).");
 }

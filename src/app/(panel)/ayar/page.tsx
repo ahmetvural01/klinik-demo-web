@@ -58,7 +58,8 @@ export default function AyarPage() {
     smsEnabled: true,
     smsDefaultInfo: true,
     smsDefaultReminder: false,
-    smsDefaultSurvey: false
+    smsDefaultSurvey: false,
+    paymentReminderSmsEnabled: false
   });
   const [institutionSlug, setInstitutionSlug] = useState("");
   const [loading, setLoading] = useState(false);
@@ -125,6 +126,7 @@ export default function AyarPage() {
           smsDefaultInfo:     data.smsDefaultInfo     !== undefined ? data.smsDefaultInfo     : true,
           smsDefaultReminder: data.smsDefaultReminder !== undefined ? data.smsDefaultReminder : false,
           smsDefaultSurvey:   data.smsDefaultSurvey   !== undefined ? data.smsDefaultSurvey   : false,
+          paymentReminderSmsEnabled: data.paymentReminderSmsEnabled !== undefined ? data.paymentReminderSmsEnabled : false,
         });
       }
     } catch (e) { console.error(e); }
@@ -512,6 +514,7 @@ export default function AyarPage() {
               { key: "smsDefaultInfo"     as const, label: "Randevu bilgilendirme SMS'i varsayılan açık olsun" },
               { key: "smsDefaultReminder" as const, label: "Hatırlatma SMS'i varsayılan açık olsun" },
               { key: "smsDefaultSurvey"   as const, label: "Değerlendirme SMS'i varsayılan açık olsun" },
+              { key: "paymentReminderSmsEnabled" as const, label: "Ödeme vadesi yaklaşan/geciken hastalara otomatik SMS hatırlatması gönder" },
             ].map(item => (
               <label key={item.key} className="flex items-center gap-3 cursor-pointer text-sm">
                 <input type="checkbox" className="h-4 w-4 accent-primary"

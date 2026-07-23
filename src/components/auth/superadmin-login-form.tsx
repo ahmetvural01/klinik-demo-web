@@ -38,9 +38,7 @@ export function SuperadminLoginForm() {
       return;
     }
 
-    // Şifre doğru ama 2FA henüz kurulmamış — sunucu sınırlı bir oturum açtı,
-    // zorunlu kurulum ekranına yönlendir (bkz. mustSetup2fa).
-    window.location.href = data.mustSetup2fa ? "/superadmin/2fa-zorunlu" : "/superadmin/panel";
+    window.location.href = "/superadmin/panel";
   };
 
   const onSubmitCode = async (event: FormEvent) => {
