@@ -10,33 +10,45 @@ export async function GET() {
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
   }
 
-  const count = await prisma.smsTemplate.count();
-
-  if (count === 0) {
-    await prisma.smsTemplate.createMany({
-      data: [
-        {
-          code: "BILGI",
-          title: "Bilgi SMS",
-          content: "{{institutionName}}: Sayın {{patientName}}, randevunuz oluşturuldu. Tarih: {{dateTime}}.",
-          isActive: true,
-        },
-        {
-          code: "HATIRLATMA",
-          title: "Hatirlatma SMS",
-          content: "{{institutionName}}: Sayın {{patientName}}, randevu hatırlatması. Tarih: {{dateTime}}, Doktor: {{doctorName}}.",
-          isActive: true,
-        },
-        {
-          code: "ANKET",
-          title: "Anket SMS",
-          content: "{{institutionName}}: Sayın {{patientName}}, randevunuz tamamlandı. Geri bildiriminiz bizim için değerli.",
-          isActive: true,
-        },
-      ],
-      skipDuplicates: true,
-    });
-  }
+  // skipDuplicates ile her zaman çalıştırılır (count===0 şartına bağlı DEĞİL) —
+  // aksi halde daha önce en az bir şablon oluşturulmuş kurulumlarda burada sonradan
+  // eklenen yeni varsayılan kodlar (örn. ödeme hatırlatma şablonları) hiçbir zaman
+  // seed edilmezdi.
+  await prisma.smsTemplate.createMany({
+    data: [
+      {
+        code: "BILGI",
+        title: "Bilgi SMS",
+        content: "{{institutionName}}: Sayın {{patientName}}, randevunuz oluşturuldu. Tarih: {{dateTime}}.",
+        isActive: true,
+      },
+      {
+        code: "HATIRLATMA",
+        title: "Hatirlatma SMS",
+        content: "{{institutionName}}: Sayın {{patientName}}, randevu hatırlatması. Tarih: {{dateTime}}, Doktor: {{doctorName}}.",
+        isActive: true,
+      },
+      {
+        code: "ANKET",
+        title: "Anket SMS",
+        content: "{{institutionName}}: Sayın {{patientName}}, randevunuz tamamlandı. Geri bildiriminiz bizim için değerli.",
+        isActive: true,
+      },
+      {
+        code: "ODEME_YAKLASIYOR",
+        title: "Ödeme Vadesi Yaklaşıyor",
+        content: "{{institutionName}}: Sayın {{patientName}}, {{dueDate}} vadeli {{amount}} TL taksit ödemenizin süresi yaklaşıyor.",
+        isActive: true,
+      },
+      {
+        code: "ODEME_GECIKTI",
+        title: "Ödeme Vadesi Geçti",
+        content: "{{institutionName}}: Sayın {{patientName}}, {{dueDate}} vadeli {{amount}} TL taksit ödemeniz gecikmiştir. Bilgi için lütfen kliniğimizle iletişime geçin.",
+        isActive: true,
+      },
+    ],
+    skipDuplicates: true,
+  });
 
   const templates = await prisma.smsTemplate.findMany({
     orderBy: { createdAt: "asc" },

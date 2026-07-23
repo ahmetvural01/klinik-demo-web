@@ -14,6 +14,10 @@ function fmtDate(d: Date) {
   return d.toLocaleDateString("tr-TR");
 }
 
+function renderTemplate(template: string, vars: Record<string, string>) {
+  return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
+}
+
 export async function runPatientPaymentReminderSweep(): Promise<{
   institutionsChecked: number;
   checked: number;
@@ -82,9 +86,23 @@ export async function runPatientPaymentReminderSweep(): Promise<{
 
       const isOverdue = taksit.status === "GECIKTI" || taksit.vadeDate < now;
       const institutionName = setting.institutionName || institution.name;
-      const message = isOverdue
-        ? `${institutionName}: Sayın ${patient.fullName}, ${fmtDate(taksit.vadeDate)} vadeli ${Number(taksit.kalan)} TL taksit ödemeniz gecikmiştir. Bilgi için lütfen kliniğimizle iletişime geçin.`
-        : `${institutionName}: Sayın ${patient.fullName}, ${fmtDate(taksit.vadeDate)} vadeli ${Number(taksit.kalan)} TL taksit ödemenizin süresi yaklaşıyor.`;
+      const dueDateText = fmtDate(taksit.vadeDate);
+      const amountText = Number(taksit.kalan).toLocaleString("tr-TR");
+
+      const smsTemplate = await prisma.smsTemplate.findFirst({
+        where: { code: isOverdue ? "ODEME_GECIKTI" : "ODEME_YAKLASIYOR", isActive: true },
+      });
+      const fallbackMessage = isOverdue
+        ? `${institutionName}: Sayın ${patient.fullName}, ${dueDateText} vadeli ${amountText} TL taksit ödemeniz gecikmiştir. Bilgi için lütfen kliniğimizle iletişime geçin.`
+        : `${institutionName}: Sayın ${patient.fullName}, ${dueDateText} vadeli ${amountText} TL taksit ödemenizin süresi yaklaşıyor.`;
+      const message = smsTemplate
+        ? renderTemplate(smsTemplate.content, {
+            institutionName,
+            patientName: patient.fullName,
+            dueDate: dueDateText,
+            amount: amountText,
+          })
+        : fallbackMessage;
 
       const result = await sendSms(patient.phone, message);
 

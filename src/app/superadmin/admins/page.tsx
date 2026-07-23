@@ -24,7 +24,6 @@ const inputClass = "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm 
 const ALL_MODULES = [
   { key: "dashboard", label: "Dashboard" },
   { key: "institutions", label: "Klinikler" },
-  { key: "users", label: "Kullanıcılar" },
   { key: "roles", label: "Rol Yetkileri" },
   { key: "invoices", label: "Faturalar" },
   { key: "sms", label: "SMS" },

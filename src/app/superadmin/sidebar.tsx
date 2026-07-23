@@ -14,7 +14,6 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/superadmin/panel", icon: "📊", label: "Kontrol Paneli", module: "dashboard" },
       { href: "/superadmin/institutions", icon: "🏢", label: "Klinikler", module: "institutions" },
-      { href: "/superadmin/users", icon: "👥", label: "Kullanıcılar", module: "users" },
       { href: "/superadmin/reports", icon: "📈", label: "Raporlar", module: "reports" },
     ],
   },
