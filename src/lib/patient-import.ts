@@ -1,12 +1,14 @@
 import ExcelJS from "exceljs";
 
-// Klinik geçmiş verilerini (hasta + ödeme geçmişi) toplu aktarma şablonu ve
-// ayrıştırıcısı. Süperadmin bu şablonu klinik için indirir, klinik doldurur,
-// süperadmin panelden yükler — önce önizleme (hiçbir yazma yok), sonra onay
-// ile gerçek kayıt. Bkz. src/app/api/superadmin/institutions/[id]/import/*.
+// Klinik geçmiş verilerini (hasta + ödeme + tedavi + reçete geçmişi) toplu
+// aktarma şablonu ve ayrıştırıcısı. Süperadmin bu şablonu klinik için indirir,
+// klinik doldurur, süperadmin panelden yükler — önce önizleme (hiçbir yazma
+// yok), sonra onay ile gerçek kayıt. Bkz. src/app/api/superadmin/institutions/[id]/import/*.
 
 export const PATIENT_SHEET_NAME = "Hastalar";
 export const PAYMENT_SHEET_NAME = "Odeme Gecmisi";
+export const TREATMENT_SHEET_NAME = "Tedavi Gecmisi";
+export const PRESCRIPTION_SHEET_NAME = "Recete Gecmisi";
 export const INSTRUCTIONS_SHEET_NAME = "Talimatlar";
 
 // String.toLocaleUpperCase("tr-TR") tek başına güvenilir değil: "nakit" → "NAKİT"
@@ -40,12 +42,26 @@ const PAYMENT_METHOD_MAP: Record<string, string> = {
   "DIGER": "DIGER",
 };
 
+export const TREATMENT_STATUS_OPTIONS = ["Tamamlandı", "Devam Ediyor", "Planlandı", "İptal"] as const;
+const TREATMENT_STATUS_MAP: Record<string, string> = {
+  "TAMAMLANDI": "TAMAMLANDI",
+  "DEVAM EDIYOR": "DEVAM_EDIYOR",
+  "PLANLANDI": "PLANLANDI",
+  "IPTAL": "IPTAL",
+};
+
 // Sütun sırası şablon ile ayrıştırıcı arasında birebir aynı olmalı — sıra
 // değişirse mevcut doldurulmuş dosyalar yanlış sütuna eşlenir.
+// `textFormat: true` olan sütunlar Excel'de "Metin" hücre biçimiyle üretilir —
+// aksi halde TC kimlik no ve telefon gibi rakamla başlayan ama başında SIFIR
+// olan değerler, kullanıcı hücreye yazdığı anda Excel tarafından sayıya
+// çevrilip baştaki 0 sessizce silinir (çok bilinen, sık karşılaşılan bir
+// Excel veri kaybı hatası — şablonda önceden engellenmezse fark edilmeden
+// telefon/TC verisi bozulur).
 export const PATIENT_COLUMNS = [
-  { key: "tcNo", header: "TC Kimlik No*", required: true, width: 16 },
+  { key: "tcNo", header: "TC Kimlik No*", required: true, width: 16, textFormat: true },
   { key: "fullName", header: "Ad Soyad*", required: true, width: 24 },
-  { key: "phone", header: "Telefon* (0XXXXXXXXXX)", required: true, width: 18 },
+  { key: "phone", header: "Telefon* (0XXXXXXXXXX)", required: true, width: 18, textFormat: true },
   { key: "gender", header: "Cinsiyet*", required: true, width: 12, list: GENDER_OPTIONS as unknown as string[] },
   { key: "birthDate", header: "Doğum Tarihi (GG.AA.YYYY)", required: false, width: 16 },
   { key: "address", header: "Adres", required: false, width: 28 },
@@ -69,12 +85,31 @@ export const PATIENT_COLUMNS = [
 ] as const;
 
 export const PAYMENT_COLUMNS = [
-  { key: "patientTcNo", header: "Hasta TC Kimlik No*", required: true, width: 16 },
+  { key: "patientTcNo", header: "Hasta TC Kimlik No*", required: true, width: 16, textFormat: true },
   { key: "date", header: "Tarih* (GG.AA.YYYY)", required: true, width: 16 },
   { key: "amount", header: "Tutar*", required: true, width: 12 },
   { key: "method", header: "Ödeme Yöntemi", required: false, width: 16, list: PAYMENT_METHOD_OPTIONS as unknown as string[] },
-  { key: "doctorName", header: "Doktor Adı Soyadı", required: false, width: 22 },
+  { key: "doctorName", header: "Doktor Adı Soyadı", required: false, width: 22, doctorList: true },
   { key: "description", header: "Açıklama", required: false, width: 26 },
+] as const;
+
+export const TREATMENT_COLUMNS = [
+  { key: "patientTcNo", header: "Hasta TC Kimlik No*", required: true, width: 16, textFormat: true },
+  { key: "date", header: "Tarih* (GG.AA.YYYY)", required: true, width: 16 },
+  { key: "treatmentName", header: "Tedavi Adı*", required: true, width: 24 },
+  { key: "doctorName", header: "Doktor Adı Soyadı*", required: true, width: 22, doctorList: true },
+  { key: "toothNo", header: "Diş No", required: false, width: 10, textFormat: true },
+  { key: "amount", header: "Tutar", required: false, width: 12 },
+  { key: "status", header: "Durum", required: false, width: 14, list: TREATMENT_STATUS_OPTIONS as unknown as string[] },
+  { key: "note", header: "Not", required: false, width: 26 },
+] as const;
+
+export const PRESCRIPTION_COLUMNS = [
+  { key: "patientTcNo", header: "Hasta TC Kimlik No*", required: true, width: 16, textFormat: true },
+  { key: "date", header: "Tarih* (GG.AA.YYYY)", required: true, width: 16 },
+  { key: "drugs", header: "İlaçlar*", required: true, width: 32 },
+  { key: "doctorName", header: "Doktor Adı Soyadı", required: false, width: 22, doctorList: true },
+  { key: "note", header: "Not", required: false, width: 26 },
 ] as const;
 
 export type PatientImportData = {
@@ -112,11 +147,32 @@ export type PaymentImportData = {
   description: string | null;
 };
 
+export type TreatmentImportData = {
+  patientTcNo: string;
+  date: string; // ISO
+  treatmentName: string;
+  doctorName: string;
+  toothNo: string | null;
+  amount: number;
+  status: string;
+  note: string | null;
+};
+
+export type PrescriptionImportData = {
+  patientTcNo: string;
+  date: string; // ISO
+  drugs: string;
+  doctorName: string | null;
+  note: string | null;
+};
+
 export type ParsedRow<T> = { rowNumber: number; data: T | null; errors: string[]; warnings: string[] };
 
 export type ImportParseResult = {
   patients: ParsedRow<PatientImportData>[];
   payments: ParsedRow<PaymentImportData>[];
+  treatments: ParsedRow<TreatmentImportData>[];
+  prescriptions: ParsedRow<PrescriptionImportData>[];
 };
 
 function cellText(value: ExcelJS.CellValue): string {
@@ -146,6 +202,40 @@ function yesNoToBoolean(raw: ExcelJS.CellValue): boolean {
   return text === "EVET" || text === "TRUE" || text === "1" || text === "X";
 }
 
+type ColumnDef = { key: string; header: string; required: boolean; width: number; list?: readonly string[]; doctorList?: boolean; textFormat?: boolean };
+
+function writeDataSheet(workbook: ExcelJS.Workbook, name: string, columns: readonly ColumnDef[], doctorNames: string[], maxRows: number) {
+  const sheet = workbook.addWorksheet(name);
+  sheet.columns = columns.map((c) => ({ header: c.header, key: c.key, width: c.width }));
+
+  const headerRow = sheet.getRow(1);
+  headerRow.height = 22;
+  headerRow.eachCell((cell, colNumber) => {
+    const col = columns[colNumber - 1];
+    cell.font = { bold: true, color: { argb: col.required ? "FFFFFFFF" : "FF334155" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: col.required ? "FFB91C1C" : "FFE2E8F0" } };
+    cell.alignment = { vertical: "middle", wrapText: true };
+  });
+  // Başlık satırı kayarken hep görünür kalsın — yüzlerce satırlık bir tabloda
+  // hangi sütunun ne olduğunu unutmamak için önemli.
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
+
+  const doctorList = doctorNames.length > 0 ? doctorNames : ["(kayıtlı doktor yok)"];
+  columns.forEach((col, idx) => {
+    const colLetter = sheet.getColumn(idx + 1).letter;
+    const list = col.doctorList ? doctorList : col.list ? (col.list as unknown as string[]) : null;
+    for (let r = 2; r <= maxRows + 1; r += 1) {
+      const cell = sheet.getCell(`${colLetter}${r}`);
+      if (col.textFormat) cell.numFmt = "@";
+      if (list) {
+        cell.dataValidation = { type: "list", allowBlank: !col.required, formulae: [`"${list.join(",")}"`] };
+      }
+    }
+  });
+
+  return sheet;
+}
+
 // Şablonu, bu kurumun mevcut doktor listesiyle üretir — "Doktor Adı Soyadı"
 // alanı böylece serbest metin yerine gerçek isimlerden seçilen bir açılır
 // liste olur (yazım hatası riskini ortadan kaldırır).
@@ -155,64 +245,50 @@ export async function buildImportWorkbook(doctorNames: string[]): Promise<Buffer
   workbook.created = new Date();
 
   const info = workbook.addWorksheet(INSTRUCTIONS_SHEET_NAME);
-  info.columns = [{ width: 100 }];
-  const lines = [
-    "HASTA VE ÖDEME GEÇMİŞİ AKTARIM ŞABLONU",
-    "",
-    "1) 'Hastalar' sayfasına mevcut hastalarınızın bilgilerini girin. Yıldızlı (*) alanlar zorunludur, diğerleri boş bırakılabilir.",
-    "2) 'Odeme Gecmisi' sayfasına (varsa) geçmiş ödeme kayıtlarını girin. Hasta TC Kimlik No, 'Hastalar' sayfasındaki bir TC ile eşleşmelidir.",
-    "3) Dropdown (açılır liste) olan sütunlarda sadece listeden seçim yapın — serbest metin yazmayın.",
-    "4) Bilmediğiniz/elinizde olmayan bilgileri boş bırakabilirsiniz, sistemde o alan boş olarak kalır.",
-    "5) Doldurduğunuz dosyayı süperadmine iletin veya doğrudan Klinikler > İlgili Klinik > Toplu Veri Aktarımı ekranından yükleyin.",
-    "6) Yükleme önce bir ÖNİZLEME gösterir — hiçbir şey kaydedilmeden önce kaç kayıt ekleneceğini ve varsa hataları görürsünüz.",
-  ];
-  lines.forEach((line, i) => { info.getCell(i + 1, 1).value = line; });
-  info.getCell(1, 1).font = { bold: true, size: 13 };
+  info.columns = [{ width: 6 }, { width: 100 }];
+  let r = 1;
+  const writeLine = (text: string, opts?: Partial<ExcelJS.Font>) => {
+    const cell = info.getCell(r, 2);
+    cell.value = text;
+    if (opts) cell.font = opts;
+    cell.alignment = { wrapText: true, vertical: "top" };
+    r += 1;
+  };
+  writeLine("HASTA, ÖDEME, TEDAVİ VE REÇETE GEÇMİŞİ AKTARIM ŞABLONU", { bold: true, size: 14 });
+  r += 1;
+  writeLine("Bu dosyada 4 veri sayfası var: Hastalar, Odeme Gecmisi, Tedavi Gecmisi, Recete Gecmisi. Hepsini doldurmak zorunlu değil — sadece elinizde olan veriyi girin, kalanı boş bırakın.", { size: 11 });
+  r += 1;
+  writeLine("NASIL DOLDURULUR", { bold: true, size: 12 });
+  writeLine("1) Kırmızı başlıklı sütunlar ZORUNLUDUR, gri başlıklı sütunlar isteğe bağlıdır — boş bırakılabilir.");
+  writeLine("2) Açılır listesi (▾ ok işareti) olan hücrelerde SADECE listeden seçim yapın, serbest metin yazmayın.");
+  writeLine("3) 'Odeme Gecmisi', 'Tedavi Gecmisi' ve 'Recete Gecmisi' sayfalarındaki 'Hasta TC Kimlik No' sütunu, 'Hastalar' sayfasında girdiğiniz bir TC ile birebir aynı olmalıdır.");
+  writeLine("4) Tarih sütunlarını GG.AA.YYYY biçiminde girin (örnek: 15.03.2023).");
+  writeLine("5) TC Kimlik No ve Telefon sütunları 'Metin' biçimindedir — başında 0 olan numaralar bu sayede kaybolmaz, farklı bir biçime çevirmeyin.");
+  writeLine("6) Doldurduğunuz dosyayı süperadmine iletin veya Klinikler > İlgili Klinik > Toplu Veri Aktarımı ekranından yükleyin.");
+  writeLine("7) Yükleme önce bir ÖNİZLEME gösterir — hiçbir kayıt yazılmadan önce kaç kayıt ekleneceğini ve varsa hataları görürsünüz. Hatalı satırlar olsa bile geçerli satırlar aktarılabilir.");
+  r += 1;
+  writeLine("ÖRNEK DOĞRU DOLDURULMUŞ SATIRLAR", { bold: true, size: 12 });
+  writeLine("Hastalar: 12345678901 | Ayşe Yılmaz | 05551112233 | Kadın | 15.03.1985 | ... (kalan sütunlar boş bırakılabilir)");
+  writeLine("Odeme Gecmisi: 12345678901 | 10.01.2024 | 1500 | Nakit | Dr. Mehmet Öz | Kanal tedavisi ödemesi");
+  writeLine("Tedavi Gecmisi: 12345678901 | 10.01.2024 | Kanal Tedavisi | Dr. Mehmet Öz | 36 | 2500 | Tamamlandı | ");
+  writeLine("Recete Gecmisi: 12345678901 | 10.01.2024 | Augmentin 1000mg 2x1 | Dr. Mehmet Öz | ");
+  r += 1;
+  writeLine("Not: Bu örnek satırlar sadece bilgi amaçlıdır, veri sayfalarına kopyalamanıza gerek yoktur.", { italic: true, color: { argb: "FF64748B" } });
 
-  const patientSheet = workbook.addWorksheet(PATIENT_SHEET_NAME);
-  patientSheet.columns = PATIENT_COLUMNS.map((c) => ({ header: c.header, key: c.key, width: c.width }));
-  patientSheet.getRow(1).font = { bold: true };
-  patientSheet.getRow(1).eachCell((cell) => {
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-  });
-
-  const paymentSheet = workbook.addWorksheet(PAYMENT_SHEET_NAME);
-  paymentSheet.columns = PAYMENT_COLUMNS.map((c) => ({ header: c.header, key: c.key, width: c.width }));
-  paymentSheet.getRow(1).font = { bold: true };
-  paymentSheet.getRow(1).eachCell((cell) => {
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE2E8F0" } };
-  });
-
-  // Açılır liste (dropdown) doğrulamaları — 500 satıra kadar, gerçekçi bir üst sınır.
   const MAX_ROWS = 500;
-  PATIENT_COLUMNS.forEach((col, idx) => {
-    if (!("list" in col) || !col.list) return;
-    const colLetter = patientSheet.getColumn(idx + 1).letter;
-    for (let r = 2; r <= MAX_ROWS + 1; r += 1) {
-      patientSheet.getCell(`${colLetter}${r}`).dataValidation = {
-        type: "list",
-        allowBlank: !col.required,
-        formulae: [`"${(col.list as unknown as string[]).join(",")}"`],
-      };
-    }
-  });
-
-  const doctorList = doctorNames.length > 0 ? doctorNames : ["(kayıtlı doktor yok)"];
-  PAYMENT_COLUMNS.forEach((col, idx) => {
-    const colLetter = paymentSheet.getColumn(idx + 1).letter;
-    const list = col.key === "doctorName" ? doctorList : ("list" in col ? (col.list as unknown as string[]) : null);
-    if (!list) return;
-    for (let r = 2; r <= MAX_ROWS + 1; r += 1) {
-      paymentSheet.getCell(`${colLetter}${r}`).dataValidation = {
-        type: "list",
-        allowBlank: true,
-        formulae: [`"${list.join(",")}"`],
-      };
-    }
-  });
+  const patientSheet = writeDataSheet(workbook, PATIENT_SHEET_NAME, PATIENT_COLUMNS, [], MAX_ROWS);
+  const paymentSheet = writeDataSheet(workbook, PAYMENT_SHEET_NAME, PAYMENT_COLUMNS, doctorNames, MAX_ROWS);
+  const treatmentSheet = writeDataSheet(workbook, TREATMENT_SHEET_NAME, TREATMENT_COLUMNS, doctorNames, MAX_ROWS);
+  const prescriptionSheet = writeDataSheet(workbook, PRESCRIPTION_SHEET_NAME, PRESCRIPTION_COLUMNS, doctorNames, MAX_ROWS);
+  void patientSheet; void paymentSheet; void treatmentSheet; void prescriptionSheet;
 
   const buffer = await workbook.xlsx.writeBuffer();
   return Buffer.from(buffer);
+}
+
+function getByKey<C extends readonly ColumnDef[]>(row: ExcelJS.Row, columns: C, key: string): ExcelJS.CellValue {
+  const idx = columns.findIndex((c) => c.key === key) + 1;
+  return row.getCell(idx).value;
 }
 
 export async function parseImportWorkbook(buffer: Buffer): Promise<ImportParseResult> {
@@ -221,6 +297,8 @@ export async function parseImportWorkbook(buffer: Buffer): Promise<ImportParseRe
 
   const patientSheet = workbook.getWorksheet(PATIENT_SHEET_NAME);
   const paymentSheet = workbook.getWorksheet(PAYMENT_SHEET_NAME);
+  const treatmentSheet = workbook.getWorksheet(TREATMENT_SHEET_NAME);
+  const prescriptionSheet = workbook.getWorksheet(PRESCRIPTION_SHEET_NAME);
 
   const patients: ParsedRow<PatientImportData>[] = [];
   const seenTc = new Set<string>();
@@ -228,10 +306,7 @@ export async function parseImportWorkbook(buffer: Buffer): Promise<ImportParseRe
   if (patientSheet) {
     patientSheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return; // başlık satırı
-      const get = (key: (typeof PATIENT_COLUMNS)[number]["key"]) => {
-        const idx = PATIENT_COLUMNS.findIndex((c) => c.key === key) + 1;
-        return row.getCell(idx).value;
-      };
+      const get = (key: string) => getByKey(row, PATIENT_COLUMNS, key);
 
       const tcNo = cellText(get("tcNo"));
       const fullName = cellText(get("fullName"));
@@ -302,10 +377,7 @@ export async function parseImportWorkbook(buffer: Buffer): Promise<ImportParseRe
   if (paymentSheet) {
     paymentSheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return;
-      const get = (key: (typeof PAYMENT_COLUMNS)[number]["key"]) => {
-        const idx = PAYMENT_COLUMNS.findIndex((c) => c.key === key) + 1;
-        return row.getCell(idx).value;
-      };
+      const get = (key: string) => getByKey(row, PAYMENT_COLUMNS, key);
 
       const patientTcNo = cellText(get("patientTcNo"));
       const dateRaw = get("date");
@@ -342,5 +414,89 @@ export async function parseImportWorkbook(buffer: Buffer): Promise<ImportParseRe
     });
   }
 
-  return { patients, payments };
+  const treatments: ParsedRow<TreatmentImportData>[] = [];
+  if (treatmentSheet) {
+    treatmentSheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+      const get = (key: string) => getByKey(row, TREATMENT_COLUMNS, key);
+
+      const patientTcNo = cellText(get("patientTcNo"));
+      const treatmentName = cellText(get("treatmentName"));
+      const dateRaw = get("date");
+      if (!patientTcNo && !treatmentName && !cellText(dateRaw)) return; // boş satır
+
+      const errors: string[] = [];
+      const warnings: string[] = [];
+
+      if (!/^\d{11}$/.test(patientTcNo)) errors.push("Hasta TC Kimlik No 11 haneli olmalı");
+
+      const date = parseTurkishDate(dateRaw);
+      if (!date) errors.push("Tarih GG.AA.YYYY formatında olmalı");
+
+      if (treatmentName.length < 2) errors.push("Tedavi Adı zorunlu");
+
+      const doctorName = cellText(get("doctorName"));
+      if (!doctorName) errors.push("Doktor Adı Soyadı zorunlu (tedavi kaydı bir doktora bağlı olmalı)");
+
+      const amountRaw = get("amount");
+      let amount = 0;
+      if (cellText(amountRaw) !== "") {
+        const n = Number(cellText(amountRaw).replace(",", "."));
+        if (Number.isFinite(n) && n >= 0) amount = n;
+        else warnings.push("Tutar tanınamadı, 0 kabul edildi");
+      }
+
+      const statusRaw = normalizeTrKey(cellText(get("status")));
+      const status = statusRaw ? (TREATMENT_STATUS_MAP[statusRaw] || null) : "TAMAMLANDI";
+      if (statusRaw && !status) warnings.push(`Durum "${cellText(get("status"))}" tanınamadı, "Tamamlandı" kabul edildi`);
+
+      const data: TreatmentImportData = {
+        patientTcNo,
+        date: date ? date.toISOString() : "",
+        treatmentName,
+        doctorName,
+        toothNo: cellText(get("toothNo")) || null,
+        amount,
+        status: status || "TAMAMLANDI",
+        note: cellText(get("note")) || null,
+      };
+
+      treatments.push({ rowNumber, data: errors.length === 0 ? data : null, errors, warnings });
+    });
+  }
+
+  const prescriptions: ParsedRow<PrescriptionImportData>[] = [];
+  if (prescriptionSheet) {
+    prescriptionSheet.eachRow((row, rowNumber) => {
+      if (rowNumber === 1) return;
+      const get = (key: string) => getByKey(row, PRESCRIPTION_COLUMNS, key);
+
+      const patientTcNo = cellText(get("patientTcNo"));
+      const drugs = cellText(get("drugs"));
+      const dateRaw = get("date");
+      if (!patientTcNo && !drugs && !cellText(dateRaw)) return; // boş satır
+
+      const errors: string[] = [];
+      const warnings: string[] = [];
+
+      if (!/^\d{11}$/.test(patientTcNo)) errors.push("Hasta TC Kimlik No 11 haneli olmalı");
+
+      const date = parseTurkishDate(dateRaw);
+      if (!date) errors.push("Tarih GG.AA.YYYY formatında olmalı");
+
+      if (drugs.length < 2) errors.push("İlaçlar zorunlu");
+
+      const data: PrescriptionImportData = {
+        patientTcNo,
+        date: date ? date.toISOString() : "",
+        drugs,
+        doctorName: cellText(get("doctorName")) || null,
+        note: cellText(get("note")) || null,
+      };
+
+      prescriptions.push({ rowNumber, data: errors.length === 0 ? data : null, errors, warnings });
+    });
+  }
+
+  return { patients, payments, treatments, prescriptions };
 }
