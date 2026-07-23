@@ -18,3 +18,26 @@ export function renderSmsPreview(content: string): string {
     content
   );
 }
+
+function placeholderTag(p: SmsPlaceholder) {
+  return `[${p.label}]`;
+}
+
+// Şablon içeriği veritabanında her zaman ham {{token}} biçiminde saklanır
+// (renderTemplate bunu bekler — bkz. sms-jobs.ts, appointments/route.ts vb.)
+// ama kullanıcıya düzenleme kutusunda süslü parantez yerine "[Hasta Adı]" gibi
+// okunaklı bir etiket gösterilir. Bu iki fonksiyon o çeviriyi ekranın giriş/
+// çıkışında yapar; textarea'daki metin HER ZAMAN okunaklı biçimdedir.
+export function toReadableText(content: string): string {
+  return SMS_PLACEHOLDERS.reduce(
+    (text, p) => text.replaceAll(`{{${p.token}}}`, placeholderTag(p)),
+    content
+  );
+}
+
+export function toStoredText(readableText: string): string {
+  return SMS_PLACEHOLDERS.reduce(
+    (text, p) => text.replaceAll(placeholderTag(p), `{{${p.token}}}`),
+    readableText
+  );
+}

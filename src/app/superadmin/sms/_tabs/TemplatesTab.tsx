@@ -7,7 +7,7 @@ import { Button, IconButton } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { FormField } from "@/components/ui/FormField";
 import { showToastSafe } from "@/lib/toast-client";
-import { SMS_PLACEHOLDERS, renderSmsPreview } from "@/lib/sms-template-placeholders";
+import { SMS_PLACEHOLDERS, renderSmsPreview, toReadableText, toStoredText } from "@/lib/sms-template-placeholders";
 
 type Template = {
   id: string;
@@ -50,13 +50,13 @@ export default function TemplatesTab() {
 
   const openEdit = (t: Template) => {
     setEditing(t);
-    setForm({ code: t.code, title: t.title, content: t.content, isActive: t.isActive });
+    setForm({ code: t.code, title: t.title, content: toReadableText(t.content), isActive: t.isActive });
     setShowForm(true);
   };
 
-  const insertPlaceholder = (token: string) => {
+  const insertPlaceholder = (label: string) => {
     const el = textareaRef.current;
-    const insertText = `{{${token}}}`;
+    const insertText = `[${label}]`;
     if (!el) {
       setForm((f) => ({ ...f, content: f.content + insertText }));
       return;
@@ -79,13 +79,14 @@ export default function TemplatesTab() {
     }
     setSaving(true);
     try {
+      const storedContent = toStoredText(form.content);
       const res = await fetch("/api/superadmin/sms-templates", {
         method: editing ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
           editing
-            ? { id: editing.id, title: form.title, content: form.content, isActive: form.isActive }
-            : { code: form.code, title: form.title, content: form.content, isActive: form.isActive }
+            ? { id: editing.id, title: form.title, content: storedContent, isActive: form.isActive }
+            : { code: form.code, title: form.title, content: storedContent, isActive: form.isActive }
         ),
       });
       const d = await res.json();
@@ -164,7 +165,22 @@ export default function TemplatesTab() {
               <input className={inputClass} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} />
             </FormField>
           )}
-          <FormField label="Mesaj Metni" required hint="Aşağıdaki butonlara tıklayarak imleç konumuna otomatik dolacak bilgiyi ekleyebilirsiniz">
+          <div>
+            <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">Otomatik Doldurulacak Bilgiler</p>
+            <div className="flex flex-wrap gap-1.5">
+              {SMS_PLACEHOLDERS.map((p) => (
+                <button
+                  key={p.token}
+                  type="button"
+                  onClick={() => insertPlaceholder(p.label)}
+                  className="rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10"
+                >
+                  + {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <FormField label="Mesaj Metni" required hint="Yukarıdaki butonlara tıklayarak imleç konumuna otomatik dolacak bilgiyi ekleyebilirsiniz — köşeli parantezli alanlar gönderim sırasında gerçek bilgiyle değiştirilir">
             <textarea
               ref={textareaRef}
               className={inputClass}
@@ -174,24 +190,9 @@ export default function TemplatesTab() {
             />
           </FormField>
           <div>
-            <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">Otomatik Doldurulacak Bilgiler</p>
-            <div className="flex flex-wrap gap-1.5">
-              {SMS_PLACEHOLDERS.map((p) => (
-                <button
-                  key={p.token}
-                  type="button"
-                  onClick={() => insertPlaceholder(p.token)}
-                  className="rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10"
-                >
-                  + {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div>
             <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">Örnek Önizleme</p>
             <p className="rounded-lg border border-emerald-100 bg-emerald-50 p-3 text-sm text-emerald-800">
-              {form.content.trim() ? renderSmsPreview(form.content) : "Mesaj metni girildikçe burada örnek bir hastaya nasıl göründüğünü görürsünüz."}
+              {form.content.trim() ? renderSmsPreview(toStoredText(form.content)) : "Mesaj metni girildikçe burada örnek bir hastaya nasıl göründüğünü görürsünüz."}
             </p>
           </div>
           <label className="flex cursor-pointer items-center gap-2">
