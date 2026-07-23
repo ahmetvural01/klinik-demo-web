@@ -27,7 +27,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
       <PanelRealtimeSync />
       <PanelRouteWarmup />
       <PanelCacheReset />
-      <Sidebar user={{ fullName: user.fullName, role: user.rawRole, photoUrl }} />
+      <Sidebar user={{ fullName: user.fullName, role: user.rawRole, photoUrl, ghost: user.ghost }} />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Topbar user={{ fullName: user.fullName, role: user.role, photoUrl }} />
         {user.rawRole !== "SUPERADMIN" && <BillingStatusBanner />}

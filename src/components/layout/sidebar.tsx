@@ -154,7 +154,7 @@ function buildNavGroups(role: string): NavGroup[] {
 
 type ClinicOption = { id: string; name: string; isActive: boolean };
 
-export function Sidebar({ user }: { user: { fullName: string; role: string; photoUrl?: string | null } }) {
+export function Sidebar({ user }: { user: { fullName: string; role: string; photoUrl?: string | null; ghost?: boolean } }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -171,6 +171,10 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   const [switchError, setSwitchError] = useState<string | null>(null);
 
   const isSuperAdmin = user.role === "SUPERADMIN";
+  // Bare superadmin oturumunda VEYA ghost (Kliniğe Gir ile başka bir klinikten
+  // geçilmiş) oturumda da klinik değiştirici görünmeli — sadece ilk girişte
+  // değil, klinikten kliniğe geçerken de kaybolmamalı.
+  const canSwitchClinic = isSuperAdmin || Boolean(user.ghost);
 
   useEffect(() => {
     const saved = localStorage.getItem("sidebar-collapsed");
@@ -178,12 +182,12 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   }, []);
 
   useEffect(() => {
-    if (!isSuperAdmin) return;
+    if (!canSwitchClinic) return;
     fetch("/api/superadmin/institutions")
       .then((r) => r.json())
       .then((d) => setClinics(Array.isArray(d) ? d.map((i: { id: string; name: string; isActive: boolean }) => ({ id: i.id, name: i.name, isActive: i.isActive })) : []))
       .catch(() => setClinics([]));
-  }, [isSuperAdmin]);
+  }, [canSwitchClinic]);
 
   const toggleCollapsed = () => {
     setCollapsed(prev => {
@@ -353,7 +357,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                 </div>
               )}
 
-              {isSuperAdmin && (
+              {canSwitchClinic && (
                 <details className="mb-2">
                   <summary className="flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-slate-100">
                     <svg className="h-3.5 w-3.5 shrink-0 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
@@ -474,8 +478,8 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
         </div>
       )}
 
-      {/* ── Kliniğe Gir (sadece SUPERADMIN) ─────────────────────────────── */}
-      {isSuperAdmin && (
+      {/* ── Kliniğe Gir (süperadmin veya ghost oturumdan klinik değiştirme) ── */}
+      {canSwitchClinic && (
         <div className="relative mx-2 mb-2 shrink-0">
           {!collapsed ? (
             <>

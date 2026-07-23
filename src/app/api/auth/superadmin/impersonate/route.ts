@@ -9,15 +9,25 @@ import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
  * POST { institutionId, password }
  * - Superadmin kendi şifresiyle doğrulanır
  * - O kliniğin YONETICI rolüyle ghost token üretilir
+ * - Zaten bir ghost oturumdan (başka bir klinikten) çağrılırsa da çalışır —
+ *   ghost token'daki impersonatorId gerçek süperadmin kimliğini taşır, şifre
+ *   doğrulaması ona karşı yapılır (bare superadmin oturumundan hiç farkı yok,
+ *   tekrar çıkış yapmaya gerek kalmadan klinikten kliniğe geçilebilir).
  * - Oturumun başlangıcı ve oturum sırasında yapılan tüm işlemler audit log'a
  *   actorId/isGhost alanlarıyla işaretlenerek kaydedilir (bkz. src/lib/api.ts writeAudit)
  */
 export async function POST(request: NextRequest) {
-  // Mevcut oturum superadmin mi?
   const currentUser = decodeTokenUser();
-  if (!currentUser || currentUser.role !== "SUPERADMIN") {
+  const isBareSuperadmin = currentUser?.role === "SUPERADMIN";
+  const isGhostSwitch = Boolean(currentUser?.ghost && currentUser?.impersonatorId);
+
+  if (!currentUser || (!isBareSuperadmin && !isGhostSwitch)) {
     return NextResponse.json({ message: "Oturum gerekli" }, { status: 401 });
   }
+
+  // Şifrenin kime karşı doğrulanacağı: bare superadmin oturumunda kendisi,
+  // ghost oturumdan geçişte ise ghost token'ın taşıdığı gerçek süperadmin id'si.
+  const superadminId = isBareSuperadmin ? currentUser.id : currentUser.impersonatorId!;
 
   const body = (await request.json()) as { institutionId?: string; password?: string };
   const { institutionId, password } = body;
@@ -30,18 +40,18 @@ export async function POST(request: NextRequest) {
   // çerezi (şifre olmadan) sınırsız deneme ile gerçek şifreyi kaba kuvvetle
   // bulmaya çalışabilirdi. Diğer şifre doğrulama uçlarıyla (login, 2FA) aynı
   // desen uygulanıyor.
-  const rate = checkRateLimit(`impersonate:${getClientIpFromHeaders(request.headers)}:${currentUser.id}`, 5, 15 * 60_000);
+  const rate = checkRateLimit(`impersonate:${getClientIpFromHeaders(request.headers)}:${superadminId}`, 5, 15 * 60_000);
   if (!rate.ok) {
     return NextResponse.json({ message: "Çok fazla hatalı deneme yapıldı. Lütfen daha sonra tekrar deneyin." }, { status: 429 });
   }
 
   // Superadmin şifresini doğrula
   const superadminUser = await prisma.user.findUnique({
-    where: { id: currentUser.id },
-    select: { passwordHash: true },
+    where: { id: superadminId },
+    select: { id: true, fullName: true, passwordHash: true, role: true },
   });
 
-  if (!superadminUser) {
+  if (!superadminUser || superadminUser.role !== "SUPERADMIN") {
     return NextResponse.json({ message: "Kullanıcı bulunamadı" }, { status: 404 });
   }
 
@@ -76,13 +86,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Bu klinikte aktif kullanıcı yok" }, { status: 404 });
   }
 
-  // Ghost token: kliniğin YONETICI'si gibi davran, ghost=true
+  // Ghost token: kliniğin YONETICI'si gibi davran, ghost=true. impersonatorId
+  // gerçek süperadmin kimliğini taşır ki bu oturumdan başka bir kliniğe
+  // geçilirken (şifre onayı hâlâ zorunlu) tekrar bare superadmin oturumuna
+  // dönmeye gerek kalmasın.
   const token = signToken({
     userId: targetUser.id,
     role: "YONETICI",
     institutionId,
     fullName: `${targetUser.fullName} [SA]`,
     ghost: true,
+    impersonatorId: superadminUser.id,
   });
 
   setAuthCookie(token);
@@ -90,7 +104,7 @@ export async function POST(request: NextRequest) {
   await writeAudit(
     targetUser.id,
     "IMPERSONATE_START",
-    `${institution.name} kliniğine "${currentUser.fullName}" (superadmin) tarafından ${targetUser.fullName} kimliğiyle gizli giriş yapıldı`
+    `${institution.name} kliniğine "${superadminUser.fullName}" (superadmin) tarafından ${targetUser.fullName} kimliğiyle gizli giriş yapıldı`
   );
 
   return NextResponse.json({
