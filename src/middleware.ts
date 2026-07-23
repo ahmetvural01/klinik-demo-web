@@ -13,6 +13,7 @@ const PUBLIC_PREFIXES = [
   "/api/auth/login",
   "/api/demo-requests",
   "/api/auth/superadmin/login",
+  "/api/auth/superadmin/verify-2fa",
   "/api/auth/superadmin/impersonate",
   "/api/auth/logout",
   "/health",
@@ -122,6 +123,7 @@ export async function middleware(request: NextRequest) {
       exp?: number;
       role?: string;
       superadminModules?: string[];
+      mustSetup2fa?: boolean;
     };
 
     if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
@@ -135,8 +137,24 @@ export async function middleware(request: NextRequest) {
       return response;
     }
 
+    // Süperadmin için 2FA zorunlu — kurulum tamamlanana kadar bu oturum
+    // yalnızca kurulum ekranına/uçlarına erişebilir (bkz. auth.ts mustSetup2fa,
+    // /api/auth/superadmin/login). Diğer tüm süperadmin kontrollerinden ÖNCE
+    // gelir — 2FA kurulu değilse modül yetkisinin hiç önemi yok.
+    if (payload.role === "SUPERADMIN" && payload.mustSetup2fa) {
+      const setupAllowed = ["/superadmin/2fa-zorunlu", "/api/profile/2fa/setup", "/api/profile/2fa/confirm", "/api/auth/me"];
+      const isAllowed = setupAllowed.some((p) => pathname === p || pathname.startsWith(p + "/"));
+      if (!isAllowed) {
+        if (pathname.startsWith("/api/")) {
+          return NextResponse.json({ message: "Önce iki faktörlü doğrulamayı kurmalısınız." }, { status: 423 });
+        }
+        return NextResponse.redirect(new URL("/superadmin/2fa-zorunlu", request.url));
+      }
+    }
+
     if (
       payload.role === "SUPERADMIN" &&
+      !payload.mustSetup2fa &&
       pathname !== "/superadmin/yetki-yok" &&
       pathname !== "/api/auth/superadmin/permissions"
     ) {

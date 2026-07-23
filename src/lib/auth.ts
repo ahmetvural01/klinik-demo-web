@@ -21,6 +21,14 @@ export type AuthPayload = {
   superadminModules?: string[];
   /** Superadmin gizli giriş — log kaydı atılmaz */
   ghost?: boolean;
+  /**
+   * Süperadmin için 2FA henüz kurulmamış — bu oturum SADECE 2FA kurulum
+   * uçlarına erişebilir (bkz. middleware.ts). Süperadmin hesapları en
+   * yetkili hesaplar olduğu için 2FA zorunludur; kurulum tamamlanınca
+   * (profile/2fa/confirm) bu claim olmadan tam yetkili bir token yeniden
+   * imzalanır.
+   */
+  mustSetup2fa?: boolean;
 };
 
 export function getVisibleRole(role: string) {
@@ -100,7 +108,7 @@ export async function getCurrentUser() {
  * JWT token'dan DB sorgusu yapmadan kullanıcı bilgilerini çöz.
  * requireAuth için yeterli: id, role, institutionId.
  */
-export function decodeTokenUser(): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean } | null {
+export function decodeTokenUser(): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean; mustSetup2fa?: boolean } | null {
   const token = readAuthToken();
   if (!token) return null;
   try {
@@ -110,7 +118,7 @@ export function decodeTokenUser(): { id: string; role: string; institutionId: st
   }
 }
 
-export function decodeTokenUserFromToken(token: string): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean } | null {
+export function decodeTokenUserFromToken(token: string): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean; mustSetup2fa?: boolean } | null {
   try {
     const payload = verifyToken(token);
     return {
@@ -120,6 +128,7 @@ export function decodeTokenUserFromToken(token: string): { id: string; role: str
       fullName: payload.fullName || "",
       superadminModules: payload.superadminModules,
       ghost: payload.ghost ?? false,
+      mustSetup2fa: payload.mustSetup2fa ?? false,
     };
   } catch {
     return null;

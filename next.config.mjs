@@ -5,6 +5,8 @@ const nextConfig = {
       bodySizeLimit: "2mb",
     },
     optimizePackageImports: ["lucide-react", "@radix-ui/react-icons"],
+    // src/instrumentation.ts'in çalışması için gerekli (Next 14'te henüz varsayılan değil).
+    instrumentationHook: true,
   },
   poweredByHeader: false,
   compress: true,

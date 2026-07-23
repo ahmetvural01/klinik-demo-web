@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { setAuthCookie, signToken, verifyPassword } from "@/lib/auth";
+import { setAuthCookie, signPendingTwoFactorToken, signToken, verifyPassword } from "@/lib/auth";
 import { writeAudit } from "@/lib/api";
 import { DEFAULT_SUPERADMIN_MODULES, normalizeModules } from "@/lib/superadmin-modules";
 
@@ -89,16 +89,27 @@ export async function POST(request: NextRequest) {
     ? normalizeModules(user.superadminPermission.modules)
     : DEFAULT_SUPERADMIN_MODULES;
 
-  const token = signToken({
+  // Süperadmin hesapları her klinikteki her hastanın verisine erişebiliyor —
+  // bu yüzden 2FA bu rol için isteğe bağlı değil, ZORUNLU. İki durum var:
+  if (user.twoFactorEnabled) {
+    // 2FA zaten kurulu: şifre doğru ama tam oturum HENÜZ açılmadı, TOTP/yedek
+    // kod bekleniyor (bkz. /api/auth/superadmin/verify-2fa).
+    const pendingToken = signPendingTwoFactorToken(user.id);
+    return NextResponse.json({ requiresTwoFactor: true, pendingToken });
+  }
+
+  // 2FA henüz kurulmamış: sınırlı bir "mustSetup2fa" oturumu açılır — bu
+  // oturum SADECE 2FA kurulum ekranına erişebilir (bkz. middleware.ts).
+  const limitedToken = signToken({
     userId: user.id,
     role: user.role,
     institutionId: null,
     fullName: user.fullName,
     superadminModules: modules,
+    mustSetup2fa: true,
   });
-
-  setAuthCookie(token);
-  await writeAudit(user.id, "LOGIN", "Superadmin sisteme giris yapti");
+  setAuthCookie(limitedToken);
+  await writeAudit(user.id, "LOGIN", "Superadmin sisteme giris yapti (2FA kurulumu bekleniyor)");
 
   return NextResponse.json({
     id: user.id,
@@ -106,5 +117,6 @@ export async function POST(request: NextRequest) {
     role: user.role,
     institutionId: null,
     modules,
+    mustSetup2fa: true,
   });
 }

@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { generateBackupCodes, verifyTwoFactorToken } from "@/lib/two-factor";
+import { setAuthCookie, signToken } from "@/lib/auth";
+import { DEFAULT_SUPERADMIN_MODULES, normalizeModules } from "@/lib/superadmin-modules";
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
@@ -28,5 +30,22 @@ export async function POST(req: NextRequest) {
   });
 
   await writeAudit(auth.user.id, "TWO_FACTOR_ENABLE", "İki faktörlü doğrulama etkinleştirildi");
+
+  // Süperadmin bu ekrana "mustSetup2fa" sınırlı oturumuyla ulaşmış olabilir
+  // (bkz. /api/auth/superadmin/login) — kurulum bitince tekrar giriş yapmak
+  // zorunda kalmadan hemen tam yetkili bir oturuma geçsin.
+  if (auth.user.role === "SUPERADMIN" && auth.user.mustSetup2fa) {
+    const permission = await prisma.superadminPermission.findUnique({ where: { userId: auth.user.id } });
+    const modules = permission ? normalizeModules(permission.modules) : DEFAULT_SUPERADMIN_MODULES;
+    const fullToken = signToken({
+      userId: auth.user.id,
+      role: "SUPERADMIN",
+      institutionId: null,
+      fullName: auth.user.fullName,
+      superadminModules: modules,
+    });
+    setAuthCookie(fullToken);
+  }
+
   return NextResponse.json({ ok: true, backupCodes: plain });
 }
