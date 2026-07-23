@@ -296,33 +296,12 @@ export default function RolePermissionsPage() {
           return (
             <div key={group.key} className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
               {/* Grup başlık */}
-              <div className="flex items-center justify-between border-b border-slate-100 bg-slate-50/60 px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-lg">{group.icon}</span>
-                  <h3 className="text-sm font-bold text-slate-800">{group.label}</h3>
-                  <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
-                    {allGroupPerms.length} yetki
-                  </span>
-                </div>
-                {/* Grup bazlı toplu aç/kapat */}
-                <div className="flex gap-1.5">
-                  {payload.roles.map(role => (
-                    <div key={role} className="flex gap-0.5">
-                      <button
-                        title={`${payload.roleMeta?.[role]?.label ?? role} — Tümünü Aç`}
-                        onClick={() => toggleGroup(role, allGroupPerms, true)}
-                        className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold transition hover:bg-emerald-100 hover:text-emerald-700">
-                        +
-                      </button>
-                      <button
-                        title={`${payload.roleMeta?.[role]?.label ?? role} — Tümünü Kapat`}
-                        onClick={() => toggleGroup(role, allGroupPerms, false)}
-                        className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold transition hover:bg-rose-100 hover:text-rose-700">
-                        −
-                      </button>
-                    </div>
-                  ))}
-                </div>
+              <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/60 px-4 py-3">
+                <span className="text-lg">{group.icon}</span>
+                <h3 className="text-sm font-bold text-slate-800">{group.label}</h3>
+                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
+                  {allGroupPerms.length} yetki
+                </span>
               </div>
 
               <div className="overflow-x-auto">
@@ -332,8 +311,27 @@ export default function RolePermissionsPage() {
                       <th className="w-80 px-4 py-2 text-left">Yetki</th>
                       <th className="w-20 px-3 py-2 text-center">Risk</th>
                       {payload.roles.map(role => (
-                        <th key={role} className="min-w-[80px] px-3 py-2 text-center">
-                          {payload.roleMeta?.[role]?.label ?? role}
+                        <th key={role} className="min-w-[110px] px-3 py-2 text-center">
+                          <div className="normal-case">{payload.roleMeta?.[role]?.label ?? role}</div>
+                          {/* Bu gruptaki tüm yetkileri bu rol için toplu aç/kapat — sütunun
+                              tam altında olduğu için hangi role ait olduğu net, karışmıyor. */}
+                          <div className="mt-1 flex items-center justify-center gap-1 text-[10px] font-normal normal-case tracking-normal text-slate-400">
+                            <button
+                              type="button"
+                              onClick={() => toggleGroup(role, allGroupPerms, true)}
+                              className="rounded px-1 py-0.5 text-emerald-600 transition hover:bg-emerald-50"
+                            >
+                              Tümü
+                            </button>
+                            <span className="text-slate-300">/</span>
+                            <button
+                              type="button"
+                              onClick={() => toggleGroup(role, allGroupPerms, false)}
+                              className="rounded px-1 py-0.5 text-rose-500 transition hover:bg-rose-50"
+                            >
+                              Hiçbiri
+                            </button>
+                          </div>
                         </th>
                       ))}
                     </tr>

@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { Search } from "lucide-react";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
-import { Badge } from "@/components/ui/Badge";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { ROLE_META } from "@/lib/role-permissions";
 
 type User = {
   id: string;
@@ -13,6 +14,18 @@ type User = {
   institution?: { name: string };
   isActive: boolean;
   createdAt: string;
+};
+
+// Rol Yetkileri ekranındaki aynı ROLE_META kaynağı kullanılır — burada ayrı bir
+// etiket seti tutulursa iki ekran zamanla birbirinden sapar (bkz. önceki "DOCTOR"/
+// "ADMIN" gibi gerçekte var olmayan rol adlarıyla eşleşmeye çalışan kırık rozet).
+const ROLE_BADGE_TONE: Record<string, BadgeTone> = {
+  YONETICI: "warning",
+  DOKTOR: "info",
+  ASISTAN: "success",
+  BANKO: "neutral",
+  MUHASEBE: "neutral",
+  SUPERADMIN: "critical",
 };
 
 export default function UsersPage() {
@@ -50,8 +63,8 @@ export default function UsersPage() {
       key: "role",
       header: "Rol",
       render: (u) => (
-        <Badge tone={u.role === "DOCTOR" ? "info" : u.role === "ADMIN" ? "warning" : "neutral"}>
-          {u.role}
+        <Badge tone={ROLE_BADGE_TONE[u.role] ?? "neutral"}>
+          {ROLE_META[u.role]?.label ?? u.role}
         </Badge>
       ),
     },

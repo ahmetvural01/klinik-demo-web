@@ -55,7 +55,7 @@ function enrichStockItem(item: any, purchaseLines?: any[]) {
 }
 
 export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
-  const auth = await requireAuth("finance:read");
+  const auth = await requireAuth("stock:read");
   if (auth.error) return auth.error;
 
   const { searchParams } = new URL(req.url);
@@ -111,7 +111,7 @@ export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
 });
 
 export async function POST(req: NextRequest) {
-  const auth = await requireAuth("finance:write");
+  const auth = await requireAuth("stock:write");
   if (auth.error) return auth.error;
 
   const parsed = stockItemCreateSchema.safeParse(await req.json());

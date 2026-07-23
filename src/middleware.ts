@@ -23,39 +23,49 @@ const PUBLIC_PREFIXES = [
 
 // Rol bazlı sayfa erişim haritası
 // Her rol için erişilemeyen sayfa prefix'leri
+// ÖNEMLİ: bu liste ile src/lib/role-permissions.ts'teki DB tabanlı yetki matrisi
+// (Süperadmin > Rol Yetkileri ekranı) ÇAKIŞMAMALI — bir modül için burada "engelli"
+// yazıp orada "izinli" göstermek, süperadminin ekrandan açtığı bir yetkinin sessizce
+// çalışmaması anlamına gelir (bkz. stock/taksit-plani/lab/reçete için yaşanan gerçek
+// hata). Burada sadece Rol Yetkileri ekranında YÖNETİLMEYEN alanlar (finans/rapor/
+// personel/ayar gibi rol bazında değil, sabit iş kuralı olarak kapatılan sayfalar)
+// listelenmelidir.
 const ROLE_DENIED_PAGES: Record<string, string[]> = {
   DOKTOR: [
-    "/muhasebe", "/kasa", "/gider", "/firma", "/firma-detay", "/stok",
+    "/muhasebe", "/kasa", "/gider", "/firma", "/firma-detay",
     "/rapor", "/personel", "/personel-ekle", "/ayar", "/log",
-    "/fiyat", "/sms", "/taksit", "/dashboard",
+    "/fiyat", "/sms", "/dashboard",
   ],
   ASISTAN: [
-    "/muhasebe", "/kasa", "/gider", "/firma", "/firma-detay", "/stok",
+    "/muhasebe", "/kasa", "/gider", "/firma", "/firma-detay",
     "/rapor", "/personel", "/personel-ekle", "/ayar", "/log",
-    "/fiyat", "/sms", "/finans", "/muayene", "/taksit", "/dashboard",
+    "/fiyat", "/sms", "/finans", "/muayene", "/dashboard",
   ],
   BANKO: [
-    "/gider", "/firma", "/firma-detay", "/stok", "/rapor",
+    "/gider", "/firma", "/firma-detay", "/rapor",
     "/personel", "/personel-ekle", "/ayar", "/log",
     "/fiyat", "/sms", "/finans", "/tedavi-plani",
-    "/lab", "/muayene", "/recete", "/dashboard",
+    "/muayene", "/dashboard",
   ],
   MUHASEBE: [
     "/personel", "/personel-ekle", "/ayar", "/log",
     "/fiyat", "/sms",
     "/randevu", "/hasta", "/hasta-detay", "/hasta-ekle",
-    "/hasta-takip", "/tedavi-plani", "/lab", "/muayene",
+    "/hasta-takip", "/tedavi-plani", "/muayene",
     "/recete", "/dashboard",
   ],
 };
 
-// API rol kısıtlamaları: hangi API prefix'leri hangi roller için yasak
+// API rol kısıtlamaları: hangi API prefix'leri hangi roller için yasak.
+// Aynı uyarı burada da geçerli — stock/installments/lab/prescriptions/staff artık
+// tamamen Rol Yetkileri ekranındaki (DB) yetki matrisi tarafından yönetiliyor,
+// burada TEKRAR sabit kodlanmamalı.
 const API_ROLE_DENIED: Record<string, string[]> = {
-  DOKTOR:   ["/api/gider", "/api/firma", "/api/purchases", "/api/kasa", "/api/stock", "/api/muhasebe", "/api/reports", "/api/settings", "/api/logs", "/api/sms", "/api/prices", "/api/taksit-plani"],
-  ASISTAN:  ["/api/gider", "/api/firma", "/api/purchases", "/api/kasa", "/api/stock", "/api/muhasebe", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/sms", "/api/taksit-plani"],
+  DOKTOR:   ["/api/gider", "/api/firma", "/api/purchases", "/api/kasa", "/api/muhasebe", "/api/reports", "/api/settings", "/api/logs", "/api/sms", "/api/prices"],
+  ASISTAN:  ["/api/gider", "/api/firma", "/api/purchases", "/api/kasa", "/api/muhasebe", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/sms"],
   // NOT: /api/examinations ASISTAN için izinli — requireAuth("examinations:read") ile GET, requireAuth("examinations:write") ile POST kontrolü yapılır
-  BANKO:    ["/api/gider", "/api/firma", "/api/purchases", "/api/stock", "/api/muhasebe/trend", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/prices", "/api/sms", "/api/lab-orders", "/api/treatment-plans", "/api/examinations", "/api/prescriptions"],
-  MUHASEBE: ["/api/settings", "/api/logs", "/api/sms", "/api/prices", "/api/appointments", "/api/patients", "/api/examinations", "/api/treatment-plans", "/api/lab-orders", "/api/prescriptions"],
+  BANKO:    ["/api/gider", "/api/firma", "/api/purchases", "/api/muhasebe/trend", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/prices", "/api/sms", "/api/treatment-plans", "/api/examinations"],
+  MUHASEBE: ["/api/settings", "/api/logs", "/api/sms", "/api/prices", "/api/appointments", "/api/patients", "/api/examinations", "/api/treatment-plans", "/api/prescriptions"],
 };
 
 function isPublicPath(pathname: string) {

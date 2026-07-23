@@ -7,7 +7,7 @@ import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 export const dynamic = "force-dynamic";
 
 export async function GET(_: NextRequest, { params }: { params: { id: string } }) {
-  const auth = await requireAuth("appointments:read");
+  const auth = await requireAuth("lab:read");
   if (auth.error) return auth.error;
   const user = auth.user;
 
@@ -38,7 +38,7 @@ export async function GET(_: NextRequest, { params }: { params: { id: string } }
 }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = await requireAuth("appointments:write");
+  const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
 
   const body = await req.json();

@@ -5,7 +5,7 @@ import { requireAuth, writeAudit } from "@/lib/api";
 type Params = { params: { id: string } };
 
 export async function GET(_: NextRequest, { params }: Params) {
-  const auth = await requireAuth("patients:read");
+  const auth = await requireAuth("prescriptions:read");
   if (auth.error) return auth.error;
 
   const prescription = await prisma.prescription.findFirst({
@@ -23,7 +23,7 @@ export async function GET(_: NextRequest, { params }: Params) {
 }
 
 export async function DELETE(_: NextRequest, { params }: Params) {
-  const auth = await requireAuth("patients:write");
+  const auth = await requireAuth("prescriptions:write");
   if (auth.error) return auth.error;
 
   const existing = await prisma.prescription.findFirst({

@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { FormField, inputErrorClass } from "@/components/ui/FormField";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 
 type Institution = {
   id: string;
@@ -148,94 +149,84 @@ export default function InstitutionsPage() {
     setGhostPassword("");
   };
 
+  const columns: ListTableColumn<Institution>[] = [
+    {
+      key: "name",
+      header: "Klinik",
+      render: (inst) => (
+        <>
+          <Link href={`/superadmin/institutions/${inst.id}`} className="font-semibold text-slate-900 hover:text-primary hover:underline">
+            {inst.name}
+          </Link>
+          <p className="text-xs text-slate-500">{inst.email}</p>
+        </>
+      ),
+    },
+    { key: "owner", header: "Sahip", render: (inst) => <span className="text-slate-700">{inst.owner?.fullName || "-"}</span> },
+    { key: "subscriptionPlan", header: "Plan", render: (inst) => <span>{inst.subscriptionPlan}</span> },
+    { key: "smsBalance", header: "SMS", align: "right", render: (inst) => <span className="font-semibold">{inst.smsBalance.toLocaleString()}</span> },
+    {
+      key: "isActive",
+      header: "Durum",
+      align: "center",
+      render: (inst) => <Badge tone={inst.isActive ? "success" : "critical"}>{inst.isActive ? "Aktif" : "Pasif"}</Badge>,
+    },
+    {
+      key: "actions",
+      header: "İşlem",
+      align: "center",
+      render: (inst) => (
+        <div className="flex items-center justify-center gap-2">
+          <Button variant="secondary" size="sm" href={`/superadmin/institutions/${inst.id}`}>
+            Detay
+          </Button>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={Eye}
+            onClick={() => { setGhostTarget(inst); setGhostPassword(""); setGhostError(null); }}
+          >
+            Kliniğe Gir
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
   return (
-    <main className="min-h-screen bg-slate-100 p-6">
-      <div className="mx-auto max-w-7xl space-y-4">
-        <header className="rounded-2xl bg-white p-5 shadow-sm border">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h1 className="text-2xl font-black text-slate-900">Klinik Yönetimi</h1>
-              <p className="text-sm text-slate-500">Tüm klinikleri buradan yönetin.</p>
-            </div>
-            <Button variant="primary" size="sm" icon={Plus} onClick={() => setShowNew((v) => !v)}>
-              {showNew ? "Formu Kapat" : "Yeni Klinik"}
-            </Button>
+    <>
+    <section className="space-y-4">
+      <header className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-black text-slate-900">Klinik Yönetimi</h1>
+            <p className="text-sm text-slate-500">Tüm klinikleri buradan yönetin.</p>
           </div>
+          <Button variant="primary" size="sm" icon={Plus} onClick={() => setShowNew((v) => !v)}>
+            {showNew ? "Formu Kapat" : "Yeni Klinik"}
+          </Button>
+        </div>
 
-          <div className="mt-4">
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Klinik, sahip veya e-posta ara"
-              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-            />
-          </div>
-        </header>
+        <div className="mt-4">
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Klinik, sahip veya e-posta ara"
+            className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
+          />
+        </div>
+      </header>
 
-        {message && <div className="rounded-xl border bg-white p-3 text-sm text-slate-700">{message}</div>}
+      {message && <div className="rounded-xl border border-slate-100 bg-white p-3 text-sm text-slate-700 shadow-sm">{message}</div>}
 
-        <section className="rounded-2xl bg-white border shadow-sm overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 border-b">
-              <tr>
-                <th className="px-4 py-3 text-left">Klinik</th>
-                <th className="px-4 py-3 text-left">Sahip</th>
-                <th className="px-4 py-3 text-left">Plan</th>
-                <th className="px-4 py-3 text-right">SMS</th>
-                <th className="px-4 py-3 text-center">Durum</th>
-                <th className="px-4 py-3 text-center">İşlem</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
-                    Yükleniyor...
-                  </td>
-                </tr>
-              ) : filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-slate-400">
-                    Klinik bulunamadı
-                  </td>
-                </tr>
-              ) : (
-                filtered.map((inst) => (
-                  <tr key={inst.id} className="border-b hover:bg-slate-50">
-                    <td className="px-4 py-3">
-                      <Link href={`/superadmin/institutions/${inst.id}`} className="font-semibold text-slate-900 hover:text-primary hover:underline">
-                        {inst.name}
-                      </Link>
-                      <p className="text-xs text-slate-500">{inst.email}</p>
-                    </td>
-                    <td className="px-4 py-3 text-slate-700">{inst.owner?.fullName || "-"}</td>
-                    <td className="px-4 py-3">{inst.subscriptionPlan}</td>
-                    <td className="px-4 py-3 text-right font-semibold">{inst.smsBalance.toLocaleString()}</td>
-                    <td className="px-4 py-3 text-center">
-                      <Badge tone={inst.isActive ? "success" : "critical"}>{inst.isActive ? "Aktif" : "Pasif"}</Badge>
-                    </td>
-                    <td className="px-4 py-3 text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        <Button variant="secondary" size="sm" href={`/superadmin/institutions/${inst.id}`}>
-                          Detay
-                        </Button>
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          icon={Eye}
-                          onClick={() => { setGhostTarget(inst); setGhostPassword(""); setGhostError(null); }}
-                        >
-                          Kliniğe Gir
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </section>
-      </div>
+      <ListTable<Institution>
+        columns={columns}
+        rows={filtered}
+        rowKey={(inst) => inst.id}
+        loading={loading}
+        emptyText="Klinik bulunamadı"
+      />
+    </section>
 
       {/* Yeni klinik oluşturma modal */}
       <Modal
@@ -351,7 +342,7 @@ export default function InstitutionsPage() {
       >
         <div className="space-y-3">
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-            Bu giriş hiçbir log kaydına yansımaz.
+            Bu giriş denetim günlüğüne (Denetim Günlüğü) &quot;gizli giriş&quot; olarak kaydedilir.
           </p>
           <FormField label="Superadmin Şifresi">
             <input
@@ -366,6 +357,6 @@ export default function InstitutionsPage() {
           {ghostError && <p className="text-sm text-red-600">{ghostError}</p>}
         </div>
       </Modal>
-    </main>
+    </>
   );
 }

@@ -12,7 +12,7 @@ function taksitPlanTenantWhere(id: string, institutionId: string | null | undefi
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const auth = await requireAuth("payments:read");
+    const auth = await requireAuth("installments:read");
     if (auth.error) return auth.error;
     const user = auth.user;
     if (user.role !== "SUPERADMIN" && !user.institutionId) {
@@ -47,7 +47,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const auth = await requireAuth("payments:write");
+    const auth = await requireAuth("installments:write");
     if (auth.error) return auth.error;
     const user = auth.user;
     if (user.role !== "SUPERADMIN" && !user.institutionId) {
@@ -79,7 +79,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
 export async function DELETE(_: NextRequest, { params }: { params: { id: string } }) {
   try {
-    const auth = await requireAuth("payments:write");
+    const auth = await requireAuth("installments:write");
     if (auth.error) return auth.error;
     if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
       return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });

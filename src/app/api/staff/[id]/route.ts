@@ -26,7 +26,7 @@ function roleLabel(v: unknown): string {
 }
 
 export async function GET(_: NextRequest, { params }: Params) {
-  const auth = await requireAuth("patients:read");
+  const auth = await requireAuth("staff:read");
   if (auth.error) return auth.error;
 
   const user = await prisma.user.findUnique({
@@ -46,7 +46,7 @@ export async function GET(_: NextRequest, { params }: Params) {
 }
 
 export async function PUT(request: NextRequest, { params }: Params) {
-  const auth = await requireAuth("patients:write");
+  const auth = await requireAuth("staff:write");
   if (auth.error) return auth.error;
 
   const body = await request.json();
@@ -154,7 +154,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 }
 
 export async function DELETE(_: NextRequest, { params }: Params) {
-  const auth = await requireAuth("patients:write");
+  const auth = await requireAuth("staff:delete");
   if (auth.error) return auth.error;
 
   const existing = await prisma.user.findUnique({ where: { id: params.id } });

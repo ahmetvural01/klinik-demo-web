@@ -4,7 +4,7 @@ import { prescriptionSchema } from "@/lib/validators";
 import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 
 export const GET = withApiTiming("prescriptions", async function GET(request: NextRequest) {
-  const auth = await requireAuth("patients:read");
+  const auth = await requireAuth("prescriptions:read");
   if (auth.error) return auth.error;
 
   const patientId = request.nextUrl.searchParams.get("patientId");
@@ -24,7 +24,7 @@ export const GET = withApiTiming("prescriptions", async function GET(request: Ne
 });
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth("patients:write");
+  const auth = await requireAuth("prescriptions:write");
   if (auth.error) return auth.error;
 
   const body = await request.json();

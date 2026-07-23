@@ -27,7 +27,7 @@ function normalizeCategory(value?: string | null) {
 }
 
 export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = await requireAuth("finance:read");
+  const auth = await requireAuth("stock:read");
   if (auth.error) return auth.error;
 
   const item = await (prisma as any).stockItem.findFirst({
@@ -49,7 +49,7 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
 }
 
 export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = await requireAuth("finance:write");
+  const auth = await requireAuth("stock:write");
   if (auth.error) return auth.error;
 
   const parsed = stockItemUpdateSchema.safeParse(await req.json());
@@ -113,7 +113,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 
 // PATCH: stock movement (GIRIS/CIKIS)
 export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = await requireAuth("finance:write");
+  const auth = await requireAuth("stock:write");
   if (auth.error) return auth.error;
 
   const parsed = stockMovementSchema.safeParse(await req.json());
@@ -144,7 +144,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 }
 
 export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = await requireAuth("finance:write");
+  const auth = await requireAuth("stock:delete");
   if (auth.error) return auth.error;
 
   const existing = await (prisma as any).stockItem.findFirst({

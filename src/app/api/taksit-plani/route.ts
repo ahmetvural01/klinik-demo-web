@@ -39,7 +39,7 @@ function bucketAging5(rows: { kalan: unknown; vadeDate: Date }[]) {
 
 export const GET = withApiTiming("taksit-plani", async function GET(req: NextRequest) {
   try {
-    const auth = await requireAuth("payments:read");
+    const auth = await requireAuth("installments:read");
     if (auth.error) return auth.error;
     const user = auth.user;
     if (user.role !== "SUPERADMIN" && !user.institutionId) {
@@ -156,7 +156,7 @@ export const GET = withApiTiming("taksit-plani", async function GET(req: NextReq
 
 export async function POST(req: NextRequest) {
   try {
-    const auth = await requireAuth("payments:write");
+    const auth = await requireAuth("installments:write");
     if (auth.error) return auth.error;
     const user = auth.user;
     if (user.role !== "SUPERADMIN" && !user.institutionId) {

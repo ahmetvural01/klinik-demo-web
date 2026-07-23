@@ -11,7 +11,7 @@ import { turkeyTodayStartUtc } from "@/lib/tz";
 
 export async function POST() {
   try {
-    const auth = await requireAuth("payments:write");
+    const auth = await requireAuth("installments:write");
     if (auth.error) return auth.error;
     if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
       return NextResponse.json({ updated: 0 }, { status: 403 });
@@ -65,7 +65,7 @@ export async function POST() {
 }
 
 export async function GET() {
-  const auth = await requireAuth("payments:read");
+  const auth = await requireAuth("installments:read");
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
     return NextResponse.json({ pending: 0 }, { status: 403 });

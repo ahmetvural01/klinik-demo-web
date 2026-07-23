@@ -8,7 +8,7 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string; tripId: string } }
 ) {
-  const auth = await requireAuth("appointments:write");
+  const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
 
   const body = await req.json();

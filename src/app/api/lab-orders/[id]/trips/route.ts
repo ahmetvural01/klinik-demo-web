@@ -5,7 +5,7 @@ import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
 export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
-  const auth = await requireAuth("appointments:write");
+  const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
 
   const body = await req.json();

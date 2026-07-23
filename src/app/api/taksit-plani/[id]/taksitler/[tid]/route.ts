@@ -16,7 +16,7 @@ export async function PATCH(
   { params }: { params: { id: string; tid: string } }
 ) {
   try {
-    const auth = await requireAuth("payments:write");
+    const auth = await requireAuth("installments:write");
     if (auth.error) return auth.error;
     const user = auth.user;
     if (user.role !== "SUPERADMIN" && !user.institutionId) {

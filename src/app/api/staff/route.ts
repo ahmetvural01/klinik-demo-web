@@ -7,7 +7,7 @@ import { checkStaffLimit } from "@/lib/staff-limits";
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await requireAuth("patients:read");
+    const auth = await requireAuth("staff:read");
     if (auth.error) return auth.error;
 
     const staff = await prisma.user.findMany({
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth("patients:write");
+  const auth = await requireAuth("staff:write");
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId && auth.user.role !== "SUPERADMIN") {

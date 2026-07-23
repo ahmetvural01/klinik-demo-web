@@ -7,7 +7,7 @@ import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 export const dynamic = "force-dynamic";
 
 export const GET = withApiTiming("lab-orders", async function GET(req: NextRequest) {
-  const auth = await requireAuth("appointments:read");
+  const auth = await requireAuth("lab:read");
   if (auth.error) return auth.error;
   const user = auth.user;
   const { searchParams } = new URL(req.url);
@@ -69,7 +69,7 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
 });
 
 export async function POST(req: NextRequest) {
-  const auth = await requireAuth("appointments:write");
+  const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
   const user = auth.user;
 
