@@ -57,10 +57,12 @@ async function sendAppointmentInfoSms(params: {
 
   const dateText = new Date(appointment.startAt).toLocaleString("tr-TR");
   const institutionName = settings.institutionName || institution.name;
+  const institutionPhone = settings.institutionPhone || institution.phone || "";
   const fallbackMessage = `${institutionName}: Sayın ${appointment.patient.fullName}, randevunuz oluşturuldu. Tarih: ${dateText}, Doktor: ${appointment.doctor.fullName}.`;
   const message = smsTemplate
     ? renderTemplate(smsTemplate.content, {
         institutionName,
+        institutionPhone,
         patientName: appointment.patient.fullName,
         doctorName: appointment.doctor.fullName,
         dateTime: dateText,

@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Pencil, PlusCircle } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { FormField } from "@/components/ui/FormField";
+import { SmsMessageEditor } from "@/components/sms/SmsMessageEditor";
 import { showToastSafe } from "@/lib/toast-client";
 import { SMS_PLACEHOLDERS, renderSmsPreview, toReadableText, toStoredText } from "@/lib/sms-template-placeholders";
 
@@ -29,7 +30,6 @@ export default function TemplatesTab() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const load = () => {
     setLoading(true);
@@ -52,24 +52,6 @@ export default function TemplatesTab() {
     setEditing(t);
     setForm({ code: t.code, title: t.title, content: toReadableText(t.content), isActive: t.isActive });
     setShowForm(true);
-  };
-
-  const insertPlaceholder = (label: string) => {
-    const el = textareaRef.current;
-    const insertText = `[${label}]`;
-    if (!el) {
-      setForm((f) => ({ ...f, content: f.content + insertText }));
-      return;
-    }
-    const start = el.selectionStart ?? form.content.length;
-    const end = el.selectionEnd ?? form.content.length;
-    const nextContent = form.content.slice(0, start) + insertText + form.content.slice(end);
-    setForm((f) => ({ ...f, content: nextContent }));
-    requestAnimationFrame(() => {
-      el.focus();
-      const cursor = start + insertText.length;
-      el.setSelectionRange(cursor, cursor);
-    });
   };
 
   const submit = async () => {
@@ -165,36 +147,11 @@ export default function TemplatesTab() {
               <input className={inputClass} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} />
             </FormField>
           )}
-          <div>
-            <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">Otomatik Doldurulacak Bilgiler</p>
-            <div className="flex flex-wrap gap-1.5">
-              {SMS_PLACEHOLDERS.map((p) => (
-                <button
-                  key={p.token}
-                  type="button"
-                  onClick={() => insertPlaceholder(p.label)}
-                  className="rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10"
-                >
-                  + {p.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <FormField label="Mesaj Metni" required hint="Yukarıdaki butonlara tıklayarak imleç konumuna otomatik dolacak bilgiyi ekleyebilirsiniz — köşeli parantezli alanlar gönderim sırasında gerçek bilgiyle değiştirilir">
-            <textarea
-              ref={textareaRef}
-              className={inputClass}
-              rows={4}
-              value={form.content}
-              onChange={(e) => setForm({ ...form, content: e.target.value })}
-            />
-          </FormField>
-          <div>
-            <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">Örnek Önizleme</p>
-            <p className="rounded-lg border border-emerald-100 bg-emerald-50 p-3 text-sm text-emerald-800">
-              {form.content.trim() ? renderSmsPreview(toStoredText(form.content)) : "Mesaj metni girildikçe burada örnek bir hastaya nasıl göründüğünü görürsünüz."}
-            </p>
-          </div>
+          <SmsMessageEditor
+            value={form.content}
+            onChange={(content) => setForm({ ...form, content })}
+            placeholders={SMS_PLACEHOLDERS}
+          />
           <label className="flex cursor-pointer items-center gap-2">
             <input
               type="checkbox"

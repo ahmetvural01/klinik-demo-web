@@ -5,6 +5,7 @@ import { showToastSafe } from "@/lib/toast-client";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import BulkSendTab from "./_tabs/BulkSendTab";
 
 type SmsSettings = {
   smsEnabled: boolean;
@@ -26,6 +27,7 @@ const ACTION_LABELS: Record<string, string> = {
   SMS_ANKET: "Değerlendirme",
   SMS_BILGI_AUTO: "Otomatik bilgilendirme",
   SMS_REMINDER_AUTO: "Otomatik hatırlatma",
+  SMS_TOPLU: "Toplu gönderim",
 };
 
 function formatSmsAction(action: string) {
@@ -190,5 +192,19 @@ function SmsManagement() {
 }
 
 export default function SmsPage() {
-  return <SmsManagement />;
+  const [tab, setTab] = useState<"kayitlar" | "toplu">("kayitlar");
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2">
+        <Button variant={tab === "kayitlar" ? "primary" : "secondary"} size="sm" onClick={() => setTab("kayitlar")}>
+          Kayıtlar
+        </Button>
+        <Button variant={tab === "toplu" ? "primary" : "secondary"} size="sm" onClick={() => setTab("toplu")}>
+          Toplu Gönderim
+        </Button>
+      </div>
+      {tab === "kayitlar" ? <SmsManagement /> : <BulkSendTab />}
+    </div>
+  );
 }

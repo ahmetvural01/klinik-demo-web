@@ -111,6 +111,7 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
     const chunkResults = await Promise.all(chunk.map(async (appt) => {
       const dateText = new Date(appt.startAt).toLocaleString("tr-TR");
       const institutionName = settings.institutionName || institution.name;
+      const institutionPhone = settings.institutionPhone || institution.phone || "";
       const fallbackMessage = job.smsType === "BILGI"
         ? `${institutionName}: Sayın ${appt.patient.fullName}, randevunuz oluşturuldu. Tarih: ${dateText}.`
         : job.smsType === "HATIRLATMA"
@@ -120,9 +121,11 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
       const message = smsTemplate
         ? renderTemplate(smsTemplate.content, {
             institutionName,
+            institutionPhone,
             patientName: appt.patient.fullName,
             doctorName: appt.doctor.fullName,
             dateTime: dateText,
+            surveyLink: settings.reviewLink || "",
           })
         : fallbackMessage;
 

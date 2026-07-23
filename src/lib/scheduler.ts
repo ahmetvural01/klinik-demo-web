@@ -1,5 +1,6 @@
 import { runDueInvoiceReminderSweep } from "@/lib/billing-reminders";
 import { runPatientPaymentReminderSweep } from "@/lib/patient-payment-reminders";
+import { runBirthdaySmsSweep } from "@/lib/birthday-reminders";
 
 // Render'da tek, sürekli çalışan bir Node süreci olarak barındırıyoruz
 // (next start, custom sunucu değil) — bu yüzden ayrı bir cron servisi
@@ -38,6 +39,19 @@ async function runPatientReminderSweepSafely() {
   }
 }
 
+async function runBirthdaySweepSafely() {
+  try {
+    const result = await runBirthdaySmsSweep();
+    if (result.checked > 0) {
+      console.log(
+        `[scheduler] Doğum günü SMS taraması: ${result.institutionsChecked} kurum, ${result.checked} hasta kontrol edildi, ${result.sent} SMS gönderildi, ${result.failed} başarısız, ${result.skippedAlreadySent} bu yıl zaten gönderilmiş, ${result.skippedNoBalance} SMS bakiyesi yetersiz.`
+      );
+    }
+  } catch (error) {
+    console.error("[scheduler] Doğum günü SMS taraması başarısız:", error);
+  }
+}
+
 export function startBillingReminderScheduler() {
   const g = globalThis as GlobalWithFlag;
   if (g[FLAG]) return;
@@ -46,11 +60,13 @@ export function startBillingReminderScheduler() {
   setTimeout(() => {
     void runBillingSweepSafely();
     void runPatientReminderSweepSafely();
+    void runBirthdaySweepSafely();
     setInterval(() => {
       void runBillingSweepSafely();
       void runPatientReminderSweepSafely();
+      void runBirthdaySweepSafely();
     }, SWEEP_INTERVAL_MS);
   }, FIRST_RUN_DELAY_MS);
 
-  console.log("[scheduler] Fatura ve hasta taksit hatırlatma zamanlayıcıları başlatıldı (saatte bir çalışacak).");
+  console.log("[scheduler] Fatura, hasta taksit ve doğum günü hatırlatma zamanlayıcıları başlatıldı (saatte bir çalışacak).");
 }

@@ -174,6 +174,7 @@ export async function POST(request: NextRequest) {
     const chunkResults = await Promise.all(chunk.map(async (appt) => {
       const dateText = new Date(appt.startAt).toLocaleString("tr-TR");
       const institutionName = settings.institutionName || institution.name;
+      const institutionPhone = settings.institutionPhone || institution.phone || "";
       const fallbackMessage = smsType === "BILGI"
         ? `${institutionName}: Sayın ${appt.patient.fullName}, randevunuz oluşturuldu. Tarih: ${dateText}.`
         : smsType === "HATIRLATMA"
@@ -183,9 +184,11 @@ export async function POST(request: NextRequest) {
       const message = smsTemplate
         ? renderTemplate(smsTemplate.content, {
             institutionName,
+            institutionPhone,
             patientName: appt.patient.fullName,
             doctorName: appt.doctor.fullName,
             dateTime: dateText,
+            surveyLink: settings.reviewLink || "",
           })
         : fallbackMessage;
 

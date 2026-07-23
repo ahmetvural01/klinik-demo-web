@@ -416,6 +416,7 @@ model Patient {
   documents       Document[]
   consents        PatientConsent[]
   waitlistEntries Waitlist[]
+  birthdaySmsLogs BirthdaySmsLog[]
 
   @@unique([institutionId, tcNo])
   @@index([institutionId])
@@ -693,6 +694,13 @@ model Setting {
   // gönderilsin mi (bkz. src/lib/patient-payment-reminders.ts). Varsayılan
   // kapalı: SMS kurumun kendi bakiyesinden düşer, bu yüzden bilinçli açılmalı.
   paymentReminderSmsEnabled Boolean @default(false)
+  // Ödeme hatırlatması vadeden kaç gün önce gönderilsin (klinik ayarlanabilir).
+  paymentReminderWindowDays Int     @default(3)
+  // Değerlendirme (ANKET) SMS şablonunda {{surveyLink}} yer tutucusu için
+  // kliniğin kendi belirlediği bağlantı (ör. Google yorum linki). Opsiyonel.
+  reviewLink          String?
+  // Doğum günü olan hastalara otomatik kutlama SMS'i (bkz. src/lib/birthday-reminders.ts).
+  birthdaySmsEnabled  Boolean     @default(false)
   updatedAt           DateTime    @updatedAt
   institutionId       String      @unique
   activePriceList     String      @default("standard")
@@ -1002,6 +1010,22 @@ model TaksitReminderLog {
   taksit    Taksit   @relation(fields: [taksitId], references: [id], onDelete: Cascade)
 
   @@index([taksitId])
+}
+
+// Bir hastaya doğum günü SMS'i hangi yıl gönderildi — @@unique([patientId, year])
+// yılda-bir-kez gönderim garantisini DB seviyesinde sağlar (saatlik tarama aynı
+// gün birden fazla kez çalışsa bile ikinci kez göndermez), bkz. src/lib/birthday-reminders.ts.
+model BirthdaySmsLog {
+  id          String   @id @default(cuid())
+  patientId   String
+  year        Int
+  sentTo      String
+  status      String
+  errorDetail String?
+  sentAt      DateTime @default(now())
+  patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@unique([patientId, year])
 }
 
 model PosDevice {

@@ -10,6 +10,10 @@ export const SMS_PLACEHOLDERS: SmsPlaceholder[] = [
   { token: "doctorName", label: "Doktor Adı", sample: "Dr. Mehmet Demir" },
   { token: "dueDate", label: "Vade Tarihi", sample: "15.08.2026" },
   { token: "amount", label: "Tutar (TL)", sample: "1.250" },
+  { token: "daysLeft", label: "Kalan Gün Sayısı", sample: "3" },
+  { token: "daysLate", label: "Gecikme Gün Sayısı", sample: "5" },
+  { token: "institutionPhone", label: "Klinik Telefonu", sample: "0322 123 45 67" },
+  { token: "surveyLink", label: "Değerlendirme Bağlantısı", sample: "https://g.page/r/xxxx/review" },
 ];
 
 export function renderSmsPreview(content: string): string {

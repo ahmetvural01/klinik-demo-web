@@ -7,8 +7,9 @@ import { sendSms } from "@/lib/sms";
 // ve klinik Ayarlar > SMS ekranından açıp kapatabilir (Setting.paymentReminderSmsEnabled).
 // Varsayılan KAPALI — SMS kurumun kendi bakiyesinden düşer, bilinçli açılmalı.
 
-const APPROACHING_WINDOW_DAYS = 3;
+const DEFAULT_APPROACHING_WINDOW_DAYS = 3;
 const MIN_HOURS_BETWEEN_REMINDERS = 20;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function fmtDate(d: Date) {
   return d.toLocaleDateString("tr-TR");
@@ -27,12 +28,11 @@ export async function runPatientPaymentReminderSweep(): Promise<{
   skippedNoBalance: number;
 }> {
   const now = new Date();
-  const windowEnd = new Date(now.getTime() + APPROACHING_WINDOW_DAYS * 24 * 60 * 60 * 1000);
   const cutoff = new Date(now.getTime() - MIN_HOURS_BETWEEN_REMINDERS * 60 * 60 * 1000);
 
   const settings = await prisma.setting.findMany({
     where: { paymentReminderSmsEnabled: true, smsEnabled: true },
-    select: { institutionId: true, institutionName: true },
+    select: { institutionId: true, institutionName: true, institutionPhone: true, paymentReminderWindowDays: true },
   });
 
   let checked = 0;
@@ -44,9 +44,13 @@ export async function runPatientPaymentReminderSweep(): Promise<{
   for (const setting of settings) {
     const institution = await prisma.institution.findUnique({
       where: { id: setting.institutionId },
-      select: { id: true, name: true, smsBalance: true },
+      select: { id: true, name: true, phone: true, smsBalance: true },
     });
     if (!institution) continue;
+
+    // Pencere kurum bazlı: klinik Ayarlar'dan vadeye kaç gün kala hatırlatılacağını seçer.
+    const windowDays = setting.paymentReminderWindowDays ?? DEFAULT_APPROACHING_WINDOW_DAYS;
+    const windowEnd = new Date(now.getTime() + windowDays * DAY_MS);
 
     const taksitler = await prisma.taksit.findMany({
       where: {
@@ -86,21 +90,27 @@ export async function runPatientPaymentReminderSweep(): Promise<{
 
       const isOverdue = taksit.status === "GECIKTI" || taksit.vadeDate < now;
       const institutionName = setting.institutionName || institution.name;
+      const institutionPhone = setting.institutionPhone || institution.phone || "";
       const dueDateText = fmtDate(taksit.vadeDate);
       const amountText = Number(taksit.kalan).toLocaleString("tr-TR");
+      const daysLeftText = String(Math.max(0, Math.ceil((taksit.vadeDate.getTime() - now.getTime()) / DAY_MS)));
+      const daysLateText = String(Math.max(0, Math.ceil((now.getTime() - taksit.vadeDate.getTime()) / DAY_MS)));
 
       const smsTemplate = await prisma.smsTemplate.findFirst({
         where: { code: isOverdue ? "ODEME_GECIKTI" : "ODEME_YAKLASIYOR", isActive: true },
       });
       const fallbackMessage = isOverdue
-        ? `${institutionName}: Sayın ${patient.fullName}, ${dueDateText} vadeli ${amountText} TL taksit ödemeniz gecikmiştir. Bilgi için lütfen kliniğimizle iletişime geçin.`
-        : `${institutionName}: Sayın ${patient.fullName}, ${dueDateText} vadeli ${amountText} TL taksit ödemenizin süresi yaklaşıyor.`;
+        ? `Sayın ${patient.fullName}, ${institutionName} nezdindeki ${amountText} TL tutarındaki ödemenizin vadesi ${daysLateText} gün geçmiştir. En kısa sürede tamamlamanızı rica ederiz.`
+        : `Sayın ${patient.fullName}, ${institutionName} nezdindeki ${amountText} TL tutarındaki ödemenizin son ${daysLeftText} gün içinde tamamlanmasını rica ederiz.`;
       const message = smsTemplate
         ? renderTemplate(smsTemplate.content, {
             institutionName,
+            institutionPhone,
             patientName: patient.fullName,
             dueDate: dueDateText,
             amount: amountText,
+            daysLeft: daysLeftText,
+            daysLate: daysLateText,
           })
         : fallbackMessage;
 

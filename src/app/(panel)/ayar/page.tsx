@@ -59,7 +59,10 @@ export default function AyarPage() {
     smsDefaultInfo: true,
     smsDefaultReminder: false,
     smsDefaultSurvey: false,
-    paymentReminderSmsEnabled: false
+    paymentReminderSmsEnabled: false,
+    paymentReminderWindowDays: 3,
+    reviewLink: "",
+    birthdaySmsEnabled: false
   });
   const [institutionSlug, setInstitutionSlug] = useState("");
   const [loading, setLoading] = useState(false);
@@ -127,6 +130,9 @@ export default function AyarPage() {
           smsDefaultReminder: data.smsDefaultReminder !== undefined ? data.smsDefaultReminder : false,
           smsDefaultSurvey:   data.smsDefaultSurvey   !== undefined ? data.smsDefaultSurvey   : false,
           paymentReminderSmsEnabled: data.paymentReminderSmsEnabled !== undefined ? data.paymentReminderSmsEnabled : false,
+          paymentReminderWindowDays: data.paymentReminderWindowDays || 3,
+          reviewLink: data.reviewLink || "",
+          birthdaySmsEnabled: data.birthdaySmsEnabled !== undefined ? data.birthdaySmsEnabled : false,
         });
       }
     } catch (e) { console.error(e); }
@@ -515,6 +521,7 @@ export default function AyarPage() {
               { key: "smsDefaultReminder" as const, label: "Hatırlatma SMS'i varsayılan açık olsun" },
               { key: "smsDefaultSurvey"   as const, label: "Değerlendirme SMS'i varsayılan açık olsun" },
               { key: "paymentReminderSmsEnabled" as const, label: "Ödeme vadesi yaklaşan/geciken hastalara otomatik SMS hatırlatması gönder" },
+              { key: "birthdaySmsEnabled" as const, label: "Doğum günü olan hastalara otomatik kutlama SMS'i gönder" },
             ].map(item => (
               <label key={item.key} className="flex items-center gap-3 cursor-pointer text-sm">
                 <input type="checkbox" className="h-4 w-4 accent-primary"
@@ -523,6 +530,20 @@ export default function AyarPage() {
                 {item.label}
               </label>
             ))}
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <FormField label="Ödeme Hatırlatması — Vadeden Kaç Gün Önce" hint="Vadeye kaç gün kala hatırlatma SMS'i gönderilsin">
+              <input type="number" min={1} max={30}
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                value={settings.paymentReminderWindowDays}
+                onChange={e => setSettings({ ...settings, paymentReminderWindowDays: Math.max(1, Math.min(30, parseInt(e.target.value) || 1)) })} />
+            </FormField>
+            <FormField label="Değerlendirme Bağlantısı (opsiyonel)" hint="Google yorum linki gibi bir bağlantı — Değerlendirme SMS şablonunda [Değerlendirme Bağlantısı] etiketiyle kullanılabilir">
+              <input type="text" placeholder="https://g.page/r/..."
+                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+                value={settings.reviewLink}
+                onChange={e => setSettings({ ...settings, reviewLink: e.target.value })} />
+            </FormField>
           </div>
           <div className="flex gap-2 pt-2 border-t border-slate-100">
             <Button variant="primary" onClick={() => void saveSettings()} loading={saving}>

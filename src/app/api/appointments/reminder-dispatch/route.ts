@@ -107,10 +107,12 @@ export const POST = withApiTiming("reminder-dispatch", async function POST(reque
 
     const dateText = new Date(appointment.startAt).toLocaleString("tr-TR");
     const institutionName = settings.institutionName || institution.name;
+    const institutionPhone = settings.institutionPhone || institution.phone || "";
     const fallbackMessage = `${institutionName}: Sayın ${appointment.patient.fullName}, yarın ${dateText} tarihinde randevunuz bulunmaktadır. Doktor: ${appointment.doctor.fullName}.`;
     const message = smsTemplate
       ? renderTemplate(smsTemplate.content, {
           institutionName,
+          institutionPhone,
           patientName: appointment.patient.fullName,
           doctorName: appointment.doctor.fullName,
           dateTime: dateText,
