@@ -307,7 +307,7 @@ export async function POST(request: NextRequest) {
     const appointment = await prisma.$transaction(async (tx) => {
       const appt = await tx.appointment.create({
         data: { ...parsed.data, startAt, endAt },
-        include: { patient: true, doctor: true },
+        include: { patient: true, doctor: { select: { id: true, fullName: true } } },
       });
 
     // Reminder'ı transaction içinde oluştur - bir başarısızsa ikisi de rollback

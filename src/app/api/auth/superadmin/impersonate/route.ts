@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { decodeTokenUser, setAuthCookie, signToken, verifyPassword } from "@/lib/auth";
 import { writeAudit } from "@/lib/api";
+import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 
 /**
  * Superadmin → Klinik paneline gizli giriş (ghost mode)
@@ -23,6 +24,15 @@ export async function POST(request: NextRequest) {
 
   if (!institutionId || !password) {
     return NextResponse.json({ message: "institutionId ve password zorunlu" }, { status: 400 });
+  }
+
+  // Şifre doğrulama burada rate-limitsizdi — çalınmış bir superadmin oturum
+  // çerezi (şifre olmadan) sınırsız deneme ile gerçek şifreyi kaba kuvvetle
+  // bulmaya çalışabilirdi. Diğer şifre doğrulama uçlarıyla (login, 2FA) aynı
+  // desen uygulanıyor.
+  const rate = checkRateLimit(`impersonate:${getClientIpFromHeaders(request.headers)}:${currentUser.id}`, 5, 15 * 60_000);
+  if (!rate.ok) {
+    return NextResponse.json({ message: "Çok fazla hatalı deneme yapıldı. Lütfen daha sonra tekrar deneyin." }, { status: 429 });
   }
 
   // Superadmin şifresini doğrula

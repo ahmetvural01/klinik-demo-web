@@ -38,7 +38,7 @@ export async function GET(_: NextRequest, { params }: Params) {
 
   const examination = await prisma.examination.findFirst({
     where: examinationTenantWhere(params.id, auth.user.role, auth.user.institutionId),
-    include: { patient: true, doctor: true }
+    include: { patient: true, doctor: { select: { id: true, fullName: true } } }
   });
 
   if (!examination) {

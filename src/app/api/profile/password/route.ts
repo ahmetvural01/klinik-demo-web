@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 
 export async function PUT(request: NextRequest) {
   const auth = await requireAuth();
@@ -12,6 +13,11 @@ export async function PUT(request: NextRequest) {
 
   if (!oldPassword || !newPassword) {
     return NextResponse.json({ message: "Eski ve yeni şifre gerekli" }, { status: 400 });
+  }
+
+  const rate = checkRateLimit(`password-change:${getClientIpFromHeaders(request.headers)}:${auth.user.id}`, 5, 15 * 60_000);
+  if (!rate.ok) {
+    return NextResponse.json({ message: "Çok fazla hatalı deneme yapıldı. Lütfen daha sonra tekrar deneyin." }, { status: 429 });
   }
 
   const user = await prisma.user.findUnique({ where: { id: auth.user.id } });

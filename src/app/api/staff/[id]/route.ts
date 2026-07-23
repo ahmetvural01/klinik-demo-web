@@ -31,7 +31,21 @@ export async function GET(_: NextRequest, { params }: Params) {
 
   const user = await prisma.user.findUnique({
     where: { id: params.id },
-    include: { profile: true }
+    // passwordHash/twoFactorSecret/twoFactorBackupCodes client'a asla gönderilmez.
+    select: {
+      id: true,
+      fullName: true,
+      identityNo: true,
+      email: true,
+      role: true,
+      isActive: true,
+      institutionId: true,
+      createdAt: true,
+      kkYuzde: true,
+      genelYuzde: true,
+      maasYuzde: true,
+      profile: { select: { workStart: true, workEnd: true, photoUrl: true, hideAsDoctor: true } },
+    },
   });
 
   if (!user || user.role === "SUPERADMIN") {
@@ -109,7 +123,19 @@ export async function PUT(request: NextRequest, { params }: Params) {
         }
       }
     },
-    include: { profile: true }
+    select: {
+      id: true,
+      fullName: true,
+      identityNo: true,
+      email: true,
+      role: true,
+      isActive: true,
+      institutionId: true,
+      kkYuzde: true,
+      genelYuzde: true,
+      maasYuzde: true,
+      profile: { select: { workStart: true, workEnd: true, photoUrl: true, hideAsDoctor: true } },
+    },
     });
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {

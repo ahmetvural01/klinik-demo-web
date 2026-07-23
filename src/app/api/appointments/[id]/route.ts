@@ -95,7 +95,7 @@ export async function GET(_: NextRequest, { params }: Params) {
 
   const appointment = await prisma.appointment.findFirst({
     where: appointmentTenantWhere(params.id, auth.user.role, auth.user.institutionId),
-    include: { patient: true, doctor: true }
+    include: { patient: true, doctor: { select: { id: true, fullName: true } } }
   });
 
   if (!appointment) {
@@ -113,7 +113,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
   const existing = await prisma.appointment.findFirst({
     where: appointmentTenantWhere(params.id, auth.user.role, auth.user.institutionId),
-    include: { patient: true, doctor: true }
+    include: { patient: true, doctor: { select: { id: true, fullName: true } } }
   });
 
   if (!existing) {
@@ -130,7 +130,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
         ...(typeof body.status === "string" ? { status: body.status } : {}),
         ...(typeof body.note === "string" ? { note: body.note } : {}),
       },
-      include: { patient: true, doctor: true }
+      include: { patient: true, doctor: { select: { id: true, fullName: true } } }
     });
 
     try {
@@ -231,7 +231,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       startAt: newStart,
       endAt:   newEnd,
     },
-    include: { patient: true, doctor: true },
+    include: { patient: true, doctor: { select: { id: true, fullName: true } } },
   });
 
   try {

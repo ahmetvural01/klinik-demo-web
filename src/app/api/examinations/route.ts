@@ -14,7 +14,7 @@ export const GET = withApiTiming("examinations", async function GET(request: Nex
       ...(patientId ? { patientId } : {}),
       ...(auth.user.role !== "SUPERADMIN" ? { patient: { institutionId: auth.user.institutionId } } : {}),
     },
-    include: { patient: true, doctor: true },
+    include: { patient: true, doctor: { select: { id: true, fullName: true } } },
     orderBy: { diagnosedAt: "desc" },
     take: 500,
   });

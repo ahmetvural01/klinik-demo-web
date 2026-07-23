@@ -825,7 +825,7 @@ export default function InstitutionDetailPage() {
       >
         <div className="space-y-3">
           <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-            Bu giriş hiçbir log kaydına yansımaz.
+            Bu giriş denetim günlüğüne (Denetim Günlüğü) &quot;gizli giriş&quot; olarak kaydedilir.
           </p>
           <FormField label="Superadmin Şifresi" required>
             <input

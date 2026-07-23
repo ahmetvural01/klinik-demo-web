@@ -18,7 +18,23 @@ export async function GET(request: NextRequest) {
         // taşır — sadece o kliniğin personeli görünmeli, tüm kurumlarınki değil.
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
       },
-      include: { profile: true },
+      // passwordHash/twoFactorSecret/twoFactorBackupCodes ASLA client'a
+      // gönderilmemeli — bunlar önceden `include` ile tüm User satırını
+      // (hash dahil) döndürüyordu. Sadece personel ekranının gerçekten
+      // kullandığı alanlar seçiliyor.
+      select: {
+        id: true,
+        fullName: true,
+        identityNo: true,
+        email: true,
+        role: true,
+        isActive: true,
+        createdAt: true,
+        kkYuzde: true,
+        genelYuzde: true,
+        maasYuzde: true,
+        profile: { select: { workStart: true, workEnd: true, photoUrl: true, hideAsDoctor: true } },
+      },
       orderBy: { createdAt: "desc" }
     });
 
@@ -81,7 +97,17 @@ export async function POST(request: NextRequest) {
             hideAsDoctor: body.role === "YONETICI" ? (typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : true) : false,
           }
         }
-      }
+      },
+      select: {
+        id: true,
+        fullName: true,
+        identityNo: true,
+        email: true,
+        role: true,
+        isActive: true,
+        createdAt: true,
+        profile: { select: { workStart: true, workEnd: true, photoUrl: true, hideAsDoctor: true } },
+      },
     });
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
