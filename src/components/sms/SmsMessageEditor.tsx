@@ -10,6 +10,13 @@ export interface SmsMessageEditorProps {
   value: string;
   onChange: (value: string) => void;
   placeholders: SmsPlaceholder[];
+  // Verilirse, ilgili chip'e tıklamak metne DOĞRUDAN bu değeri ekler
+  // ({{token}} yerine) — ör. toplu gönderimde klinik adı zaten sabit
+  // bilindiği için tekrar kullanılabilir bir yer tutucuya gerek yoktur.
+  insertContext?: Partial<Record<string, string>>;
+  // Verilirse, "Örnek Önizleme" jenerik örnek yerine bu gerçek değerleri
+  // gösterir (ör. "Beyaz Diş Kliniği" yerine kliniğin gerçek adı).
+  previewContext?: Partial<Record<string, string>>;
   rows?: number;
   label?: string;
   hint?: string;
@@ -24,15 +31,18 @@ export function SmsMessageEditor({
   value,
   onChange,
   placeholders,
+  insertContext,
+  previewContext,
   rows = 4,
   label = "Mesaj Metni",
   hint = "Aşağıdaki butonlara tıklayarak imleç konumuna otomatik dolacak bilgiyi ekleyebilirsiniz — köşeli parantezli alanlar gönderim sırasında gerçek bilgiyle değiştirilir",
 }: SmsMessageEditorProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const insertPlaceholder = (placeholderLabel: string) => {
+  const insertPlaceholder = (p: SmsPlaceholder) => {
+    const literal = insertContext?.[p.token];
+    const insertText = literal !== undefined ? literal : `[${p.label}]`;
     const el = textareaRef.current;
-    const insertText = `[${placeholderLabel}]`;
     if (!el) {
       onChange(value + insertText);
       return;
@@ -57,7 +67,7 @@ export function SmsMessageEditor({
             <button
               key={p.token}
               type="button"
-              onClick={() => insertPlaceholder(p.label)}
+              onClick={() => insertPlaceholder(p)}
               className="rounded-full border border-primary/30 bg-primary/5 px-3 py-1 text-xs font-semibold text-primary transition hover:bg-primary/10"
             >
               + {p.label}
@@ -77,7 +87,7 @@ export function SmsMessageEditor({
       <div>
         <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-500">Örnek Önizleme</p>
         <p className="rounded-lg border border-emerald-100 bg-emerald-50 p-3 text-sm text-emerald-800">
-          {value.trim() ? renderSmsPreview(toStoredText(value)) : "Mesaj metni girildikçe burada örnek bir hastaya nasıl göründüğünü görürsünüz."}
+          {value.trim() ? renderSmsPreview(toStoredText(value), previewContext) : "Mesaj metni girildikçe burada örnek bir hastaya nasıl göründüğünü görürsünüz."}
         </p>
       </div>
     </div>

@@ -16,9 +16,12 @@ export const SMS_PLACEHOLDERS: SmsPlaceholder[] = [
   { token: "surveyLink", label: "Değerlendirme Bağlantısı", sample: "https://g.page/r/xxxx/review" },
 ];
 
-export function renderSmsPreview(content: string): string {
+// overrides verilirse (ör. gerçek klinik adı/telefonu), örnek değer yerine
+// o kullanılır — böylece önizleme "Beyaz Diş Kliniği" gibi jenerik bir
+// örnek yerine, önizlemeyi görüntüleyen kliniğin gerçek adını gösterir.
+export function renderSmsPreview(content: string, overrides: Partial<Record<string, string>> = {}): string {
   return SMS_PLACEHOLDERS.reduce(
-    (text, p) => text.replaceAll(`{{${p.token}}}`, p.sample),
+    (text, p) => text.replaceAll(`{{${p.token}}}`, overrides[p.token] ?? p.sample),
     content
   );
 }

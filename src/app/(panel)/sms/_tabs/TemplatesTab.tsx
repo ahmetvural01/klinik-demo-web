@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Pencil, PlusCircle, RotateCcw } from "lucide-react";
+import { CheckCircle2, PenSquare, PlusCircle, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
@@ -17,6 +17,9 @@ type Template = {
   content: string;
   isActive: boolean;
   isCustom: boolean;
+  hasDefault: boolean;
+  defaultTitle?: string;
+  defaultContent?: string;
   updatedAt: string;
 };
 
@@ -27,10 +30,14 @@ const emptyForm = { code: "", title: "", content: "", isActive: true };
 export default function TemplatesTab() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
+  const [institutionName, setInstitutionName] = useState("");
+  const [institutionPhone, setInstitutionPhone] = useState("");
   const [editing, setEditing] = useState<Template | null>(null);
+  const [isNewCustom, setIsNewCustom] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
+  const [switching, setSwitching] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -41,18 +48,81 @@ export default function TemplatesTab() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((d) => {
+        setInstitutionName(d?.institutionName || "");
+        setInstitutionPhone(d?.institutionPhone || "");
+      })
+      .catch(() => {});
+  }, []);
+
+  const previewContext = { institutionName: institutionName || undefined, institutionPhone: institutionPhone || undefined };
 
   const openCreate = () => {
     setEditing(null);
+    setIsNewCustom(true);
     setForm(emptyForm);
     setShowForm(true);
   };
 
-  const openEdit = (t: Template) => {
+  const openEditCustom = (t: Template) => {
     setEditing(t);
+    setIsNewCustom(false);
     setForm({ code: t.code, title: t.title, content: toReadableText(t.content), isActive: t.isActive });
     setShowForm(true);
+  };
+
+  // "Kendi Şablonum" seçilir seçilmez, henüz bir override yoksa, varsayılan
+  // metin başlangıç noktası olarak editöre yüklenir — sıfırdan yazmaya
+  // zorlamak yerine düzenlemeye başlanır.
+  const switchToCustom = (t: Template) => {
+    setEditing(t);
+    setIsNewCustom(false);
+    setForm({ code: t.code, title: t.title, content: toReadableText(t.content), isActive: t.isActive });
+    setShowForm(true);
+  };
+
+  const switchToDefault = async (t: Template) => {
+    const ok = await confirmDialog({
+      title: "Varsayılan Şablona Dön",
+      message: `"${t.defaultTitle ?? t.title}" için kendi özelleştirmeniz silinip sistem varsayılanı kullanılacak. Emin misiniz?`,
+      confirmText: "Varsayılana Dön",
+    });
+    if (!ok) return;
+    setSwitching(t.code);
+    try {
+      const res = await fetch(`/api/sms/templates?code=${encodeURIComponent(t.code)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("İşlem başarısız");
+      showToastSafe({ title: "Tamamlandı", message: "Sistem varsayılanına dönüldü", type: "success" });
+      load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
+      showToastSafe({ title: "Hata", message: msg, type: "error" });
+    } finally {
+      setSwitching(null);
+    }
+  };
+
+  const deleteCustomOnly = async (t: Template) => {
+    const ok = await confirmDialog({
+      title: "Şablonu Sil",
+      message: `"${t.title}" şablonu kalıcı olarak silinecek. Emin misiniz?`,
+      danger: true,
+      confirmText: "Sil",
+    });
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/sms/templates?code=${encodeURIComponent(t.code)}`, { method: "DELETE" });
+      if (!res.ok) throw new Error("Silinemedi");
+      showToastSafe({ title: "Silindi", message: "Şablon silindi", type: "success" });
+      load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
+      showToastSafe({ title: "Hata", message: msg, type: "error" });
+    }
   };
 
   const submit = async () => {
@@ -80,71 +150,86 @@ export default function TemplatesTab() {
     }
   };
 
-  const resetToDefault = async (t: Template) => {
-    const ok = await confirmDialog({
-      title: "Varsayılana Sıfırla",
-      message: `"${t.title}" şablonu kendi özelleştirmeniz silinip sistem varsayılanına döndürülecek. Emin misiniz?`,
-      confirmText: "Sıfırla",
-    });
-    if (!ok) return;
-    try {
-      const res = await fetch(`/api/sms/templates?code=${encodeURIComponent(t.code)}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Sıfırlanamadı");
-      showToastSafe({ title: "Sıfırlandı", message: "Şablon sistem varsayılanına döndürüldü", type: "success" });
-      load();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
-      showToastSafe({ title: "Hata", message: msg, type: "error" });
-    }
-  };
-
   return (
     <section className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">Sistem varsayılanları burada listelenir. Dilerseniz kendi metninizle özelleştirebilir veya tamamen yeni bir şablon ekleyebilirsiniz.</p>
-        <Button icon={PlusCircle} size="sm" onClick={openCreate}>Yeni Şablon</Button>
+      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-black text-slate-900">SMS Şablonları</h2>
+            <p className="mt-1 text-sm text-slate-500">
+              Her şablon için ya sistem varsayılanını kullanın, ya da kendi metninizi tasarlayın.
+            </p>
+          </div>
+          <Button icon={PlusCircle} size="sm" onClick={openCreate}>Yeni Özel Şablon</Button>
+        </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+      <div className="space-y-3">
         {loading ? (
-          <div className="divide-y divide-slate-100">
+          <div className="space-y-3">
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-20 animate-pulse bg-slate-50" style={{ animationDelay: `${i * 40}ms` }} />
+              <div key={i} className="h-28 animate-pulse rounded-2xl bg-slate-50" style={{ animationDelay: `${i * 40}ms` }} />
             ))}
           </div>
         ) : templates.length === 0 ? (
-          <div className="px-6 py-14 text-center text-sm text-slate-400">Şablon bulunamadı</div>
+          <div className="rounded-2xl border border-slate-100 bg-white px-6 py-14 text-center text-sm text-slate-400 shadow-sm">Şablon bulunamadı</div>
         ) : (
-          <div className="divide-y divide-slate-100">
-            {templates.map((t) => (
-              <div key={t.code} className="p-4 transition hover:bg-slate-50/80">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                      <span className="font-bold text-slate-900">{t.title}</span>
-                      <Badge tone={t.isCustom ? "info" : "neutral"} size="sm">{t.isCustom ? "Özelleştirilmiş" : "Varsayılan Kullanılıyor"}</Badge>
-                      {!t.isActive && <Badge tone="neutral" size="sm">Pasif</Badge>}
-                    </div>
-                    <p className="rounded-lg bg-slate-50 p-2 text-sm text-slate-600">{renderSmsPreview(t.content)}</p>
-                    <p className="mt-1 text-xs text-slate-400">Örnek bir hastaya böyle görünür</p>
+          templates.map((t) => (
+            <div key={t.code} className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                    <span className="font-bold text-slate-900">{t.title}</span>
+                    {!t.isActive && <Badge tone="neutral" size="sm">Pasif</Badge>}
                   </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {t.isCustom && (
-                      <IconButton icon={RotateCcw} title="Varsayılana Sıfırla" tone="neutral" onClick={() => resetToDefault(t)} />
-                    )}
-                    <IconButton icon={Pencil} title="Düzenle" tone="neutral" onClick={() => openEdit(t)} />
-                  </div>
+                  <p className="rounded-lg bg-slate-50 p-2 text-sm text-slate-600">{renderSmsPreview(t.content, previewContext)}</p>
+                  <p className="mt-1 text-xs text-slate-400">Örnek bir hastaya böyle görünür</p>
                 </div>
+                {!t.hasDefault && (
+                  <div className="flex shrink-0 items-center gap-1">
+                    <IconButton icon={PenSquare} title="Düzenle" tone="neutral" onClick={() => openEditCustom(t)} />
+                    <IconButton icon={Trash2} title="Sil" tone="danger" onClick={() => deleteCustomOnly(t)} />
+                  </div>
+                )}
               </div>
-            ))}
-          </div>
+
+              {t.hasDefault && (
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => { if (t.isCustom) void switchToDefault(t); }}
+                    disabled={switching === t.code}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                      !t.isCustom ? "bg-primary text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {!t.isCustom && <CheckCircle2 className="h-3.5 w-3.5" />}
+                    Varsayılan Şablon
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => switchToCustom(t)}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
+                      t.isCustom ? "bg-primary text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {t.isCustom && <CheckCircle2 className="h-3.5 w-3.5" />}
+                    Kendi Şablonum
+                  </button>
+                  {t.isCustom && (
+                    <IconButton icon={PenSquare} title="Kendi şablonumu düzenle" tone="neutral" size="sm" onClick={() => openEditCustom(t)} />
+                  )}
+                </div>
+              )}
+            </div>
+          ))
         )}
       </div>
 
       <Modal
         open={showForm}
         onClose={() => setShowForm(false)}
-        title={editing ? `Düzenle: ${editing.title}` : "Yeni SMS Şablonu"}
+        title={isNewCustom ? "Yeni Özel Şablon" : `Düzenle: ${editing?.title ?? ""}`}
         size="lg"
         footer={
           <>
@@ -157,7 +242,7 @@ export default function TemplatesTab() {
           <FormField label="Başlık" required hint="Bu şablonu tanımak için kısa bir ad">
             <input className={inputClass} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
           </FormField>
-          {!editing && (
+          {isNewCustom && (
             <FormField label="Kod" required hint="Sistemdeki bilinen bir kodu yazarsanız (BILGI, HATIRLATMA, ANKET, ODEME_YAKLASIYOR, ODEME_GECIKTI, DOGUM_GUNU) o şablonu kendi metninizle değiştirirsiniz; farklı bir kod yazarsanız yeni, tamamen size özel bir şablon oluşturursunuz">
               <input className={inputClass} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} />
             </FormField>
@@ -166,6 +251,7 @@ export default function TemplatesTab() {
             value={form.content}
             onChange={(content) => setForm({ ...form, content })}
             placeholders={SMS_PLACEHOLDERS}
+            previewContext={previewContext}
           />
           <label className="flex cursor-pointer items-center gap-2">
             <input

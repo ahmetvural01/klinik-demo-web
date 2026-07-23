@@ -8,6 +8,9 @@ type MergedTemplate = {
   content: string;
   isActive: boolean;
   isCustom: boolean;
+  hasDefault: boolean;
+  defaultTitle?: string;
+  defaultContent?: string;
   updatedAt: string;
 };
 
@@ -31,15 +34,15 @@ export async function GET() {
   const merged: MergedTemplate[] = defaults.map((d) => {
     const override = customByCode.get(d.code);
     return override
-      ? { code: d.code, title: override.title, content: override.content, isActive: override.isActive, isCustom: true, updatedAt: override.updatedAt.toISOString() }
-      : { code: d.code, title: d.title, content: d.content, isActive: d.isActive, isCustom: false, updatedAt: d.updatedAt.toISOString() };
+      ? { code: d.code, title: override.title, content: override.content, isActive: override.isActive, isCustom: true, hasDefault: true, defaultTitle: d.title, defaultContent: d.content, updatedAt: override.updatedAt.toISOString() }
+      : { code: d.code, title: d.title, content: d.content, isActive: d.isActive, isCustom: false, hasDefault: true, updatedAt: d.updatedAt.toISOString() };
   });
 
   // Kliniğin varsayılanlarda karşılığı olmayan tamamen kendi eklediği şablonlar
   const defaultCodes = new Set(defaults.map((d) => d.code));
   for (const t of custom) {
     if (!defaultCodes.has(t.code)) {
-      merged.push({ code: t.code, title: t.title, content: t.content, isActive: t.isActive, isCustom: true, updatedAt: t.updatedAt.toISOString() });
+      merged.push({ code: t.code, title: t.title, content: t.content, isActive: t.isActive, isCustom: true, hasDefault: false, updatedAt: t.updatedAt.toISOString() });
     }
   }
 
