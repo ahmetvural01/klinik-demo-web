@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Shield, Edit3 } from "lucide-react";
+import { Shield, Edit3, PlusCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
+import { FormField } from "@/components/ui/FormField";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { showToastSafe } from "@/lib/toast-client";
 
@@ -12,9 +13,13 @@ type Admin = {
   id: string;
   fullName: string;
   identityNo: string;
+  email?: string | null;
+  isActive: boolean;
   modules: string[];
   createdAt: string;
 };
+
+const inputClass = "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
 
 const ALL_MODULES = [
   { key: "dashboard", label: "Dashboard" },
@@ -38,7 +43,12 @@ export default function AdminsPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Admin | null>(null);
   const [modules, setModules] = useState<string[]>([]);
+  const [editIsActive, setEditIsActive] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
+  const [createForm, setCreateForm] = useState({ fullName: "", identityNo: "", email: "", password: "" });
+  const [createModules, setCreateModules] = useState<string[]>(ALL_MODULES.map((m) => m.key));
+  const [creating, setCreating] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -54,6 +64,7 @@ export default function AdminsPage() {
   const openEdit = (admin: Admin) => {
     setSelected(admin);
     setModules(admin.modules ?? []);
+    setEditIsActive(admin.isActive);
   };
 
   const handleSave = async () => {
@@ -63,10 +74,10 @@ export default function AdminsPage() {
       const res = await fetch(`/api/superadmin/admins/${selected.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ modules }),
+        body: JSON.stringify({ modules, isActive: editIsActive }),
       });
       if (!res.ok) throw new Error("Kaydedilemedi");
-      showToastSafe({ title: "Kaydedildi", message: "Modül erişimleri güncellendi", type: "success" });
+      showToastSafe({ title: "Kaydedildi", message: "Admin bilgileri güncellendi", type: "success" });
       setSelected(null);
       load();
     } catch (e) {
@@ -81,6 +92,45 @@ export default function AdminsPage() {
     setModules((prev) =>
       prev.includes(key) ? prev.filter((m) => m !== key) : [...prev, key]
     );
+  };
+
+  const toggleCreateModule = (key: string) => {
+    setCreateModules((prev) =>
+      prev.includes(key) ? prev.filter((m) => m !== key) : [...prev, key]
+    );
+  };
+
+  const submitCreate = async () => {
+    if (!createForm.fullName.trim() || !createForm.identityNo.trim() || createForm.password.length < 6) {
+      showToastSafe({ title: "Eksik alan", message: "Ad soyad, TC ve en az 6 haneli şifre zorunlu", type: "error" });
+      return;
+    }
+    setCreating(true);
+    try {
+      const res = await fetch("/api/superadmin/admins", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fullName: createForm.fullName.trim(),
+          identityNo: createForm.identityNo.trim(),
+          email: createForm.email.trim() || undefined,
+          password: createForm.password,
+          modules: createModules,
+        }),
+      });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.message || "Oluşturulamadı");
+      showToastSafe({ title: "Oluşturuldu", message: `${d.fullName} admin olarak eklendi`, type: "success" });
+      setShowCreate(false);
+      setCreateForm({ fullName: "", identityNo: "", email: "", password: "" });
+      setCreateModules(ALL_MODULES.map((m) => m.key));
+      load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
+      showToastSafe({ title: "Hata", message: msg, type: "error" });
+    } finally {
+      setCreating(false);
+    }
   };
 
   const columns: ListTableColumn<Admin>[] = [
@@ -109,6 +159,11 @@ export default function AdminsPage() {
       ),
     },
     {
+      key: "isActive",
+      header: "Durum",
+      render: (a) => <Badge tone={a.isActive ? "success" : "neutral"}>{a.isActive ? "Aktif" : "Pasif"}</Badge>,
+    },
+    {
       key: "createdAt",
       header: "Kayıt",
       render: (a) => <span className="text-slate-500">{new Date(a.createdAt).toLocaleDateString("tr-TR")}</span>,
@@ -131,6 +186,7 @@ export default function AdminsPage() {
           <h1 className="text-lg font-black text-slate-900">Admin Yetkileri</h1>
           <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{admins.length} admin</span>
         </div>
+        <Button icon={PlusCircle} size="sm" onClick={() => setShowCreate(true)}>Yeni Admin</Button>
       </div>
 
       <ListTable
@@ -161,6 +217,15 @@ export default function AdminsPage() {
             </span>
             <p className="text-xs text-slate-500">Bu admin kullanıcısının erişebileceği modülleri seçin.</p>
           </div>
+          <label className="flex cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              checked={editIsActive}
+              onChange={(e) => setEditIsActive(e.target.checked)}
+              className="rounded border-slate-300 text-primary focus:ring-primary/30"
+            />
+            <span className="text-sm text-slate-700">Hesap aktif</span>
+          </label>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
             {ALL_MODULES.map((m) => (
               <label key={m.key} className="flex cursor-pointer items-center gap-2">
@@ -188,6 +253,52 @@ export default function AdminsPage() {
             >
               Tümünü Kaldır
             </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={showCreate}
+        onClose={() => setShowCreate(false)}
+        title="Yeni Admin Ekle"
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowCreate(false)}>İptal</Button>
+            <Button loading={creating} onClick={submitCreate}>Oluştur</Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField label="Ad Soyad" required>
+              <input className={inputClass} value={createForm.fullName} onChange={(e) => setCreateForm({ ...createForm, fullName: e.target.value })} />
+            </FormField>
+            <FormField label="TC Kimlik No" required>
+              <input className={inputClass} value={createForm.identityNo} onChange={(e) => setCreateForm({ ...createForm, identityNo: e.target.value })} />
+            </FormField>
+            <FormField label="E-posta">
+              <input className={inputClass} value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} />
+            </FormField>
+            <FormField label="Şifre" required hint="En az 6 karakter">
+              <input type="password" className={inputClass} value={createForm.password} onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })} />
+            </FormField>
+          </div>
+          <div>
+            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Modül Erişimi</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+              {ALL_MODULES.map((m) => (
+                <label key={m.key} className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={createModules.includes(m.key)}
+                    onChange={() => toggleCreateModule(m.key)}
+                    className="rounded border-slate-300 text-primary focus:ring-primary/30"
+                  />
+                  <span className="text-sm text-slate-700">{m.label}</span>
+                </label>
+              ))}
+            </div>
           </div>
         </div>
       </Modal>

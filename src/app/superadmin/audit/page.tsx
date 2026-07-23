@@ -12,30 +12,48 @@ type AuditEntry = {
   ip?: string;
   actorRole?: string;
   isGhost?: boolean;
-  user?: { fullName: string; identityNo: string; role?: string };
-  institution?: { name: string };
+  user?: { fullName: string; role?: string; institution?: { name: string } | null };
   createdAt: string;
 };
 
+const PAGE_SIZE = 50;
+
 export default function AuditPage() {
   const [logs, setLogs] = useState<AuditEntry[]>([]);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
 
   useEffect(() => {
-    fetch("/api/superadmin/audit")
-      .then((r) => r.json())
-      .then((d) => setLogs(Array.isArray(d) ? d : d.logs ?? []))
-      .catch(() => setLogs([]))
-      .finally(() => setLoading(false));
-  }, []);
+    const t = setTimeout(() => setDebouncedSearch(search), 350);
+    return () => clearTimeout(t);
+  }, [search]);
 
-  const filtered = logs.filter(
-    (l) =>
-      l.action?.toLowerCase().includes(search.toLowerCase()) ||
-      l.user?.fullName?.toLowerCase().includes(search.toLowerCase()) ||
-      l.institution?.name?.toLowerCase().includes(search.toLowerCase())
-  );
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
+
+  useEffect(() => {
+    setLoading(true);
+    const params = new URLSearchParams({ page: String(page) });
+    if (debouncedSearch) params.set("search", debouncedSearch);
+    fetch(`/api/superadmin/audit?${params.toString()}`)
+      .then((r) => r.json())
+      .then((d) => {
+        setLogs(Array.isArray(d) ? d : d.logs ?? []);
+        setTotal(d.total ?? 0);
+        setTotalPages(d.totalPages ?? 1);
+      })
+      .catch(() => {
+        setLogs([]);
+        setTotal(0);
+        setTotalPages(1);
+      })
+      .finally(() => setLoading(false));
+  }, [page, debouncedSearch]);
 
   const columns: ListTableColumn<AuditEntry>[] = [
     {
@@ -61,7 +79,7 @@ export default function AuditPage() {
     {
       key: "institution",
       header: "Klinik",
-      render: (log) => <span className="text-slate-600">{log.institution?.name ?? "—"}</span>,
+      render: (log) => <span className="text-slate-600">{log.user?.institution?.name ?? "—"}</span>,
     },
     {
       key: "action",
@@ -90,13 +108,13 @@ export default function AuditPage() {
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           <h1 className="text-lg font-black text-slate-900">Denetim Günlüğü</h1>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{filtered.length} kayıt</span>
+          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{total} kayıt</span>
         </div>
         <div className="relative w-full max-w-sm">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
-            placeholder="İşlem, kullanıcı veya klinik ara..."
+            placeholder="İşlem veya detay ara..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full rounded-xl border border-slate-200 bg-slate-50 py-2.5 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20"
@@ -106,10 +124,18 @@ export default function AuditPage() {
 
       <ListTable
         columns={columns}
-        rows={filtered}
+        rows={logs}
         rowKey={(log) => log.id}
         loading={loading}
         emptyText="Kayıt bulunamadı"
+        pager={{
+          page,
+          pageCount: totalPages,
+          pageSize: PAGE_SIZE,
+          total,
+          onPageChange: setPage,
+          loading,
+        }}
       />
     </section>
   );

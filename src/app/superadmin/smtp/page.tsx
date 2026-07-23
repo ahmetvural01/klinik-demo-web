@@ -11,7 +11,7 @@ type SmtpConfig = {
   host: string;
   port: number;
   secure: boolean;
-  user: string;
+  username: string;
   fromName: string;
   fromEmail: string;
   isActive: boolean;
@@ -24,11 +24,13 @@ export default function SmtpPage() {
     host: "",
     port: "587",
     secure: false,
-    user: "",
+    username: "",
     password: "",
     fromName: "",
     fromEmail: "",
+    isActive: false,
   });
+  const [testTo, setTestTo] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -45,9 +47,10 @@ export default function SmtpPage() {
             host: d.host ?? "",
             port: String(d.port ?? 587),
             secure: d.secure ?? false,
-            user: d.user ?? "",
+            username: d.username ?? "",
             fromName: d.fromName ?? "",
             fromEmail: d.fromEmail ?? "",
+            isActive: d.isActive ?? false,
           }));
         }
       })
@@ -59,7 +62,7 @@ export default function SmtpPage() {
     setSaving(true);
     try {
       const res = await fetch("/api/superadmin/smtp", {
-        method: "POST",
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...form, port: parseInt(form.port) }),
       });
@@ -76,14 +79,22 @@ export default function SmtpPage() {
   };
 
   const handleTest = async () => {
+    if (!testTo.trim()) {
+      showToastSafe({ title: "Eksik alan", message: "Test e-postası gönderilecek adresi girin", type: "error" });
+      return;
+    }
     setTesting(true);
     setTestResult(null);
     try {
-      const res = await fetch("/api/superadmin/smtp/test", { method: "POST" });
+      const res = await fetch("/api/superadmin/smtp", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "test", ...form, port: parseInt(form.port), testTo: testTo.trim() }),
+      });
       const d = await res.json();
       setTestResult(
         res.ok
-          ? { ok: true, message: "Test maili başarıyla gönderildi" }
+          ? { ok: true, message: d.message ?? "Test maili başarıyla gönderildi" }
           : { ok: false, message: d.message ?? "Hata" }
       );
     } catch {
@@ -140,8 +151,8 @@ export default function SmtpPage() {
                 <input
                   className={inputClass}
                   placeholder="info@example.com"
-                  value={form.user}
-                  onChange={(e) => setForm({ ...form, user: e.target.value })}
+                  value={form.username}
+                  onChange={(e) => setForm({ ...form, username: e.target.value })}
                 />
               </FormField>
               <FormField label="Şifre">
@@ -169,6 +180,27 @@ export default function SmtpPage() {
                   onChange={(e) => setForm({ ...form, fromEmail: e.target.value })}
                 />
               </FormField>
+              <div className="col-span-2 flex items-center pb-2">
+                <label className="flex cursor-pointer items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={form.isActive}
+                    onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
+                    className="rounded border-slate-300 text-primary focus:ring-primary/30"
+                  />
+                  <span className="text-sm text-slate-700">SMTP aktif (e-posta gönderimi bu ayarla yapılsın)</span>
+                </label>
+              </div>
+              <div className="col-span-2">
+                <FormField label="Test E-postası Gönderilecek Adres">
+                  <input
+                    className={inputClass}
+                    placeholder="test@example.com"
+                    value={testTo}
+                    onChange={(e) => setTestTo(e.target.value)}
+                  />
+                </FormField>
+              </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-3 pt-2">

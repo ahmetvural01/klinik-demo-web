@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
         actorRole: true,
         isGhost: true,
         ip: true,
-        user: { select: { fullName: true, role: true, institutionId: true } },
+        user: { select: { fullName: true, role: true, institution: { select: { name: true } } } },
       },
     }),
   ]);
