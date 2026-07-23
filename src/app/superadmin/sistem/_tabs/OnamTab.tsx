@@ -35,7 +35,7 @@ function countSections(body: string) {
   return (body.match(/^##\s+/gm) || []).length;
 }
 
-export default function SuperadminConsentPage() {
+export default function OnamTab() {
   const [template, setTemplate] = useState<ConsentTemplate | null>(null);
   const [oldTemplates, setOldTemplates] = useState<OldTemplate[]>([]);
   const [title, setTitle] = useState("Kapsamlı Klinik Onam ve KVKK Paketi");
@@ -111,12 +111,9 @@ export default function SuperadminConsentPage() {
   }
 
   return (
-    <section className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div>
-          <h1 className="text-lg font-black text-slate-900">Onam Paketi</h1>
-          <p className="text-xs text-slate-500">Kliniklerde kullanılan tek kapsamlı KVKK ve tedavi onam metni.</p>
-        </div>
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-slate-500">Kliniklerde kullanılan tek kapsamlı KVKK ve tedavi onam metni.</p>
         <Button onClick={() => void save()} disabled={loading || body.trim().length < 200} loading={saving}>
           Paketi Kaydet
         </Button>

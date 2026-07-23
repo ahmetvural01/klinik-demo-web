@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Package } from "lucide-react";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 
 type WalletEntry = {
@@ -12,7 +11,7 @@ type WalletEntry = {
   updatedAt: string;
 };
 
-export default function SmsStockPage() {
+export default function StockTab() {
   const [wallets, setWallets] = useState<WalletEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -44,14 +43,7 @@ export default function SmsStockPage() {
   ];
 
   return (
-    <section className="space-y-5">
-      <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <Package className="h-4 w-4" />
-        </span>
-        <h1 className="text-lg font-black text-slate-900">SMS Stok</h1>
-      </div>
-
+    <section className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam Kalan Kredi</p>

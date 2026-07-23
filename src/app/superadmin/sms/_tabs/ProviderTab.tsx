@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Plug, CheckCircle2 } from "lucide-react";
+import { CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { FormField, inputErrorClass } from "@/components/ui/FormField";
 import { showToastSafe } from "@/lib/toast-client";
@@ -14,7 +14,7 @@ type ProviderConfig = {
   isActive: boolean;
 };
 
-export default function SmsProviderPage() {
+export default function ProviderTab() {
   const [config, setConfig] = useState<ProviderConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ provider: "", apiUrl: "", apiKey: "", sender: "" });
@@ -53,14 +53,7 @@ export default function SmsProviderPage() {
   };
 
   return (
-    <section className="space-y-5">
-      <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <Plug className="h-4 w-4" />
-        </span>
-        <h1 className="text-lg font-black text-slate-900">SMS API Tanımlamaları</h1>
-      </div>
-
+    <section className="space-y-4">
       <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
         {loading ? (
           <div className="flex items-center justify-center py-10">

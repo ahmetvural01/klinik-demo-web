@@ -28,10 +28,7 @@ const MODULE_ROUTE_RULES: Array<{ module: SuperadminModule; prefixes: string[] }
   {
     module: "sms",
     prefixes: [
-      "/superadmin/sms-packages",
-      "/superadmin/sms-stock",
-      "/superadmin/sms-templates",
-      "/superadmin/sms-provider",
+      "/superadmin/sms",
       "/api/superadmin/sms",
       "/api/superadmin/sms-packages",
       "/api/superadmin/sms-stock",
@@ -45,7 +42,7 @@ const MODULE_ROUTE_RULES: Array<{ module: SuperadminModule; prefixes: string[] }
   { module: "support", prefixes: ["/superadmin/support", "/api/superadmin/support"] },
   { module: "audit", prefixes: ["/superadmin/audit", "/api/superadmin/audit"] },
   { module: "announcements", prefixes: ["/superadmin/announcements", "/api/superadmin/announcements"] },
-  { module: "settings", prefixes: ["/superadmin/settings", "/superadmin/onam", "/superadmin/site-content", "/api/superadmin/system-settings", "/api/superadmin/consent-template", "/api/superadmin/site-content"] },
+  { module: "settings", prefixes: ["/superadmin/sistem", "/superadmin/site-content", "/api/superadmin/system-settings", "/api/superadmin/consent-template", "/api/superadmin/site-content", "/api/superadmin/theme"] },
   { module: "admins", prefixes: ["/superadmin/admins", "/api/superadmin/admins"] },
 ];
 

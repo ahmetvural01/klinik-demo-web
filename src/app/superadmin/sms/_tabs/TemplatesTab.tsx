@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MessageCircle } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 
 type Template = {
@@ -13,7 +12,7 @@ type Template = {
   createdAt: string;
 };
 
-export default function SmsTemplatesPage() {
+export default function TemplatesTab() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -26,14 +25,7 @@ export default function SmsTemplatesPage() {
   }, []);
 
   return (
-    <section className="space-y-5">
-      <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <MessageCircle className="h-4 w-4" />
-        </span>
-        <h1 className="text-lg font-black text-slate-900">SMS Şablonları</h1>
-      </div>
-
+    <section className="space-y-4">
       <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
         {loading ? (
           <div className="divide-y divide-slate-100">

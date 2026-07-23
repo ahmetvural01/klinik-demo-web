@@ -27,10 +27,7 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "SMS ve İletişim",
     items: [
-      { href: "/superadmin/sms-packages", icon: "📱", label: "SMS Paketleri", module: "sms" },
-      { href: "/superadmin/sms-stock", icon: "📦", label: "SMS Stok", module: "sms" },
-      { href: "/superadmin/sms-templates", icon: "✉️", label: "SMS Şablonları", module: "sms" },
-      { href: "/superadmin/sms-provider", icon: "🔌", label: "SMS API Bağlantısı", module: "sms" },
+      { href: "/superadmin/sms", icon: "📱", label: "SMS Yönetimi", module: "sms" },
       { href: "/superadmin/announcements", icon: "📢", label: "Duyurular", module: "announcements" },
       { href: "/superadmin/support", icon: "🎧", label: "Destek Talepleri", module: "support" },
     ],
@@ -51,10 +48,8 @@ const NAV_GROUPS: NavGroup[] = [
   {
     label: "Sistem",
     items: [
+      { href: "/superadmin/sistem", icon: "⚙️", label: "Sistem Ayarları", module: "settings" },
       { href: "/superadmin/smtp", icon: "📧", label: "SMTP Ayarları", module: "smtp" },
-      { href: "/superadmin/onam", icon: "📝", label: "Onam Paketi", module: "settings" },
-      { href: "/superadmin/tema", icon: "🎨", label: "Tema", module: "settings" },
-      { href: "/superadmin/settings", icon: "⚙️", label: "Sistem Ayarları", module: "settings" },
       { href: "/superadmin/audit", icon: "🔍", label: "Denetim Günlüğü", module: "audit" },
     ],
   },

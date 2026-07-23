@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MessageSquare, Plus } from "lucide-react";
+import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
@@ -18,7 +18,7 @@ type Package = {
   createdAt: string;
 };
 
-export default function SmsPackagesPage() {
+export default function PackagesTab() {
   const [packages, setPackages] = useState<Package[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -95,14 +95,8 @@ export default function SmsPackagesPage() {
   ];
 
   return (
-    <section className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <MessageSquare className="h-4 w-4" />
-          </span>
-          <h1 className="text-lg font-black text-slate-900">SMS Paketleri</h1>
-        </div>
+    <section className="space-y-4">
+      <div className="flex justify-end">
         <Button icon={Plus} onClick={() => setShowForm(true)}>Yeni Paket</Button>
       </div>
 

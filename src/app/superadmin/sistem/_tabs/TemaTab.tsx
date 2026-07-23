@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { THEME_PACKAGES, type ThemePackage } from "@/lib/theme-packages";
+import { Button } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { showToastSafe } from "@/lib/toast-client";
 
-export default function TemaPage() {
+export default function TemaTab() {
   const [activeTheme, setActiveTheme] = useState<string>("klasik");
   const [loading, setLoading] = useState(true);
   const [applying, setApplying] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     fetch("/api/superadmin/theme")
@@ -16,11 +18,6 @@ export default function TemaPage() {
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
-
-  const showToast = (type: "success" | "error", text: string) => {
-    setToast({ type, text });
-    setTimeout(() => setToast(null), 3500);
-  };
 
   const activate = async (pkg: ThemePackage) => {
     if (pkg.id === activeTheme || applying) return;
@@ -33,36 +30,24 @@ export default function TemaPage() {
       });
       if (res.ok) {
         setActiveTheme(pkg.id);
-        showToast("success", `"${pkg.name}" sistem geneli aktif tema oldu. Sayfayı yenileyen herkes yeni görünümü görecek.`);
+        showToastSafe({ title: "Uygulandı", message: `"${pkg.name}" sistem geneli aktif tema oldu. Sayfayı yenileyen herkes yeni görünümü görecek.`, type: "success" });
       } else {
-        showToast("error", "Tema uygulanamadı");
+        showToastSafe({ title: "Hata", message: "Tema uygulanamadı", type: "error" });
       }
     } catch {
-      showToast("error", "Bağlantı hatası");
+      showToastSafe({ title: "Hata", message: "Bağlantı hatası", type: "error" });
     } finally {
       setApplying(null);
     }
   };
 
   return (
-    <section className="space-y-5">
-      {toast && (
-        <div className={`fixed right-5 top-5 z-[100] max-w-sm rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${toast.type === "success" ? "bg-emerald-500" : "bg-red-500"}`}>
-          {toast.text}
-        </div>
-      )}
-
-      <div className="flex items-center gap-3">
-        <span className="text-3xl">🎨</span>
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Sistem Teması</h2>
-          <p className="text-sm text-gray-500">Tüm klinikler ve tüm kullanıcılar için tek, sistem geneli renk ve yazı tipi kimliği. Seçilen tema sayfa yenilendiğinde herkeste görünür.</p>
-        </div>
-      </div>
+    <section className="space-y-4">
+      <p className="text-xs text-slate-500">Tüm klinikler ve tüm kullanıcılar için tek, sistem geneli renk ve yazı tipi kimliği. Seçilen tema sayfa yenilendiğinde herkeste görünür.</p>
 
       {loading ? (
         <div className="flex items-center justify-center py-16">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-500 border-t-transparent" />
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -72,7 +57,7 @@ export default function TemaPage() {
             return (
               <div
                 key={pkg.id}
-                className={`overflow-hidden rounded-2xl border bg-white shadow-sm transition ${isActive ? "border-blue-500 ring-2 ring-blue-200" : "border-gray-100 hover:border-gray-200"}`}
+                className={`overflow-hidden rounded-2xl border bg-white shadow-sm transition ${isActive ? "border-primary ring-2 ring-primary/20" : "border-slate-100 hover:border-slate-200"}`}
               >
                 {/* Canlı önizleme şeridi: temanın gerçek arka plan/nötr/primary tonları */}
                 <div
@@ -87,25 +72,23 @@ export default function TemaPage() {
 
                 <div className="space-y-2 p-4">
                   <div className="flex items-center justify-between gap-2">
-                    <h3 className="text-sm font-bold text-gray-900" style={{ fontFamily: pkg.fontSans }}>{pkg.name}</h3>
-                    {isActive && <span className="shrink-0 rounded-full bg-blue-100 px-2.5 py-1 text-[10px] font-bold text-blue-700">AKTİF</span>}
+                    <h3 className="text-sm font-bold text-slate-900" style={{ fontFamily: pkg.fontSans }}>{pkg.name}</h3>
+                    {isActive && <Badge tone="success">AKTİF</Badge>}
                   </div>
-                  <p className="text-xs leading-relaxed text-gray-500">{pkg.description}</p>
-                  <p className="truncate text-xs text-gray-400" style={{ fontFamily: pkg.fontSans }}>
+                  <p className="text-xs leading-relaxed text-slate-500">{pkg.description}</p>
+                  <p className="truncate text-xs text-slate-400" style={{ fontFamily: pkg.fontSans }}>
                     Aa Bb Cc — {pkg.fontSans.split(",")[0].replace(/'/g, "")}
                   </p>
-                  <button
-                    onClick={() => activate(pkg)}
+                  <Button
+                    size="sm"
+                    variant={isActive ? "secondary" : "primary"}
                     disabled={isActive || applying !== null}
-                    className={`mt-2 w-full rounded-lg px-3 py-2 text-xs font-bold transition disabled:cursor-not-allowed ${
-                      isActive
-                        ? "bg-blue-50 text-blue-400"
-                        : "text-white hover:opacity-90 disabled:opacity-60"
-                    }`}
-                    style={isActive ? undefined : { background: `rgb(${v.primary})` }}
+                    loading={applying === pkg.id}
+                    onClick={() => void activate(pkg)}
+                    className="w-full"
                   >
-                    {isActive ? "Şu an aktif" : applying === pkg.id ? "Uygulanıyor…" : "Bu Temayı Aktif Et"}
-                  </button>
+                    {isActive ? "Şu an aktif" : "Bu Temayı Aktif Et"}
+                  </Button>
                 </div>
               </div>
             );
