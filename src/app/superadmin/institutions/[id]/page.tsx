@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Eye, Pencil, Plus, Power, ShieldAlert, UploadCloud } from "lucide-react";
+import { ArrowLeft, Download, Eye, Pencil, Plus, Power, ShieldAlert, UploadCloud } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
@@ -518,6 +518,14 @@ export default function InstitutionDetailPage() {
               </Button>
               <Button variant="secondary" size="sm" icon={UploadCloud} href={`/superadmin/institutions/${institution.id}/import`}>
                 Toplu Veri Aktarımı
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                icon={Download}
+                onClick={() => { window.location.href = `/api/superadmin/institutions/${institution.id}/export`; }}
+              >
+                Veriyi Dışa Aktar
               </Button>
               <Button variant="primary" size="sm" icon={Pencil} onClick={openEdit}>
                 Düzenle
