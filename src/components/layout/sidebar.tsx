@@ -152,9 +152,15 @@ function buildNavGroups(role: string): NavGroup[] {
   return groups;
 }
 
-type ClinicOption = { id: string; name: string; isActive: boolean };
+const PREVIEW_ROLES = [
+  { key: "YONETICI",  label: "Yönetici",  color: "bg-violet-600" },
+  { key: "DOKTOR",    label: "Doktor",    color: "bg-emerald-600" },
+  { key: "ASISTAN",   label: "Asistan",   color: "bg-sky-600" },
+  { key: "BANKO",     label: "Banko",     color: "bg-amber-600" },
+  { key: "MUHASEBE",  label: "Muhasebe",  color: "bg-rose-600" },
+];
 
-export function Sidebar({ user }: { user: { fullName: string; role: string; photoUrl?: string | null; ghost?: boolean } }) {
+export function Sidebar({ user }: { user: { fullName: string; role: string; photoUrl?: string | null } }) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -162,19 +168,10 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   useEscapeClose(() => setMobileOpen(false), mobileOpen);
-  const [clinicPickerOpen, setClinicPickerOpen] = useState(false);
-  const [clinics, setClinics] = useState<ClinicOption[]>([]);
-  const [clinicQuery, setClinicQuery] = useState("");
-  const [switchTarget, setSwitchTarget] = useState<ClinicOption | null>(null);
-  const [switchPassword, setSwitchPassword] = useState("");
-  const [switching, setSwitching] = useState(false);
-  const [switchError, setSwitchError] = useState<string | null>(null);
+  const [previewRole, setPreviewRole] = useState<string | null>(null);
+  const [rolePickerOpen, setRolePickerOpen] = useState(false);
 
   const isSuperAdmin = user.role === "SUPERADMIN";
-  // Bare superadmin oturumunda VEYA ghost (Kliniğe Gir ile başka bir klinikten
-  // geçilmiş) oturumda da klinik değiştirici görünmeli — sadece ilk girişte
-  // değil, klinikten kliniğe geçerken de kaybolmamalı.
-  const canSwitchClinic = isSuperAdmin || Boolean(user.ghost);
 
   useEffect(() => {
     const saved = localStorage.getItem("sidebar-collapsed");
@@ -182,12 +179,11 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   }, []);
 
   useEffect(() => {
-    if (!canSwitchClinic) return;
-    fetch("/api/superadmin/institutions")
-      .then((r) => r.json())
-      .then((d) => setClinics(Array.isArray(d) ? d.map((i: { id: string; name: string; isActive: boolean }) => ({ id: i.id, name: i.name, isActive: i.isActive })) : []))
-      .catch(() => setClinics([]));
-  }, [canSwitchClinic]);
+    if (isSuperAdmin) {
+      const saved = sessionStorage.getItem("dev-preview-role");
+      if (saved) setPreviewRole(saved);
+    }
+  }, [isSuperAdmin]);
 
   const toggleCollapsed = () => {
     setCollapsed(prev => {
@@ -206,53 +202,36 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
     setMobileOpen(false);
   }, [pathname]);
 
-  const openSwitchTarget = (clinic: ClinicOption) => {
-    setSwitchTarget(clinic);
-    setSwitchPassword("");
-    setSwitchError(null);
-    setClinicPickerOpen(false);
-  };
-
-  const confirmSwitchClinic = async () => {
-    if (!switchTarget || !switchPassword) return;
-    setSwitching(true);
-    setSwitchError(null);
-    try {
-      const res = await fetch("/api/auth/superadmin/impersonate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ institutionId: switchTarget.id, password: switchPassword }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setSwitchError(d.message || "Giriş başarısız");
-        setSwitching(false);
-        return;
-      }
-      window.location.href = "/anasayfa";
-    } catch {
-      setSwitchError("Bağlantı hatası");
-      setSwitching(false);
+  const handlePreviewRole = (role: string | null) => {
+    if (role) {
+      sessionStorage.setItem("dev-preview-role", role);
+    } else {
+      sessionStorage.removeItem("dev-preview-role");
     }
+    setPreviewRole(role);
+    setRolePickerOpen(false);
+    window.dispatchEvent(new Event("preview-role-change"));
   };
-
-  const filteredClinics = clinics.filter((c) => c.name.toLowerCase().includes(clinicQuery.toLowerCase()));
 
   const userRole = user.role;
   const userName = user.fullName;
-  const navGroups = buildNavGroups(userRole);
-  const alerts = usePanelAlerts(userRole);
+  // SuperAdmin ise seçili preview rolü, yoksa gerçek rol
+  const effectiveRole = (isSuperAdmin && previewRole) ? previewRole : userRole;
+  const navGroups = buildNavGroups(effectiveRole);
+  const alerts = usePanelAlerts(effectiveRole);
+
+  const activePreview = PREVIEW_ROLES.find(r => r.key === previewRole);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const seen = new Set<string>();
-    const targets = buildNavGroups(userRole).flatMap((group) => group.items.map((item) => item.href));
+    const targets = buildNavGroups(effectiveRole).flatMap((group) => group.items.map((item) => item.href));
     targets.forEach((href) => {
       if (seen.has(href)) return;
       seen.add(href);
       Promise.resolve(router.prefetch(href)).catch(() => {});
     });
-  }, [userRole, router]);
+  }, [effectiveRole, router]);
 
   useEffect(() => {
     const syncUnread = () => {
@@ -327,6 +306,15 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
         >
           <div className="relative flex h-dvh max-h-dvh">
             <div className="flex h-dvh max-h-dvh w-[min(86vw,288px)] flex-col overflow-hidden bg-[#0f172a]">
+              {isSuperAdmin && activePreview && (
+                <div className={`flex shrink-0 items-center gap-2 px-3 py-2 text-xs font-bold text-white ${activePreview.color}`}>
+                  <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+                  </svg>
+                  <span>{activePreview.label} görünümü</span>
+                </div>
+              )}
+
               <div className="shrink-0 p-3">
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
@@ -351,41 +339,55 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-white">{userName}</p>
                     <p className="text-xs font-semibold uppercase text-slate-500">
-                      {ROLE_LABELS[userRole] ?? userRole}
+                      {activePreview ? activePreview.label : (ROLE_LABELS[userRole] ?? userRole)}
                     </p>
                   </div>
                 </div>
               )}
 
-              {canSwitchClinic && (
+              {isSuperAdmin && (
                 <details className="mb-2">
                   <summary className="flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-slate-100">
                     <svg className="h-3.5 w-3.5 shrink-0 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
                     </svg>
-                    <span className="flex-1 text-left">Kliniğe Gir</span>
+                    <span className="flex-1 text-left">{previewRole ? `Görünüm: ${activePreview?.label}` : "Rol Görünümü"}</span>
                     <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="6 9 12 15 18 9"/>
                     </svg>
                   </summary>
-                  <div className="mt-1 max-h-64 overflow-y-auto rounded-lg border border-white/10 bg-[#1e2d45] p-1.5">
-                    <p className="mb-1.5 px-1 text-xs font-bold uppercase text-slate-500">Klinik seç</p>
+                  <div className="mt-1 rounded-lg border border-white/10 bg-[#1e2d45] p-1.5">
+                    <p className="mb-1.5 px-1 text-xs font-bold uppercase text-slate-500">Rol seç</p>
                     <div className="flex flex-col gap-0.5">
-                      {clinics.map(c => (
+                      {PREVIEW_ROLES.map(r => (
                         <button
-                          key={c.id}
+                          key={r.key}
                           onClick={() => {
-                            openSwitchTarget(c);
+                            handlePreviewRole(previewRole === r.key ? null : r.key);
                             setMobileOpen(false);
                           }}
-                          className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-400 transition hover:bg-white/10 hover:text-slate-200"
+                          className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition ${
+                            previewRole === r.key ? `${r.color} text-white` : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                          }`}
                         >
-                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.isActive ? "bg-emerald-500" : "bg-slate-500"}`} />
-                          <span className="truncate">{c.name}</span>
+                          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.color}`} />
+                          {r.label}
+                          {previewRole === r.key && <span className="ml-auto text-xs opacity-80">aktif</span>}
                         </button>
                       ))}
-                      {clinics.length === 0 && (
-                        <p className="px-2.5 py-2 text-xs text-slate-500">Klinik bulunamadı</p>
+                      {previewRole && (
+                        <button
+                          onClick={() => {
+                            handlePreviewRole(null);
+                            setMobileOpen(false);
+                          }}
+                          className="mt-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-500 transition hover:bg-white/10 hover:text-slate-300"
+                        >
+                          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                          </svg>
+                          Önizlemeyi kapat
+                        </button>
                       )}
                     </div>
                   </div>
@@ -429,6 +431,16 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
         </div>
       )}
       <aside className={`hidden h-screen ${w} shrink-0 flex-col bg-[#0f172a] transition-all duration-200 md:flex`}>
+        {/* Rol görünümü aktifken göster */}
+      {isSuperAdmin && activePreview && (
+        <div className={`flex items-center gap-2 px-3 py-2 text-xs font-bold text-white ${activePreview.color} shrink-0`}>
+          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+          </svg>
+          {!collapsed && <span>{activePreview.label} görünümü</span>}
+        </div>
+      )}
+
       {/* Logo + toggle */}
       <div className={`flex items-center ${collapsed ? "justify-center px-0 py-4" : "justify-between px-4 py-4"}`}>
         {!collapsed && (
@@ -471,101 +483,114 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold text-white">{userName}</p>
               <p className="text-xs font-semibold uppercase text-slate-500">
-                {ROLE_LABELS[userRole] ?? userRole}
+                {activePreview ? activePreview.label : (ROLE_LABELS[userRole] ?? userRole)}
               </p>
             </div>
           )}
         </div>
       )}
 
-      {/* ── Kliniğe Gir (süperadmin veya ghost oturumdan klinik değiştirme) ── */}
-      {canSwitchClinic && (
-        <div className="relative mx-2 mb-2 shrink-0">
+      {/* ── Rol Görünümü (sadece SUPERADMIN) ─────────────────────────────── */}
+      {isSuperAdmin && (
+        <details className="mx-2 mb-2 shrink-0">
           {!collapsed ? (
             <>
-              <button
-                onClick={() => setClinicPickerOpen((v) => !v)}
-                className="flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-slate-100"
-              >
-                <svg className="h-3.5 w-3.5 shrink-0 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
-                </svg>
-                <span className="flex-1 text-left">Kliniğe Gir</span>
-                <svg className="h-3 w-3 shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="6 9 12 15 18 9"/>
-                </svg>
-              </button>
-              {clinicPickerOpen && (
-                <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-lg border border-white/10 bg-[#1e2d45] p-1.5 shadow-xl">
-                  <input
-                    autoFocus
-                    value={clinicQuery}
-                    onChange={(e) => setClinicQuery(e.target.value)}
-                    placeholder="Klinik ara..."
-                    className="mb-1.5 w-full rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-violet-400"
-                  />
-                  <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto">
-                    {filteredClinics.map((c) => (
+              <summary className="flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-slate-100">
+                  <svg className="h-3.5 w-3.5 shrink-0 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+                  </svg>
+                  <span className="flex-1 text-left">
+                    {previewRole ? `Görünüm: ${activePreview?.label}` : "Rol Görünümü"}
+                  </span>
+                  <svg className="h-3 w-3 shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="6 9 12 15 18 9"/>
+                  </svg>
+                </summary>
+              <div className="mt-1 rounded-lg border border-white/10 bg-[#1e2d45] p-1.5">
+                  <p className="mb-1.5 px-1 text-xs font-bold uppercase text-slate-500">Rol seç</p>
+                  <div className="flex flex-col gap-0.5">
+                    {PREVIEW_ROLES.map(r => (
                       <button
-                        key={c.id}
-                        onClick={() => openSwitchTarget(c)}
-                        className="flex items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-400 transition hover:bg-white/10 hover:text-slate-200"
+                        key={r.key}
+                        onClick={() => handlePreviewRole(previewRole === r.key ? null : r.key)}
+                        className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition ${
+                          previewRole === r.key
+                            ? `${r.color} text-white`
+                            : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                        }`}
                       >
-                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.isActive ? "bg-emerald-500" : "bg-slate-500"}`} />
-                        <span className="truncate">{c.name}</span>
+                        <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${r.color}`} />
+                        {r.label}
+                        {previewRole === r.key && (
+                          <span className="ml-auto text-xs opacity-80">aktif</span>
+                        )}
                       </button>
                     ))}
-                    {filteredClinics.length === 0 && (
-                      <p className="px-2.5 py-2 text-xs text-slate-500">Klinik bulunamadı</p>
+                    {previewRole && (
+                      <button
+                        onClick={() => handlePreviewRole(null)}
+                        className="mt-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-500 hover:bg-white/10 hover:text-slate-300 transition"
+                      >
+                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                        Önizlemeyi kapat
+                      </button>
                     )}
                   </div>
                 </div>
-              )}
             </>
           ) : (
-            /* Collapsed: ikon + tooltip */
+            /* Collapsed: dev icon + tooltip */
             <div className="relative group">
               <button
-                onClick={() => setClinicPickerOpen((prev) => !prev)}
-                className="flex h-9 w-full items-center justify-center rounded-lg text-slate-600 transition hover:bg-white/10 hover:text-slate-400"
-                title="Kliniğe Gir"
+                onClick={() => setRolePickerOpen(prev => !prev)}
+                className={`flex h-9 w-full items-center justify-center rounded-lg transition ${
+                  previewRole ? "bg-violet-600/30 text-violet-400" : "text-slate-600 hover:bg-white/10 hover:text-slate-400"
+                }`}
+                title="Rol Görünümü"
               >
                 <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
                 </svg>
               </button>
-              {clinicPickerOpen && (
-                <div className="absolute left-full top-0 z-50 ml-2 min-w-[180px] rounded-lg border border-white/10 bg-[#1e2d45] p-1.5 shadow-xl">
-                  <input
-                    autoFocus
-                    value={clinicQuery}
-                    onChange={(e) => setClinicQuery(e.target.value)}
-                    placeholder="Klinik ara..."
-                    className="mb-1.5 w-full rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:border-violet-400"
-                  />
-                  <div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto">
-                    {filteredClinics.map((c) => (
-                      <button
-                        key={c.id}
-                        onClick={() => openSwitchTarget(c)}
-                        className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-slate-400 transition hover:bg-white/10 hover:text-slate-200"
-                      >
-                        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${c.isActive ? "bg-emerald-500" : "bg-slate-500"}`} />
-                        <span className="truncate">{c.name}</span>
-                      </button>
-                    ))}
-                    {filteredClinics.length === 0 && (
-                      <p className="px-2.5 py-2 text-xs text-slate-500">Klinik bulunamadı</p>
-                    )}
-                  </div>
+              {/* Collapsed tooltip ile mini picker */}
+              {rolePickerOpen && (
+                <div className="absolute left-full top-0 z-50 ml-2 min-w-[140px] rounded-lg border border-white/10 bg-[#1e2d45] p-1.5 shadow-xl">
+                  <p className="mb-1 px-1 text-xs font-bold uppercase text-slate-500">Rol seç</p>
+                  {PREVIEW_ROLES.map(r => (
+                    <button
+                      key={r.key}
+                      onClick={() => handlePreviewRole(previewRole === r.key ? null : r.key)}
+                      className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition ${
+                        previewRole === r.key
+                          ? `${r.color} text-white`
+                          : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                      }`}
+                    >
+                      <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${r.color}`} />
+                      {r.label}
+                    </button>
+                  ))}
+                  {previewRole && (
+                    <button
+                      onClick={() => handlePreviewRole(null)}
+                      className="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-slate-500 hover:bg-white/10 hover:text-slate-300 transition"
+                    >
+                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                      </svg>
+                      Kapat
+                    </button>
+                  )}
                 </div>
               )}
-              <div className="pointer-events-none absolute left-full top-1/2 z-40 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1 text-[12px] font-medium text-slate-100 opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-                Kliniğe Gir
+                <div className="pointer-events-none absolute left-full top-1/2 z-40 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1 text-[12px] font-medium text-slate-100 opacity-0 shadow-lg transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+                Rol Görünümü
               </div>
             </div>
           )}
-        </div>
+        </details>
       )}
 
       {/* Nav */}
@@ -647,46 +672,6 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
         </div>
       </div>
     </aside>
-
-    {switchTarget && (
-      <div
-        className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/50 px-4"
-        onPointerDown={(event) => {
-          if (event.target === event.currentTarget && !switching) setSwitchTarget(null);
-        }}
-      >
-        <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl">
-          <h3 className="text-sm font-black text-slate-900">Kliniğe Gir: {switchTarget.name}</h3>
-          <p className="mt-1 text-xs text-slate-500">Devam etmek için süperadmin şifrenizi tekrar girin.</p>
-          <input
-            type="password"
-            autoFocus
-            value={switchPassword}
-            onChange={(e) => setSwitchPassword(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") void confirmSwitchClinic(); }}
-            placeholder="Şifre"
-            className="mt-3 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-          />
-          {switchError && <p className="mt-2 text-xs font-semibold text-red-600">{switchError}</p>}
-          <div className="mt-4 flex justify-end gap-2">
-            <button
-              onClick={() => setSwitchTarget(null)}
-              disabled={switching}
-              className="rounded-lg border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
-            >
-              İptal
-            </button>
-            <button
-              onClick={() => void confirmSwitchClinic()}
-              disabled={switching || !switchPassword}
-              className="rounded-lg bg-primary px-3 py-2 text-sm font-bold text-white transition hover:bg-primary/90 disabled:opacity-50"
-            >
-              {switching ? "Giriş yapılıyor..." : "Gir"}
-            </button>
-          </div>
-        </div>
-      </div>
-    )}
   </div>
   );
 }

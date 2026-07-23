@@ -21,10 +21,6 @@ export type AuthPayload = {
   superadminModules?: string[];
   /** Superadmin gizli giriş — log kaydı atılmaz */
   ghost?: boolean;
-  /** ghost=true ise, gerçek süperadmin kullanıcısının id'si — ghost oturumdan
-   * başka bir kliniğe geçerken şifre doğrulamasının kime karşı yapılacağını
-   * bilmek için (bkz. /api/auth/superadmin/impersonate). */
-  impersonatorId?: string;
 };
 
 export function getVisibleRole(role: string) {
@@ -104,7 +100,7 @@ export async function getCurrentUser() {
  * JWT token'dan DB sorgusu yapmadan kullanıcı bilgilerini çöz.
  * requireAuth için yeterli: id, role, institutionId.
  */
-export function decodeTokenUser(): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean; impersonatorId?: string } | null {
+export function decodeTokenUser(): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean } | null {
   const token = readAuthToken();
   if (!token) return null;
   try {
@@ -114,7 +110,7 @@ export function decodeTokenUser(): { id: string; role: string; institutionId: st
   }
 }
 
-export function decodeTokenUserFromToken(token: string): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean; impersonatorId?: string } | null {
+export function decodeTokenUserFromToken(token: string): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean } | null {
   try {
     const payload = verifyToken(token);
     return {
@@ -124,7 +120,6 @@ export function decodeTokenUserFromToken(token: string): { id: string; role: str
       fullName: payload.fullName || "",
       superadminModules: payload.superadminModules,
       ghost: payload.ghost ?? false,
-      impersonatorId: payload.impersonatorId,
     };
   } catch {
     return null;
@@ -132,7 +127,7 @@ export function decodeTokenUserFromToken(token: string): { id: string; role: str
 }
 
 /** JWT'den DB sorgusu yapmadan kullanıcı bilgilerini al (layout için hızlı) */
-export function getCurrentUserFast(): { id: string; role: string; rawRole: string; institution: string; fullName: string; ghost: boolean; impersonatorId?: string } | null {
+export function getCurrentUserFast(): { id: string; role: string; rawRole: string; institution: string; fullName: string } | null {
   const token = readAuthToken();
   if (!token) return null;
   try {
@@ -143,8 +138,6 @@ export function getCurrentUserFast(): { id: string; role: string; rawRole: strin
       rawRole: payload.role,
       institution: payload.institutionId ?? "",
       fullName: payload.fullName || "",
-      ghost: payload.ghost ?? false,
-      impersonatorId: payload.impersonatorId,
     };
   } catch {
     return null;
