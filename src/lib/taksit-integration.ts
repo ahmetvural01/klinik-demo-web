@@ -27,6 +27,12 @@ export interface TaksitApplyResult {
  * @param method    - Ödeme yöntemi (PaymentMethod enum string)
  * @param posId     - POS cihaz ID'si (opsiyonel)
  * @param tarih     - Ödeme tarihi (default: şimdi)
+ * @param paymentId - Bağlanacak Payment kaydının ID'si
+ * @param doctorId  - Ödemenin ait olduğu doktor. Verilirse, otomatik
+ *   eşleştirme yalnızca BU doktorun taksit planlarını kapatır — aksi halde
+ *   hastanın başka bir doktora ait eski/gecikmiş taksiti, o an ödeme alınan
+ *   doktorla hiç ilgisi olmadan sessizce kapatılıp iki doktorun hakedişini
+ *   de bozardı (bkz. denetim raporu).
  */
 export async function applyTaksitIntegration(
   tx: Prisma.TransactionClient,
@@ -36,14 +42,16 @@ export async function applyTaksitIntegration(
   posId?: string | null,
   tarih?: Date,
   paymentId?: string | null,
+  doctorId?: string | null,
 ): Promise<TaksitApplyResult> {
   const result: TaksitApplyResult = { applied: 0, updatedCount: 0, completedPlanIds: [] };
   if (!patientId || amount <= 0) return result;
 
-  // En eski vadeli, gecikmiş / bekleyen taksitler
+  // En eski vadeli, gecikmiş / bekleyen taksitler — yalnızca ödemenin ait
+  // olduğu doktorun planları (doctorId verilmemişse eski davranış korunur).
   const pendingTaksitler = await tx.taksit.findMany({
     where: {
-      plan: { patientId },
+      plan: { patientId, ...(doctorId ? { doctorId } : {}) },
       status: { in: ["GECIKTI", "BEKLIYOR"] },
     },
     orderBy: [{ vadeDate: "asc" }, { siraNo: "asc" }],

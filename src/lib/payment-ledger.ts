@@ -48,7 +48,7 @@ export async function createIntegratedPayment({
   });
 
   const taksitInfo = patientId
-    ? await applyTaksitIntegration(tx, patientId, amount, method, posId || null, payment.createdAt, payment.id)
+    ? await applyTaksitIntegration(tx, patientId, amount, method, posId || null, payment.createdAt, payment.id, doctorId || null)
     : null;
 
   return { payment, taksitInfo };
@@ -96,6 +96,7 @@ export async function updateIntegratedPayment({
   const nextMethod = method ?? existing.method;
   const nextPosId = posId !== undefined ? posId : existing.posId;
   const nextCreatedAt = createdAt !== undefined ? (createdAt ? new Date(createdAt) : existing.createdAt) : existing.createdAt;
+  const nextDoctorId = doctorId !== undefined ? (doctorId || null) : existing.doctorId;
 
   const payment = await tx.payment.update({
     where: { id: paymentId },
@@ -110,7 +111,7 @@ export async function updateIntegratedPayment({
   });
 
   if (shouldReapply && existing.patientId) {
-    taksitInfo = await applyTaksitIntegration(tx, existing.patientId, nextAmount, nextMethod, nextPosId || null, nextCreatedAt, payment.id);
+    taksitInfo = await applyTaksitIntegration(tx, existing.patientId, nextAmount, nextMethod, nextPosId || null, nextCreatedAt, payment.id, nextDoctorId);
   }
 
   return { payment, taksitReverseInfo, taksitInfo };
