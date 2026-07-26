@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 
-export type PanelAlertCounts = { taksit: number; stok: number; lab: number };
+export type WaitingPatient = { id: string; patientName: string; doctorName: string; startAt: string };
+export type PanelAlertCounts = { taksit: number; stok: number; lab: number; waiting: number; waitingList: WaitingPatient[] };
 
-const EMPTY_ALERTS: PanelAlertCounts = { taksit: 0, stok: 0, lab: 0 };
+const EMPTY_ALERTS: PanelAlertCounts = { taksit: 0, stok: 0, lab: 0, waiting: 0, waitingList: [] };
 const CACHE_TTL_MS = 15_000;
 
 let memoryCache: Record<string, { at: number; data: PanelAlertCounts }> = {};
@@ -15,6 +16,10 @@ export function getAlertPermissions(role: string) {
     canSeeTaksit: ["YONETICI", "SUPERADMIN", "MUHASEBE", "BANKO"].includes(role),
     canSeeStok: ["YONETICI", "SUPERADMIN", "MUHASEBE"].includes(role),
     canSeeLab: ["YONETICI", "SUPERADMIN", "DOKTOR", "ASISTAN"].includes(role),
+    // Bir hasta "Geldi" olarak işaretlendiğinde, ön büro (Banko) dışındaki
+    // katlarda/odalarda çalışan doktor ve asistanların da bunu fark etmesi
+    // gerekir — bu yüzden klinik içi tüm operasyonel roller görebilir.
+    canSeeWaiting: ["YONETICI", "SUPERADMIN", "DOKTOR", "ASISTAN", "BANKO"].includes(role),
   };
 }
 
@@ -36,6 +41,8 @@ function readCached(role: string): PanelAlertCounts | null {
       taksit: Number(parsed.data?.taksit || 0),
       stok: Number(parsed.data?.stok || 0),
       lab: Number(parsed.data?.lab || 0),
+      waiting: Number(parsed.data?.waiting || 0),
+      waitingList: Array.isArray(parsed.data?.waitingList) ? parsed.data!.waitingList! : [],
     };
   } catch {
     return null;
@@ -56,20 +63,24 @@ async function loadAlerts(role: string): Promise<PanelAlertCounts> {
 
   if (inFlight[role]) return inFlight[role]!;
 
-  const { canSeeTaksit, canSeeStok, canSeeLab } = getAlertPermissions(role);
+  const { canSeeTaksit, canSeeStok, canSeeLab, canSeeWaiting } = getAlertPermissions(role);
+  const todayKey = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Istanbul" });
 
   inFlight[role] = Promise.allSettled([
     canSeeTaksit ? fetch("/api/taksit-plani?status=GECIKTI", { cache: "no-store" }) : Promise.resolve(null),
     canSeeStok ? fetch("/api/stock", { cache: "no-store" }) : Promise.resolve(null),
     canSeeLab ? fetch("/api/lab-orders?status=BEKLIYOR", { cache: "no-store" }) : Promise.resolve(null),
+    canSeeWaiting ? fetch(`/api/appointments?date=${todayKey}`, { cache: "no-store" }) : Promise.resolve(null),
   ])
-    .then(async ([tRes, sRes, lRes]) => {
+    .then(async ([tRes, sRes, lRes, aRes]) => {
       const tData =
         tRes.status === "fulfilled" && tRes.value?.ok ? await tRes.value.json() : null;
       const sData =
         sRes.status === "fulfilled" && sRes.value?.ok ? await sRes.value.json() : null;
       const lData =
         lRes.status === "fulfilled" && lRes.value?.ok ? await lRes.value.json() : null;
+      const aData =
+        aRes.status === "fulfilled" && aRes.value?.ok ? await aRes.value.json() : null;
 
       const taksit = Array.isArray(tData)
         ? tData.reduce(
@@ -82,7 +93,18 @@ async function loadAlerts(role: string): Promise<PanelAlertCounts> {
         ? sData.filter((item: any) => Number(item.quantity || 0) < Number(item.minQuantity || 0)).length
         : 0;
       const lab = Array.isArray(lData) ? lData.length : Number(lData?.total || 0);
-      const data = { taksit, stok, lab };
+      const waitingList: WaitingPatient[] = Array.isArray(aData)
+        ? aData
+            .filter((a: any) => a.status === "GELDI")
+            .sort((a: any, b: any) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime())
+            .map((a: any) => ({
+              id: a.id,
+              patientName: a.patient?.fullName || "Hasta",
+              doctorName: a.doctor?.fullName || "-",
+              startAt: a.startAt,
+            }))
+        : [];
+      const data = { taksit, stok, lab, waiting: waitingList.length, waitingList };
       writeCached(role, data);
       return data;
     })

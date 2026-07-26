@@ -5,9 +5,13 @@ export type BadgeTone = "critical" | "warning" | "success" | "info" | "neutral";
 // Durum renkleri (critical/warning/success) kasıtlı olarak tema tokenlerinden
 // muaf tutulur — bkz. tailwind.config.ts: "Durum renkleri kasıtlı olarak
 // dokunulmaz". "info" ise marka/bilgi etiketi olduğu için tema tokenli kalır.
+// critical/warning önceden -50 (neredeyse görünmez, beyaza yakın) tondaydı —
+// success/neutral zaten -100 kullanıyordu, bu yüzden ekran görüntülerinde
+// "Gecikiyor"/uyarı rozetleri arka plansız düz metin gibi görünüyordu (bkz.
+// kullanıcı geri bildirimi). Artık tüm tonlar aynı görünürlük seviyesinde.
 const SUBTLE_CLASS: Record<BadgeTone, string> = {
-  critical: "bg-red-50 text-red-700",
-  warning: "bg-amber-50 text-amber-700",
+  critical: "bg-red-100 text-red-700",
+  warning: "bg-amber-100 text-amber-700",
   success: "bg-emerald-100 text-emerald-700",
   info: "bg-primary/10 text-primary",
   neutral: "bg-slate-100 text-slate-600",

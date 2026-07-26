@@ -24,6 +24,8 @@ import { getAlertPermissions, usePanelAlerts } from "@/components/layout/use-pan
 import { cachedGet } from "@/lib/client-cache";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { showToastSafe } from "@/lib/toast-client";
+import { UserCheck } from "lucide-react";
 
 type Props = { user: { fullName: string; role: string; photoUrl?: string | null } };
 
@@ -119,9 +121,11 @@ function getTopbarConfig(pathname: string): TopbarPageConfig {
   }
 
   if (pathname.startsWith("/lab") || pathname.startsWith("/stok") || pathname.startsWith("/muhasebe")) {
+    // Lab, diğer tüm sayfalar gibi kendi başlığını topbar'da göstermeliydi —
+    // önceden yalnızca burada gizleniyordu, bu da sayfanın kimliksiz/başlıksız
+    // görünmesine yol açıyordu (bkz. kullanıcı ekran görüntüsü geri bildirimi).
     return {
       ...base,
-      showPageTitle: pathname.startsWith("/lab") ? false : base.showPageTitle,
       showSearch: pathname.startsWith("/lab") ? true : base.showSearch,
       compact: pathname.startsWith("/lab") ? true : base.compact,
       quickActions: [{ href: "/gorevler", label: "Görev Merkezi", icon: ClipboardList }],
@@ -166,10 +170,35 @@ export function Topbar({ user }: Props) {
   }, [getEffectiveRole]);
   const hidePhone = effectiveRole === "DOKTOR" || effectiveRole === "ASISTAN";
   const alerts = usePanelAlerts(effectiveRole);
+  const { canSeeTaksit, canSeeStok, canSeeLab, canSeeWaiting } = getAlertPermissions(effectiveRole);
+
+  useEffect(() => {
+    if (!canSeeWaiting) return;
+    const currentIds = new Set(alerts.waitingList.map((w) => w.id));
+    if (seenWaitingIdsRef.current === null) {
+      // İlk yükleme: mevcut bekleyenler için toast göstermeden yalnızca kaydet.
+      seenWaitingIdsRef.current = currentIds;
+      return;
+    }
+    const previous = seenWaitingIdsRef.current;
+    const newlyArrived = alerts.waitingList.filter((w) => !previous.has(w.id));
+    newlyArrived.forEach((w) => {
+      showToastSafe({
+        type: "info",
+        title: "Hasta geldi",
+        message: `${w.patientName} geldi — Dr. ${w.doctorName} bekleniyor`,
+        duration: 6000,
+      });
+    });
+    seenWaitingIdsRef.current = currentIds;
+  }, [alerts.waitingList, canSeeWaiting]);
+
   const [showAlerts, setShowAlerts] = useState(false);
+  const [showWaiting, setShowWaiting] = useState(false);
   const [messageUnread, setMessageUnread] = useState(0);
   const [currentUserId, setCurrentUserId] = useState("");
   const alertRef = useRef<HTMLDivElement>(null);
+  const waitingRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const today = new Date().toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" });
   const pageConfig = getTopbarConfig(pathname || "");
@@ -242,13 +271,21 @@ export function Topbar({ user }: Props) {
     document.title = messageUnread > 0 ? `(${messageUnread}) ${base}` : base;
   }, [messageUnread]);
 
-  const { canSeeTaksit, canSeeStok, canSeeLab } = getAlertPermissions(effectiveRole);
+  // Banko bir hastayı "Geldi" işaretlediğinde, diğer katlarda/odalarda
+  // çalışan doktor/asistanlar sayfayı yenilemeden fark edebilsin diye,
+  // bekleme listesine yeni giren her hasta için bir toast bildirimi
+  // gösteriyoruz (ilk yüklemede zaten bekleyenler için değil, sadece
+  // bu oturum açıkken sonradan eklenenler için).
+  const seenWaitingIdsRef = useRef<Set<string> | null>(null);
 
   // Dışarı tıklanınca kapat
   useEffect(() => {
     function handle(e: MouseEvent) {
       if (alertRef.current && !alertRef.current.contains(e.target as Node)) {
         setShowAlerts(false);
+      }
+      if (waitingRef.current && !waitingRef.current.contains(e.target as Node)) {
+        setShowWaiting(false);
       }
       if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
         setShowSearchDropdown(false);
@@ -429,6 +466,58 @@ export function Topbar({ user }: Props) {
             <Clock />
           </div>
         )}
+
+        {/* Bekleme odası — hasta "Geldi" işaretlendiğinde sayfa/kat farkı
+            olmadan tüm klinik personeli bunu hemen görebilsin diye,
+            uygulamanın her ekranında görünen topbar'a bağımsız bir gösterge
+            olarak eklendi (bkz. Randevu ekranındaki "Geldi" işaretlemesi). */}
+        {pageConfig.showAlerts && canSeeWaiting && <div className="relative" ref={waitingRef}>
+          <button
+            onClick={() => setShowWaiting(v => !v)}
+            className="relative flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100"
+            title="Bekleyen hastalar"
+          >
+            <UserCheck className="h-4 w-4" />
+            {alerts.waiting > 0 && (
+              <span className="absolute -right-0.5 -top-0.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-emerald-500 px-1 text-[10px] font-bold text-white">
+                {alerts.waiting > 9 ? "9+" : alerts.waiting}
+              </span>
+            )}
+          </button>
+          {showWaiting && (
+            <div className="absolute right-0 top-11 z-50 w-72 rounded-2xl border border-slate-200 bg-white shadow-xl">
+              <div className="border-b border-slate-100 px-4 py-3">
+                <p className="text-sm font-bold text-slate-800">Bekleme Odası</p>
+              </div>
+              {alerts.waitingList.length > 0 ? (
+                <div className="max-h-80 divide-y divide-slate-50 overflow-y-auto py-1">
+                  {alerts.waitingList.map((w) => (
+                    <a
+                      key={w.id}
+                      href="/randevu"
+                      onClick={() => setShowWaiting(false)}
+                      className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition"
+                    >
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50">
+                        <UserCheck className="h-4 w-4 text-emerald-600" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold text-slate-800">{w.patientName}</p>
+                        <p className="truncate text-xs text-slate-500">
+                          {new Date(w.startAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })} · Dr. {w.doctorName}
+                        </p>
+                      </div>
+                    </a>
+                  ))}
+                </div>
+              ) : (
+                <div className="px-4 py-6 text-center">
+                  <p className="text-sm text-slate-400">Şu an bekleyen hasta yok</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>}
 
         {/* Alarm zili */}
         {pageConfig.showAlerts && <div className="relative" ref={alertRef}>
