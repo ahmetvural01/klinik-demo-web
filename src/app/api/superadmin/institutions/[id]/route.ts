@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { getPlanDefaultLimits, type SubscriptionPlanId } from "@/lib/subscription-plans";
+
+const VALID_SUBSCRIPTION_PLANS = new Set(["TEMEL", "PROFESYONEL", "KURUMSAL"]);
+const VALID_BILLING_CYCLES = new Set(["AYLIK", "YILLIK"]);
+const VALID_SERVICE_MODES = new Set(["NORMAL", "LIMITED", "READ_ONLY", "SUSPENDED"]);
+const VALID_AD_INTENSITIES = new Set(["LOW", "MEDIUM", "HIGH"]);
 
 // GET /api/superadmin/institutions/[id] - Klinik detayını getir
 export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
@@ -104,12 +109,32 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
     return NextResponse.json({ message: "suspendedUntil ISO tarih formatında olmalı" }, { status: 400 });
   }
 
+  // Önceden bu enum alanları hiç doğrulanmadan Prisma'ya veriliyordu — geçersiz
+  // bir değer ham/stilsiz bir 500 hatasına yol açıyordu (bkz. denetim raporu).
+  if (body.subscriptionPlan && !VALID_SUBSCRIPTION_PLANS.has(body.subscriptionPlan)) {
+    return NextResponse.json({ message: "Geçersiz abonelik planı" }, { status: 400 });
+  }
+  if (body.billingCycle && !VALID_BILLING_CYCLES.has(body.billingCycle)) {
+    return NextResponse.json({ message: "Geçersiz fatura döngüsü" }, { status: 400 });
+  }
+  if (body.serviceMode && !VALID_SERVICE_MODES.has(body.serviceMode)) {
+    return NextResponse.json({ message: "Geçersiz servis modu" }, { status: 400 });
+  }
+  if (body.adIntensity !== undefined && !VALID_AD_INTENSITIES.has(body.adIntensity)) {
+    return NextResponse.json({ message: "Geçersiz reklam yoğunluğu" }, { status: 400 });
+  }
+
+  const existing = await prisma.institution.findUnique({ where: { id: params.id } });
+  if (!existing) return NextResponse.json({ message: "Bulunamadı" }, { status: 404 });
+
   // Plan değiştiyse ve limitler elle gönderilmediyse, yeni planın varsayılan
   // doktor/kullanıcı limitlerine düş — süperadmin özel bir sayı girdiyse
   // (body.maxActiveDoctors/maxActiveUsers gönderildiyse) o değer her zaman kazanır.
   const planLimits = body.subscriptionPlan ? getPlanDefaultLimits(body.subscriptionPlan as SubscriptionPlanId) : null;
 
-  const updated = await prisma.institution.update({
+  let updated;
+  try {
+    updated = await prisma.institution.update({
     where: { id: params.id },
     data: {
       ...(body.name && { name: body.name }),
@@ -135,7 +160,11 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
       ...(body.paymentGraceUntil !== undefined && { paymentGraceUntil }),
       ...(body.suspendedUntil !== undefined && { suspendedUntil }),
     },
-  });
+    });
+  } catch (error) {
+    console.error("[superadmin institutions PUT]", error);
+    return NextResponse.json({ message: "Klinik güncellenemedi" }, { status: 400 });
+  }
 
   // Ayarları da güncelle (klinik adı vs.)
   if (body.name) {
@@ -144,6 +173,22 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
       data: { institutionName: body.name },
     });
   }
+
+  // Askıya alma, plan değişikliği, servis modu gibi yüksek etkili işlemler
+  // hiç denetim kaydına yazılmıyordu (bkz. denetim raporu) — artık hangi
+  // alanların değiştiği açıkça kaydediliyor.
+  const changedFields: string[] = [];
+  if (body.isActive !== undefined && body.isActive !== existing.isActive) changedFields.push(`isActive: ${existing.isActive} → ${updated.isActive}`);
+  if (body.subscriptionPlan && body.subscriptionPlan !== existing.subscriptionPlan) changedFields.push(`plan: ${existing.subscriptionPlan} → ${updated.subscriptionPlan}`);
+  if (body.serviceMode && body.serviceMode !== existing.serviceMode) changedFields.push(`serviceMode: ${existing.serviceMode} → ${updated.serviceMode}`);
+  if (body.suspendedUntil !== undefined && String(existing.suspendedUntil) !== String(updated.suspendedUntil)) changedFields.push(`suspendedUntil: ${existing.suspendedUntil?.toISOString() || "-"} → ${updated.suspendedUntil?.toISOString() || "-"}`);
+  if (body.maxActiveUsers !== undefined && existing.maxActiveUsers !== updated.maxActiveUsers) changedFields.push(`maxActiveUsers: ${existing.maxActiveUsers ?? "-"} → ${updated.maxActiveUsers ?? "-"}`);
+  if (body.maxActiveDoctors !== undefined && existing.maxActiveDoctors !== updated.maxActiveDoctors) changedFields.push(`maxActiveDoctors: ${existing.maxActiveDoctors ?? "-"} → ${updated.maxActiveDoctors ?? "-"}`);
+  await writeAudit(
+    auth.user.id,
+    "SUPERADMIN_INSTITUTION_UPDATE",
+    `${updated.name}: ${changedFields.length > 0 ? changedFields.join(", ") : "alan değişikliği yok"}`,
+  );
 
   return NextResponse.json(updated);
 }
@@ -159,6 +204,8 @@ export async function DELETE(_req: NextRequest, props: { params: Promise<{ id: s
     where: { id: params.id },
     data: { isActive: false },
   });
+
+  await writeAudit(auth.user.id, "SUPERADMIN_INSTITUTION_DEACTIVATE", `${updated.name} pasife alındı.`);
 
   return NextResponse.json(updated);
 }

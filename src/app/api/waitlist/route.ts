@@ -47,6 +47,22 @@ export async function POST(req: NextRequest) {
     });
     if (!patient) return NextResponse.json({ error: "Hasta bulunamadı" }, { status: 404 });
 
+    // Çift form gönderimi/tekrar tıklama, aynı hasta için aynı doktora
+    // mükerrer bekleme kaydı oluşturabiliyordu (bkz. denetim raporu) — aynı
+    // hasta+doktor için zaten açık (BEKLIYOR/ARANDI) bir kayıt varsa reddet.
+    const existingActive = await prisma.waitlist.findFirst({
+      where: {
+        patientId,
+        doctorId: doctorId || null,
+        status: { in: ["BEKLIYOR", "ARANDI"] },
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
+      select: { id: true },
+    });
+    if (existingActive) {
+      return NextResponse.json({ error: "Bu hasta için zaten açık bir bekleme listesi kaydı var." }, { status: 409 });
+    }
+
     const entry = await prisma.waitlist.create({
       data: {
         institutionId: auth.user.institutionId || null,

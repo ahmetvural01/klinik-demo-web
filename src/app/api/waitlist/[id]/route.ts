@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 
+const VALID_WAITLIST_STATUSES = new Set(["BEKLIYOR", "ARANDI", "YERLESTIRILDI", "IPTAL"]);
+
 export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const auth = await requireAuth("appointments:write");
@@ -9,6 +11,11 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
 
   try {
     const body = await req.json();
+    // Önceden body.status doğrudan Prisma'ya veriliyordu — geçersiz bir
+    // değer ham DB hatasına yol açıyordu (bkz. denetim raporu).
+    if (body.status !== undefined && !VALID_WAITLIST_STATUSES.has(body.status)) {
+      return NextResponse.json({ error: "Geçersiz bekleme listesi durumu" }, { status: 400 });
+    }
     const existing = await prisma.waitlist.findFirst({
       where: {
         id: params.id,
