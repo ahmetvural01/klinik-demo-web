@@ -280,7 +280,7 @@ function HastaEkleContent() {
 
   return (
     <section className="space-y-4">
-      <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-start gap-3">
             <Link href="/hasta" className="mt-0.5 rounded-lg border border-slate-200 p-2 text-slate-500 transition hover:bg-slate-50" aria-label="Hasta listesine dön">

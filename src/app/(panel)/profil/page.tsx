@@ -209,7 +209,7 @@ export default function ProfilPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div>
+      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <h1 className="text-lg font-black text-slate-900">Profilim</h1>
         <p className="mt-0.5 text-sm text-slate-500">Hesap ayarları ve güvenlik</p>
       </div>

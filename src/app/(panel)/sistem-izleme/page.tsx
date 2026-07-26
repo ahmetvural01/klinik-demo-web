@@ -69,7 +69,7 @@ export default function SistemIzlemePage() {
 
   return (
     <section className="space-y-4">
-      <div>
+      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <h1 className="text-lg font-black text-slate-900">Sistem İzleme</h1>
         <p className="text-sm text-slate-500">Canlı metrikler, alarm durumları ve operasyonel sağlık görünümü.</p>
       </div>

@@ -234,7 +234,7 @@ function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
 
   return (
     <section className="space-y-4">
-      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-lg font-black text-slate-900">SMS Kayıtları</h1>
@@ -368,7 +368,7 @@ function SmsSettingsPanel() {
 
   return (
     <section className="space-y-4" aria-busy={loading}>
-      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-lg font-black text-slate-900">SMS Ayarları</h1>

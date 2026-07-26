@@ -608,7 +608,7 @@ export default function AnasayfaPage() {
     <div className="space-y-5">
 
       {/* ── HEADER ────────────────────────────── */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div>
           <h1 className="text-lg font-black text-slate-900">Anasayfa</h1>
           <p className="mt-0.5 text-sm text-slate-500">{dateLabel}</p>

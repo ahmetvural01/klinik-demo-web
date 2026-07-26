@@ -171,7 +171,7 @@ export default function LogPage() {
 
   return (
     <section className="space-y-5">
-      <div>
+      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <h1 className="text-lg font-black text-slate-900">İşlem Kayıtları</h1>
         <p className="mt-0.5 text-sm text-slate-500">Kurum içindeki kritik işlemler, değişiklik detayları ve erişim kayıtları.</p>
       </div>

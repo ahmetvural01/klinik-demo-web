@@ -54,7 +54,7 @@ export default function FinansPage() {
   return (
     <section className="space-y-5">
       {/* Header + Filtreler */}
-      <div className="flex flex-wrap items-end gap-3 rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
+      <div className="flex flex-wrap items-end gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div className="flex-1">
           <h1 className="text-lg font-black text-slate-900">Doktor Finansal Özeti</h1>
           <p className="mt-0.5 text-xs text-slate-500">Doktor bazlı muayene cirosu, tahsilat ve hakediş takibi</p>

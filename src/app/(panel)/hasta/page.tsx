@@ -318,7 +318,7 @@ function HastaContent() {
 
   return (
     <section className="space-y-4">
-      <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 shadow-sm">
+      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-lg font-black text-slate-900">Hastalar</h1>
