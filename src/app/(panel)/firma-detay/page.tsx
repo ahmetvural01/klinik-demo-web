@@ -329,7 +329,7 @@ function FirmaDetayContent() {
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-black text-slate-900">{firma.name}</h1>
+              <h1 className="text-lg font-black text-slate-900">{firma.name}</h1>
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{FIRMA_KATEGORILERI[firma.kategori] || firma.kategori}</span>
               {firma.isActive ? (
                 <Badge tone="success">Aktif</Badge>

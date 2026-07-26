@@ -610,7 +610,7 @@ export default function AnasayfaPage() {
       {/* ── HEADER ────────────────────────────── */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-black text-slate-900">Anasayfa</h1>
+          <h1 className="text-lg font-black text-slate-900">Anasayfa</h1>
           <p className="mt-0.5 text-sm text-slate-500">{dateLabel}</p>
           <p className="mt-1 text-xs text-slate-400">Rol: {roleLabel} · Son senkron: {lastSyncLabel}</p>
         </div>

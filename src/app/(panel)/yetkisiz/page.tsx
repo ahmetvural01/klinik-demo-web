@@ -10,7 +10,7 @@ export default function YetkisizPage() {
           <circle cx="12" cy="12" r="9" strokeLinecap="round" />
         </svg>
       </div>
-      <h1 className="text-2xl font-black text-slate-900">Erişim Yetkiniz Yok</h1>
+      <h1 className="text-lg font-black text-slate-900">Erişim Yetkiniz Yok</h1>
       <p className="text-sm text-slate-500 max-w-xs">
         Bu sayfaya erişmek için gerekli yetkiye sahip değilsiniz. Lütfen yöneticinizle iletişime geçin.
       </p>
