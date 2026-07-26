@@ -58,6 +58,12 @@ export async function POST(request: NextRequest) {
   if (body.role === "SUPERADMIN") {
     return NextResponse.json({ message: "Bu rol oluşturulamaz." }, { status: 403 });
   }
+
+  // bkz. src/app/api/staff/[id]/route.ts PUT — YONETICI (tüm yetkiler) rolü
+  // sadece zaten YONETICI/SUPERADMIN olan bir aktör tarafından atanabilir.
+  if (body.role === "YONETICI" && auth.user.role !== "SUPERADMIN" && auth.user.role !== "YONETICI") {
+    return NextResponse.json({ message: "Bu rol için yetkiniz yok" }, { status: 403 });
+  }
   const workStart = typeof body.workStart === "string" ? body.workStart : "08:30";
   const workEnd = typeof body.workEnd === "string" ? body.workEnd : "18:00";
   const workHoursError = validateWorkHoursRange(workStart, workEnd, "Personel çalışma saatleri");

@@ -79,6 +79,15 @@ export async function PUT(request: NextRequest, props: Params) {
   if (body.role === "SUPERADMIN") {
     return NextResponse.json({ message: "Bu rol atanamaz" }, { status: 403 });
   }
+
+  // İzin haritası kurum yöneticisi tarafından sonradan değiştirilebildiği için
+  // (bkz. denetim raporu — ASISTAN/BANKO varsayılan olarak staff:write/delete
+  // alabiliyordu), tek başına permission kontrolüne güvenmek yetersiz: rolünü
+  // YONETICI'ye (tüm yetkiler) yükseltme işlemi burada ayrıca sabit olarak
+  // sadece mevcut rolü zaten YONETICI/SUPERADMIN olanlara açık tutuluyor.
+  if (body.role === "YONETICI" && existing.role !== "YONETICI" && auth.user.role !== "SUPERADMIN" && auth.user.role !== "YONETICI") {
+    return NextResponse.json({ message: "Bu rol için yetkiniz yok" }, { status: 403 });
+  }
   const workStart = body.workStart !== undefined ? body.workStart : (existing.profile?.workStart || "08:30");
   const workEnd = body.workEnd !== undefined ? body.workEnd : (existing.profile?.workEnd || "18:00");
   const workHoursError = validateWorkHoursRange(workStart, workEnd, "Personel çalışma saatleri");

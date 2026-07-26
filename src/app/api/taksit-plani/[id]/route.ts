@@ -94,6 +94,22 @@ export async function DELETE(_: NextRequest, props: { params: Promise<{ id: stri
     });
     if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
+    // Plana ait gerçek tahsilat (TaksitOdeme) varsa, planı silmek Taksit/
+    // TaksitOdeme kayıtlarını cascade ile yok eder ama alttaki Payment kaydı
+    // (ve tahsil edilmiş para) kasada kalır — hangi taksitlerin ödendiğine
+    // dair tüm iz ve yaşlandırma geçmişi sessizce kaybolur (bkz. denetim
+    // raporu). Ödemesi olan bir plan silinemez; önce ilgili ödemeler kendi
+    // ekranından (payments:refund yetkisiyle) geri alınmalı.
+    const paidCount = await (prisma as any).taksitOdeme.count({
+      where: { taksit: { planId: params.id } },
+    });
+    if (paidCount > 0) {
+      return NextResponse.json(
+        { error: "Bu plana ait tahsilat kayıtları var — plan silinemez. Önce ilgili ödemeleri geri alın." },
+        { status: 400 },
+      );
+    }
+
     // Hatırlatıcıları sil, sonra plan (Taksit + TaksitOdeme cascade ile silinir)
     await prisma.$transaction(async (tx) => {
       await (tx as any).reminder.deleteMany({ where: { planId: params.id } });

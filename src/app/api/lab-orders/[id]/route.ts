@@ -169,6 +169,18 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     return NextResponse.json(toPublicOrder(reopened));
   }
 
+  // İptal edilmiş bir siparişi bu genel PATCH ile başka bir duruma taşımak,
+  // firma cari hesabına hiç geri yansımadan (yalnızca RPT_REOPEN akışı eski
+  // faturaları silip entegrasyonu doğru şekilde sıfırdan kuruyor) siparişi
+  // "faturası var, borcu yok" bir hayalet duruma düşürüyordu (bkz. denetim
+  // raporu). İptalden çıkış artık yalnızca RPT_REOPEN akışı üzerinden mümkün.
+  if (existing.status === "IPTAL" && status !== undefined && status !== "IPTAL") {
+    return NextResponse.json(
+      { error: "İptal edilmiş bir sipariş yalnızca \"RPT ile yeniden aç\" işlemiyle tekrar aktif edilebilir." },
+      { status: 400 },
+    );
+  }
+
   const data: Record<string, unknown> = {};
   if (status    !== undefined) data.status    = status;
 

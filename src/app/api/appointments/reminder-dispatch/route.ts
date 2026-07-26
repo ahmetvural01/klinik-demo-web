@@ -75,6 +75,20 @@ export const POST = withApiTiming("reminder-dispatch", async function POST(reque
   const appointmentsById = new Map(appointmentsList.map((a) => [a.id, a]));
 
   for (const reminder of dueReminders) {
+    // Bu endpoint eşzamanlı iki kez tetiklenirse (çift cron, tekrar deneme,
+    // ikinci bir instance) her ikisi de aynı "AKTIF" hatırlatmayı üstteki
+    // findMany'de görebilir. Gönderime geçmeden önce satırı burada tek bir
+    // atomik updateMany ile "GONDERILIYOR"a çekiyoruz; count 0 dönerse başka
+    // bir çağrı zaten bu kaydı işliyor demektir — aynı hastaya çift SMS
+    // gitmesi ve SMS bakiyesinin boşuna tüketilmesi böylece engellenir.
+    const claim = await prisma.reminder.updateMany({
+      where: { id: reminder.id, status: "AKTIF" },
+      data: { status: "GONDERILIYOR" },
+    });
+    if (claim.count === 0) {
+      continue;
+    }
+
     const appointmentId = parseAppointmentId(reminder.note);
     if (!appointmentId) {
       skipped += 1;
@@ -102,7 +116,9 @@ export const POST = withApiTiming("reminder-dispatch", async function POST(reque
     });
 
     if (reservation.count === 0) {
-      // Bakiye bitince kalanları ileride tekrar denemek için AKTIF bırak.
+      // Bakiye bitince, yukarıda "GONDERILIYOR"a çekilen bu kayıt dahil
+      // kalanları ileride tekrar denemek için AKTIF'e geri döndür.
+      await prisma.reminder.update({ where: { id: reminder.id }, data: { status: "AKTIF" } });
       break;
     }
 

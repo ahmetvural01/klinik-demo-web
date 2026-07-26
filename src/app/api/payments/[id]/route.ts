@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { PaymentMethod } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { can } from "@/lib/rbac";
 import { deleteIntegratedPayment, toPublicPayment, updateIntegratedPayment } from "@/lib/payment-ledger";
 import { effectiveDoctorWhere, isDoctorPeriodSettled } from "@/lib/hakedis";
 
@@ -53,17 +54,32 @@ export async function DELETE(_: NextRequest, props: Params) {
   const auth = await requireAuth("payments:write");
   if (auth.error) return auth.error;
 
+  // "payments:refund" ayrı, yüksek riskli bir izin olarak UI'da gösteriliyor
+  // ama daha önce hiçbir yerde kontrol edilmiyordu — bu yetkiyi kapatan bir
+  // yönetici, silme/iade işleminin hâlâ payments:write ile mümkün kaldığını
+  // fark etmezdi (bkz. denetim raporu).
+  if (!auth.user.ghost && auth.user.role !== "SUPERADMIN" && !(await can(auth.user.role as import("@prisma/client").Role, "payments:refund"))) {
+    return NextResponse.json({ message: "Bu işlem için yetkiniz yok (iade/silme yetkisi gerekli)." }, { status: 403 });
+  }
+
   const existing = await findAccessiblePayment(params.id, auth);
   if (!existing) return NextResponse.json({ message: "Ödeme bulunamadı" }, { status: 404 });
 
-  if (existing.doctorId && auth.user.role !== "SUPERADMIN") {
+  let periodLockOverridden = false;
+  if (existing.doctorId) {
     const d = new Date(existing.createdAt);
     const settled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId, d.getUTCFullYear(), d.getUTCMonth() + 1);
     if (settled) {
-      return NextResponse.json(
-        { message: "Bu ödemenin ait olduğu dönem için doktora zaten hakediş ödemesi yapılmış — bu kayıt silinemez." },
-        { status: 400 },
-      );
+      if (auth.user.role !== "SUPERADMIN") {
+        return NextResponse.json(
+          { message: "Bu ödemenin ait olduğu dönem için doktora zaten hakediş ödemesi yapılmış — bu kayıt silinemez." },
+          { status: 400 },
+        );
+      }
+      // SUPERADMIN dönem kilidini atlayabiliyor (destek/düzeltme amaçlı) ama
+      // bu artık sessizce geçmiyor — denetim kaydına açıkça işaretleniyor
+      // (bkz. denetim raporu).
+      periodLockOverridden = true;
     }
   }
 
@@ -80,6 +96,7 @@ export async function DELETE(_: NextRequest, props: Params) {
       `Yöntem: ${METHOD_LABELS[existing.method] || existing.method}`,
       existing.description ? `Açıklama: ${existing.description}` : "",
       taksitReverseInfo.updatedCount ? `Taksit entegrasyonu: ${taksitReverseInfo.updatedCount} taksit geri güncellendi` : "Taksit entegrasyonu: değişiklik yok",
+      periodLockOverridden ? "UYARI: Dönem kilidi SUPERADMIN tarafından atlandı." : "",
     ].filter(Boolean).join("\n");
     await writeAudit(auth.user.id, "PAYMENT_DELETE", detail);
 
@@ -114,16 +131,21 @@ export async function PATCH(request: NextRequest, props: Params) {
   // Bu ödeme bir doktorun cirosuna/ödemesine sayılıyorsa ve o dönem için
   // zaten hakediş ödemesi yapılmışsa, tutar/tarih/doktor değişikliği o
   // dönemin hakedişini geriye dönük tutarsız hale getirir.
-  if (existing.doctorId && auth.user.role !== "SUPERADMIN") {
+  let periodLockOverridden = false;
+  if (existing.doctorId) {
     const touchesSettledFields = body.amount !== undefined || body.createdAt !== undefined || body.doctorId !== undefined;
     if (touchesSettledFields) {
       const d = new Date(existing.createdAt);
       const settled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId, d.getUTCFullYear(), d.getUTCMonth() + 1);
       if (settled) {
-        return NextResponse.json(
-          { message: "Bu ödemenin ait olduğu dönem için doktora zaten hakediş ödemesi yapılmış — tutar, tarih veya doktor değiştirilemez." },
-          { status: 400 },
-        );
+        if (auth.user.role !== "SUPERADMIN") {
+          return NextResponse.json(
+            { message: "Bu ödemenin ait olduğu dönem için doktora zaten hakediş ödemesi yapılmış — tutar, tarih veya doktor değiştirilemez." },
+            { status: 400 },
+          );
+        }
+        // bkz. yukarıdaki DELETE — SUPERADMIN geçebilir ama artık denetime yazılır.
+        periodLockOverridden = true;
       }
     }
   }
@@ -234,7 +256,8 @@ export async function PATCH(request: NextRequest, props: Params) {
     `Değişiklik öncesi: ${beforeParts.length > 0 ? beforeParts.join(" | ") : "Alan değişikliği yok"}`,
     `Değişiklik sonrası: ${afterParts.length > 0 ? afterParts.join(" | ") : "Alan değişikliği yok"}`,
     integrationText,
-  ].join("\n");
+    periodLockOverridden ? "UYARI: Dönem kilidi SUPERADMIN tarafından atlandı." : "",
+  ].filter(Boolean).join("\n");
 
   await writeAudit(auth.user.id, "PAYMENT_UPDATE", detail);
   return NextResponse.json({ ...toPublicPayment(payment), taksitReverseInfo, taksitInfo });
