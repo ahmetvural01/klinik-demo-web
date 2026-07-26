@@ -1098,6 +1098,7 @@ model ExpenseCategory {
 model Expense {
   id              String           @id @default(cuid())
   institutionId   String?
+  requestKey      String?          @unique
   tarih           DateTime
   categoryId      String?
   category        String

@@ -96,6 +96,16 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ message: "Randevu süresi 5 ile 240 dakika arasında olmalıdır." }, { status: 400 });
     }
 
+    // Yalnızca istemci tarafında (sms/page.tsx) sınırlanıyordu — doğrudan API
+    // çağrısıyla negatif/aşırı büyük bir değer sessizce kaydedilip hatırlatma
+    // penceresini anlamsız hale getirebilirdi (bkz. denetim raporu).
+    if (data.paymentReminderWindowDays !== undefined) {
+      const windowDays = Number(data.paymentReminderWindowDays);
+      if (!Number.isInteger(windowDays) || windowDays < 1 || windowDays > 30) {
+        return NextResponse.json({ message: "Ödeme hatırlatma penceresi 1 ile 30 gün arasında olmalıdır." }, { status: 400 });
+      }
+    }
+
     let parsedDailySchedules: unknown = [];
     const dailySchedulesRaw = data.dailySchedules ?? current?.dailySchedules ?? "[]";
     try {

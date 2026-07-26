@@ -1,7 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { validateWorkHoursRange } from "@/lib/working-hours-core";
+import { validateWorkHoursRange, parseTimeToMinutes } from "@/lib/working-hours-core";
+import { turkeyTimeKey } from "@/lib/tz";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { checkStaffLimit } from "@/lib/staff-limits";
 
@@ -124,6 +125,34 @@ export async function PUT(request: NextRequest, props: Params) {
         message: `Bu personelin ${parts.join(", ")} var. Pasife almadan önce bunları başka bir doktora devredin ya da kapatın.`,
         requiresForce: true,
         counts: { futureAppointments, openTreatmentPlans, openFollowUps },
+      }, { status: 409 });
+    }
+  }
+
+  // Çalışma saatleri daraltılırken (mesai 08:30–18:00'den 08:30–13:00'e gibi),
+  // yeni aralığın dışında kalan gelecekteki randevular kimse fark etmeden
+  // takvimde asılı kalıyordu — hekim artık o saatte çalışmıyor gibi
+  // görünmesine rağmen randevu iptal/uyarı olmadan duruyordu (bkz. denetim
+  // raporu). `force:true` ile onaylanırsa değişiklik yine de uygulanır.
+  const oldWorkStart = existing.profile?.workStart || "08:30";
+  const oldWorkEnd = existing.profile?.workEnd || "18:00";
+  const hoursNarrowed = (workStart > oldWorkStart || workEnd < oldWorkEnd) && (workStart !== oldWorkStart || workEnd !== oldWorkEnd);
+  if (hoursNarrowed && !body.force) {
+    const newStartMin = parseTimeToMinutes(workStart);
+    const newEndMin = parseTimeToMinutes(workEnd);
+    const futureAppts = await prisma.appointment.findMany({
+      where: { doctorId: existing.id, startAt: { gte: new Date() }, status: { notIn: ["IPTAL", "GELMEDI"] } },
+      select: { startAt: true },
+    });
+    const outsideCount = futureAppts.filter((a) => {
+      const mins = parseTimeToMinutes(turkeyTimeKey(a.startAt));
+      return newStartMin === null || newEndMin === null || mins === null || mins < newStartMin || mins >= newEndMin;
+    }).length;
+    if (outsideCount > 0) {
+      return NextResponse.json({
+        message: `Yeni çalışma saatleri dışında kalan ${outsideCount} gelecek randevu var. Devam etmek için onaylayın.`,
+        requiresForce: true,
+        counts: { outsideWorkingHoursAppointments: outsideCount },
       }, { status: 409 });
     }
   }

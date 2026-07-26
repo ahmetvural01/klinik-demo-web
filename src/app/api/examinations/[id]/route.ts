@@ -82,6 +82,29 @@ export async function PUT(request: NextRequest, props: Params) {
     return NextResponse.json({ message: "Geçersiz muayene verisi", errors: parsed.error.errors }, { status: 400 });
   }
 
+  // POST'ta yeni patientId/doctorId kurum kapsamına göre doğrulanıyordu, ama
+  // burada (PUT) hiç doğrulanmıyordu — body.patientId/doctorId değiştirilerek
+  // kaydın başka bir kurumun hastasına/doktoruna bağlanması mümkündü (bkz.
+  // denetim raporu — kiracılar arası sessiz veri sızıntısı/bozulması).
+  if (auth.user.role !== "SUPERADMIN") {
+    const patientChanged = parsed.data.patientId !== existing.patientId;
+    const doctorChanged = parsed.data.doctorId !== existing.doctorId;
+    if (patientChanged) {
+      const patient = await prisma.patient.findFirst({
+        where: { id: parsed.data.patientId, institutionId: auth.user.institutionId },
+        select: { id: true },
+      });
+      if (!patient) return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });
+    }
+    if (doctorChanged) {
+      const doctor = await prisma.user.findFirst({
+        where: { id: parsed.data.doctorId, institutionId: auth.user.institutionId, isActive: true },
+        select: { id: true },
+      });
+      if (!doctor) return NextResponse.json({ message: "Doktor kurum kapsamı dışında" }, { status: 403 });
+    }
+  }
+
   const examination = await prisma.examination.update({
     where: { id: params.id },
     data: {

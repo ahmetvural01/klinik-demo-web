@@ -48,9 +48,30 @@ export const GET = withApiTiming("gider", async function GET(req: NextRequest) {
 });
 
 export async function POST(req: NextRequest) {
+  // Payment/Purchase/FirmaIslem'in tersine gider kaydı hiç idempotency
+  // koruması olmadan oluşturuluyordu — çift tıklama veya ağ tekrar denemesi
+  // aynı gideri iki kez kaydedip toplamları ve doktor hakedişini şişirebilirdi
+  // (bkz. denetim raporu). Aynı desen burada da uygulanıyor.
+  const requestKey = req.headers.get("idempotency-key")?.trim() || null;
+  let institutionId: string | null | undefined;
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
+    institutionId = auth.user.institutionId;
+
+    if (requestKey && (requestKey.length < 8 || requestKey.length > 100)) {
+      return NextResponse.json({ error: "İşlem anahtarı geçersiz" }, { status: 400 });
+    }
+
+    if (requestKey) {
+      const existingExpense = await (prisma as any).expense.findUnique({ where: { requestKey } });
+      if (existingExpense) {
+        if (institutionId && existingExpense.institutionId !== institutionId) {
+          return NextResponse.json({ error: "İşlem anahtarı başka bir kayıtta kullanılmış" }, { status: 409 });
+        }
+        return NextResponse.json({ ...existingExpense, duplicatePrevented: true }, { status: 200 });
+      }
+    }
 
     const body = await req.json();
     let { categoryId, category } = body;
@@ -122,6 +143,7 @@ export async function POST(req: NextRequest) {
 
     const expense = await (prisma as any).expense.create({
       data: {
+        requestKey,
         tarih: new Date(tarih),
         institutionId: auth.user.institutionId,
         categoryId: categoryId || null,
@@ -140,6 +162,18 @@ export async function POST(req: NextRequest) {
     await writeAudit(auth.user.id, "GIDER_CREATE", `${tutar} TL gider eklendi (${category})`);
     return NextResponse.json(expense, { status: 201 });
   } catch (e) {
+    if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2002") {
+      if (requestKey) {
+        const existingExpense = await (prisma as any).expense.findUnique({ where: { requestKey } });
+        if (existingExpense && (!institutionId || existingExpense.institutionId === institutionId)) {
+          return NextResponse.json({ ...existingExpense, duplicatePrevented: true }, { status: 200 });
+        }
+      }
+      return NextResponse.json(
+        { error: "Bu gider zaten kaydedildi. Liste güncelleniyor.", duplicatePrevented: true },
+        { status: 409 },
+      );
+    }
     console.error(e);
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
   }

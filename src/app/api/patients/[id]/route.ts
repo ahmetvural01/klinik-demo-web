@@ -1,4 +1,5 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { patientSchema } from "@/lib/validators";
 import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
@@ -297,13 +298,24 @@ export async function PUT(request: NextRequest, props: Params) {
     return NextResponse.json({ message: "Geçersiz hasta verisi", errors: parsed.error.errors }, { status: 400 });
   }
 
-  const patient = await prisma.patient.update({
-    where: { id: params.id },
-    data: {
-      ...parsed.data,
-      birthDate: parsed.data.birthDate ? new Date(parsed.data.birthDate) : null
+  // POST'ta zaten yakalanan P2002 (mükerrer TC No) burada hiç yakalanmıyordu —
+  // bir kaydı düzenlerken TC no yanlışlıkla başka bir hastayla çakışırsa ham
+  // Prisma hatası kullanıcıya sızıyordu (bkz. denetim raporu).
+  let patient;
+  try {
+    patient = await prisma.patient.update({
+      where: { id: params.id },
+      data: {
+        ...parsed.data,
+        birthDate: parsed.data.birthDate ? new Date(parsed.data.birthDate) : null
+      }
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return NextResponse.json({ message: "Bu TC kimlik numarasıyla kayıtlı bir hasta zaten var." }, { status: 409 });
     }
-  });
+    throw error;
+  }
 
   const auditDetail = buildPatientUpdateAuditDetail(
     auth.user.fullName || "Personel",

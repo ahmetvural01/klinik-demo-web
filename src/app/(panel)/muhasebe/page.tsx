@@ -366,6 +366,7 @@ export default function MuhasebePage() {
   const [doctorSearch, setDoctorSearch] = useState("");
   const [tahSaving,    setTahSaving]    = useState(false);
   const tahsilatRequestKeyRef = useRef("");
+  const giderRequestKeyRef = useRef("");
   const [ledgerErrors, setLedgerErrors] = useState<{ payments?: string; expenses?: string }>({});
 
   const loadPayments = useCallback(async () => {
@@ -531,8 +532,14 @@ export default function MuhasebePage() {
       ? giderKats.find(c => c.id === realCatId)?.name || giderForm.category
       : giderForm.category.trim();
     const [payoutYear, payoutMonth] = giderForm.donem.split("-");
+    const giderRequestKey =
+      giderRequestKeyRef.current ||
+      (typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `gider-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    giderRequestKeyRef.current = giderRequestKey;
     const r = await fetch("/api/gider", {
-      method: "POST", headers: { "Content-Type": "application/json" },
+      method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": giderRequestKey },
       body: JSON.stringify({
         tarih: giderForm.tarih, categoryId: realCatId,
         category: cat, description: giderForm.description || null,
@@ -548,6 +555,7 @@ export default function MuhasebePage() {
     }).catch(() => null);
     setGiderSaving(false);
     if (r?.ok) {
+      giderRequestKeyRef.current = "";
       showToast("success", isDoctorPayoutCategory ? "Hakediş ödemesi kaydedildi" : "Gider kaydedildi");
       setTransactionOpen(false);
       const payoutDoctorId = giderForm.doctorId;

@@ -78,6 +78,25 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     );
   }
 
+  // Adımı olmayan (veya bu istekle tümü silinen) bir plan "Tamamlandı"
+  // işaretlenebiliyordu — 0 TL/0 işlemli bir plan tamamlanmış tedavi
+  // raporlarında/istatistiklerinde görünüp sessizce yanıltıcı veri üretiyordu
+  // (bkz. denetim raporu).
+  if (status === "TAMAMLANDI" && existing.status !== "TAMAMLANDI") {
+    const remainingStepCount = await (prisma as any).treatmentStep.count({
+      where: {
+        planId: params.id,
+        ...(stepDeletes && Array.isArray(stepDeletes) && stepDeletes.length > 0 ? { id: { notIn: stepDeletes } } : {}),
+      },
+    });
+    if (remainingStepCount === 0) {
+      return NextResponse.json(
+        { error: "Adımı olmayan bir tedavi planı \"Tamamlandı\" olarak işaretlenemez." },
+        { status: 400 }
+      );
+    }
+  }
+
   if (stepDeletes && Array.isArray(stepDeletes) && stepDeletes.length > 0) {
     await (prisma as any).treatmentStep.deleteMany({
       where: { id: { in: stepDeletes }, planId: params.id },
