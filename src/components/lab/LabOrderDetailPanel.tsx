@@ -188,6 +188,8 @@ export function LabOrderDetailPanel({
   order,
   onAddTrip,
   onAddInvoice,
+  onEditInvoice,
+  onDeleteInvoice,
   onReceive,
   onEditTrip,
   onComplete,
@@ -196,6 +198,8 @@ export function LabOrderDetailPanel({
   order: SharedLabOrder;
   onAddTrip?: (order: SharedLabOrder) => void;
   onAddInvoice?: (order: SharedLabOrder) => void;
+  onEditInvoice?: (order: SharedLabOrder, invoice: SharedLabInvoice) => void;
+  onDeleteInvoice?: (order: SharedLabOrder, invoice: SharedLabInvoice) => void;
   onReceive?: (order: SharedLabOrder, trip: SharedLabTrip) => void;
   onEditTrip?: (order: SharedLabOrder, trip: SharedLabTrip) => void;
   onComplete?: (order: SharedLabOrder) => void;
@@ -339,10 +343,35 @@ export function LabOrderDetailPanel({
           ) : (
             <div className="divide-y divide-slate-100">
               {order.invoices.map((inv) => (
-                <div key={inv.id} className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_120px_120px]">
-                  <span className="truncate font-semibold text-slate-800">{inv.item}</span>
+                <div key={inv.id} className="grid items-center gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_120px_110px_auto]">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-slate-800">{inv.item}</p>
+                    <p className="mt-0.5 text-xs text-slate-400">{fmt(inv.issuedAt)}</p>
+                  </div>
                   <span className="text-slate-500">{inv.invoiceNo || "Fatura no yok"}</span>
                   <span className="text-right font-bold text-slate-900">{CUR.format(inv.amount)}</span>
+                  {(onEditInvoice || onDeleteInvoice) && (
+                    <div className="flex justify-end gap-1">
+                      {onEditInvoice && (
+                        <button
+                          type="button"
+                          onClick={() => onEditInvoice(order, inv)}
+                          className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
+                        >
+                          Düzenle
+                        </button>
+                      )}
+                      {onDeleteInvoice && (
+                        <button
+                          type="button"
+                          onClick={() => onDeleteInvoice(order, inv)}
+                          className="rounded-lg border border-red-200 px-2 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50"
+                        >
+                          İptal
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
               <div className="flex justify-between px-4 py-3 text-sm font-black text-slate-900">

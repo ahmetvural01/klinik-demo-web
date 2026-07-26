@@ -60,9 +60,34 @@ function monthKey(year: number, month: number) {
 }
 
 /**
+ * Bir ay için geçerli olan doktor komisyon oranını döner. Oranlar personel
+ * ekranından değiştirildiğinde `DoctorRateHistory`'e dönem-damgalı bir satır
+ * eklenir; burada o ayın SONUNDA geçerli olan en güncel (effectiveFrom <= ay
+ * sonu) satır aranır. Hiç geçmiş kaydı yoksa (oran hiç değiştirilmemiş veya
+ * bu özellik eklenmeden önceki dönem) `fallback` (User üzerindeki güncel
+ * oran) kullanılır — böylece geçmişte zaten ödenmiş bir ayın hakedişi, oran
+ * daha sonra değiştirildiğinde sessizce değişmez.
+ */
+export async function getDoctorRatesForMonth(doctorId: string, year: number, month: number, fallback: DoctorRates): Promise<DoctorRates> {
+  const { end } = monthRangeUtc(year, month);
+  const historyRow = await prisma.doctorRateHistory.findFirst({
+    where: { doctorId, effectiveFrom: { lte: end } },
+    orderBy: { effectiveFrom: "desc" },
+  });
+  if (!historyRow) return fallback;
+  return {
+    kkYuzde: Number(historyRow.kkYuzde),
+    genelYuzde: Number(historyRow.genelYuzde),
+    maasYuzde: Number(historyRow.maasYuzde),
+  };
+}
+
+/**
  * Bir doktorun, verilen tarih aralığındaki üretimini ay ay hakediş tutarına çevirir.
  * Formül: kkMasraf = kk * kkYuzde/100; genelMasraf = ciro * genelYuzde/100;
  *         brüt = ciro - (kkMasraf + labCost + genelMasraf); hakediş = brüt * maasYuzde/100.
+ * Her ay, kendi döneminde geçerli olan orana göre hesaplanır (bkz. getDoctorRatesForMonth) —
+ * `rates` parametresi yalnızca hiç oran geçmişi olmayan aylar için varsayılan/fallback'tir.
  */
 export async function computeDoctorMonthlyHakedis(params: {
   doctorId: string;
@@ -112,13 +137,14 @@ export async function computeDoctorMonthlyHakedis(params: {
 
   const round2 = (n: number) => Math.round(n * 100) / 100;
 
-  return Array.from(buckets.values())
-    .map((b) => {
-      const kkMasraf = b.kk * (rates.kkYuzde / 100);
-      const genelMasraf = b.ciro * (rates.genelYuzde / 100);
+  const results = await Promise.all(
+    Array.from(buckets.values()).map(async (b) => {
+      const monthRates = await getDoctorRatesForMonth(doctorId, b.year, b.month, rates);
+      const kkMasraf = b.kk * (monthRates.kkYuzde / 100);
+      const genelMasraf = b.ciro * (monthRates.genelYuzde / 100);
       const toplamGider = kkMasraf + b.labCost + genelMasraf;
       const brut = b.ciro - toplamGider;
-      const hakedilen = round2(brut * (rates.maasYuzde / 100));
+      const hakedilen = round2(brut * (monthRates.maasYuzde / 100));
       return {
         year: b.year, month: b.month,
         ciro: round2(b.ciro), hakedilen,
@@ -131,10 +157,45 @@ export async function computeDoctorMonthlyHakedis(params: {
           toplamGider: round2(toplamGider),
           brut: round2(brut),
           hakedilen,
+          kkYuzde: monthRates.kkYuzde,
+          genelYuzde: monthRates.genelYuzde,
+          maasYuzde: monthRates.maasYuzde,
         },
       };
     })
-    .sort((a, b) => (a.year - b.year) || (a.month - b.month));
+  );
+
+  return results.sort((a, b) => (a.year - b.year) || (a.month - b.month));
+}
+
+/**
+ * Bir doktorun belirli bir ayı için hakediş ödemesi zaten yapılmış mı (en az
+ * bir gider/eski ödeme kaydı o döneme etiketlenmiş mi) kontrol eder. "Kapanmış"
+ * sayılan bir ayda, o doktorun cirosunu etkileyen kayıtların (hasta ödemesi,
+ * doktor ödemesi) tarihini/tutarını sessizce değiştirmek, zaten ödenmiş bir
+ * hakedişi geçmişe dönük olarak tutarsız hale getirir — bu yüzden ilgili
+ * API'ler bu kontrolü kullanarak değişikliği reddeder (bkz. denetim raporu).
+ */
+export async function isDoctorPeriodSettled(doctorId: string, institutionId: string | null, year: number, month: number): Promise<boolean> {
+  const [expenseCount, legacyPaymentCount] = await Promise.all([
+    (prisma as any).expense.count({
+      where: {
+        doctorId,
+        status: "AKTIF",
+        periodYear: year,
+        periodMonth: month,
+        ...(institutionId ? { institutionId } : {}),
+      },
+    }),
+    prisma.payment.count({
+      where: {
+        doctorId,
+        patientId: null,
+        createdAt: { gte: monthRangeUtc(year, month).start, lte: monthRangeUtc(year, month).end },
+      },
+    }),
+  ]);
+  return expenseCount > 0 || legacyPaymentCount > 0;
 }
 
 /**

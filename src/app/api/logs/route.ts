@@ -45,17 +45,24 @@ export async function GET(request: NextRequest) {
         finans: ["PAYMENT_", "KASA_", "GIDER_", "TAKSIT_", "FIRMA_", "PURCHASE_"],
         lab: ["LAB_"],
         stok: ["STOCK_"],
-        ayar: ["SETTINGS_", "POS_", "PRICE_", "SMS_TEMPLATE_", "TREATMENT_TYPE_", "FOLLOW_UP_TYPES_"],
+        ayar: ["POS_", "PRICE_", "TREATMENT_TYPE_", "FOLLOW_UP_TYPES_"],
         sms: ["SMS_"],
         sistem: ["LOGIN", "LOGOUT", "PROFILE_", "PASSWORD_", "STAFF_", "MESSAGE_", "ANNOUNCEMENT_", "SUPPORT_", "DEV_", "DEMO_"],
       };
       const selected = prefixes[category] || [];
-      if (selected.length > 0) {
-        const categoryOr = selected.map((prefix) =>
-          prefix.endsWith("_")
-            ? { action: { startsWith: prefix } }
-            : { action: prefix }
-        );
+      if (selected.length > 0 || category === "sms-delivery") {
+        const categoryOr: Record<string, unknown>[] = category === "sms-delivery"
+          ? [{ action: { startsWith: "SMS_" }, NOT: { action: { startsWith: "SMS_TEMPLATE_" } } }]
+          : selected.map((prefix) =>
+              prefix.endsWith("_")
+                ? { action: { startsWith: prefix } }
+                : { action: prefix }
+            );
+        if (category === "sms") {
+          categoryOr.push({ action: "SETTINGS_UPDATE", detail: { contains: "SMS", mode: "insensitive" } });
+        } else if (category === "ayar") {
+          categoryOr.push({ action: { startsWith: "SETTINGS_" }, NOT: { detail: { contains: "SMS", mode: "insensitive" } } });
+        }
         const searchOr = where.OR as unknown[] | undefined;
         if (searchOr?.length) {
           delete where.OR;

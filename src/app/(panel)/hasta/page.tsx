@@ -59,8 +59,6 @@ type PatientResponse = {
   take: number;
   summary?: {
     total: number;
-    medicalRisk: number;
-    missingInfo: number;
     newThisMonth: number;
   };
   message?: string;
@@ -146,13 +144,23 @@ function HastaContent() {
   const [risk, setRisk] = useState("");
   const [missing, setMissing] = useState(false);
   const [insurance, setInsurance] = useState("");
+  const [doctorId, setDoctorId] = useState("");
+  const [doctors, setDoctors] = useState<{ id: string; fullName: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [userRole, setUserRole] = useState(() => readCachedAuthRole());
 
   const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
   const canDeletePatients = userRole === "SUPERADMIN" || userRole === "YONETICI";
-  const activeFilterCount = [gender, risk, missing ? "missing" : "", insurance].filter(Boolean).length;
+  const activeFilterCount = [gender, risk, missing ? "missing" : "", insurance, doctorId].filter(Boolean).length;
+
+  useEffect(() => {
+    cachedGet<unknown>("/api/staff", 60_000).then((d) => {
+      type StaffMember = { id: string; fullName: string; role: string; profile?: { hideAsDoctor?: boolean | null } | null };
+      const list = (Array.isArray(d) ? d as StaffMember[] : []).filter((u) => u.role === "DOKTOR" || (u.role === "YONETICI" && u.profile?.hideAsDoctor === false));
+      setDoctors(list.map((u) => ({ id: u.id, fullName: u.fullName })));
+    }).catch(() => {});
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -203,6 +211,7 @@ function HastaContent() {
     if (risk) params.set("risk", risk);
     if (missing) params.set("missing", "true");
     if (insurance.trim()) params.set("insurance", insurance.trim());
+    if (doctorId) params.set("doctorId", doctorId);
 
     try {
       const res = await fetch(`/api/patients?${params.toString()}`, { cache: "no-store" });
@@ -224,7 +233,7 @@ function HastaContent() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedQuery, gender, insurance, missing, page, pageSize, risk, sortDir, sortKey]);
+  }, [debouncedQuery, gender, insurance, doctorId, missing, page, pageSize, risk, sortDir, sortKey]);
 
   useEffect(() => {
     void load();
@@ -281,6 +290,7 @@ function HastaContent() {
     setRisk("");
     setMissing(false);
     setInsurance("");
+    setDoctorId("");
     setPage(1);
   };
 
@@ -333,7 +343,7 @@ function HastaContent() {
 
       <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="grid gap-2 xl:grid-cols-[1fr_auto] xl:items-center">
-          <div className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_160px_160px_160px]">
+          <div className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_160px_160px_160px_160px]">
             <label className="relative block">
               <span className="sr-only">Hasta ara</span>
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -379,6 +389,18 @@ function HastaContent() {
               placeholder="Kurum / sigorta"
               className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
             />
+            <select
+              value={doctorId}
+              onChange={(event) => {
+                setDoctorId(event.target.value);
+                setPage(1);
+              }}
+              aria-label="Doktor filtresi"
+              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            >
+              <option value="">Tüm doktorlar</option>
+              {doctors.map((d) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+            </select>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -481,16 +503,19 @@ function HastaContent() {
                   <SortButton col="birthDate" label="Yaş" />
                 </th>
                 <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">
+                  <SortButton col="profession" label="Meslek" />
+                </th>
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">
                   <SortButton col="insurance" label="Kurum" />
                 </th>
                 <th className="px-4 py-3 text-right text-[11px] font-bold uppercase text-slate-500">İşlem</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {loading && patients.length === 0 && <TableRowsSkeleton rows={7} columns={hidePhone ? 5 : 6} />}
+              {loading && patients.length === 0 && <TableRowsSkeleton rows={7} columns={hidePhone ? 6 : 7} />}
               {!loading && patients.length === 0 && (
                 <tr>
-                  <td colSpan={hidePhone ? 5 : 6} className="px-4 py-14 text-center text-sm text-slate-400">
+                  <td colSpan={hidePhone ? 6 : 7} className="px-4 py-14 text-center text-sm text-slate-400">
                     Hasta bulunamadı
                   </td>
                 </tr>
@@ -511,7 +536,6 @@ function HastaContent() {
                           </Link>
                           <p className="mt-0.5 text-xs text-slate-400">{patient.gender === "ERKEK" ? "Erkek" : patient.gender === "KADIN" ? "Kadın" : "Cinsiyet yok"}</p>
                           <div className="mt-1 flex flex-wrap gap-1">
-                            {patient.profession && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{patient.profession}</span>}
                             {patient.hasContagiousDisease && <span className="rounded-full bg-red-600 px-2 py-0.5 text-[11px] font-black text-white" title={patient.contagiousDiseaseNote || undefined}>⚠ Bulaşıcı Hastalık</span>}
                             {riskFlag && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-700">Medikal uyarı</span>}
                             {patient.discountRate ? <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-bold text-orange-700">%{patient.discountRate} indirim</span> : null}
@@ -527,6 +551,7 @@ function HastaContent() {
                         <span className="text-xs text-slate-400">{formatDate(patient.birthDate)}</span>
                       </div>
                     </td>
+                    <td className="px-4 py-3 text-slate-600">{patient.profession || "-"}</td>
                     <td className="px-4 py-3">
                       {patient.insurance ? (
                         <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">{patient.insurance}</span>

@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
     fullName: user.fullName,
   });
 
-  setAuthCookie(token);
+  await setAuthCookie(token);
   await writeAudit(user.id, "LOGIN", usedBackupCode ? "Kullanıcı yedek kod ile giriş yaptı" : "Kullanıcı 2FA ile giriş yaptı");
 
   return NextResponse.json({

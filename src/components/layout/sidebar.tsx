@@ -96,7 +96,7 @@ function buildNavGroups(role: string): NavGroup[] {
   // ── FİNANS ──
   if (isYonetici || isBanko || isMuhasebe) {
     groups.push({
-      label: "Muhasebe",
+      label: "Finans & Rapor",
       items: [
         { href: "/muhasebe", label: "Muhasebe Merkezi", icon: "finance" },
         ...(isYonetici || isMuhasebe
@@ -202,6 +202,19 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
     setMobileOpen(false);
   }, [pathname]);
 
+  useEffect(() => {
+    if (!rolePickerOpen) return;
+
+    const closeOnOutside = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-role-preview-root]")) return;
+      setRolePickerOpen(false);
+    };
+
+    document.addEventListener("pointerdown", closeOnOutside);
+    return () => document.removeEventListener("pointerdown", closeOnOutside);
+  }, [rolePickerOpen]);
+
   const handlePreviewRole = (role: string | null) => {
     if (role) {
       sessionStorage.setItem("dev-preview-role", role);
@@ -306,15 +319,6 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
         >
           <div className="relative flex h-dvh max-h-dvh">
             <div className="flex h-dvh max-h-dvh w-[min(86vw,288px)] flex-col overflow-hidden bg-[#0f172a]">
-              {isSuperAdmin && activePreview && (
-                <div className={`flex shrink-0 items-center gap-2 px-3 py-2 text-xs font-bold text-white ${activePreview.color}`}>
-                  <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
-                  </svg>
-                  <span>{activePreview.label} görünümü</span>
-                </div>
-              )}
-
               <div className="shrink-0 p-3">
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
@@ -346,25 +350,34 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
               )}
 
               {isSuperAdmin && (
-                <details className="mb-2">
-                  <summary className="flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-slate-100">
+                <div className="relative mb-2" data-role-preview-root>
+                  <button
+                    type="button"
+                    onClick={() => setRolePickerOpen((prev) => !prev)}
+                    className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${
+                      previewRole
+                        ? "border-violet-400/30 bg-violet-500/15 text-violet-100"
+                        : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-slate-100"
+                    }`}
+                    aria-expanded={rolePickerOpen}
+                  >
                     <svg className="h-3.5 w-3.5 shrink-0 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
                     </svg>
                     <span className="flex-1 text-left">{previewRole ? `Görünüm: ${activePreview?.label}` : "Rol Görünümü"}</span>
-                    <svg className="h-3 w-3 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                    <svg className={`h-3 w-3 shrink-0 transition-transform ${rolePickerOpen ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="6 9 12 15 18 9"/>
                     </svg>
-                  </summary>
-                  <div className="mt-1 rounded-lg border border-white/10 bg-[#1e2d45] p-1.5">
-                    <p className="mb-1.5 px-1 text-xs font-bold uppercase text-slate-500">Rol seç</p>
+                  </button>
+                  {rolePickerOpen && (
+                  <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-white/10 bg-[#1e2d45] p-1.5 shadow-xl">
+                    <p className="mb-1.5 px-1 text-xs font-bold uppercase text-slate-400">Önizlenecek rol</p>
                     <div className="flex flex-col gap-0.5">
                       {PREVIEW_ROLES.map(r => (
                         <button
                           key={r.key}
                           onClick={() => {
                             handlePreviewRole(previewRole === r.key ? null : r.key);
-                            setMobileOpen(false);
                           }}
                           className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition ${
                             previewRole === r.key ? `${r.color} text-white` : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
@@ -391,7 +404,8 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                       )}
                     </div>
                   </div>
-                </details>
+                  )}
+                </div>
               )}
               </div>
 
@@ -431,16 +445,6 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
         </div>
       )}
       <aside className={`hidden h-screen ${w} shrink-0 flex-col bg-[#0f172a] transition-all duration-200 md:flex`}>
-        {/* Rol görünümü aktifken göster */}
-      {isSuperAdmin && activePreview && (
-        <div className={`flex items-center gap-2 px-3 py-2 text-xs font-bold text-white ${activePreview.color} shrink-0`}>
-          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
-          </svg>
-          {!collapsed && <span>{activePreview.label} görünümü</span>}
-        </div>
-      )}
-
       {/* Logo + toggle */}
       <div className={`flex items-center ${collapsed ? "justify-center px-0 py-4" : "justify-between px-4 py-4"}`}>
         {!collapsed && (
@@ -492,22 +496,32 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
 
       {/* ── Rol Görünümü (sadece SUPERADMIN) ─────────────────────────────── */}
       {isSuperAdmin && (
-        <details className="mx-2 mb-2 shrink-0">
+        <div className="relative mx-2 mb-2 shrink-0" data-role-preview-root>
           {!collapsed ? (
             <>
-              <summary className="flex w-full items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm font-semibold text-slate-300 transition hover:bg-white/10 hover:text-slate-100">
+              <button
+                type="button"
+                onClick={() => setRolePickerOpen((prev) => !prev)}
+                className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${
+                  previewRole
+                    ? "border-violet-400/30 bg-violet-500/15 text-violet-100"
+                    : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-slate-100"
+                }`}
+                aria-expanded={rolePickerOpen}
+              >
                   <svg className="h-3.5 w-3.5 shrink-0 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
                   </svg>
                   <span className="flex-1 text-left">
                     {previewRole ? `Görünüm: ${activePreview?.label}` : "Rol Görünümü"}
                   </span>
-                  <svg className="h-3 w-3 shrink-0 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
+                  <svg className={`h-3 w-3 shrink-0 transition-transform ${rolePickerOpen ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="6 9 12 15 18 9"/>
                   </svg>
-                </summary>
-              <div className="mt-1 rounded-lg border border-white/10 bg-[#1e2d45] p-1.5">
-                  <p className="mb-1.5 px-1 text-xs font-bold uppercase text-slate-500">Rol seç</p>
+                </button>
+              {rolePickerOpen && (
+              <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-white/10 bg-[#1e2d45] p-1.5 shadow-xl">
+                  <p className="mb-1.5 px-1 text-xs font-bold uppercase text-slate-400">Önizlenecek rol</p>
                   <div className="flex flex-col gap-0.5">
                     {PREVIEW_ROLES.map(r => (
                       <button
@@ -539,6 +553,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                     )}
                   </div>
                 </div>
+              )}
             </>
           ) : (
             /* Collapsed: dev icon + tooltip */
@@ -549,6 +564,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                   previewRole ? "bg-violet-600/30 text-violet-400" : "text-slate-600 hover:bg-white/10 hover:text-slate-400"
                 }`}
                 title="Rol Görünümü"
+                aria-expanded={rolePickerOpen}
               >
                 <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
@@ -556,8 +572,8 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
               </button>
               {/* Collapsed tooltip ile mini picker */}
               {rolePickerOpen && (
-                <div className="absolute left-full top-0 z-50 ml-2 min-w-[140px] rounded-lg border border-white/10 bg-[#1e2d45] p-1.5 shadow-xl">
-                  <p className="mb-1 px-1 text-xs font-bold uppercase text-slate-500">Rol seç</p>
+                <div className="absolute left-full top-0 z-50 ml-2 min-w-[160px] rounded-xl border border-white/10 bg-[#1e2d45] p-1.5 shadow-xl">
+                  <p className="mb-1 px-1 text-xs font-bold uppercase text-slate-400">Önizlenecek rol</p>
                   {PREVIEW_ROLES.map(r => (
                     <button
                       key={r.key}
@@ -590,7 +606,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
               </div>
             </div>
           )}
-        </details>
+        </div>
       )}
 
       {/* Nav */}

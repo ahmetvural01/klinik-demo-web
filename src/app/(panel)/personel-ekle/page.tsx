@@ -88,11 +88,29 @@ function PersonelEkleContent() {
       }
     }
 
-    const res = await fetch(isEdit ? "/api/staff/" + editId : "/api/staff", {
+    let res = await fetch(isEdit ? "/api/staff/" + editId : "/api/staff", {
       method: isEdit ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     });
+
+    if (res.status === 409) {
+      const b = await res.json().catch(() => ({}));
+      if (b.requiresForce) {
+        const proceed = await confirmDialog({
+          message: `${b.message}\n\nYine de pasife almak istiyor musunuz? (Randevu/plan/takipler devredilmeden kalır.)`,
+          danger: true,
+          confirmText: "Yine de Pasife Al",
+        });
+        if (!proceed) { setSaving(false); return; }
+        res = await fetch(isEdit ? "/api/staff/" + editId : "/api/staff", {
+          method: isEdit ? "PUT" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...body, force: true }),
+        });
+      }
+    }
+
     setSaving(false);
 
     if (!res.ok) {
@@ -250,7 +268,7 @@ function PersonelEkleContent() {
         </div>
       </FormSection>
 
-      {isEdit && showDoctorRates && (
+      {showDoctorRates && (
         <FormSection icon={Percent} title="Doktor Ödeme Oranları" description="Bu oranlar doktor raporlarında ve hakediş hesabında kullanılır. Emin değilseniz varsayılan değerleri koruyun.">
           <div className="grid gap-4 sm:grid-cols-3">
             {[

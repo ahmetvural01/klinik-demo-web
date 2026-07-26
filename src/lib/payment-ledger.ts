@@ -3,6 +3,7 @@ import { applyTaksitIntegration, reverseTaksitIntegrationForPayment } from "@/li
 
 type CreatePaymentInput = {
   tx: Prisma.TransactionClient;
+  requestKey?: string | null;
   patientId?: string | null;
   doctorId?: string | null;
   method: PaymentMethod;
@@ -12,8 +13,14 @@ type CreatePaymentInput = {
   createdAt?: string | Date | null;
 };
 
+export function toPublicPayment<T extends { requestKey?: string | null }>(payment: T) {
+  const { requestKey: _requestKey, ...publicPayment } = payment;
+  return publicPayment;
+}
+
 export async function createIntegratedPayment({
   tx,
+  requestKey,
   patientId,
   doctorId,
   method,
@@ -28,6 +35,7 @@ export async function createIntegratedPayment({
 
   const payment = await tx.payment.create({
     data: {
+      requestKey: requestKey || null,
       patientId: patientId || null,
       doctorId: doctorId || null,
       method,

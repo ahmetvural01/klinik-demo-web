@@ -2,18 +2,39 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
 import { applyLabInvoiceFirmaIntegration } from "@/lib/lab-firma-integration";
+import { formatZodError, labInvoiceCreateSchema } from "@/lib/validators";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
 
-  const body = await req.json();
-  const { item, amount, invoiceNo, issuedAt, note } = body;
+  const requestKey = req.headers.get("Idempotency-Key")?.trim().slice(0, 180) || null;
+  const parsed = labInvoiceCreateSchema.safeParse(await req.json());
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Fatura bilgileri geçersiz", errors: formatZodError(parsed.error) },
+      { status: 400 },
+    );
+  }
+  const { item, amount, invoiceNo, issuedAt, note } = parsed.data;
 
-  if (!item || !amount) {
-    return NextResponse.json({ error: "item ve amount zorunlu" }, { status: 400 });
+  if (requestKey) {
+    const existingInvoice = await (prisma as any).labOrderInvoice.findFirst({
+      where: {
+        requestKey,
+        labOrderId: params.id,
+        ...(auth.user.institutionId
+          ? { labOrder: { patient: { institutionId: auth.user.institutionId } } }
+          : {}),
+      },
+    });
+    if (existingInvoice) {
+      const { requestKey: _requestKey, ...publicInvoice } = existingInvoice;
+      return NextResponse.json({ ...publicInvoice, duplicateRequest: true }, { status: 200 });
+    }
   }
 
   const orderMeta = await (prisma as any).labOrder.findFirst({
@@ -39,57 +60,98 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     );
   }
 
-  const invoice = await (prisma as any).$transaction(async (tx: any) => {
-    const createdInvoice = await tx.labOrderInvoice.create({
-      data: {
-        labOrderId: params.id,
-        item,
-        amount: Number(amount),
-        invoiceNo: invoiceNo || null,
-        issuedAt: issuedAt ? new Date(issuedAt) : new Date(),
-        note: note || null,
-      },
-    });
-
-    await tx.labOrder.update({
-      where: { id: params.id },
-      data: {
-        price: Number(amount),
-        invoiceNo: invoiceNo || null,
-      },
-    });
-
-    const order = await tx.labOrder.findUnique({
-      where: { id: params.id },
-      select: {
-        labName: true,
-        labType: true,
-        firmaId: true,
-        patient: { select: { fullName: true } },
-      },
-    });
-
-    if (order?.labName) {
-      await applyLabInvoiceFirmaIntegration({
-        tx,
-        userId: auth.user.id,
-        institutionId: auth.user.institutionId || null,
-        labName: order.labName,
-        labType: order.labType,
-        patientName: order.patient?.fullName || null,
-        item,
-        amount: Number(amount),
-        invoiceNo: invoiceNo || null,
-        issuedAt: createdInvoice.issuedAt,
-        note: note || null,
-        labOrderId: params.id,
-        labInvoiceId: createdInvoice.id,
-        firmaId: order.firmaId,
+  let invoice;
+  try {
+    invoice = await (prisma as any).$transaction(async (tx: any) => {
+      const createdInvoice = await tx.labOrderInvoice.create({
+        data: {
+          labOrderId: params.id,
+          requestKey,
+          item,
+          amount,
+          invoiceNo: invoiceNo || null,
+          issuedAt: issuedAt ? new Date(issuedAt) : new Date(),
+          note: note || null,
+        },
       });
-    }
 
-    return createdInvoice;
-  });
+      const invoiceTotal = await tx.labOrderInvoice.aggregate({
+        where: { labOrderId: params.id },
+        _sum: { amount: true },
+      });
+      await tx.labOrder.update({
+        where: { id: params.id },
+        data: {
+          price: Number(invoiceTotal._sum.amount || 0),
+          invoiceNo: invoiceNo || null,
+        },
+      });
+
+      const order = await tx.labOrder.findUnique({
+        where: { id: params.id },
+        select: {
+          labName: true,
+          labType: true,
+          firmaId: true,
+          patient: { select: { fullName: true } },
+        },
+      });
+
+      if (order?.labName) {
+        const integration = await applyLabInvoiceFirmaIntegration({
+          tx,
+          userId: auth.user.id,
+          institutionId: auth.user.institutionId || null,
+          labName: order.labName,
+          labType: order.labType,
+          patientName: order.patient?.fullName || null,
+          item,
+          amount,
+          invoiceNo: invoiceNo || null,
+          issuedAt: createdInvoice.issuedAt,
+          note: note || null,
+          labOrderId: params.id,
+          labInvoiceId: createdInvoice.id,
+          firmaId: order.firmaId,
+        });
+        if (integration && !order.firmaId) {
+          await tx.labOrder.update({
+            where: { id: params.id },
+            data: { firmaId: integration.firmaId },
+          });
+        }
+      }
+
+      return createdInvoice;
+    });
+  } catch (error) {
+    if (
+      requestKey
+      && error
+      && typeof error === "object"
+      && "code" in error
+      && (error as { code?: string }).code === "P2002"
+    ) {
+      const existingInvoice = await (prisma as any).labOrderInvoice.findFirst({
+        where: {
+          requestKey,
+          labOrderId: params.id,
+          ...(auth.user.institutionId
+            ? { labOrder: { patient: { institutionId: auth.user.institutionId } } }
+            : {}),
+        },
+      });
+      if (existingInvoice) {
+        const { requestKey: _requestKey, ...publicInvoice } = existingInvoice;
+        return NextResponse.json({ ...publicInvoice, duplicateRequest: true }, { status: 200 });
+      }
+    }
+    console.error("[lab invoice POST]", error);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Laboratuvar faturası kaydedilemedi" },
+      { status: 400 },
+    );
+  }
 
   const fresh = await (prisma as any).labOrder.findUnique({
     where: { id: params.id },
@@ -103,5 +165,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
   await writeAudit(auth.user.id, "LAB_ORDER_INVOICE_CREATE", `Laboratuvar faturası eklendi (${params.id})`);
   await bumpRealtimeInstitution(auth.user.institutionId || null);
-  return NextResponse.json(fresh || invoice, { status: 201 });
+  if (fresh) {
+    const publicFresh = {
+      ...fresh,
+      invoices: fresh.invoices.map(({ requestKey: _requestKey, ...publicInvoice }: any) => publicInvoice),
+    };
+    return NextResponse.json(publicFresh, { status: 201 });
+  }
+  const { requestKey: _requestKey, ...publicInvoice } = invoice;
+  return NextResponse.json(publicInvoice, { status: 201 });
 }

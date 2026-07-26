@@ -9,12 +9,11 @@ import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
  * POST { institutionId, password }
  * - Superadmin kendi şifresiyle doğrulanır
  * - O kliniğin YONETICI rolüyle ghost token üretilir
- * - Oturumun başlangıcı ve oturum sırasında yapılan tüm işlemler audit log'a
- *   actorId/isGhost alanlarıyla işaretlenerek kaydedilir (bkz. src/lib/api.ts writeAudit)
+ * - Ghost oturum klinik/personel işlem kayıtlarına yazılmaz
  */
 export async function POST(request: NextRequest) {
   // Mevcut oturum superadmin mi?
-  const currentUser = decodeTokenUser();
+  const currentUser = await decodeTokenUser();
   if (!currentUser || currentUser.role !== "SUPERADMIN") {
     return NextResponse.json({ message: "Oturum gerekli" }, { status: 401 });
   }
@@ -85,7 +84,7 @@ export async function POST(request: NextRequest) {
     ghost: true,
   });
 
-  setAuthCookie(token);
+  await setAuthCookie(token);
 
   await writeAudit(
     targetUser.id,

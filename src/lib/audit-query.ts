@@ -8,11 +8,12 @@ export function buildAuditWhere(searchParams: URLSearchParams): Prisma.AuditLogW
   const startDate = searchParams.get("startDate") || "";
   const endDate = searchParams.get("endDate") || "";
 
-  // Bu ekran superadmin'in kendi hesap verimliliği/uyum denetimi içindir — kurum
-  // bazlı /api/logs'un aksine, superadmin/ghost işlemlerini DIŞLAMAZ; tam tersine
-  // asıl amacı bunları görünür kılmaktır (bkz. src/lib/api.ts writeAudit).
+  // Superadmin ve ghost müdahale kayıtları kurum/personel geçmişinde görünmez.
+  // Yeni kayıtlar writeAudit içinde yazılmadan atlanır; eski kayıtlar varsa bu
+  // filtreyle denetim ekranına da taşınmaz.
   const where: Prisma.AuditLogWhereInput = {
     user: { role: { not: "SUPERADMIN" } },
+    NOT: [{ actorRole: "SUPERADMIN" }, { isGhost: true }],
   };
   if (userId) where.userId = userId;
   if (search) {

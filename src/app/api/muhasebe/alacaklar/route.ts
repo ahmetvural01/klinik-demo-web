@@ -95,6 +95,20 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
       paymentDateMap.set(payment.patientId, payment.createdAt);
     });
 
+    // Aktif taksit planı olan hastaları işaretlemek için — bu hastaların
+    // "Tüm Bakiyeler" bakiyesi taksit ödemelerini yansıtmaz (taksit tahsilatı
+    // ayrı bir tabloda tutulur, Payment'a yazılmaz), UI'da bu belirsizliği
+    // gizlemek yerine açıkça göstermek daha güvenli (bkz. denetim raporu).
+    const activeTaksitPatientRows = await prisma.taksitPlan.findMany({
+      where: {
+        status: "AKTIF",
+        ...(institutionId ? { patient: { institutionId } } : {}),
+      },
+      select: { patientId: true },
+      distinct: ["patientId"],
+    });
+    const activeTaksitPatientIds = new Set(activeTaksitPatientRows.map((r) => r.patientId));
+
     // Patient bilgileri
     const patientIds = [...new Set(examGroups.map((e) => e.patientId))];
     const patients = await prisma.patient.findMany({
@@ -134,6 +148,7 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
           doctorNames: Array.from(doctorMap.get(e.patientId) || []),
           lastPaymentAt: paymentDateMap.get(e.patientId)?.toISOString() || null,
           lastTreatmentAt: treatmentDateMap.get(e.patientId)?.toISOString() || null,
+          hasActiveTaksitPlan: activeTaksitPatientIds.has(e.patientId),
         };
       })
       .filter((r): r is NonNullable<typeof r> => r !== null && r.bakiye > 0.5)

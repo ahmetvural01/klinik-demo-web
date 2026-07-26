@@ -1,14 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
 /**
  * KVKK m.11 (ilgili kişinin erişim/taşınabilirlik hakkı) için hastanın sistemde
  * tutulan tüm verilerini tek bir dosyada dışa aktarır. Erişim audit log'a yazılır.
  */
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("patients:read");
   if (auth.error) return auth.error;
 
@@ -77,12 +79,19 @@ export async function GET(_: NextRequest, { params }: Params) {
     return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });
   }
 
+  // Bu uç, hastanın kendi verisini talep etmesi için değil, personelin onun
+  // adına bir dışa aktarma yapması için kullanılıyor — panelde telefonu
+  // görmesine izin verilmeyen bir rol (DOKTOR/ASISTAN), bu endpoint'i
+  // kullanarak maskelemeyi bypass edemesin.
+  const hidePhone = shouldHidePatientPhone(auth.user.role);
+  const patientForExport = hidePhone ? { ...patient, phone: "***" } : patient;
+
   const exportPayload = {
     exportedAt: new Date().toISOString(),
     exportedBy: auth.user.fullName || auth.user.id,
     legalBasis: "KVKK m.11 — ilgili kişinin veri erişim/taşınabilirlik talebi",
     note: "Belgeler/röntgenler dosya içeriği hariç meta veri olarak listelenmiştir; dosyaların kendisi panelden ilgili hastanın belge sekmesinden indirilebilir.",
-    patient,
+    patient: patientForExport,
   };
 
   await writeAudit(auth.user.id, "PATIENT_DATA_EXPORT", `${patient.fullName} hastasının verileri dışa aktarıldı (KVKK erişim talebi)`);

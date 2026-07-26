@@ -22,7 +22,7 @@ export async function GET() {
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
-    return NextResponse.json({ message: "Sadece klinik kullanicilari sablonlari goruntuleyebilir" }, { status: 403 });
+    return NextResponse.json({ message: "Yalnızca klinik kullanıcıları SMS şablonlarını görüntüleyebilir." }, { status: 403 });
   }
 
   const [defaults, custom] = await Promise.all([
@@ -56,14 +56,14 @@ export async function POST(request: NextRequest) {
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
-    return NextResponse.json({ message: "Sadece klinik kullanicilari sablon olusturabilir" }, { status: 403 });
+    return NextResponse.json({ message: "Yalnızca klinik kullanıcıları SMS şablonu oluşturabilir." }, { status: 403 });
   }
 
   const body = await request.json() as { code?: string; title?: string; content?: string; isActive?: boolean };
   const code = (body.code || "").trim().toUpperCase();
 
   if (!code || !body.title?.trim() || !body.content?.trim()) {
-    return NextResponse.json({ message: "Kod, baslik ve icerik zorunlu" }, { status: 400 });
+    return NextResponse.json({ message: "Şablon kodu, başlığı ve içeriği zorunludur." }, { status: 400 });
   }
 
   // institutionId burada her zaman dolu (null değil), bu yüzden native
@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
     create: { institutionId: auth.user.institutionId, code, title: body.title.trim(), content: body.content, isActive: body.isActive ?? true },
   });
 
-  await writeAudit(auth.user.id, "SMS_TEMPLATE_CUSTOM_SAVE", `Kendi SMS sablonu kaydedildi: ${template.code}`);
+  await writeAudit(auth.user.id, "SMS_TEMPLATE_CUSTOM_SAVE", `Kurum SMS şablonu kaydedildi: ${template.code}`);
 
   return NextResponse.json({ code: template.code, title: template.title, content: template.content, isActive: template.isActive, isCustom: true, updatedAt: template.updatedAt.toISOString() });
 }
@@ -85,12 +85,12 @@ export async function DELETE(request: NextRequest) {
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
-    return NextResponse.json({ message: "Sadece klinik kullanicilari sablon silebilir" }, { status: 403 });
+    return NextResponse.json({ message: "Yalnızca klinik kullanıcıları SMS şablonu silebilir." }, { status: 403 });
   }
 
   const code = (request.nextUrl.searchParams.get("code") || "").trim().toUpperCase();
   if (!code) {
-    return NextResponse.json({ message: "code zorunlu" }, { status: 400 });
+    return NextResponse.json({ message: "Silinecek şablon kodu zorunludur." }, { status: 400 });
   }
 
   // institutionId filtresi kritik: bu filtre olmadan başka bir kurumun
@@ -101,7 +101,7 @@ export async function DELETE(request: NextRequest) {
   }
 
   await prisma.smsTemplate.delete({ where: { id: existing.id } });
-  await writeAudit(auth.user.id, "SMS_TEMPLATE_CUSTOM_RESET", `Kendi SMS sablonu silindi (varsayilana donuldu): ${code}`);
+  await writeAudit(auth.user.id, "SMS_TEMPLATE_CUSTOM_RESET", `Kurum SMS şablonu silindi; varsayılan şablona dönüldü: ${code}`);
 
   return NextResponse.json({ ok: true });
 }

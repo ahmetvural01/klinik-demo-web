@@ -160,7 +160,8 @@ export default function ProfilPage() {
         invalidateCachedGet("/api/staff");
         showToast("success", "Profil güncellendi");
       } else {
-        showToast("error", "Güncelleme başarısız");
+        const result = await res.json().catch(() => ({ message: "Profil güncellenemedi." }));
+        showToast("error", result.message || "Profil güncellenemedi.");
       }
     } catch { showToast("error", "Bağlantı hatası"); }
     finally { setSaving(false); }
@@ -227,8 +228,8 @@ export default function ProfilPage() {
               if (file) void onPhotoSelected(file);
             }}
           />
-          {/* eslint-disable-next-line @next/next/no-img-element */}
           {profile.photoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
             <img src={profile.photoUrl} alt={profile.fullName} className="h-16 w-16 rounded-full object-cover ring-4 ring-primary/20" />
           ) : (
             <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary text-xl font-bold text-white ring-4 ring-primary/20">
@@ -338,6 +339,7 @@ export default function ProfilPage() {
         {twoFactorSetup && (
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
             <p className="mb-3 text-sm text-slate-600">1. Kimlik doğrulama uygulamanızla aşağıdaki QR kodu okutun.</p>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={twoFactorSetup.qrCodeDataUrl} alt="2FA QR kodu" className="mx-auto h-40 w-40 rounded-lg border border-slate-200 bg-white p-2" />
             <p className="mt-2 text-center text-[11px] text-slate-400">QR kodu okutamıyorsanız manuel girin: <span className="font-mono font-semibold text-slate-600">{twoFactorSetup.secret}</span></p>
             <p className="mb-2 mt-4 text-sm text-slate-600">2. Uygulamada görünen 6 haneli kodu girin.</p>
@@ -390,4 +392,3 @@ export default function ProfilPage() {
     </div>
   );
 }
-

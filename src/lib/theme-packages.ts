@@ -36,9 +36,8 @@ export type ThemePackage = {
   name: string;
   description: string;
   fontSans: string;
-  // Başlıklar (h1) için ayrı bir yazı tipi — verilmezse fontSans'a düşer.
-  // globals.css'teki `h1 { font-family: var(--font-display); }` kuralı
-  // bunu uygulama genelinde otomatik uygular, sayfa dosyalarına dokunmadan.
+  // Başlıklar için ayrı aile tanımlanabilir. Operasyon ekranlarında gövde
+  // yazısıyla aynı aileyi kullanmak taranabilirliği ve kurumsal bütünlüğü korur.
   fontDisplay?: string;
   vars: ThemeVars;
 };
@@ -54,15 +53,15 @@ export const THEME_PACKAGES: ThemePackage[] = [
   {
     id: "porselen",
     name: "Porselen Klinik",
-    description: "Yeni varsayılan — sıcak porselen beyazı zemin, derin klinik yeşil-teal vurgu, başlıklarda serif.",
+    description: "Yumuşak nötr zemin, klinik teal ve dengeli mavi vurgu.",
     fontSans: "'Segoe UI', ui-sans-serif, system-ui, -apple-system, sans-serif",
-    fontDisplay: "Georgia, 'Iowan Old Style', 'Palatino Linotype', serif",
+    fontDisplay: "'Segoe UI', ui-sans-serif, system-ui, -apple-system, sans-serif",
     vars: {
-      bg: "246 244 239", surface: "251 249 245", border: "234 234 230", text: "35 35 31", muted: "132 130 108",
-      primary: "14 107 99", primaryStrong: "10 79 73", accent: "177 86 47",
-      slate: { "50": "250 250 249", "100": "246 245 244", "200": "234 234 230", "300": "215 215 208", "400": "175 173 157", "500": "132 130 108", "600": "98 97 85", "700": "79 78 69", "800": "55 54 47", "900": "35 35 31", "950": "22 22 19" },
+      bg: "240 244 246", surface: "250 252 252", border: "216 224 228", text: "27 39 45", muted: "94 108 116",
+      primary: "14 116 108", primaryStrong: "11 88 82", accent: "37 99 143",
+      slate: { "50": "247 249 250", "100": "240 244 246", "200": "216 224 228", "300": "195 206 212", "400": "143 158 166", "500": "94 108 116", "600": "70 84 92", "700": "53 66 73", "800": "38 50 57", "900": "27 39 45", "950": "16 25 30" },
       primaryRamp: { "50": "243 252 251", "100": "226 248 246", "200": "197 241 237", "300": "156 232 224", "400": "102 219 207", "500": "57 208 193", "600": "43 182 168", "700": "36 153 141", "800": "30 128 118", "900": "24 103 95", "950": "17 74 69" },
-      accentRamp: { "50": "252 246 243", "100": "248 233 227", "200": "240 211 199", "300": "229 180 158", "400": "215 139 106", "500": "204 104 62", "600": "177 86 47", "700": "149 72 40", "800": "125 61 33", "900": "101 49 27", "950": "73 35 19" },
+      accentRamp: { "50": "241 248 252", "100": "226 239 247", "200": "195 220 236", "300": "151 195 222", "400": "100 164 203", "500": "61 132 177", "600": "37 99 143", "700": "31 81 118", "800": "29 68 96", "900": "27 57 80", "950": "17 37 54" },
     },
   },
   {
@@ -132,15 +131,15 @@ export const THEME_PACKAGES: ThemePackage[] = [
   },
   {
     id: "antrasit",
-    name: "Antrasit Kurumsal",
-    description: "Nötr antrasit gri + elektrik indigo vurgu, sade ve ciddi.",
+    name: "Kurumsal Klinik",
+    description: "Düşük parlamalı soğuk nötrler, klinik teal ve kurumsal mavi.",
     fontSans: "'Segoe UI', Corbel, ui-sans-serif, system-ui, sans-serif",
     vars: {
-      bg: "247 248 249", surface: "255 255 255", border: "230 232 234", text: "30 32 36", muted: "115 118 125",
-      primary: "79 70 229", primaryStrong: "67 56 202", accent: "14 165 233",
-      slate: { "50": "249 250 251", "100": "244 244 246", "200": "230 232 234", "300": "209 211 214", "400": "162 165 169", "500": "115 118 125", "600": "87 90 96", "700": "70 72 78", "800": "47 50 55", "900": "30 32 36", "950": "18 20 22" },
-      primaryRamp: { "50": "242 241 254", "100": "229 227 252", "200": "199 196 248", "300": "151 146 242", "400": "94 85 236", "500": "40 29 237", "600": "28 17 212", "700": "26 17 176", "800": "25 18 145", "900": "24 19 114", "950": "19 16 76" },
-      accentRamp: { "50": "241 250 254", "100": "227 244 252", "200": "196 232 248", "300": "146 212 242", "400": "85 189 236", "500": "29 172 237", "600": "17 152 212", "700": "17 127 176", "800": "18 106 145", "900": "19 84 114", "950": "16 57 76" },
+      bg: "240 244 246", surface: "250 252 252", border: "216 224 228", text: "27 39 45", muted: "94 108 116",
+      primary: "14 116 108", primaryStrong: "11 88 82", accent: "37 99 143",
+      slate: { "50": "247 249 250", "100": "240 244 246", "200": "216 224 228", "300": "195 206 212", "400": "143 158 166", "500": "94 108 116", "600": "70 84 92", "700": "53 66 73", "800": "38 50 57", "900": "27 39 45", "950": "16 25 30" },
+      primaryRamp: { "50": "240 253 251", "100": "204 251 241", "200": "153 246 228", "300": "94 234 212", "400": "45 212 191", "500": "20 184 166", "600": "14 148 136", "700": "14 116 108", "800": "17 94 88", "900": "19 78 73", "950": "9 47 44" },
+      accentRamp: { "50": "241 248 252", "100": "226 239 247", "200": "195 220 236", "300": "151 195 222", "400": "100 164 203", "500": "61 132 177", "600": "37 99 143", "700": "31 81 118", "800": "29 68 96", "900": "27 57 80", "950": "17 37 54" },
     },
   },
   {
@@ -213,15 +212,18 @@ function rampVars(prefix: string, ramp: Ramp): Record<string, string> {
 
 export function themeCssVars(pkg: ThemePackage) {
   const v = pkg.vars;
+  // Saf beyaz büyük yüzeyler uzun vardiyalarda parlamayı artırır. Eski tema
+  // paketlerini kullanan kurumlarda da yüzeyi kırık beyaza normalize et.
+  const surface = v.surface === "255 255 255" ? "250 252 252" : v.surface;
   return {
     "--app-bg": v.bg,
-    "--app-surface": v.surface,
+    "--app-surface": surface,
     "--app-border": v.border,
     "--app-text": v.text,
     "--app-muted": v.muted,
     "--app-primary": v.primary,
     "--color-bg": v.bg,
-    "--color-surface": v.surface,
+    "--color-surface": surface,
     "--color-primary": v.primary,
     "--color-primary-strong": v.primaryStrong,
     "--color-accent": v.accent,

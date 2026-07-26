@@ -44,6 +44,159 @@ function paymentInstitutionScope(institutionId?: string | null) {
   };
 }
 
+function countNormalizedDuplicates(rows: Array<{ id: string; name: string }>) {
+  const seen = new Set<string>();
+  let duplicateCount = 0;
+  for (const row of rows) {
+    const key = row.name.trim().toLocaleLowerCase("tr-TR").replace(/\s+/g, " ");
+    if (!key) continue;
+    if (seen.has(key)) duplicateCount += 1;
+    else seen.add(key);
+  }
+  return duplicateCount;
+}
+
+async function countPurchaseTotalMismatches(institutionId?: string | null) {
+  const purchases = await prisma.purchase.findMany({
+    where: {
+      status: "AKTIF",
+      receiptStatus: "TESLIM_ALINDI",
+      ...(institutionId ? { institutionId } : {}),
+    },
+    select: {
+      items: { select: { lineTotal: true } },
+      firmaIslem: { select: { tutar: true, status: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 1000,
+  });
+
+  return purchases.filter((purchase) => {
+    const itemTotal = Math.round(
+      purchase.items.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0) * 100,
+    ) / 100;
+    return !purchase.firmaIslem
+      || purchase.firmaIslem.status !== "AKTIF"
+      || Math.abs(itemTotal - Number(purchase.firmaIslem.tutar || 0)) > 0.009;
+  }).length;
+}
+
+async function countLabInvoiceTotalMismatches(institutionId?: string | null) {
+  const orders = await prisma.labOrder.findMany({
+    where: {
+      status: { not: "IPTAL" },
+      OR: [
+        { price: { not: 0 } },
+        { invoices: { some: {} } },
+      ],
+      ...(institutionId ? { patient: { institutionId } } : {}),
+    },
+    select: {
+      price: true,
+      invoices: { select: { amount: true } },
+    },
+    orderBy: { updatedAt: "desc" },
+    take: 1000,
+  });
+
+  return orders.filter((order) => {
+    const invoiceTotal = Math.round(
+      order.invoices.reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0) * 100,
+    ) / 100;
+    return Math.abs(invoiceTotal - Number(order.price || 0)) > 0.009;
+  }).length;
+}
+
+async function countOverpaidFirms(institutionId?: string | null) {
+  const firms = await prisma.firma.findMany({
+    where: {
+      isActive: true,
+      ...(institutionId ? { institutionId } : {}),
+    },
+    select: {
+      islemler: {
+        where: { status: "AKTIF" },
+        select: { islemTipi: true, tutar: true },
+      },
+    },
+    take: 2000,
+  });
+
+  return firms.filter((firma) => {
+    const balance = firma.islemler.reduce((sum, row) => {
+      const amount = Number(row.tutar || 0);
+      return sum + (row.islemTipi === "ODEME" ? -amount : amount);
+    }, 0);
+    return balance < -0.009;
+  }).length;
+}
+
+async function countFirmaPaymentAllocationMismatches(institutionId?: string | null) {
+  const scope = institutionId ? { firma: { institutionId } } : {};
+  const [payments, debts, allocations] = await Promise.all([
+    prisma.firmaIslem.findMany({
+      where: { ...scope, status: "AKTIF", islemTipi: "ODEME" },
+      select: {
+        id: true,
+        tutar: true,
+        paymentAllocations: {
+          where: {
+            debtIslem: { status: "AKTIF", islemTipi: { in: ["ALIM", "HIZMET"] } },
+          },
+          select: { tutar: true },
+        },
+      },
+      take: 5000,
+    }),
+    prisma.firmaIslem.findMany({
+      where: { ...scope, status: "AKTIF", islemTipi: { in: ["ALIM", "HIZMET"] } },
+      select: {
+        id: true,
+        tutar: true,
+        debtAllocations: {
+          where: { paymentIslem: { status: "AKTIF", islemTipi: "ODEME" } },
+          select: { tutar: true },
+        },
+      },
+      take: 5000,
+    }),
+    prisma.firmaPaymentAllocation.findMany({
+      where: institutionId ? { firma: { institutionId } } : {},
+      select: {
+        firmaId: true,
+        paymentIslem: { select: { firmaId: true, status: true, islemTipi: true } },
+        debtIslem: { select: { firmaId: true, status: true, islemTipi: true } },
+      },
+      take: 10000,
+    }),
+  ]);
+
+  const unmatchedPayments = payments.filter((payment) => {
+    const allocated = payment.paymentAllocations.reduce(
+      (sum, allocation) => sum + Number(allocation.tutar || 0),
+      0,
+    );
+    return Math.abs(allocated - Number(payment.tutar || 0)) > 0.009;
+  }).length;
+  const overallocatedDebts = debts.filter((debt) => {
+    const allocated = debt.debtAllocations.reduce(
+      (sum, allocation) => sum + Number(allocation.tutar || 0),
+      0,
+    );
+    return allocated - Number(debt.tutar || 0) > 0.009;
+  }).length;
+  const invalidAllocations = allocations.filter((allocation) => (
+    allocation.paymentIslem.firmaId !== allocation.firmaId
+    || allocation.debtIslem.firmaId !== allocation.firmaId
+    || allocation.paymentIslem.status !== "AKTIF"
+    || allocation.paymentIslem.islemTipi !== "ODEME"
+    || allocation.debtIslem.status !== "AKTIF"
+    || !["ALIM", "HIZMET"].includes(allocation.debtIslem.islemTipi)
+  )).length;
+
+  return unmatchedPayments + overallocatedDebts + invalidAllocations;
+}
+
 // LAB_FATURA entegrasyon token'ı için bkz. src/lib/lab-firma-integration.ts —
 // aciklama alanında serbest metin olarak tutulan token, gerçek bir foreign key
 // değil; prefix tek kaynaktan (LAB_SOURCE_PREFIX) alınır, format değişirse
@@ -108,6 +261,13 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
     taksitOpenMismatch,
     openLabWithoutTrip,
     labInvoiceNoFirmaMovement,
+    purchaseTotalMismatch,
+    labInvoiceTotalMismatch,
+    overpaidFirms,
+    firmaPaymentAllocationMismatch,
+    recentPayments,
+    activeStockNames,
+    activeFirmaNames,
   ] = await Promise.all([
     prisma.payment.count({
       where: {
@@ -126,8 +286,8 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
     // birden null ise bu kaydın hangi kuruma ait olduğu hiçbir şekilde tespit
     // edilemez (yukarıdaki iki kontrol de bu satırı kaçırır). Bu yüzden kurum
     // bazlı taramaya değil, yalnızca platform geneli (superadmin) görünümüne
-    // dahil ediyoruz — /api/kasa artık böyle bir kayıt oluşturulmasını
-    // engelliyor, bu sayaç yalnızca eski/legacy kayıtları yakalamak için var.
+    // dahil ediyoruz. Yeni tahsilat oluşumu yalnızca /api/payments üzerinden
+    // hasta ve doktor zorunluluğuyla yapılır; bu sayaç eski kayıtları yakalar.
     institutionId
       ? Promise.resolve(0)
       : prisma.payment.count({ where: { patientId: null, doctorId: null } }),
@@ -167,6 +327,7 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
         stockMovementId: null,
         purchase: {
           status: "AKTIF",
+          receiptStatus: "TESLIM_ALINDI",
           ...(institutionId ? { institutionId } : {}),
         },
       },
@@ -200,7 +361,59 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
       },
     }),
     countUnlinkedLabInvoices(institutionId),
+    countPurchaseTotalMismatches(institutionId),
+    countLabInvoiceTotalMismatches(institutionId),
+    countOverpaidFirms(institutionId),
+    countFirmaPaymentAllocationMismatches(institutionId),
+    prisma.payment.findMany({
+      where: paymentScope,
+      select: {
+        id: true,
+        patientId: true,
+        doctorId: true,
+        method: true,
+        amount: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: "desc" },
+      take: 2000,
+    }),
+    prisma.stockItem.findMany({
+      where: {
+        isActive: true,
+        ...(institutionId ? { institutionId } : {}),
+      },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+      take: 2000,
+    }),
+    prisma.firma.findMany({
+      where: {
+        isActive: true,
+        ...(institutionId ? { institutionId } : {}),
+      },
+      select: { id: true, name: true },
+      orderBy: { name: "asc" },
+      take: 2000,
+    }),
   ]);
+
+  const paymentFingerprints = new Map<string, number>();
+  recentPayments.forEach((payment) => {
+    const minute = payment.createdAt.toISOString().slice(0, 16);
+    const key = [
+      payment.patientId || "-",
+      payment.doctorId || "-",
+      payment.method,
+      Number(payment.amount).toFixed(2),
+      minute,
+    ].join("|");
+    paymentFingerprints.set(key, (paymentFingerprints.get(key) || 0) + 1);
+  });
+  const suspectedDuplicatePayments = Array.from(paymentFingerprints.values())
+    .reduce((sum, count) => sum + Math.max(0, count - 1), 0);
+  const duplicateStockNames = countNormalizedDuplicates(activeStockNames);
+  const duplicateFirmaNames = countNormalizedDuplicates(activeFirmaNames);
 
   const issues: ConsistencyIssue[] = [];
 
@@ -213,6 +426,39 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
     count: paymentMissingPatient,
     action: "Tahsilat kayıtlarını hasta ile eşleştirin.",
     href: "/muhasebe",
+  });
+
+  addIssue(issues, {
+    id: "payment-suspected-duplicate",
+    severity: "warning",
+    area: "Muhasebe",
+    title: "Olası mükerrer tahsilat",
+    detail: "Aynı hasta, doktor, yöntem ve tutarla aynı dakika içinde birden fazla tahsilat bulundu.",
+    count: suspectedDuplicatePayments,
+    action: "Muhasebe defterinde kayıtları karşılaştırın; gerçek tekrarları silin.",
+    href: "/muhasebe?tab=defter",
+  });
+
+  addIssue(issues, {
+    id: "stock-duplicate-name",
+    severity: "warning",
+    area: "Stok",
+    title: "Aynı isimli stok kartı",
+    detail: "Büyük/küçük harf veya boşluk farkıyla yinelenen stok kartları ortalama maliyet ve miktarı bölebilir.",
+    count: duplicateStockNames,
+    action: "Stok kartlarını tek kartta birleştirin.",
+    href: "/stok",
+  });
+
+  addIssue(issues, {
+    id: "firma-duplicate-name",
+    severity: "warning",
+    area: "Satın Alma",
+    title: "Aynı isimli firma kartı",
+    detail: "Aynı firmanın birden fazla kartı borç, ödeme ve laboratuvar geçmişini bölebilir.",
+    count: duplicateFirmaNames,
+    action: "Firma kayıtlarını tek kartta birleştirin.",
+    href: "/firma",
   });
 
   addIssue(issues, {
@@ -300,6 +546,50 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
     detail: "Satın alınan ürün stok hareketine bağlı değilse stok miktarı ve ortalama maliyet hatalı olur.",
     count: purchaseItemNoMovement,
     action: "Satın alma kaydını kontrol edip stok girişini tamamlayın.",
+    href: "/firma",
+  });
+
+  addIssue(issues, {
+    id: "purchase-total-mismatch",
+    severity: "critical",
+    area: "Satın Alma",
+    title: "Satın alma toplamı ile firma borcu uyuşmuyor",
+    detail: "Satır toplamı, bağlı firma cari hareketinden farklıysa stok maliyeti ile borç kaydı ayrışır.",
+    count: purchaseTotalMismatch,
+    action: "Satın alma kaydını açıp satırları ve bağlı firma hareketini doğrulayın.",
+    href: "/firma",
+  });
+
+  addIssue(issues, {
+    id: "lab-invoice-total-mismatch",
+    severity: "warning",
+    area: "Laboratuvar",
+    title: "Laboratuvar fatura toplamı uyuşmuyor",
+    detail: "Fatura kalemleri toplamı ile laboratuvar işinin toplam ücreti farklı görünüyor.",
+    count: labInvoiceTotalMismatch,
+    action: "Laboratuvar işindeki fatura kalemlerini kontrol edin.",
+    href: "/lab",
+  });
+
+  addIssue(issues, {
+    id: "firma-overpaid",
+    severity: "warning",
+    area: "Firma Cari",
+    title: "Bakiyesinden fazla ödeme yapılmış firma",
+    detail: "Firma ödemeleri aktif borç toplamını aşmış; eski veya mükerrer ödeme kaydı olabilir.",
+    count: overpaidFirms,
+    action: "Firma ekstresindeki ödeme kayıtlarını karşılaştırın.",
+    href: "/firma",
+  });
+
+  addIssue(issues, {
+    id: "firma-payment-allocation-mismatch",
+    severity: "critical",
+    area: "Firma Cari",
+    title: "Firma ödeme dağılımı uyuşmuyor",
+    detail: "Aktif firma ödemesinin borçlara dağıtılan toplamı, ödeme tutarıyla eşleşmiyor veya geçersiz bir borç ilişkisi içeriyor.",
+    count: firmaPaymentAllocationMismatch,
+    action: "Firma ekstresini açıp ödeme ve borç kayıtlarını kontrol edin.",
     href: "/firma",
   });
 

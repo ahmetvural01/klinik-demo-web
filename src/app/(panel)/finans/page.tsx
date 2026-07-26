@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { cachedGet } from "@/lib/client-cache";
+import { HakedisMonthlyPanel } from "@/components/hakedis/HakedisMonthlyPanel";
 
 type Doctor = { id: string; fullName: string; role?: string; institutionId?: string; profile?: { hideAsDoctor?: boolean | null } | null };
 type FinanceData = { receivable: number; received: number; toReceive: number; totalTreatments: number; labCost: number; earned: number; topExaminations: any[]; topTeeth: any[]; payments: any[]; patientPayments: any[] };
@@ -17,6 +18,19 @@ export default function FinansPage() {
   const [loading, setLoading] = useState(false);
   const [userRole, setUserRole] = useState("");
 
+  const loadFinanceFor = (doctorId: string) => {
+    if (!doctorId) return;
+    setLoading(true);
+    const params = new URLSearchParams({ doctorId });
+    if (fromDate) params.set("from", fromDate);
+    if (toDate) params.set("to", toDate);
+    fetch(`/api/finance?${params.toString()}`)
+      .then((r) => r.json())
+      .then((d) => setData(d))
+      .catch(() => setData({ receivable: 0, received: 0, toReceive: 0, totalTreatments: 0, labCost: 0, earned: 0, topExaminations: [], topTeeth: [], payments: [], patientPayments: [] }))
+      .finally(() => setLoading(false));
+  };
+
   useEffect(() => {
     cachedGet<Doctor[]>("/api/staff", 60_000)
       .then((s) => {
@@ -27,22 +41,15 @@ export default function FinansPage() {
       const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
       const effectiveRole = preview || d?.role || "";
       if (effectiveRole) setUserRole(effectiveRole);
-      if (d?.role === "DOKTOR" && d?.id) setSelectedDoctor(d.id);
+      if (d?.role === "DOKTOR" && d?.id) {
+        setSelectedDoctor(d.id);
+        loadFinanceFor(d.id);
+      }
     }).catch(()=>{});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadFinance = () => {
-    if (!selectedDoctor) return;
-    setLoading(true);
-    const params = new URLSearchParams({ doctorId: selectedDoctor });
-    if (fromDate) params.set("from", fromDate);
-    if (toDate) params.set("to", toDate);
-    fetch(`/api/finance?${params.toString()}`)
-      .then((r) => r.json())
-      .then((d) => setData(d))
-      .catch(() => setData({ receivable: 0, received: 0, toReceive: 0, totalTreatments: 0, labCost: 0, earned: 0, topExaminations: [], topTeeth: [], payments: [], patientPayments: [] }))
-      .finally(() => setLoading(false));
-  };
+  const loadFinance = () => loadFinanceFor(selectedDoctor);
 
   return (
     <section className="space-y-5">
@@ -73,7 +80,7 @@ export default function FinansPage() {
             <span className="text-[11px] text-slate-400">Tarih seçilmezse içinde bulunulan yıl gösterilir</span>
           )}
           <button onClick={loadFinance} disabled={!selectedDoctor || loading} className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90 disabled:opacity-50">
-            Getir
+            Finansal Özeti Göster
           </button>
           {userRole === "YONETICI" && selectedDoctor && (
             // Ödeme kaydı artık burada değil, tek kaynak olan muhasebe > Hakediş
@@ -103,6 +110,8 @@ export default function FinansPage() {
               </article>
             ))}
           </div>
+
+          {selectedDoctor && <HakedisMonthlyPanel doctorId={selectedDoctor} canPay={false} />}
 
           <div className="grid gap-5 lg:grid-cols-2">
             {/* En çok yapılan muayeneler */}

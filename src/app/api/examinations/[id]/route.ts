@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { examinationSchema } from "@/lib/validators";
 import { requireAuth, writeAudit } from "@/lib/api";
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
 const EXAM_STATUS_LABELS: Record<string, string> = {
   PLANLANDI: "Planlandı",
@@ -32,7 +32,8 @@ function examinationTenantWhere(id: string, role: string, institutionId: string 
   };
 }
 
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("examinations:read");
   if (auth.error) return auth.error;
 
@@ -48,7 +49,8 @@ export async function GET(_: NextRequest, { params }: Params) {
   return NextResponse.json(examination);
 }
 
-export async function PUT(request: NextRequest, { params }: Params) {
+export async function PUT(request: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("examinations:write");
   if (auth.error) return auth.error;
 
@@ -117,7 +119,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
   return NextResponse.json(examination);
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("examinations:write");
   if (auth.error) return auth.error;
 

@@ -2,8 +2,8 @@ import { decodeTokenUser } from "@/lib/auth";
 import Sidebar from "./sidebar";
 import ConfirmProvider from "@/components/ui/ConfirmProvider";
 
-export default function SuperadminLayout({ children }: { children: React.ReactNode }) {
-  const user = decodeTokenUser();
+export default async function SuperadminLayout({ children }: { children: React.ReactNode }) {
+  const user = await decodeTokenUser();
 
   // Login sayfası (/superadmin) için sidebar olmadan render et
   if (!user || user.role !== "SUPERADMIN") {

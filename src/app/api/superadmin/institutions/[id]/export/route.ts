@@ -7,7 +7,8 @@ import { buildExportWorkbook } from "@/lib/patient-export";
 // ve reçete verisini aynı şablon şemasıyla Excel olarak indirir. Veri
 // taşınabilirliği (klinik ayrılırsa verisini alabilmeli) ve KVKK'ya uygun
 // erişim hakkı için.
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });

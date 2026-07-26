@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { showToastSafe } from "@/lib/toast-client";
+import { confirmDialog } from "@/lib/confirm-client";
 import { useSlashFocus } from "@/lib/use-slash-focus";
 import { stripSystemTags } from "@/lib/format-text";
 import { downloadCsv } from "@/lib/csv-export";
@@ -174,6 +175,18 @@ export default function StokPage() {
     }
   }
 
+  async function deleteItem(item: StockItem) {
+    if (!(await confirmDialog({ message: `"${item.name}" stok kartı arşivlensin mi? Listeden kaldırılır, geçmiş hareketler saklanır.`, danger: true, confirmText: "Arşivle" }))) return;
+    try {
+      const res = await fetch(`/api/stock/${item.id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error);
+      showToastSafe({ title: "Stok kartı arşivlendi", message: "Kart listeden kaldırıldı.", type: "success" });
+      void fetchItems();
+    } catch (error) {
+      showToastSafe({ title: "Stok kartı arşivlenemedi", message: error instanceof Error ? error.message : "Lütfen tekrar deneyin.", type: "error" });
+    }
+  }
+
   function openEdit(item: StockItem) {
     setEditItem(item);
     setEditForm({
@@ -304,7 +317,7 @@ export default function StokPage() {
       cell: ({ row }) => {
         const item = row.original;
         return (
-          <div className="min-w-0">
+          <div className="w-[300px] max-w-[300px]">
             <p className="truncate font-semibold text-slate-900">{item.name}</p>
             <div className="mt-1 flex flex-wrap gap-1.5">
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">{item.category}</span>
@@ -326,7 +339,7 @@ export default function StokPage() {
         const item = row.original;
         const low = item.quantity < item.minQuantity;
         return (
-          <div className="whitespace-nowrap text-right">
+          <div className="w-[84px] whitespace-nowrap text-right">
             <span className={`text-base font-black ${low ? "text-red-600" : "text-slate-800"}`}>{item.quantity}</span>
             <span className="ml-1 text-xs text-slate-400">{item.unit}</span>
             <p className={`mt-0.5 text-[11px] font-bold ${low ? "text-red-600" : "text-slate-400"}`}>
@@ -345,7 +358,7 @@ export default function StokPage() {
         const last = item.lastPurchase;
         if (!last) return <span className="text-xs text-slate-400">Satın alma yok</span>;
         return (
-          <div className="min-w-0">
+          <div className="w-[150px] max-w-[150px]">
             <p className="whitespace-nowrap font-semibold text-slate-700">{CURRENCY.format(Number(last.unitPrice || 0))}/{item.unit}</p>
             <p className="max-w-[180px] truncate text-[11px] text-slate-400">
               {last.supplier || "Firma yok"}{last.date ? ` · ${formatDate(last.date)}` : ""}
@@ -363,7 +376,7 @@ export default function StokPage() {
         const cost = averageCost(item);
         if (cost === null) return <span className="text-xs text-slate-400">Maliyet yok</span>;
         return (
-          <div className="whitespace-nowrap text-right">
+          <div className="w-[110px] whitespace-nowrap text-right">
             <p className="font-semibold text-slate-800">{CURRENCY.format(cost)}</p>
             <p className="text-[11px] text-slate-400">Değer {CURRENCY.format(stockValue(item))}</p>
           </div>
@@ -390,13 +403,16 @@ export default function StokPage() {
                 });
               }}
             >
-              Düş
+              Stok Çıkışı
             </Button>
             <Button size="sm" variant="secondary" onClick={() => void openHistory(item)}>
-              Geçmiş
+              Hareketler
             </Button>
             <Button size="sm" variant="secondary" onClick={() => openEdit(item)}>
               Düzenle
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => void deleteItem(item)}>
+              Arşivle
             </Button>
           </div>
         );
@@ -427,7 +443,7 @@ export default function StokPage() {
           CSV
         </Button>
         <Button size="sm" variant="primary" icon={Plus} onClick={() => setShowNew(true)}>
-          Yeni Kart
+          Yeni Stok Kartı
         </Button>
       </div>
         <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-bold text-slate-500">

@@ -60,7 +60,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/personel":      "Personeller",
   "/personel-ekle": "Yeni Personel",
   "/fiyat":         "Fiyat Listesi",
-  "/sms":           "SMS Kayıtları",
+  "/sms":           "SMS Yönetimi",
   "/sistem-izleme": "Sistem İzleme",
   "/ayar":          "Sistem Ayarları",
   "/log":           "İşlem Kayıtları",
@@ -270,7 +270,7 @@ export function Topbar({ user }: Props) {
     setEffectiveRole(getEffectiveRole());
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/patients?q=${encodeURIComponent(q)}&take=8`);
+        const res = await fetch(`/api/patients?q=${encodeURIComponent(q)}&take=8&summary=false`);
         if (res.ok) {
           const json = await res.json();
           const patients = Array.isArray(json) ? json : (json?.patients ?? []);
@@ -321,9 +321,9 @@ export function Topbar({ user }: Props) {
   const displayRole = roleLabel[effectiveRole] || user.role;
 
   return (
-    <header className={`flex items-center justify-between border-b border-slate-200 bg-white shadow-sm ${pageConfig.compact ? "min-h-14 gap-2 px-3 py-2 sm:gap-3 sm:px-4" : "min-h-16 gap-2 px-3 py-2 sm:gap-4 sm:px-5"}`}>
+    <header className={`flex w-full min-w-0 shrink-0 items-center justify-between border-b border-slate-200 bg-white ${pageConfig.compact ? "min-h-14 gap-2 px-3 py-2 sm:gap-3 sm:px-4" : "min-h-16 gap-2 px-3 py-2 sm:gap-4 sm:px-5"}`}>
       {/* Sol: Sayfa başlığı veya arama */}
-      <div className={`flex flex-1 items-center ${pageConfig.compact ? "gap-2" : "gap-4"}`}>
+      <div className={`flex min-w-0 flex-1 items-center ${pageConfig.compact ? "gap-2" : "gap-4"}`}>
         <button
           onClick={() => window.dispatchEvent(new Event("toggle-mobile-sidebar"))}
           aria-label="Menüyü aç"
@@ -332,10 +332,10 @@ export function Topbar({ user }: Props) {
           <Menu className="h-4 w-4" />
         </button>
         {pageConfig.showPageTitle && pageTitle && (
-          <span className="hidden text-base font-bold text-slate-800 md:block">{pageTitle}</span>
+          <span className="hidden shrink-0 text-base font-bold text-slate-800 lg:block">{pageTitle}</span>
         )}
-        {pageConfig.showSearch && <div className="relative flex max-w-sm flex-1">
-          <form onSubmit={search} className="w-full">
+        {pageConfig.showSearch && <div className="relative flex min-w-0 max-w-sm flex-1">
+          <form onSubmit={search} className="min-w-0 w-full">
             <div ref={searchRef} className="relative flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 transition focus-within:border-primary focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15">
               <Search className="h-4 w-4 shrink-0 text-slate-400" />
               <input
@@ -409,10 +409,10 @@ export function Topbar({ user }: Props) {
       </div>
 
       {/* Sağ taraf */}
-      <div className={`flex items-center ${pageConfig.compact ? "gap-2" : "gap-3"}`}>
+      <div className={`flex shrink-0 items-center ${pageConfig.compact ? "gap-1.5 sm:gap-2" : "gap-2 sm:gap-3"}`}>
         {/* Hızlı Erişim */}
         {pageConfig.quickActions.length > 0 && (
-          <div className="hidden items-center gap-2 md:flex">
+          <div className="hidden items-center gap-2 xl:flex">
             {pageConfig.quickActions.map((action) => (
               <Button key={action.href + action.label} href={action.href} variant="secondary" size="sm" icon={action.icon}>
                 {action.label}
@@ -423,7 +423,7 @@ export function Topbar({ user }: Props) {
 
         {/* Tarih & Saat */}
         {pageConfig.showDateTime && (
-          <div className="hidden items-center gap-2 border-l border-slate-100 pl-3 text-xs text-slate-400 md:flex">
+          <div className="hidden items-center gap-2 border-l border-slate-100 pl-3 text-xs text-slate-400 xl:flex">
             <span className="text-slate-500">{today}</span>
             <span className="h-3.5 w-px bg-slate-200" />
             <Clock />
@@ -496,7 +496,7 @@ export function Topbar({ user }: Props) {
                       <FlaskConical className="h-4 w-4 text-primary" />
                     </span>
                     <div>
-                      <p className="text-sm font-semibold text-slate-800">{alerts.lab} Bekleyen Lab Siparişi</p>
+                      <p className="text-sm font-semibold text-slate-800">{alerts.lab} Bekleyen Laboratuvar İşi</p>
                       <p className="text-xs text-slate-500">Laboratuvar sayfasına git</p>
                     </div>
                   </a>
@@ -525,8 +525,8 @@ export function Topbar({ user }: Props) {
         </div>}
 
         {/* Kullanıcı */}
-        <div className="flex items-center gap-2.5 border-l border-slate-100 pl-3">
-          <div className="hidden text-right md:block">
+        <div className="flex items-center gap-2.5 border-l border-slate-100 pl-2 sm:pl-3">
+          <div className="hidden text-right lg:block">
             <p className="text-sm font-semibold leading-tight text-slate-800">{displayName}</p>
             <Badge tone="info" size="sm">{displayRole}</Badge>
           </div>

@@ -6,6 +6,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { confirmDialog } from "@/lib/confirm-client";
 import { cachedGet } from "@/lib/client-cache";
+import { getAuditActionLabel } from "@/lib/audit-labels";
 
 type ApptStatus = "BEKLIYOR" | "GELDI" | "IPTAL" | "TAMAMLANDI" | string;
 type Appt = { id: string; startAt: string; endAt: string; status: ApptStatus; patient: { fullName: string }; doctor: { fullName: string }; type: string };
@@ -42,38 +43,6 @@ const ROLE_LABELS: Record<string, string> = {
   ASISTAN: "Asistan",
   BANKO: "Banko",
   MUHASEBE: "Muhasebe",
-};
-
-const ACTION_LABELS: Record<string, string> = {
-  LOGIN: "Sisteme Giriş",
-  LOGOUT: "Sistemden Çıkış",
-  PATIENT_CREATE: "Hasta Kaydı Oluşturma",
-  PATIENT_UPDATE: "Hasta Bilgisi Güncelleme",
-  PATIENT_DELETE: "Hasta Kaydı Silme",
-  APPOINTMENT_CREATE: "Randevu Oluşturma",
-  APPOINTMENT_UPDATE: "Randevu Güncelleme",
-  APPOINTMENT_STATUS: "Randevu Durumu Güncelleme",
-  APPOINTMENT_DELETE: "Randevu Silme",
-  EXAM_CREATE: "Muayene Kaydı Oluşturma",
-  EXAM_UPDATE: "Muayene Kaydı Güncelleme",
-  EXAM_DELETE: "Muayene Kaydı Silme",
-  PAYMENT_CREATE: "Ödeme Kaydı Oluşturma",
-  PAYMENT_UPDATE: "Ödeme Kaydı Güncelleme",
-  PAYMENT_DELETE: "Ödeme Kaydı Silme",
-  FIRMA_ISLEM_CREATE: "Firma İşlemi Oluşturma",
-  FIRMA_ISLEM_CANCEL: "Firma İşlemi İptali",
-  PRICE_CREATE: "Fiyat Oluşturma",
-  PRICE_UPDATE: "Fiyat Güncelleme",
-  PRICE_DELETE: "Fiyat Silme",
-  SETTINGS_UPDATE: "Sistem Ayarı Güncelleme",
-  PROFILE_UPDATE: "Profil Güncelleme",
-  PASSWORD_CHANGE: "Şifre Değiştirme",
-  STAFF_CREATE: "Personel Ekleme",
-  STAFF_UPDATE: "Personel Güncelleme",
-  STAFF_DEACTIVATE: "Personel Pasife Alma",
-  SUPPORT_UPDATE: "Destek Talebi Güncelleme",
-  POS_UPDATE: "POS Cihazı Güncelleme",
-  SMS_TEMPLATE_UPDATE: "SMS Şablonu Güncelleme",
 };
 
 const HOME_CACHE_KEY = "anasayfa:home:v1";
@@ -138,10 +107,6 @@ function readHomeCache() {
   }
 }
 
-function getActionLabel(action: string): string {
-  return ACTION_LABELS[action] || action.replaceAll("_", " ");
-}
-
 function getLogSummary(detail: string): string {
   const firstLine = (detail || "").split(/\r?\n/)[0]?.trim();
   return firstLine || "Detay yok";
@@ -173,6 +138,9 @@ export default function AnasayfaPage() {
   const [criticalStockCount, setCriticalStockCount] = useState(0);
   const [failedSmsCount, setFailedSmsCount] = useState(0);
   const [lastSyncAt, setLastSyncAt] = useState("");
+  const [rolePanelError, setRolePanelError] = useState("");
+  const [appointmentError, setAppointmentError] = useState("");
+  const [appointmentReloadKey, setAppointmentReloadKey] = useState(0);
 
   useLayoutEffect(() => {
     const cachedHome = readHomeCache();
@@ -256,6 +224,18 @@ export default function AnasayfaPage() {
     rolePanelsLoadingRef.current = true;
 
     try {
+      let failedPanelCount = 0;
+      const readPanel = async <T,>(url: string, fallback: T): Promise<T> => {
+        try {
+          const response = await fetch(url);
+          const payload = await response.json().catch(() => null);
+          if (!response.ok) throw new Error();
+          return (payload ?? fallback) as T;
+        } catch {
+          failedPanelCount += 1;
+          return fallback;
+        }
+      };
       const canSeeRoleCiro = ["YONETICI", "SUPERADMIN", "MUHASEBE"].includes(role || "");
       const canSeeTaksitDash = ["YONETICI", "SUPERADMIN", "MUHASEBE", "BANKO"].includes(role || "");
       const canSeeLabDash = ["YONETICI", "SUPERADMIN", "DOKTOR", "ASISTAN"].includes(role || "");
@@ -266,11 +246,12 @@ export default function AnasayfaPage() {
 
       const todayIso = new Date().toISOString().split("T")[0];
       const [labData, taksitData, stockData, smsLogData] = await Promise.all([
-        canSeeLabDash ? fetch("/api/lab-orders?limit=300").then(r => r.json()).catch(() => ({ labOrders: [] })) : Promise.resolve({ labOrders: [] }),
-        canSeeTaksitDash ? fetch("/api/taksit-plani?limit=400").then(r => r.json()).catch(() => ({ taksitPlanlari: [] })) : Promise.resolve({ taksitPlanlari: [] }),
-        canSeeStockDash ? fetch("/api/stock").then(r => r.json()).catch(() => []) : Promise.resolve([]),
-        canSeeAuditDash ? fetch("/api/logs?q=SMS_&limit=50").then(r => r.json()).catch(() => ({ logs: [] })) : Promise.resolve({ logs: [] }),
+        canSeeLabDash ? readPanel("/api/lab-orders?limit=300", { labOrders: [] }) : Promise.resolve({ labOrders: [] }),
+        canSeeTaksitDash ? readPanel("/api/taksit-plani?limit=400", { taksitPlanlari: [] }) : Promise.resolve({ taksitPlanlari: [] }),
+        canSeeStockDash ? readPanel("/api/stock", []) : Promise.resolve([]),
+        canSeeAuditDash ? readPanel("/api/logs?q=SMS_&limit=50", { logs: [] }) : Promise.resolve({ logs: [] }),
       ]);
+      setRolePanelError(failedPanelCount > 0 ? "Bazı güncel özet verileri alınamadı; son başarılı veriler gösteriliyor." : "");
 
       const labOrders: { status: string }[] = Array.isArray(labData) ? labData : (labData.labOrders || []);
       const pendingLab = labOrders.filter((l: { status: string }) => l.status !== "HASTAYA_TAKILDI" && l.status !== "IPTAL").length;
@@ -426,15 +407,22 @@ export default function AnasayfaPage() {
     setApptLoading(true);
     const controller = new AbortController();
     fetch("/api/appointments?date=" + dateStr, { signal: controller.signal })
-      .then(r => r.json())
-      .then(d => setAppts(Array.isArray(d) ? d : (d.appointments || [])))
+      .then(async (r) => {
+        const payload = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(payload?.message || "Randevular yüklenemedi");
+        return payload;
+      })
+      .then(d => {
+        setAppts(Array.isArray(d) ? d : (d.appointments || []));
+        setAppointmentError("");
+      })
       .catch((e: unknown) => {
         if (e instanceof Error && e.name === "AbortError") return;
-        setAppts([]);
+        setAppointmentError(e instanceof Error ? e.message : "Randevular yüklenemedi");
       })
       .finally(() => setApptLoading(false));
     return () => controller.abort();
-  }, [dateStr]);
+  }, [dateStr, appointmentReloadKey]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -561,24 +549,9 @@ export default function AnasayfaPage() {
       tone: "blue",
     });
   }
-  if (canSeeInstallments && installmentAgenda.overdue.length > 0) {
-    homeTasks.push({
-      id: "t-gecikme",
-      title: `${installmentAgenda.overdue.length} gecikmiş taksit var`,
-      meta: "Tahsilat planı oluşturun ve hasta bilgilendirmesini başlatın",
-      href: "/muhasebe?tab=taksit",
-      tone: "red",
-    });
-  }
-  if (canSeeInstallments && installmentAgenda.upcoming.length > 0) {
-    homeTasks.push({
-      id: "t-yaklasan",
-      title: `${installmentAgenda.upcoming.length} vade 7 gün içinde`,
-      meta: "Hatırlatma ve tahsilat hazırlığını tamamlayın",
-      href: "/muhasebe?tab=taksit",
-      tone: "amber",
-    });
-  }
+  // Gecikmiş/yaklaşan taksit sayıları burada ayrıca özetlenmiyor — aynı bilgi
+  // birkaç satır aşağıdaki "Taksit Takvimi" widget'ında zaten tam listeyle
+  // gösteriliyor, iki yerde aynı sayıyı tekrarlamak kafa karıştırıyordu.
   if (canSeeLabTask && crossStats.pendingLabOrders > 0) {
     homeTasks.push({
       id: "t-lab",
@@ -623,13 +596,13 @@ export default function AnasayfaPage() {
     slate: "text-slate-800",
   };
 
+  // "Bekleyen Lab" burada ayrıca bir sayaç olarak durmuyor — aynı sayı zaten
+  // "Bugün Dikkat Gerekenler" görev listesinde ve sidebar rozetinde var,
+  // üçüncü bir tekrar gereksizdi.
   const summaryItems: SummaryItem[] = [
     { id: "s-appt-total", label: "Bugünkü Randevu", value: String(todayTotal), tone: "blue", href: "/randevu" },
     { id: "s-appt-pending", label: "İşlem Bekleyen", value: String(todayWaiting), tone: "amber", href: "/randevu" },
   ];
-  if (canSeeLabTask) {
-    summaryItems.push({ id: "s-lab", label: "Bekleyen Lab", value: String(crossStats.pendingLabOrders), tone: crossStats.pendingLabOrders > 0 ? "blue" : "slate", href: "/lab" });
-  }
 
   return (
     <div className="space-y-5">
@@ -642,6 +615,22 @@ export default function AnasayfaPage() {
           <p className="mt-1 text-xs text-slate-400">Rol: {roleLabel} · Son senkron: {lastSyncLabel}</p>
         </div>
       </div>
+
+      {(rolePanelError || appointmentError) && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
+          <span>{appointmentError || rolePanelError}</span>
+          <button
+            type="button"
+            onClick={() => {
+              if (appointmentError) setAppointmentReloadKey((value) => value + 1);
+              if (annRole) void loadRolePanels(annRole);
+            }}
+            className="font-bold text-amber-900 underline underline-offset-2"
+          >
+            Yeniden dene
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-wrap overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
         {summaryItems.map((item, idx) => (
@@ -904,7 +893,7 @@ export default function AnasayfaPage() {
                 <div key={l.id} className="flex items-start gap-3 px-4 py-2.5">
                   <div className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[9px] font-bold text-slate-600">{l.user?.fullName?.charAt(0) || "?"}</div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-xs font-semibold text-slate-700">{getActionLabel(l.action)}</p>
+                    <p className="truncate text-xs font-semibold text-slate-700">{getAuditActionLabel(l.action, l.detail)}</p>
                     <p className="truncate text-[10px] text-slate-400">{getLogSummary(l.detail)}</p>
                   </div>
                   <p className="shrink-0 text-[10px] tabular-nums text-slate-400">{new Date(l.createdAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}</p>

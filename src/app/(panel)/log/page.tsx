@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { getAuditActionLabel, getAuditScopeLabel } from "@/lib/audit-labels";
 
 type Log = {
   id: string;
@@ -16,104 +17,6 @@ type Log = {
   detail: string | null;
   ip?: string | null;
 };
-
-const ACTION_LABELS: Record<string, string> = {
-  LOGIN: "Sisteme Giriş",
-  LOGOUT: "Sistemden Çıkış",
-  PATIENT_CREATE: "Hasta Kaydı Oluşturma",
-  PATIENT_UPDATE: "Hasta Bilgisi Güncelleme",
-  PATIENT_DELETE: "Hasta Kaydı Silme",
-  APPOINTMENT_CREATE: "Randevu Oluşturma",
-  APPOINTMENT_UPDATE: "Randevu Güncelleme",
-  APPOINTMENT_DELETE: "Randevu Silme",
-  APPOINTMENT_STATUS: "Randevu Durumu Güncelleme",
-  EXAM_CREATE: "Muayene Kaydı Oluşturma",
-  EXAM_UPDATE: "Muayene Kaydı Güncelleme",
-  EXAM_DELETE: "Muayene Kaydı Silme",
-  PAYMENT_CREATE: "Ödeme Kaydı Oluşturma",
-  PAYMENT_UPDATE: "Ödeme Kaydı Güncelleme",
-  PAYMENT_DELETE: "Ödeme Kaydı Silme",
-  TAKSIT_MARK_OVERDUE: "Taksitleri Gecikmiş İşaretleme",
-  FIRMA_ISLEM_CREATE: "Firma İşlemi Oluşturma",
-  FIRMA_ISLEM_CANCEL: "Firma İşlemi İptali",
-  PRICE_CREATE: "Fiyat Olusturma",
-  PRICE_UPDATE: "Fiyat Güncelleme",
-  PRICE_DELETE: "Fiyat Silme",
-  PROFILE_UPDATE: "Profil Güncelleme",
-  PASSWORD_CHANGE: "Şifre Değiştirme",
-  SETTINGS_UPDATE: "Sistem Ayarı Güncelleme",
-  STAFF_CREATE: "Personel Ekleme",
-  STAFF_UPDATE: "Personel Güncelleme",
-  STAFF_DEACTIVATE: "Personel Pasife Alma",
-  POS_UPDATE: "POS Cihazı Güncelleme",
-  SUPPORT_UPDATE: "Destek Talebi Güncelleme",
-  SMS_TEMPLATE_UPDATE: "SMS Şablonu Güncelleme",
-  SMS_TEMPLATE_SAVE: "SMS Şablonu Kaydetme",
-  SMS_BILGI: "SMS Bilgilendirme",
-  SMS_HATIRLATMA: "SMS Hatırlatma",
-  SMS_ANKET: "SMS Değerlendirme",
-  SMS_BILGI_FAILED: "SMS Bilgilendirme Başarısız",
-  SMS_HATIRLATMA_FAILED: "SMS Hatırlatma Başarısız",
-  SMS_ANKET_FAILED: "SMS Değerlendirme Başarısız",
-  PATIENT_DATA_EXPORT: "Hasta Verisi Dışa Aktarma (KVKK)",
-  APPOINTMENT_CANCEL: "Randevu İptali",
-  BOOKING_REQUEST_UPDATE: "Online Randevu Talebi Güncelleme",
-  PUBLIC_BOOKING_REQUEST_CREATE: "Online Randevu Talebi Oluşturma",
-  WAITLIST_CREATE: "Bekleme Listesi Oluşturma",
-  WAITLIST_UPDATE: "Bekleme Listesi Güncelleme",
-  WAITLIST_DELETE: "Bekleme Listesi Silme",
-  LAB_ORDER_CREATE: "Laboratuvar İşi Oluşturma",
-  LAB_ORDER_UPDATE: "Laboratuvar İşi Güncelleme",
-  LAB_ORDER_INVOICE_CREATE: "Laboratuvar Faturası Ekleme",
-  LAB_TRIP_CREATE: "Laboratuvar Gönderimi Ekleme",
-  LAB_TRIP_UPDATE: "Laboratuvar Gönderimi Güncelleme",
-  PURCHASE_UPDATE: "Satın Alma Güncelleme",
-  PURCHASE_CANCEL: "Satın Alma İptali",
-  STOCK_ITEM_CREATE: "Stok Kartı Oluşturma",
-  STOCK_ITEM_UPDATE: "Stok Kartı Güncelleme",
-  STOCK_MOVEMENT: "Stok Hareketi",
-  STOCK_ITEM_DELETE: "Stok Kartı Pasifleştirme",
-  TREATMENT_TYPE_CREATE: "Tedavi Türü Oluşturma",
-  TREATMENT_TYPE_UPDATE: "Tedavi Türü Güncelleme",
-  TREATMENT_TYPE_DELETE: "Tedavi Türü Silme",
-  PATIENT_CONSENT_CREATE: "Hasta Onamı Kaydetme",
-  PATIENT_CONSENT_VOID: "Hasta Onamı İptali",
-  DOCUMENT_CREATE: "Belge Yükleme",
-  DOCUMENT_DELETE: "Belge Silme",
-  PRESCRIPTION_CREATE: "Reçete Oluşturma",
-  PRESCRIPTION_DELETE: "Reçete Silme",
-  MESSAGE_CREATE: "Klinik İçi Mesaj",
-  MESSAGE_UPDATE: "Klinik İçi Mesaj Güncelleme",
-  MESSAGE_DELETE: "Klinik İçi Mesaj Silme",
-  ANNOUNCEMENT_CREATE: "Duyuru Oluşturma",
-  ANNOUNCEMENT_DELETE: "Duyuru Silme",
-  TWO_FACTOR_ENABLE: "İki Aşamalı Doğrulama Açma",
-  TWO_FACTOR_DISABLE: "İki Aşamalı Doğrulama Kapatma",
-  PROFILE_2FA_SETUP_START: "İki Aşamalı Doğrulama Kurulum Başlatma",
-  DEV_DEMO_LOAD: "Yerel Demo Veri Yükleme",
-  DEV_DEMO_LOAD_SKIPPED: "Yerel Demo Veri Yükleme Atlandı",
-  DEMO_REQUEST_CREATE: "Demo Kurum Oluşturma",
-};
-
-function getActionLabel(action: string): string {
-  return ACTION_LABELS[action] || action.replaceAll("_", " ");
-}
-
-function getScopeLabel(action: string): string {
-  if (action === "LOGIN" || action === "LOGOUT" || action.startsWith("PROFILE_") || action.startsWith("PASSWORD_")) return "Oturum";
-  if (action.startsWith("PATIENT_") || action.startsWith("DOCUMENT_")) return "Hasta";
-  if (action.startsWith("APPOINTMENT_") || action.startsWith("BOOKING_REQUEST_") || action.startsWith("PUBLIC_BOOKING_") || action.startsWith("WAITLIST_") || action.startsWith("DOCTOR_BLOCK_")) return "Randevu";
-  if (action.startsWith("EXAM_") || action.startsWith("TREATMENT_") || action.startsWith("PRESCRIPTION_")) return "Tedavi";
-  if (action.startsWith("PAYMENT_") || action.startsWith("KASA_") || action.startsWith("GIDER_") || action.startsWith("TAKSIT_") || action.startsWith("FIRMA_") || action.startsWith("PURCHASE_")) return "Finans";
-  if (action.startsWith("LAB_")) return "Laboratuvar";
-  if (action.startsWith("STOCK_")) return "Stok";
-  if (action.startsWith("SMS_")) return "SMS";
-  if (action.startsWith("SETTINGS_") || action.startsWith("POS_") || action.startsWith("PRICE_") || action.startsWith("SMS_TEMPLATE_") || action.startsWith("FOLLOW_UP_TYPES_")) return "Ayarlar";
-  if (action.startsWith("SUPPORT_")) return "Destek";
-  if (action.startsWith("MESSAGE_") || action.startsWith("ANNOUNCEMENT_")) return "İletişim";
-  if (action.startsWith("DEV_") || action.startsWith("DEMO_")) return "Sistem";
-  return "Genel";
-}
 
 const CATEGORY_OPTIONS = [
   { value: "", label: "Tüm işlemler" },
@@ -178,7 +81,7 @@ export default function LogPage() {
     return from.toISOString().split("T")[0];
   });
   const [toDate, setToDate] = useState(() => new Date().toISOString().split("T")[0]);
-  const [pageSize, setPageSize] = useState(15);
+  const [pageSize, setPageSize] = useState(25);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const [detailLog, setDetailLog] = useState<Log | null>(null);
@@ -249,7 +152,7 @@ export default function LogPage() {
       header: "İşlem",
       render: (l) => (
         <>
-          <p className="text-sm font-medium text-slate-800">{getActionLabel(l.action)}</p>
+          <p className="text-sm font-medium text-slate-800">{getAuditActionLabel(l.action, l.detail)}</p>
           <p className="max-w-lg truncate text-xs text-slate-500">{parseDetail(l.detail).summary}</p>
         </>
       ),
@@ -257,7 +160,7 @@ export default function LogPage() {
     {
       key: "scope",
       header: "Kapsam",
-      render: (l) => <Badge tone="neutral">{getScopeLabel(l.action)}</Badge>,
+      render: (l) => <Badge tone="neutral">{getAuditScopeLabel(l.action, l.detail)}</Badge>,
     },
     {
       key: "islem",
@@ -281,7 +184,7 @@ export default function LogPage() {
           {CATEGORY_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
         </select>
         <input value={search} onChange={e=>setSearch(e.target.value)} onKeyDown={e=>{ if (e.key === "Enter") { setPage(1); void fetchLogs(); } }} placeholder="Personel, işlem veya detay ara…" className="flex-1 min-w-48 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm focus:border-primary focus:outline-none" />
-        <Button size="sm" onClick={() => { setPage(1); void fetchLogs(); }}>Getir</Button>
+        <Button size="sm" onClick={() => { setPage(1); void fetchLogs(); }}>Kayıtları Göster</Button>
         <div className="flex items-center gap-1.5 text-sm text-slate-600">
           Göster:
           <select value={pageSize} onChange={e=>{setPageSize(Number(e.target.value));setPage(1);}} className="ml-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-sm focus:outline-none">
@@ -333,7 +236,7 @@ export default function LogPage() {
               {detailLog.ip && (
                 <div className="flex gap-2"><dt className="w-20 shrink-0 text-xs font-semibold text-slate-500 uppercase">IP</dt><dd className="text-slate-700">{detailLog.ip}</dd></div>
               )}
-              <div className="flex gap-2"><dt className="w-20 shrink-0 text-xs font-semibold text-slate-500 uppercase">İşlem</dt><dd className="text-slate-700">{getActionLabel(detailLog.action)}</dd></div>
+              <div className="flex gap-2"><dt className="w-20 shrink-0 text-xs font-semibold text-slate-500 uppercase">İşlem</dt><dd className="text-slate-700">{getAuditActionLabel(detailLog.action, detailLog.detail)}</dd></div>
               <div className="flex gap-2"><dt className="w-20 shrink-0 text-xs font-semibold text-slate-500 uppercase">Özet</dt><dd className="text-slate-700 text-xs">{parsed.summary}</dd></div>
               {beforeItems.length > 0 && (
                 <div className="flex gap-2"><dt className="w-20 shrink-0 text-xs font-semibold text-slate-500 uppercase">Öncesi</dt><dd className="text-slate-600 text-xs"><ul className="list-disc pl-4 space-y-0.5">{beforeItems.map((item, idx) => <li key={`b-${idx}`}>{item}</li>)}</ul></dd></div>

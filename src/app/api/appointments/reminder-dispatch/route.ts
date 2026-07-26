@@ -21,7 +21,7 @@ export const POST = withApiTiming("reminder-dispatch", async function POST(reque
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
-    return NextResponse.json({ message: "Sadece klinik kullanicilari hatirlatma dagitimi yapabilir" }, { status: 403 });
+    return NextResponse.json({ message: "Yalnızca klinik kullanıcıları hatırlatma gönderebilir." }, { status: 403 });
   }
 
   const takeRaw = request.nextUrl.searchParams.get("take");

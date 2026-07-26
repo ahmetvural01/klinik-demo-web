@@ -7,6 +7,7 @@ import { useSearchParams } from "next/navigation";
 import { useState, useEffect } from "react";
 import { formatDate } from "@/lib/format";
 import { cachedGet } from "@/lib/client-cache";
+import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 import { Button } from "@/components/ui/Button";
 import { Printer } from "lucide-react";
 
@@ -44,7 +45,7 @@ export default function PrescriptionPage() {
   const [setting, setSetting] = useState<Setting | null>(null);
   const [loading, setLoading] = useState(false);
   const [userRole, setUserRole] = useState("");
-  const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
+  const hidePhone = shouldHidePatientPhone(userRole);
 
   useEffect(() => {
     cachedGet<{ role?: string }>("/api/auth/me", 60_000)

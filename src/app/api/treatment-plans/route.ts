@@ -17,12 +17,14 @@ export const GET = withApiTiming("treatment-plans", async function GET(req: Next
   const { searchParams } = new URL(req.url);
   const patientId = searchParams.get("patientId");
   const status    = searchParams.get("status");
+  const doctorId  = searchParams.get("doctorId");
   const q         = (searchParams.get("q") || "").trim();
   const { page, take, skip, pageCount } = parsePagination(searchParams, { defaultTake: 30, maxTake: 100 });
 
   const baseWhere: Record<string, unknown> = {
     ...(patientId ? { patientId } : {}),
     ...(status    ? { status }    : {}),
+    ...(doctorId  ? { doctorId }  : {}),
     ...(user.role !== "SUPERADMIN" ? { patient: { institutionId: user.institutionId } } : {}),
   };
   const searchWhere = q

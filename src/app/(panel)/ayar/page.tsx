@@ -5,7 +5,6 @@ import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
-import SmsPage from "../sms/page";
 import FiyatPage from "../fiyat/page";
 
 type PosDevice = { id: string; name: string; isActive: boolean; createdAt: string };
@@ -24,8 +23,6 @@ const DAYS = ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","P
 const TABS = [
   { id: "genel", label: "Genel Ayarlar" },
   { id: "calisma", label: "Çalışma Saatleri" },
-  { id: "sms", label: "SMS Ayarları" },
-  { id: "smsKayit", label: "SMS Kayıtları" },
   { id: "fiyat", label: "Fiyat Listesi" },
   { id: "pos", label: "POS Cihazları" },
   { id: "tedavi", label: "Tedavi Türleri" },
@@ -88,6 +85,8 @@ export default function AyarPage() {
   const [editingTreatment, setEditingTreatment] = useState<{ id: string; label: string; color: string } | null>(null);
   const [savingTreatment, setSavingTreatment] = useState(false);
 
+  // İlk açılışta kurum ayarlarının üç bağımsız veri kaynağını bir kez yükle.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const requestedTab = new URLSearchParams(window.location.search).get("tab");
     if (TABS.some((tab) => tab.id === requestedTab)) setActiveTab(requestedTab as SettingsTab);
@@ -105,9 +104,14 @@ export default function AyarPage() {
   };
 
   const fetchSettings = async () => {
+    setLoading(true);
     try {
       const res = await fetch("/api/settings");
       const data = await res.json();
+      if (!res.ok) {
+        showToast("error", data?.message || "Ayarlar yüklenemedi.");
+        return;
+      }
       if (data) {
       setInstitutionSlug(data.institutionSlug || "");
       setSettings({
@@ -122,7 +126,12 @@ export default function AyarPage() {
           lunchEnd: data.lunchEnd || "",
           dailySchedules: (() => {
               const raw = data.dailySchedules;
-              const parsed: DaySchedule[] = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : [];
+              let parsed: DaySchedule[] = [];
+              try {
+                parsed = raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : [];
+              } catch {
+                parsed = [];
+              }
               return parsed.length > 0 ? parsed : DEFAULT_SCHEDULES;
             })(),
           smsEnabled:         data.smsEnabled         !== undefined ? data.smsEnabled         : true,
@@ -135,7 +144,7 @@ export default function AyarPage() {
           birthdaySmsEnabled: data.birthdaySmsEnabled !== undefined ? data.birthdaySmsEnabled : false,
         });
       }
-    } catch (e) { console.error(e); }
+    } catch (e) { console.error(e); showToast("error", "Ayarlar yüklenemedi. Bağlantınızı kontrol edin."); }
     finally { setLoading(false); }
   };
 
@@ -143,15 +152,17 @@ export default function AyarPage() {
     setPosLoading(true);
     try {
       const res = await fetch("/api/pos-devices");
-      if (res.ok) setPosDevices(await res.json());
-    } catch { /* ignore */ }
+      const result = await res.json().catch(() => []);
+      if (res.ok) setPosDevices(result);
+      else showToast("error", result?.message || "POS cihazları yüklenemedi.");
+    } catch { showToast("error", "POS cihazları yüklenemedi."); }
     finally { setPosLoading(false); }
   };
 
   const saveSettings = async () => {
     setSaving(true);
     try {
-      await fetch("/api/settings", {
+      const response = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -159,8 +170,13 @@ export default function AyarPage() {
           dailySchedules: JSON.stringify(settings.dailySchedules),
         })
       });
+      const result = await response.json().catch(() => ({ message: "Ayarlar kaydedilemedi." }));
+      if (!response.ok) {
+        showToast("error", result.message || "Ayarlar kaydedilemedi.");
+        return;
+      }
       showToast("success", "Ayarlar kaydedildi");
-    } catch (e) { console.error(e); showToast("error", "Hata oluştu"); }
+    } catch (e) { console.error(e); showToast("error", "Ayarlar kaydedilemedi. Bağlantınızı kontrol edin."); }
     finally { setSaving(false); }
   };
 
@@ -173,15 +189,27 @@ export default function AyarPage() {
       body: JSON.stringify({ name: newPosName.trim() }),
     });
     setAddingPos(false);
-    if (res.ok) { setNewPosName(""); void fetchPos(); }
+    if (res.ok) {
+      setNewPosName("");
+      showToast("success", "POS cihazı eklendi.");
+      void fetchPos();
+    } else {
+      const result = await res.json().catch(() => ({ message: "POS cihazı eklenemedi." }));
+      showToast("error", result.message || "POS cihazı eklenemedi.");
+    }
   };
 
   const togglePos = async (id: string, isActive: boolean) => {
-    await fetch(`/api/pos-devices/${id}`, {
+    const res = await fetch(`/api/pos-devices/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ isActive }),
     });
+    if (!res.ok) {
+      const result = await res.json().catch(() => ({ message: "POS durumu güncellenemedi." }));
+      showToast("error", result.message || "POS durumu güncellenemedi.");
+      return;
+    }
     void fetchPos();
   };
 
@@ -199,7 +227,8 @@ export default function AyarPage() {
       showToast("success", "POS cihazı güncellendi");
       void fetchPos();
     } else {
-      showToast("error", "POS cihazı güncellenemedi");
+      const result = await res.json().catch(() => ({ message: "POS cihazı güncellenemedi." }));
+      showToast("error", result.message || "POS cihazı güncellenemedi.");
     }
   };
 
@@ -210,7 +239,13 @@ export default function AyarPage() {
       danger: true,
       confirmText: "Sil",
     }))) return;
-    await fetch(`/api/pos-devices/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/pos-devices/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const result = await res.json().catch(() => ({ message: "POS cihazı silinemedi." }));
+      showToast("error", result.message || "POS cihazı silinemedi.");
+      return;
+    }
+    showToast("success", "POS cihazı silindi.");
     void fetchPos();
   };
 
@@ -218,8 +253,10 @@ export default function AyarPage() {
     setTreatmentLoading(true);
     try {
       const res = await fetch("/api/treatment-types");
-      if (res.ok) setTreatmentTypes(await res.json());
-    } catch { /* ignore */ }
+      const result = await res.json().catch(() => []);
+      if (res.ok) setTreatmentTypes(result);
+      else showToast("error", result?.message || "Tedavi türleri yüklenemedi.");
+    } catch { showToast("error", "Tedavi türleri yüklenemedi."); }
     finally { setTreatmentLoading(false); }
   };
 
@@ -263,11 +300,16 @@ export default function AyarPage() {
   };
 
   const toggleTreatmentType = async (id: string, isActive: boolean) => {
-    await fetch(`/api/treatment-types/${id}`, {
+    const res = await fetch(`/api/treatment-types/${id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ isActive }),
     });
+    if (!res.ok) {
+      const result = await res.json().catch(() => ({ message: "Tedavi türü durumu güncellenemedi." }));
+      showToast("error", result.message || "Tedavi türü durumu güncellenemedi.");
+      return;
+    }
     void fetchTreatmentTypes();
   };
 
@@ -278,7 +320,13 @@ export default function AyarPage() {
       danger: true,
       confirmText: "Sil",
     }))) return;
-    await fetch(`/api/treatment-types/${id}`, { method: "DELETE" });
+    const res = await fetch(`/api/treatment-types/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      const result = await res.json().catch(() => ({ message: "Tedavi türü silinemedi." }));
+      showToast("error", result.message || "Tedavi türü silinemedi.");
+      return;
+    }
+    showToast("success", "Tedavi türü silindi.");
     void fetchTreatmentTypes();
   };
 
@@ -327,7 +375,7 @@ export default function AyarPage() {
           {institutionSlug && (
             <div className="rounded-xl border border-cyan-100 bg-cyan-50/50 p-4">
               <h3 className="mb-1 text-sm font-black text-slate-900">Online Randevu Talep Bağlantısı</h3>
-              <p className="mb-2 text-xs text-slate-500">Bu bağlantıyı hastalarınızla (web sitesi, WhatsApp, SMS) paylaşın; gönderdikleri randevu talepleri Randevu sayfasındaki &quot;Online Talepler&quot; bölümünde görünür.</p>
+              <p className="mb-2 text-xs text-slate-500">Bu bağlantıyı hastalarınızla paylaşın. Gönderilen başvurular Randevular sayfasındaki &quot;Online Randevu Talepleri&quot; bölümünde görünür.</p>
               <div className="flex items-center gap-2">
                 <input readOnly value={typeof window !== "undefined" ? `${window.location.origin}/randevu-al/${encodeURIComponent(institutionSlug)}` : ""} className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs text-slate-600" />
                 <Button
@@ -349,7 +397,7 @@ export default function AyarPage() {
             <p className="mb-3 text-sm text-slate-500">Takvimde varsayılan randevu aralığını belirler.</p>
             <div className="grid gap-3 sm:grid-cols-1 max-w-xs">
               <FormField label="Randevu Süresi (dakika)">
-                <input type="number" value={settings.appointmentDuration}
+                <input type="number" min={5} max={240} step={5} value={settings.appointmentDuration}
                   onChange={e => setSettings({ ...settings, appointmentDuration: parseInt(e.target.value) })}
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
               </FormField>
@@ -361,7 +409,7 @@ export default function AyarPage() {
               Ayarları Kaydet
             </Button>
             <Button variant="ghost" onClick={() => void fetchSettings()}>
-              Eski Değerleri Getir
+              Değişiklikleri Geri Al
             </Button>
           </div>
         </div>
@@ -503,59 +551,9 @@ export default function AyarPage() {
               Çalışma Saatlerini Kaydet
             </Button>
             <Button variant="ghost" onClick={() => void fetchSettings()}>
-              Eski Değerleri Getir
+              Değişiklikleri Geri Al
             </Button>
           </div>
-        </div>
-      )}
-
-      {/* ── SMS AYARLARI ───────────────────────────────────────────────── */}
-      {activeTab === "sms" && (
-        <div className="rounded-xl border border-slate-100 bg-white p-6 shadow-sm space-y-4">
-          <h3 className="text-base font-black text-slate-900">SMS Gönderim Tercihleri</h3>
-          <p className="text-sm text-slate-500">Bu seçimler yeni randevu oluştururken varsayılan olarak uygulanır.</p>
-          <div className="space-y-3 rounded-lg bg-slate-50 p-4 border border-slate-100">
-            {[
-              { key: "smsEnabled"         as const, label: "SMS gönderimi açık olsun" },
-              { key: "smsDefaultInfo"     as const, label: "Randevu bilgilendirme SMS'i varsayılan açık olsun" },
-              { key: "smsDefaultReminder" as const, label: "Hatırlatma SMS'i varsayılan açık olsun" },
-              { key: "smsDefaultSurvey"   as const, label: "Değerlendirme SMS'i varsayılan açık olsun" },
-              { key: "paymentReminderSmsEnabled" as const, label: "Ödeme vadesi yaklaşan/geciken hastalara otomatik SMS hatırlatması gönder" },
-              { key: "birthdaySmsEnabled" as const, label: "Doğum günü olan hastalara otomatik kutlama SMS'i gönder" },
-            ].map(item => (
-              <label key={item.key} className="flex items-center gap-3 cursor-pointer text-sm">
-                <input type="checkbox" className="h-4 w-4 accent-primary"
-                  checked={settings[item.key]}
-                  onChange={e => setSettings({ ...settings, [item.key]: e.target.checked })} />
-                {item.label}
-              </label>
-            ))}
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <FormField label="Ödeme Hatırlatması — Vadeden Kaç Gün Önce" hint="Vadeye kaç gün kala hatırlatma SMS'i gönderilsin">
-              <input type="number" min={1} max={30}
-                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-                value={settings.paymentReminderWindowDays}
-                onChange={e => setSettings({ ...settings, paymentReminderWindowDays: Math.max(1, Math.min(30, parseInt(e.target.value) || 1)) })} />
-            </FormField>
-            <FormField label="Değerlendirme Bağlantısı (opsiyonel)" hint="Google yorum linki gibi bir bağlantı — Değerlendirme SMS şablonunda [Değerlendirme Bağlantısı] etiketiyle kullanılabilir">
-              <input type="text" placeholder="https://g.page/r/..."
-                className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-                value={settings.reviewLink}
-                onChange={e => setSettings({ ...settings, reviewLink: e.target.value })} />
-            </FormField>
-          </div>
-          <div className="flex gap-2 pt-2 border-t border-slate-100">
-            <Button variant="primary" onClick={() => void saveSettings()} loading={saving}>
-              SMS Ayarlarını Kaydet
-            </Button>
-          </div>
-        </div>
-      )}
-
-      {activeTab === "smsKayit" && (
-        <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
-          <SmsPage />
         </div>
       )}
 
@@ -726,5 +724,3 @@ export default function AyarPage() {
     </section>
   );
 }
-
-

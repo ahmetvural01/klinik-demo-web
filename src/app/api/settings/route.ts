@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { validateWorkingHoursSettings } from "@/lib/working-hours-core";
 
 function fmt(v: unknown): string {
   if (v === null || v === undefined || v === "") return "-";
@@ -11,7 +12,7 @@ function fmt(v: unknown): string {
 const SETTING_LABELS: Record<string, string> = {
   institutionName: "Kurum Adı",
   institutionPhone: "Kurum Telefonu",
-  appointmentDurationMin: "Randevu Süresi (dk)",
+  appointmentDuration: "Randevu Süresi (dk)",
   smsDefaultInfo: "SMS Bilgilendirme",
   smsDefaultReminder: "SMS Hatırlatma",
   smsDefaultSurvey: "SMS Anket",
@@ -38,7 +39,7 @@ export async function GET() {
     if (auth.error) return auth.error;
 
     if (!auth.user.institutionId) {
-      return NextResponse.json({ message: "Sadece klinik kullanicilari ayarlara erisebilir" }, { status: 403 });
+      return NextResponse.json({ message: "Yalnızca klinik kullanıcıları ayarlara erişebilir." }, { status: 403 });
     }
 
     const [settings, institution] = await Promise.all([
@@ -72,7 +73,7 @@ export async function PUT(request: NextRequest) {
     if (auth.error) return auth.error;
 
     if (!auth.user.institutionId) {
-      return NextResponse.json({ message: "Sadece klinik kullanicilari ayar guncelleyebilir" }, { status: 403 });
+      return NextResponse.json({ message: "Yalnızca klinik kullanıcıları ayarları güncelleyebilir." }, { status: 403 });
     }
 
     const body = await request.json();
@@ -83,12 +84,34 @@ export async function PUT(request: NextRequest) {
     });
 
     if (!institution) {
-      return NextResponse.json({ message: "Klinik bulunamadi" }, { status: 404 });
+      return NextResponse.json({ message: "Klinik bulunamadı." }, { status: 404 });
     }
 
     const current = await prisma.setting.findUnique({
       where: { institutionId: auth.user.institutionId },
     });
+
+    const duration = Number(data.appointmentDuration ?? current?.appointmentDuration ?? 15);
+    if (!Number.isInteger(duration) || duration < 5 || duration > 240) {
+      return NextResponse.json({ message: "Randevu süresi 5 ile 240 dakika arasında olmalıdır." }, { status: 400 });
+    }
+
+    let parsedDailySchedules: unknown = [];
+    const dailySchedulesRaw = data.dailySchedules ?? current?.dailySchedules ?? "[]";
+    try {
+      parsedDailySchedules =
+        typeof dailySchedulesRaw === "string" ? JSON.parse(dailySchedulesRaw) : dailySchedulesRaw;
+    } catch {
+      return NextResponse.json({ message: "Çalışma günü ayarları geçerli bir biçimde değil." }, { status: 400 });
+    }
+    const workingHoursError = validateWorkingHoursSettings({
+      dailySchedules: parsedDailySchedules,
+      lunchStart: data.lunchStart ?? current?.lunchStart ?? "",
+      lunchEnd: data.lunchEnd ?? current?.lunchEnd ?? "",
+    });
+    if (workingHoursError) {
+      return NextResponse.json({ message: workingHoursError }, { status: 400 });
+    }
 
     const updated = current
       ? await prisma.setting.update({ where: { institutionId: auth.user.institutionId }, data })
@@ -123,6 +146,6 @@ export async function PUT(request: NextRequest) {
     return NextResponse.json(updated);
   } catch (error) {
     console.error("[settings PUT] fallback:", error);
-    return NextResponse.json({ message: "Ayarlar güncellenemedi" }, { status: 503 });
+    return NextResponse.json({ message: "Ayarlar güncellenemedi." }, { status: 503 });
   }
 }

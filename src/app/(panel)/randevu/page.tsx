@@ -12,6 +12,16 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
 import {
+  buildScheduleByJsDay,
+  checkDoctorLocalHoursInterval,
+  checkDoctorWorkingHoursInterval,
+  checkLocalWorkingHoursInterval,
+  checkWorkingHoursInterval,
+  FALLBACK_DAILY_SCHEDULES,
+  normalizeDailySchedules,
+  type DaySchedule,
+} from "@/lib/working-hours-core";
+import {
   type AppointmentTreatmentKey,
   type FollowUpKey,
   type TreatmentOption,
@@ -96,31 +106,6 @@ function toSlotLabel(totalMinutes: number): string {
   return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
 }
 
-type DaySchedule = {
-  day: string;
-  isHoliday: boolean;
-  open: string;
-  close: string;
-  lunchStart: string;
-  lunchEnd: string;
-};
-
-const SCHEDULE_IDX_TO_JS_DAY = [1, 2, 3, 4, 5, 6, 0] as const;
-const SCHEDULE_DAY_NAMES = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"] as const;
-// Ayarlar > Çalışma Saatleri'nde henüz hiç kayıt yapılmamış (kurum bu ekranı
-// hiç ziyaret etmemiş) kurumlar için güvenli varsayılan — ayar/page.tsx'teki
-// DEFAULT_SCHEDULES ile birebir aynı olmalı, aksi halde randevu oluşturma
-// tatil/mesai kontrolü sessizce devre dışı kalır (bkz. dailySchedules boşsa
-// scheduleByJsDay boş Map döner).
-const FALLBACK_DAILY_SCHEDULES: DaySchedule[] = SCHEDULE_DAY_NAMES.map((day) => ({
-  day,
-  isHoliday: day === "Pazar",
-  open: "08:30",
-  close: day === "Cumartesi" ? "15:00" : "18:00",
-  lunchStart: "",
-  lunchEnd: "",
-}));
-
 type CalendarSettings = {
   openingTime: string;
   closingTime: string;
@@ -193,7 +178,7 @@ function readRandevuCache(cacheKey: string) {
 export default function RandevuPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [view, setView] = useState<"GUN" | "HAFTA" | "AY" | "AJANDA">("HAFTA");
+  const [view, setView] = useState<"GUN" | "HAFTA" | "AY" | "AJANDA">("GUN");
   const [date, setDate] = useState(() => new Date());
   const [doctorId, setDoctorId] = useState("");
   const [appointments, setAppointments] = useState<Appointment[]>([]);
@@ -259,11 +244,12 @@ export default function RandevuPage() {
   const [focusAppointmentId, setFocusAppointmentId] = useState<string | null>(null);
   const [showBlockModal, setShowBlockModal] = useState(false);
   const [blockDoctorId, setBlockDoctorId] = useState("");
-  const [blockDate, setBlockDate] = useState(() => { const d = new Date(); return d.toISOString().slice(0, 10); });
+  const [blockDate, setBlockDate] = useState(() => toLocalDateKey(new Date()));
   const [blockStartTime, setBlockStartTime] = useState("13:00");
   const [blockEndTime, setBlockEndTime] = useState("17:00");
   const [blockReason, setBlockReason] = useState("");
   const [blockSaving, setBlockSaving] = useState(false);
+  const [blockSubmitError, setBlockSubmitError] = useState<string | null>(null);
   const [calendarSettings, setCalendarSettings] = useState<CalendarSettings>({
     openingTime: "08:30",
     closingTime: "23:59",
@@ -314,7 +300,7 @@ export default function RandevuPage() {
     if (wlPatientSearch.trim().length < 2) { setWlPatientResults([]); return; }
     const t = setTimeout(async () => {
       try {
-        const res = await fetch("/api/patients?q=" + encodeURIComponent(wlPatientSearch.trim()) + "&take=10");
+        const res = await fetch("/api/patients?q=" + encodeURIComponent(wlPatientSearch.trim()) + "&take=10&summary=false");
         const data = await res.json();
         setWlPatientResults(Array.isArray(data.patients) ? data.patients : (Array.isArray(data) ? data : []));
       } catch { setWlPatientResults([]); }
@@ -526,12 +512,49 @@ export default function RandevuPage() {
 
   // dailySchedules'tan gelen per-day saat bilgilerini JS day index'e göre map'le
   const scheduleByJsDay = useMemo(() => {
-    const map = new Map<number, DaySchedule>();
-    calendarSettings.dailySchedules.forEach((ds, i) => {
-      if (i < SCHEDULE_IDX_TO_JS_DAY.length) map.set(SCHEDULE_IDX_TO_JS_DAY[i], ds);
-    });
-    return map;
+    return buildScheduleByJsDay(calendarSettings.dailySchedules);
   }, [calendarSettings.dailySchedules]);
+
+  const blockValidationError = useMemo(() => {
+    if (!blockDate || !blockStartTime || !blockEndTime) return null;
+    const clinicHoursError = checkLocalWorkingHoursInterval({
+      date: blockDate,
+      startTime: blockStartTime,
+      endTime: blockEndTime,
+      dailySchedules: calendarSettings.dailySchedules,
+      actionLabel: "Zaman kapatma kaydı",
+    });
+    if (clinicHoursError) return clinicHoursError;
+    const doctor = staff.find((item) => item.id === blockDoctorId);
+    return checkDoctorLocalHoursInterval(
+      blockStartTime,
+      blockEndTime,
+      doctor?.profile?.workStart,
+      doctor?.profile?.workEnd,
+      doctor?.fullName
+    );
+  }, [blockDate, blockStartTime, blockEndTime, blockDoctorId, calendarSettings.dailySchedules, staff]);
+
+  // Yeni randevu formundaki tarih/saat/doktor seçimi mesai/tatil dışına
+  // düşüyorsa, "Zamanı Kapat" modalindeki gibi kaydetmeden önce anlık uyarı
+  // gösterir — kullanıcı formu doldurup göndermeden önce sorunu görür.
+  const newAppointmentValidationError = useMemo(() => {
+    if (!startAt || !newDoctorId) return null;
+    const startDate = new Date(startAt);
+    if (Number.isNaN(startDate.getTime())) return null;
+    const endDate = new Date(startDate);
+    endDate.setMinutes(endDate.getMinutes() + durationMinutes);
+    const workingHoursError = checkWorkingHoursInterval(startDate, endDate, calendarSettings.dailySchedules);
+    if (workingHoursError) return workingHoursError;
+    const selectedDoctor = staff.find((item) => item.id === newDoctorId);
+    return checkDoctorWorkingHoursInterval(
+      startDate,
+      endDate,
+      selectedDoctor?.profile?.workStart,
+      selectedDoctor?.profile?.workEnd,
+      selectedDoctor?.fullName
+    );
+  }, [startAt, newDoctorId, durationMinutes, calendarSettings.dailySchedules, staff]);
 
   const slotTimes = useMemo(() => {
     let opening: number;
@@ -651,7 +674,7 @@ export default function RandevuPage() {
     const t = setTimeout(async () => {
       setPatientSearchLoading(true);
       try {
-        const res = await fetch("/api/patients?q=" + encodeURIComponent(patientSearch.trim()) + "&take=10");
+        const res = await fetch("/api/patients?q=" + encodeURIComponent(patientSearch.trim()) + "&take=10&summary=false");
         const data = await res.json();
         setPatientResults(Array.isArray(data.patients) ? data.patients : []);
       } finally { setPatientSearchLoading(false); }
@@ -686,7 +709,7 @@ export default function RandevuPage() {
     const t = setTimeout(async () => {
       setEditPatientLoading(true);
       try {
-        const res = await fetch("/api/patients?q=" + encodeURIComponent(editPatientSearch.trim()) + "&take=10");
+        const res = await fetch("/api/patients?q=" + encodeURIComponent(editPatientSearch.trim()) + "&take=10&summary=false");
         const data = await res.json();
         setEditPatientResults(Array.isArray(data.patients) ? data.patients : []);
       } finally { setEditPatientLoading(false); }
@@ -773,11 +796,18 @@ export default function RandevuPage() {
 
             const parsedDailySchedules = (() => {
               const raw = settingsJson?.dailySchedules;
-              if (Array.isArray(raw) && raw.length > 0) return raw as DaySchedule[];
-              if (typeof raw === "string") {
-                try { const p = JSON.parse(raw); return Array.isArray(p) && p.length > 0 ? p as DaySchedule[] : FALLBACK_DAILY_SCHEDULES; } catch { return FALLBACK_DAILY_SCHEDULES; }
+              if (Array.isArray(raw) && raw.length > 0) {
+                return normalizeDailySchedules(raw, settingsJson?.lunchStart || "", settingsJson?.lunchEnd || "");
               }
-              return FALLBACK_DAILY_SCHEDULES;
+              if (typeof raw === "string") {
+                try {
+                  const parsed = JSON.parse(raw);
+                  return normalizeDailySchedules(parsed, settingsJson?.lunchStart || "", settingsJson?.lunchEnd || "");
+                } catch {
+                  return normalizeDailySchedules(FALLBACK_DAILY_SCHEDULES, settingsJson?.lunchStart || "", settingsJson?.lunchEnd || "");
+                }
+              }
+              return normalizeDailySchedules(FALLBACK_DAILY_SCHEDULES, settingsJson?.lunchStart || "", settingsJson?.lunchEnd || "");
             })();
 
             const resolvedSettings: CalendarSettings = {
@@ -793,9 +823,9 @@ export default function RandevuPage() {
         fetch(`/api/doctor-blocks?from=${fromDate}&to=${toDate}`, { cache: "no-store" })
           .then(async (r) => {
             if (!r.ok) {
-              // Blokaj listesi yüklenemedi — sessizce "blokaj yok" varsaymak doktorun kapattığı
+              // Kapalı zaman listesi yüklenemezse çakışma kontrolü eksik kalır.
               // bir saate randevu yazılmasına yol açabilir, o yüzden görünür şekilde uyar.
-              setError("Doktor blokaj bilgisi yüklenemedi — çakışma kontrolü eksik olabilir. Sayfayı yenileyin.");
+              setError("Doktorun kapalı zamanları yüklenemedi. Çakışma kontrolü için sayfayı yenileyin.");
               setDoctorBlocks([]);
               return;
             }
@@ -803,7 +833,7 @@ export default function RandevuPage() {
             setDoctorBlocks(Array.isArray(blocksJson) ? blocksJson : []);
           })
           .catch(() => {
-            setError("Doktor blokaj bilgisi yüklenemedi — çakışma kontrolü eksik olabilir. Sayfayı yenileyin.");
+            setError("Doktorun kapalı zamanları yüklenemedi. Çakışma kontrolü için sayfayı yenileyin.");
             setDoctorBlocks([]);
           }),
         fetch("/api/treatment-types", { cache: "no-store" })
@@ -940,22 +970,29 @@ export default function RandevuPage() {
       setError("Başlangıç tarih ve saatini doğru girin");
       return;
     }
-    const daySchedule = scheduleByJsDay.get(startDate.getDay());
-    if (daySchedule?.isHoliday) {
-      setError("Seçilen gün, Ayarlar > Çalışma Saatleri sekmesinde tatil olarak işaretli. Randevu oluşturmak için önce çalışma günlerini güncelleyin.");
-      return;
-    }
-    if (daySchedule) {
-      const startMinutes = startDate.getHours() * 60 + startDate.getMinutes();
-      const openMinutes = parseTimeToMinutes(daySchedule.open, 8 * 60 + 30);
-      const closeMinutes = parseTimeToMinutes(daySchedule.close, 18 * 60);
-      if (startMinutes < openMinutes || startMinutes >= closeMinutes) {
-        setError(`Seçilen saat, o günün çalışma saatleri (${daySchedule.open}–${daySchedule.close}) dışında. Ayarlar > Çalışma Saatleri sekmesinden kontrol edin.`);
-        return;
-      }
-    }
     const endDate = new Date(startDate);
     endDate.setMinutes(endDate.getMinutes() + durationMinutes);
+    const workingHoursError = checkWorkingHoursInterval(
+      startDate,
+      endDate,
+      calendarSettings.dailySchedules
+    );
+    if (workingHoursError) {
+      setError(workingHoursError);
+      return;
+    }
+    const selectedDoctor = staff.find((item) => item.id === newDoctorId);
+    const doctorHoursError = checkDoctorWorkingHoursInterval(
+      startDate,
+      endDate,
+      selectedDoctor?.profile?.workStart,
+      selectedDoctor?.profile?.workEnd,
+      selectedDoctor?.fullName
+    );
+    if (doctorHoursError) {
+      setError(doctorHoursError);
+      return;
+    }
     setSaving(true); setError(null);
     const res = await fetch("/api/appointments", {
       method: "POST",
@@ -1081,13 +1118,29 @@ export default function RandevuPage() {
     }
     const startDate = new Date(editStartAt);
     if (Number.isNaN(startDate.getTime())) { setError("Geçerli bir başlangıç tarihi/saati girin."); return; }
-    const editDaySchedule = scheduleByJsDay.get(startDate.getDay());
-    if (editDaySchedule?.isHoliday) {
-      setError("Seçilen gün, Ayarlar > Çalışma Saatleri sekmesinde tatil olarak işaretli. Randevuyu taşımak için önce çalışma günlerini güncelleyin.");
-      return;
-    }
     const endDate = new Date(startDate);
     endDate.setMinutes(endDate.getMinutes() + editDurationMinutes);
+    const workingHoursError = checkWorkingHoursInterval(
+      startDate,
+      endDate,
+      calendarSettings.dailySchedules
+    );
+    if (workingHoursError) {
+      setError(workingHoursError);
+      return;
+    }
+    const selectedDoctor = staff.find((item) => item.id === editDoctorId);
+    const doctorHoursError = checkDoctorWorkingHoursInterval(
+      startDate,
+      endDate,
+      selectedDoctor?.profile?.workStart,
+      selectedDoctor?.profile?.workEnd,
+      selectedDoctor?.fullName
+    );
+    if (doctorHoursError) {
+      setError(doctorHoursError);
+      return;
+    }
     const parsed = parseAppointmentNote(selectedAppt.note);
     const treatmentMeta = getTreatmentMeta(parsed.treatment);
     setEditSaving(true); setError(null);
@@ -1220,7 +1273,15 @@ export default function RandevuPage() {
 
   const nav = (dir: number) => {
     const d = new Date(date);
-    if (view === "GUN" || view === "AJANDA") d.setDate(d.getDate() + dir);
+    if (view === "GUN") {
+      // Kapalı/tatil günleri tamamen atla — kullanıcı zaten hiçbir işlem
+      // yapamayacağı bir günün boş "tatil" ekranına düşmemeli.
+      let guard = 0;
+      do {
+        d.setDate(d.getDate() + dir);
+        guard++;
+      } while (workingDayIndexes.size > 0 && !workingDayIndexes.has(d.getDay()) && guard < 366);
+    } else if (view === "AJANDA") d.setDate(d.getDate() + dir);
     else if (view === "HAFTA") d.setDate(d.getDate() + dir * 7);
     else d.setMonth(d.getMonth() + dir);
     setDate(d);
@@ -1644,9 +1705,8 @@ export default function RandevuPage() {
     }) || null;
   }, [doctorBlocks]);
 
-  // Doktorun kişisel mesai saati dışını yumuşak biçimde işaretler (DoctorBlock
-  // gibi sert bir engel değil — personel profilinde düzenlenen mesai saatleri
-  // önceden randevu ekranına hiç yansımıyordu, tamamen kozmetikti).
+  // Kişisel çalışma saati dışını takvimde işaretler; API aynı aralığı kesin
+  // olarak reddeder.
   const isOutsideDoctorHours = useCallback((docId: string, slotTime: string): boolean => {
     const doc = staff.find(s => s.id === docId);
     if (!doc?.profile?.workStart && !doc?.profile?.workEnd) return false;
@@ -1656,10 +1716,24 @@ export default function RandevuPage() {
   }, [staff]);
 
   const deleteBlock = async (id: string) => {
-    if (!(await confirmDialog({ message: "Bu bloke zaman silinsin mi?", danger: true, confirmText: "Sil" }))) return;
+    if (!(await confirmDialog({ message: "Bu kapalı zaman kaydı silinsin mi?", danger: true, confirmText: "Sil" }))) return;
     const res = await fetch("/api/doctor-blocks?id=" + id, { method: "DELETE" });
     if (!res.ok) {
-      setError("Bloke zaman silinemedi");
+      setError("Kapalı zaman kaydı silinemedi.");
+      return;
+    }
+    await load();
+  };
+
+  // Kapalı zaman aralığından tek bir slotu (örn. sadece 13:30) açar; kalan
+  // parçalar API tarafında ayrı DoctorBlock kayıtlarına bölünür.
+  const deleteBlockSlot = async (id: string, slotTime: string) => {
+    if (!(await confirmDialog({ message: `${slotTime} saati açılsın mı?`, danger: true, confirmText: "Aç" }))) return;
+    const slotStart = slotTime;
+    const slotEnd = toSlotLabel(parseTimeToMinutes(slotTime, 0) + slotInterval);
+    const res = await fetch(`/api/doctor-blocks?id=${id}&slotStart=${slotStart}&slotEnd=${slotEnd}`, { method: "DELETE" });
+    if (!res.ok) {
+      setError("Kapalı zaman kaydı silinemedi.");
       return;
     }
     await load();
@@ -1667,6 +1741,11 @@ export default function RandevuPage() {
 
   const saveBlock = async () => {
     if (!blockDoctorId || !blockDate || !blockStartTime || !blockEndTime) return;
+    if (blockValidationError) {
+      setBlockSubmitError(blockValidationError);
+      return;
+    }
+    setBlockSubmitError(null);
     setBlockSaving(true);
     const res = await fetch("/api/doctor-blocks", {
       method: "POST",
@@ -1677,10 +1756,11 @@ export default function RandevuPage() {
     if (res.ok) {
       setShowBlockModal(false);
       setBlockReason("");
+      setBlockSubmitError(null);
       await load();
     } else {
-      const body = await res.json().catch(() => ({ message: "Blok eklenemedi" }));
-      setError(body.message || "Blok eklenemedi");
+      const body = await res.json().catch(() => ({ message: "Zaman kapatma kaydı eklenemedi." }));
+      setBlockSubmitError(body.message || "Zaman kapatma kaydı eklenemedi.");
     }
   };
 
@@ -1716,7 +1796,7 @@ export default function RandevuPage() {
 
   return (
     <section className="randevu-page space-y-2">
-      <div className="randevu-toolbar flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-2 shadow-sm">
+      <div className="randevu-toolbar sticky top-0 z-20 flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-2 shadow-sm">
         <button onClick={() => nav(-1)} aria-label="Önceki tarih aralığı" className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-lg leading-none hover:bg-slate-50">‹</button>
         <span className="max-w-full truncate rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-sm font-bold text-slate-800">{navLabel()}</span>
         <button onClick={() => nav(1)} aria-label="Sonraki tarih aralığı" className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-lg leading-none hover:bg-slate-50">›</button>
@@ -1743,13 +1823,13 @@ export default function RandevuPage() {
         </span>
         {doctorBlocks.length > 0 && (
           <span className="rounded-full border border-orange-200 bg-orange-50 px-2 py-1 text-xs font-bold text-orange-700">
-            {doctorBlocks.length} blokaj
+            {doctorBlocks.length} kapalı zaman
           </span>
         )}
 
         <button onClick={() => setShowForm(!showForm)} disabled={!canCreateAppointments} className="h-8 rounded-md bg-accent px-3 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Yeni Randevu</button>
         {canCreateAppointments && (
-          <button onClick={() => setShowBlockModal(true)} className="h-8 rounded-md border border-orange-300 bg-orange-50 px-3 text-sm font-semibold text-orange-700 hover:bg-orange-100">Blokaj</button>
+          <button onClick={() => { setBlockSubmitError(null); setShowBlockModal(true); }} className="h-8 rounded-md border border-orange-300 bg-orange-50 px-3 text-sm font-semibold text-orange-700 hover:bg-orange-100">Zamanı Kapat</button>
         )}
         <button onClick={() => setShowWaitlistModal(true)} className="relative h-8 rounded-md border border-purple-300 bg-purple-50 px-3 text-sm font-semibold text-purple-700 hover:bg-purple-100">
           Bekleme Listesi
@@ -1758,18 +1838,21 @@ export default function RandevuPage() {
           )}
         </button>
         <button onClick={() => setShowBookingRequestsModal(true)} className="relative h-8 rounded-md border border-cyan-300 bg-cyan-50 px-3 text-sm font-semibold text-cyan-700 hover:bg-cyan-100">
-          Online Talepler
+          Online Randevu Talepleri
           {bookingRequests.length > 0 && (
             <span className="ml-1.5 rounded-full bg-cyan-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{bookingRequests.length}</span>
           )}
         </button>
         <details className="relative">
           <summary className="flex h-8 cursor-pointer list-none items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-            Diğer
+            Dışa Aktar
           </summary>
           <div className="absolute right-0 top-full z-20 mt-1 w-40 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
             <button
-              onClick={printReport}
+              onClick={(event) => {
+                printReport();
+                event.currentTarget.closest("details")?.removeAttribute("open");
+              }}
               disabled={!canExportOrPrint}
               className="block w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Randevu çizelgesini yazdır"}
@@ -1777,7 +1860,10 @@ export default function RandevuPage() {
               Yazdır
             </button>
             <button
-              onClick={downloadExcelReport}
+              onClick={(event) => {
+                downloadExcelReport();
+                event.currentTarget.closest("details")?.removeAttribute("open");
+              }}
               disabled={!canExportOrPrint}
               className="block w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
               title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Excel olarak dışa aktar"}
@@ -1796,7 +1882,7 @@ export default function RandevuPage() {
         footer={
           <>
             <Button variant="secondary" onClick={() => { setShowForm(false); resetForm(); }}>İptal</Button>
-            <Button variant="primary" onClick={createAppointment} loading={saving}>
+            <Button variant="primary" onClick={createAppointment} loading={saving} disabled={Boolean(newAppointmentValidationError)}>
               {saving ? "Kaydediliyor..." : "Randevu Ekle"}
             </Button>
           </>
@@ -1984,6 +2070,9 @@ export default function RandevuPage() {
               </span>
             </div>
           </div>
+          {newAppointmentValidationError && (
+            <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">{newAppointmentValidationError}</p>
+          )}
           <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Not (isteğe bağlı)" rows={2} className="mt-2 w-full rounded-lg border px-3 py-2 text-sm" />
           <div className="mt-2 flex flex-wrap gap-4">
             {[["smsInfo","Bilgilendirme SMS",smsInfo,setSmsInfo],["smsReminder","Hatırlatma SMS",smsReminder,setSmsReminder],["smsSurvey","Değerlendirme SMS",smsSurvey,setSmsSurvey]].map(([k,lbl,val,set]:any) => (
@@ -2041,8 +2130,8 @@ export default function RandevuPage() {
                         {blocked ? (
                           <div className="flex items-center gap-1 rounded bg-orange-100 border border-orange-200 px-1 py-0.5 text-[10px] text-orange-700">
                             <span>⊘</span>
-                            <span className="truncate">{blockInfo?.reason || "Bloke"}</span>
-                            {canCreateAppointments && <button onClick={() => blockInfo && deleteBlock(blockInfo.id)} aria-label="Bloke zamanı sil" title="Bloke zamanı sil" className="ml-auto text-red-400 hover:text-red-600">✕</button>}
+                            <span className="truncate">{blockInfo?.reason || "Kapalı zaman"}</span>
+                            {canCreateAppointments && <button onClick={() => blockInfo && deleteBlockSlot(blockInfo.id, slot)} aria-label="Bu saati aç" title="Bu saati aç" className="ml-auto text-red-400 hover:text-red-600">✕</button>}
                           </div>
                         ) : continuingAppts.length > 0 ? (
                           <div className="flex h-full min-h-8 items-center rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-semibold text-slate-500">
@@ -2101,9 +2190,12 @@ export default function RandevuPage() {
                 <th className="border px-2 py-2 text-left text-gray-500 w-16">Saat</th>
                 {weekDays.map((d, i) => {
                   const isToday = d.toDateString() === new Date().toDateString();
+                  const isWorkday = workingDayIndexes.has(d.getDay());
+                  const canOpenDay = isWorkday || getApptForDay(d).length > 0;
                   return (
-                    <th key={i} onClick={() => { setDate(d); setView("GUN"); }}
-                      className={"border px-2 py-2 text-center cursor-pointer hover:bg-primary/10 min-w-28 " + (isToday ? "bg-primary/20 text-primary font-bold" : "text-gray-700")}>
+                    <th key={i} onClick={() => { if (canOpenDay) { setDate(d); setView("GUN"); } }}
+                      title={canOpenDay ? undefined : "Klinik için tatil günü — görüntülenecek bir şey yok"}
+                      className={"border px-2 py-2 text-center min-w-28 " + (canOpenDay ? "cursor-pointer hover:bg-primary/10 " : "cursor-not-allowed opacity-40 ") + (isToday ? "bg-primary/20 text-primary font-bold" : "text-gray-700")}>
                       {TR_DAYS_BY_JS_INDEX[d.getDay()]}<br /><span className="text-sm">{d.getDate()}</span>
                     </th>
                   );
@@ -2145,8 +2237,8 @@ export default function RandevuPage() {
                         ) : blocked ? (
                           <div className="flex items-center gap-1 rounded bg-orange-100 border border-orange-200 px-1 py-0.5 text-[10px] text-orange-700">
                             <span>⊘</span>
-                            <span className="truncate">{blockInfo?.reason || "Bloke"}</span>
-                            {canCreateAppointments && <button onClick={() => blockInfo && deleteBlock(blockInfo.id)} aria-label="Bloke zamanı sil" title="Bloke zamanı sil" className="ml-auto text-red-400 hover:text-red-600">✕</button>}
+                            <span className="truncate">{blockInfo?.reason || "Kapalı zaman"}</span>
+                            {canCreateAppointments && <button onClick={() => blockInfo && deleteBlockSlot(blockInfo.id, slot)} aria-label="Bu saati aç" title="Bu saati aç" className="ml-auto text-red-400 hover:text-red-600">✕</button>}
                           </div>
                         ) : continuingAppts.length > 0 ? (
                           <div className="flex h-full min-h-8 items-center rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-semibold text-slate-500">
@@ -2204,9 +2296,13 @@ export default function RandevuPage() {
               const dayAppts = getApptForDay(d);
               const isToday = d.toDateString() === new Date().toDateString();
               const isWorkday = workingDayIndexes.has(d.getDay());
+              // Tatil günü olsa da o günde zaten kayıtlı randevu varsa (örn.
+              // tatil ayarı sonradan eklendiyse) yine de görülüp yönetilebilmeli.
+              const canOpenDay = isWorkday || dayAppts.length > 0;
               return (
-                <div key={i} onClick={() => { setDate(d); setView("GUN"); }}
-                  className={"bg-white min-h-20 p-1 cursor-pointer hover:bg-primary/5 " + (isToday ? "ring-2 ring-inset ring-primary" : "") + (isWorkday ? "" : " opacity-70") }>
+                <div key={i} onClick={() => { if (canOpenDay) { setDate(d); setView("GUN"); } }}
+                  title={canOpenDay ? undefined : "Klinik için tatil günü — görüntülenecek bir şey yok"}
+                  className={"bg-white min-h-20 p-1 hover:bg-primary/5 " + (canOpenDay ? "cursor-pointer" : "cursor-not-allowed") + " " + (isToday ? "ring-2 ring-inset ring-primary" : "") + (isWorkday ? "" : " opacity-70") }>
                   <div className="mb-1 flex items-center justify-between">
                     <div className={"text-xs font-bold " + (isToday ? "text-primary" : "text-gray-700")}>{d.getDate()}</div>
                     {canCreateAppointments && isWorkday ? (
@@ -2289,20 +2385,20 @@ export default function RandevuPage() {
       {/* DOKTOR BLOK EKLEME MODALI */}
       <Modal
         open={showBlockModal}
-        onClose={() => setShowBlockModal(false)}
-        title="Doktor Zaman Blokajı Ekle"
-        description="Seçili zaman aralığında doktor randevuya kapalı olarak işaretlenir. Mevcut randevular etkilenmez."
+        onClose={() => { setShowBlockModal(false); setBlockSubmitError(null); }}
+        title="Doktorun Zamanını Kapat"
+        description="Doktorun randevu kabul etmeyeceği çalışma saati aralığını kaydedin."
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowBlockModal(false)}>İptal</Button>
+            <Button variant="secondary" onClick={() => { setShowBlockModal(false); setBlockSubmitError(null); }}>İptal</Button>
             <Button
               variant="primary"
               onClick={saveBlock}
-              disabled={!blockDoctorId || !blockDate || !blockStartTime || !blockEndTime}
+              disabled={!blockDoctorId || !blockDate || !blockStartTime || !blockEndTime || Boolean(blockValidationError)}
               loading={blockSaving}
               fullWidth
             >
-              {blockSaving ? "Kaydediliyor…" : "Blok Ekle"}
+              {blockSaving ? "Kaydediliyor…" : "Zamanı Kapat"}
             </Button>
           </>
         }
@@ -2316,16 +2412,16 @@ export default function RandevuPage() {
                 </select>
               </FormField>
               <FormField label="Tarih">
-                <input type="date" value={blockDate} onChange={e => setBlockDate(e.target.value)}
+                <input type="date" min={toLocalDateKey(new Date())} value={blockDate} onChange={e => { setBlockDate(e.target.value); setBlockSubmitError(null); }}
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
               </FormField>
               <div className="grid grid-cols-2 gap-3">
                 <FormField label="Başlangıç">
-                  <input type="time" value={blockStartTime} onChange={e => setBlockStartTime(e.target.value)}
+                  <input type="time" value={blockStartTime} onChange={e => { setBlockStartTime(e.target.value); setBlockSubmitError(null); }}
                     className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
                 </FormField>
                 <FormField label="Bitiş">
-                  <input type="time" value={blockEndTime} onChange={e => setBlockEndTime(e.target.value)}
+                  <input type="time" value={blockEndTime} onChange={e => { setBlockEndTime(e.target.value); setBlockSubmitError(null); }}
                     className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
                 </FormField>
               </div>
@@ -2334,21 +2430,26 @@ export default function RandevuPage() {
                   placeholder="Öğle arası, toplantı, izin..."
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
               </FormField>
+              {(blockValidationError || blockSubmitError) && (
+                <p role="alert" className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                  {blockSubmitError || blockValidationError}
+                </p>
+              )}
             </div>
 
             {/* Mevcut bloklar bu doktor için */}
             {blockDoctorId && blockDate && (
               <div className="mt-4">
-                <h3 className="text-xs font-bold text-slate-700 mb-2">Bu güne ait mevcut bloklar</h3>
+                <h3 className="mb-2 text-xs font-bold text-slate-700">Bu gündeki kapalı zamanlar</h3>
                 {doctorBlocks.filter(b => b.doctorId === blockDoctorId && b.date === blockDate).length === 0 ? (
-                  <p className="text-xs text-slate-400">Bu tarihte blok yok</p>
+                  <p className="text-xs text-slate-400">Bu tarihte kapalı zaman kaydı yok.</p>
                 ) : (
                   <div className="space-y-1">
                     {doctorBlocks.filter(b => b.doctorId === blockDoctorId && b.date === blockDate).map(b => (
                       <div key={b.id} className="flex items-center justify-between rounded-lg bg-orange-50 border border-orange-200 px-3 py-2 text-xs">
                         <span className="font-semibold text-orange-800">{b.startTime} – {b.endTime}</span>
                         <span className="text-orange-600">{b.reason || ""}</span>
-                        <button onClick={() => deleteBlock(b.id)} aria-label="Bloke zamanı sil" title="Bloke zamanı sil" className="text-red-500 hover:text-red-700 font-bold ml-2">✕</button>
+                        <button onClick={() => deleteBlock(b.id)} aria-label="Kapalı zamanı sil" title="Kapalı zamanı sil" className="ml-2 font-bold text-red-500 hover:text-red-700">✕</button>
                       </div>
                     ))}
                   </div>

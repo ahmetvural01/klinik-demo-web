@@ -26,19 +26,28 @@ export default function DestekPage() {
   const [newTicket, setNewTicket] = useState({ subject: SUPPORT_TOPICS[0] as string, customSubject: "", message: "" });
   const [sending, setSending] = useState(false);
   const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"" | "acik" | "yanitli">("");
 
   const showToast = (type: "success" | "error", text: string) => {
     showToastSafe({ message: text, type });
   };
 
-  useEffect(() => { fetchTickets(); }, []);
+  // Destek geçmişini sayfa ilk açıldığında bir kez yükle.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void fetchTickets(); }, []);
 
   const fetchTickets = async () => {
+    setLoading(true);
     try {
       const res = await fetch("/api/support");
       const data = await res.json();
+      if (!res.ok) throw new Error(data?.message || "Destek talepleri yüklenemedi.");
       setTickets(Array.isArray(data) ? data : []);
-    } catch (e) { console.error(e); } finally { setLoading(false); }
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Destek talepleri yüklenemedi.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const sendTicket = async () => {
@@ -48,15 +57,24 @@ export default function DestekPage() {
     setSending(true);
     try {
       const res = await fetch("/api/support", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject, message: newTicket.message }) });
+      const data = await res.json().catch(() => null);
       if (res.ok) {
         setNewTicket({ subject: SUPPORT_TOPICS[0], customSubject: "", message: "" });
         showToast("success", "Destek talebiniz gönderildi");
-        fetchTickets();
+        void fetchTickets();
+      } else {
+        throw new Error(data?.message || "Destek talebi gönderilemedi.");
       }
-    } catch { showToast("error", "Gönderme sırasında hata oluştu"); } finally { setSending(false); }
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Destek talebi gönderilemedi.");
+    } finally {
+      setSending(false);
+    }
   };
 
   const filteredTickets = tickets.filter((t) => {
+    if (statusFilter === "acik" && t.answer) return false;
+    if (statusFilter === "yanitli" && !t.answer) return false;
     if (!query.trim()) return true;
     const q = query.toLowerCase();
     return (
@@ -100,7 +118,7 @@ export default function DestekPage() {
           <p className="text-sm font-semibold text-emerald-800">WhatsApp Destek Hattı</p>
           <p className="text-xs text-emerald-600">Hızlı destek için WhatsApp üzerinden ulaşabilirsiniz.</p>
         </div>
-        <a href="https://api.whatsapp.com/send/?phone=03228028162" target="_blank" rel="noopener noreferrer"
+        <a href="https://api.whatsapp.com/send/?phone=903228028162" target="_blank" rel="noopener noreferrer"
           className="shrink-0 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700">
           WhatsApp ile Yaz
         </a>
@@ -149,12 +167,20 @@ export default function DestekPage() {
             Talep oluştururken hangi ekranda, hangi işlemde ve mümkünse hasta/firma adı gibi bağlam bilgilerini yazmanız çözümü hızlandırır.
           </div>
           <div className="grid gap-2 text-xs text-slate-500">
-            <div className="rounded-lg border border-slate-100 px-3 py-2">
+            <button
+              type="button"
+              onClick={() => setStatusFilter((s) => (s === "acik" ? "" : "acik"))}
+              className={`rounded-lg border px-3 py-2 text-left transition ${statusFilter === "acik" ? "border-primary bg-primary/5" : "border-slate-100 hover:bg-slate-50"}`}
+            >
               <span className="font-bold text-slate-700">Açık talepler:</span> {tickets.filter((ticket) => !ticket.answer).length}
-            </div>
-            <div className="rounded-lg border border-slate-100 px-3 py-2">
+            </button>
+            <button
+              type="button"
+              onClick={() => setStatusFilter((s) => (s === "yanitli" ? "" : "yanitli"))}
+              className={`rounded-lg border px-3 py-2 text-left transition ${statusFilter === "yanitli" ? "border-primary bg-primary/5" : "border-slate-100 hover:bg-slate-50"}`}
+            >
               <span className="font-bold text-slate-700">Yanıtlanan:</span> {tickets.filter((ticket) => ticket.answer).length}
-            </div>
+            </button>
           </div>
         </div>
       </div>
@@ -162,7 +188,14 @@ export default function DestekPage() {
       {/* Görüşler Tablosu */}
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white px-5 py-3 shadow-sm">
-          <h3 className="text-sm font-bold text-slate-800">Gönderilen Görüşler</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-sm font-bold text-slate-800">Gönderilen Görüşler</h3>
+            {statusFilter && (
+              <button type="button" onClick={() => setStatusFilter("")} className="rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-bold text-primary hover:bg-primary/20">
+                {statusFilter === "acik" ? "Açık" : "Yanıtlanan"} ×
+              </button>
+            )}
+          </div>
           <input value={query} onChange={e => setQuery(e.target.value)}
             placeholder="Ara…"
             className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:border-primary focus:bg-white focus:outline-none" />

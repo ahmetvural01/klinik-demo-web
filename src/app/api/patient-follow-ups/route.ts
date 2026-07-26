@@ -114,7 +114,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (auth.user.institutionId && parsed.data.doctorId && !doctorIds.includes(parsed.data.doctorId)) {
-    return NextResponse.json({ message: "Doktor kurum kapsamı disinda" }, { status: 403 });
+    return NextResponse.json({ message: "Seçilen doktor bu kuruma bağlı değil." }, { status: 403 });
   }
 
   let patient;
@@ -127,7 +127,7 @@ export async function POST(request: NextRequest) {
       select: { id: true, fullName: true },
     });
     if (!patient) {
-      return NextResponse.json({ message: "Hasta bulunamadi" }, { status: 404 });
+      return NextResponse.json({ message: "Hasta bulunamadı." }, { status: 404 });
     }
 
   } catch (error) {
@@ -135,6 +135,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Takip kaydı oluşturulamadı" }, { status: 503 });
   }
 
+  // Randevuya bağlı bir takip, o randevunun gerçek doktoruna atfedilir —
+  // formda yanlışlıkla farklı bir doktor seçilmiş olsa bile, takip randevu
+  // doktorundan başkasına yazılamaz (bkz. denetim raporu: hakediş/performans
+  // raporlarında yanlış doktora atfedilme riski).
+  let resolvedFollowUpDoctorId = parsed.data.doctorId || null;
   if (parsed.data.appointmentId) {
     try {
       const appointment = await prisma.appointment.findUnique({
@@ -142,11 +147,12 @@ export async function POST(request: NextRequest) {
         select: { id: true, doctorId: true, patient: { select: { institutionId: true } } },
       });
       if (!appointment) {
-        return NextResponse.json({ message: "Bagli randevu bulunamadi" }, { status: 404 });
+        return NextResponse.json({ message: "Bağlı randevu bulunamadı." }, { status: 404 });
       }
       if (auth.user.institutionId && appointment.patient.institutionId !== auth.user.institutionId) {
-        return NextResponse.json({ message: "Randevu kurum kapsamı disinda" }, { status: 403 });
+        return NextResponse.json({ message: "Randevu bu kuruma bağlı değil." }, { status: 403 });
       }
+      resolvedFollowUpDoctorId = appointment.doctorId;
     } catch (error) {
       console.error("[patient-follow-ups POST appointment lookup] fallback:", error);
       return NextResponse.json({ message: "Takip kaydı oluşturulamadı" }, { status: 503 });
@@ -159,7 +165,7 @@ export async function POST(request: NextRequest) {
       data: {
         patientId: parsed.data.patientId,
         appointmentId: parsed.data.appointmentId || null,
-        doctorId: parsed.data.doctorId || null,
+        doctorId: resolvedFollowUpDoctorId,
         createdById: auth.user.id,
         type: parsed.data.type,
         priority: parsed.data.priority,

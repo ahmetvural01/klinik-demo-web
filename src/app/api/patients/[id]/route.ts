@@ -5,7 +5,7 @@ import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { reverseLabInvoiceFirmaIntegration } from "@/lib/lab-firma-integration";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
 const FIELD_LABELS: Record<string, string> = {
   fullName: "Ad Soyad",
@@ -114,7 +114,8 @@ function buildPatientUpdateAuditDetail(
   ].join("\n");
 }
 
-export const GET = withApiTiming("patients-detail", async function GET(_: NextRequest, { params }: Params) {
+export const GET = withApiTiming("patients-detail", async function GET(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("patients:read");
   if (auth.error) return auth.error;
 
@@ -243,7 +244,8 @@ export const GET = withApiTiming("patients-detail", async function GET(_: NextRe
   return NextResponse.json(patient);
 });
 
-export async function PUT(request: NextRequest, { params }: Params) {
+export async function PUT(request: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("patients:write");
   if (auth.error) return auth.error;
 
@@ -318,7 +320,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
   return NextResponse.json(patient);
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("patients:delete");
   if (auth.error) return auth.error;
 

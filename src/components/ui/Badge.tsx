@@ -22,7 +22,7 @@ const SOLID_CLASS: Record<BadgeTone, string> = {
 };
 
 const SIZE_CLASS: Record<"sm" | "md", string> = {
-  sm: "px-2 py-0.5 text-[11px] font-semibold",
+  sm: "px-2 py-0.5 text-xs font-semibold",
   md: "px-2.5 py-1 text-xs font-bold",
 };
 

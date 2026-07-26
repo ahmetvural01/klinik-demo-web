@@ -4,10 +4,8 @@ import { requireAuth } from "@/lib/api";
 import { reverseFirmaIslemIntegration } from "@/lib/firma-integration";
 import { writeAudit } from "@/lib/api";
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string; iid: string } }
-) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string; iid: string }> }) {
+  const params = await props.params;
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;

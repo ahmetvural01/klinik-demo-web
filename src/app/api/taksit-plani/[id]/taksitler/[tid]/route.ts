@@ -11,10 +11,8 @@ class HttpError extends Error {
 }
 
 // PATCH: Taksit öde (kısmi veya tam)
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: { id: string; tid: string } }
-) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string; tid: string }> }) {
+  const params = await props.params;
   try {
     const auth = await requireAuth("installments:write");
     if (auth.error) return auth.error;

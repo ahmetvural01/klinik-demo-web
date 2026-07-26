@@ -6,8 +6,9 @@ import bcrypt from "bcryptjs";
 // PUT /api/superadmin/institutions/[id]/users/[userId] - Kullanıcı bilgilerini güncelle
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string; userId: string } }
+  props: { params: Promise<{ id: string; userId: string }> }
 ) {
+  const params = await props.params;
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
@@ -91,8 +92,9 @@ export async function PUT(
 // DELETE /api/superadmin/institutions/[id]/users/[userId] - Kullanıcıyı pasif yap
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string; userId: string } }
+  props: { params: Promise<{ id: string; userId: string }> }
 ) {
+  const params = await props.params;
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });

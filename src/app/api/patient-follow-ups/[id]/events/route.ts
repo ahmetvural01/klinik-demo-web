@@ -4,9 +4,10 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { patientFollowUpEventCreateSchema } from "@/lib/validators";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(_: NextRequest, props: Params) {
+  const params = await props.params;
   try {
     const auth = await requireAuth("appointments:read");
     if (auth.error) return auth.error;
@@ -28,7 +29,7 @@ export async function GET(_: NextRequest, { params }: Params) {
       return NextResponse.json({ message: "Takip kaydı bulunamadı" }, { status: 404 });
     }
 
-    if (auth.user.institutionId && doctorIds.length > 0) {
+    if (auth.user.institutionId) {
       const followUpDoctorId = followUp.doctorId || followUp.appointment?.doctorId || null;
       const sameInstitution = followUp.createdBy.institutionId === auth.user.institutionId || (followUpDoctorId ? doctorIds.includes(followUpDoctorId) : false);
       if (!sameInstitution) {
@@ -52,7 +53,8 @@ export async function GET(_: NextRequest, { params }: Params) {
   }
 }
 
-export async function POST(request: NextRequest, { params }: Params) {
+export async function POST(request: NextRequest, props: Params) {
+  const params = await props.params;
   try {
     const auth = await requireAuth("appointments:write");
     if (auth.error) return auth.error;
@@ -78,7 +80,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       return NextResponse.json({ message: "Takip kaydı bulunamadı" }, { status: 404 });
     }
 
-    if (auth.user.institutionId && doctorIds.length > 0) {
+    if (auth.user.institutionId) {
       const followUpDoctorId = followUp.doctorId || followUp.appointment?.doctorId || null;
       const sameInstitution = followUp.createdBy.institutionId === auth.user.institutionId || (followUpDoctorId ? doctorIds.includes(followUpDoctorId) : false);
       if (!sameInstitution) {

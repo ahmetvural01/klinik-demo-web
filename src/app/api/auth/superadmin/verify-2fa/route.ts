@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
     superadminModules: modules,
   });
 
-  setAuthCookie(token);
+  await setAuthCookie(token);
   await writeAudit(user.id, "LOGIN", usedBackupCode ? "Superadmin yedek kod ile giris yapti" : "Superadmin 2FA ile giris yapti");
 
   return NextResponse.json({

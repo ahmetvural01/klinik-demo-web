@@ -38,13 +38,19 @@ export default function TemplatesTab() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [switching, setSwitching] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState("");
 
   const load = () => {
     setLoading(true);
+    setLoadError("");
     fetch("/api/sms/templates")
-      .then((r) => r.json())
+      .then(async (r) => {
+        const data = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(data?.message || "SMS şablonları yüklenemedi.");
+        return data;
+      })
       .then((d) => setTemplates(Array.isArray(d?.templates) ? d.templates : []))
-      .catch(() => setTemplates([]))
+      .catch((error) => setLoadError(error instanceof Error ? error.message : "SMS şablonları yüklenemedi."))
       .finally(() => setLoading(false));
   };
 
@@ -170,6 +176,11 @@ export default function TemplatesTab() {
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="h-28 animate-pulse rounded-2xl bg-slate-50" style={{ animationDelay: `${i * 40}ms` }} />
             ))}
+          </div>
+        ) : loadError ? (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
+            <span>{loadError}</span>
+            <Button variant="secondary" size="sm" onClick={load}>Yeniden Dene</Button>
           </div>
         ) : templates.length === 0 ? (
           <div className="rounded-2xl border border-slate-100 bg-white px-6 py-14 text-center text-sm text-slate-400 shadow-sm">Şablon bulunamadı</div>

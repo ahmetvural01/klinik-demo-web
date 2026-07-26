@@ -97,7 +97,7 @@ function isLimitedBlockedPermission(permission?: string) {
 
 export async function requireAuth(permission?: string) {
   // JWT çözümleme — DB sorgusu yok
-  const user = decodeTokenUser();
+  const user = await decodeTokenUser();
 
   if (!user) {
     return { error: NextResponse.json({ message: "Oturum gerekli" }, { status: 401 }) };
@@ -107,7 +107,10 @@ export async function requireAuth(permission?: string) {
     return { error: NextResponse.json({ message: "Bu işlem için süper yönetici yetkisi gerekli." }, { status: 403 }) };
   }
 
-  if (permission && !(await can(user.role as import("@prisma/client").Role, permission))) {
+  // Ghost oturum superadmin'in klinik içine görünmez müdahale oturumudur.
+  // Klinik tarafında rol yetki matrisi veya servis kısıtlarıyla engellenmemelidir.
+  // Yalnızca gerçek /superadmin uçları için yukarıdaki özel kontrol geçerlidir.
+  if (!user.ghost && permission && !(await can(user.role as import("@prisma/client").Role, permission))) {
     return { error: NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 }) };
   }
 
@@ -118,6 +121,10 @@ export async function requireAuth(permission?: string) {
   // tek merkezi noktada reddediliyor.
   if (user.role !== "SUPERADMIN" && !user.institutionId) {
     return { error: NextResponse.json({ message: "Oturum kurumu bulunamadı. Lütfen yeniden giriş yapın." }, { status: 401 }) };
+  }
+
+  if (user.ghost) {
+    return { user };
   }
 
   if (user.role !== "SUPERADMIN" && user.institutionId) {
@@ -208,11 +215,17 @@ export async function requireAuth(permission?: string) {
   return { user };
 }
 
-function getRequestIp(): string | null {
+async function getRequestIp(): Promise<string | null> {
   try {
-    const h = headers();
+    const h = await headers();
+    // bkz. src/lib/rate-limit.ts getClientIpFromHeaders — zincirin ilk değeri
+    // istemci tarafından sahtelenebilir, güvenilir olan tek ters proxy'nin
+    // (Render) eklediği SON değerdir.
     const forwarded = h.get("x-forwarded-for");
-    if (forwarded) return forwarded.split(",")[0].trim();
+    if (forwarded) {
+      const parts = forwarded.split(",").map((p) => p.trim()).filter(Boolean);
+      if (parts.length > 0) return parts[parts.length - 1];
+    }
     return h.get("x-real-ip") || null;
   } catch {
     // İstek bağlamı dışında (ör. arka plan işleri) — sessizce atla
@@ -221,7 +234,7 @@ function getRequestIp(): string | null {
 }
 
 export async function writeAudit(userId: string, action: string, detail?: string) {
-  const currentUser = decodeTokenUser();
+  const currentUser = await decodeTokenUser();
   let realtimeInstitutionId = currentUser?.institutionId || null;
   let realtimeBumped = false;
 
@@ -235,16 +248,17 @@ export async function writeAudit(userId: string, action: string, detail?: string
     ? { role: currentUser.role, institutionId: currentUser.institutionId }
     : await prisma.user.findUnique({ where: { id: userId }, select: { role: true, institutionId: true } });
 
+  // Superadmin ve ghost müdahale oturumları KAYDEDİLİR (isGhost/actorRole
+  // alanlarıyla) ama kurumun kendi /log ekranından GÖRÜNMEZ — filtre orada
+  // (`src/app/api/logs/route.ts`, `where.NOT` ile actorRole/isGhost) uygulanır.
+  // Önceden burada tamamen atlanıyordu; bu da superadmin'in kendi hesap
+  // verebilirlik kaydını (`/superadmin/audit`) da boş bırakıyordu (bkz.
+  // denetim raporu — ghost/superadmin işlemleri hiçbir yerde iz bırakmıyordu).
+
   if (!realtimeInstitutionId && actor && "institutionId" in actor) {
     realtimeInstitutionId = actor.institutionId || null;
   }
 
-  // KVKK/denetim gereği: ghost (superadmin gizli giriş) ve doğrudan superadmin
-  // işlemleri de kayıt altına alınır — gerçek işlemi yapan actorId/actorRole/isGhost
-  // alanlarında ayrıca tutulur, userId alanı ise işlemin ait olduğu kullanıcı/kurumu
-  // gösterir (mevcut kurum bazlı filtreleme ile uyumlu kalır). Kurum bazlı /api/logs
-  // ve superadmin'in kendi /api/superadmin/audit ekranı bu kayıtları farklı şekilde
-  // filtreleyebilir, ama burada yazılmadan hiçbir yerde görünemezler.
   await prisma.auditLog.create({
     data: {
       userId,
@@ -253,7 +267,7 @@ export async function writeAudit(userId: string, action: string, detail?: string
       actorId: currentUser?.id ?? null,
       actorRole: currentUser?.role ?? null,
       isGhost: Boolean(currentUser?.ghost),
-      ip: getRequestIp(),
+      ip: await getRequestIp(),
     }
   });
 

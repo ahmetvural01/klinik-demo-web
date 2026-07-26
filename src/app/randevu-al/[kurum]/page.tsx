@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
+import { checkWorkingDay, type DaySchedule } from "@/lib/working-hours-core";
 
 type Doctor = { id: string; fullName: string };
 
@@ -12,6 +13,7 @@ export default function RandevuAlPage() {
   const [loadingDoctors, setLoadingDoctors] = useState(true);
   const [institutionName, setInstitutionName] = useState("");
   const [doctors, setDoctors] = useState<Doctor[]>([]);
+  const [dailySchedules, setDailySchedules] = useState<DaySchedule[]>([]);
   const [notFound, setNotFound] = useState(false);
 
   const [fullName, setFullName] = useState("");
@@ -32,16 +34,25 @@ export default function RandevuAlPage() {
         const data = await r.json();
         setInstitutionName(data.institutionName || "");
         setDoctors(Array.isArray(data.doctors) ? data.doctors : []);
+        setDailySchedules(Array.isArray(data.dailySchedules) ? data.dailySchedules : []);
       })
       .catch(() => setNotFound(true))
       .finally(() => setLoadingDoctors(false));
   }, [kurum]);
+
+  const preferredDateError = useMemo(
+    () => preferredDate && dailySchedules.length > 0
+      ? checkWorkingDay(preferredDate, dailySchedules, "Randevu talebi")
+      : null,
+    [preferredDate, dailySchedules]
+  );
 
   const submit = async () => {
     setError("");
     if (fullName.trim().length < 3) { setError("Lütfen ad soyad girin."); return; }
     if (!/^0\d{10}$/.test(phone)) { setError("Telefon numarası 0 ile başlamalı ve 11 haneli olmalı."); return; }
     if (!preferredDate) { setError("Lütfen tercih ettiğiniz tarihi seçin."); return; }
+    if (preferredDateError) { setError(preferredDateError); return; }
 
     setSubmitting(true);
     try {
@@ -71,7 +82,11 @@ export default function RandevuAlPage() {
     }
   };
 
-  const minDate = new Date().toISOString().slice(0, 10);
+  const minDate = (() => {
+    const now = new Date();
+    const pad = (value: number) => String(value).padStart(2, "0");
+    return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  })();
 
   if (loadingDoctors) {
     return (
@@ -134,7 +149,8 @@ export default function RandevuAlPage() {
           )}
           <div>
             <label className="mb-1 block text-xs font-semibold text-slate-600">Tercih Ettiğiniz Tarih *</label>
-            <input type="date" min={minDate} value={preferredDate} onChange={(e) => setPreferredDate(e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
+            <input type="date" min={minDate} value={preferredDate} onChange={(e) => { setPreferredDate(e.target.value); setError(""); }} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
+            {preferredDateError && <p className="mt-1 text-xs font-semibold text-amber-700">{preferredDateError}</p>}
           </div>
           <div>
             <label className="mb-1 block text-xs font-semibold text-slate-600">Not (opsiyonel)</label>
@@ -143,7 +159,7 @@ export default function RandevuAlPage() {
 
           {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{error}</p>}
 
-          <button onClick={submit} disabled={submitting} className="w-full rounded-xl bg-primary py-3 text-sm font-bold text-white transition hover:bg-primary-strong disabled:opacity-50">
+          <button onClick={submit} disabled={submitting || Boolean(preferredDateError)} className="w-full rounded-xl bg-primary py-3 text-sm font-bold text-white transition hover:bg-primary-strong disabled:cursor-not-allowed disabled:opacity-50">
             {submitting ? "Gönderiliyor…" : "Randevu Talebi Gönder"}
           </button>
           <p className="text-center text-[11px] text-slate-400">Bu bir kesin randevu değildir; talebiniz klinik tarafından onaylandığında randevunuz oluşturulur.</p>

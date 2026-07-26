@@ -2,6 +2,7 @@
 import bcrypt from "bcryptjs";
 import { Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { validateWorkHoursRange } from "@/lib/working-hours-core";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { checkStaffLimit } from "@/lib/staff-limits";
 
@@ -50,12 +51,18 @@ export async function POST(request: NextRequest) {
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId && auth.user.role !== "SUPERADMIN") {
-    return NextResponse.json({ message: "Kurum bilgisi olmadan personel olusturulamaz" }, { status: 403 });
+    return NextResponse.json({ message: "Kurum bilgisi olmadan personel oluşturulamaz." }, { status: 403 });
   }
 
   const body = await request.json();
   if (body.role === "SUPERADMIN") {
-    return NextResponse.json({ message: "Bu rol olusturulamaz" }, { status: 403 });
+    return NextResponse.json({ message: "Bu rol oluşturulamaz." }, { status: 403 });
+  }
+  const workStart = typeof body.workStart === "string" ? body.workStart : "08:30";
+  const workEnd = typeof body.workEnd === "string" ? body.workEnd : "18:00";
+  const workHoursError = validateWorkHoursRange(workStart, workEnd, "Personel çalışma saatleri");
+  if (workHoursError) {
+    return NextResponse.json({ message: workHoursError }, { status: 400 });
   }
 
   const targetInstitutionId = auth.user.institutionId || body.institutionId || null;
@@ -90,8 +97,8 @@ export async function POST(request: NextRequest) {
         passwordHash,
         profile: {
           create: {
-            workStart: "08:30",
-            workEnd: "18:00",
+            workStart,
+            workEnd,
             // Yönetici rolündeki personel varsayılan olarak randevu ekranındaki
             // doktor listesinde görünmez; tedavi de veriyorsa formdan işaretlenerek gösterilebilir.
             hideAsDoctor: body.role === "YONETICI" ? (typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : true) : false,
@@ -111,10 +118,10 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
-      return NextResponse.json({ message: "Bu TC kimlik no bu kurumda zaten kayıtlı" }, { status: 409 });
+      return NextResponse.json({ message: "Bu TC kimlik numarası kurumda zaten kayıtlı." }, { status: 409 });
     }
     console.error("[staff POST] fallback:", error);
-    return NextResponse.json({ message: "Personel oluşturulamadı" }, { status: 503 });
+    return NextResponse.json({ message: "Personel oluşturulamadı." }, { status: 503 });
   }
 
   await writeAudit(auth.user.id, "STAFF_CREATE", `${created.fullName} eklendi`);

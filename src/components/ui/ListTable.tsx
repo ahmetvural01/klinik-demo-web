@@ -43,16 +43,26 @@ export function ListTable<T>({
   onRowClick,
   pager,
 }: ListTableProps<T>) {
+  const hasStickyActions = columns.some((column) => column.key === "islem" || column.key === "actions");
+  const tableMinWidth = columns.length >= 6 ? "min-w-[820px]" : columns.length >= 4 ? "min-w-[680px]" : "";
+
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
       <div className="overflow-x-auto">
-        <table className="w-full">
+        <table className={`${tableMinWidth} w-full`}>
           <thead>
             <tr className="border-b border-slate-100 bg-slate-50">
               {columns.map((col) => (
                 <th
                   key={col.key}
-                  className={["px-4 py-3", ALIGN_CLASS[col.align || "left"], col.headerClassName || ""].filter(Boolean).join(" ")}
+                  className={[
+                    "whitespace-nowrap px-3 py-2.5 sm:px-4",
+                    ALIGN_CLASS[col.align || "left"],
+                    hasStickyActions && (col.key === "islem" || col.key === "actions")
+                      ? "sticky right-0 z-10 bg-slate-50 shadow-[-5px_0_8px_-8px_rgb(15_23_42/0.45)]"
+                      : "",
+                    col.headerClassName || "",
+                  ].filter(Boolean).join(" ")}
                 >
                   {col.header}
                 </th>
@@ -73,12 +83,19 @@ export function ListTable<T>({
                 <tr
                   key={rowKey(row)}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
-                  className={`transition hover:bg-slate-50/80 ${onRowClick ? "cursor-pointer" : ""}`}
+                  className={`group transition hover:bg-slate-50/80 ${onRowClick ? "cursor-pointer" : ""}`}
                 >
                   {columns.map((col) => (
                     <td
                       key={col.key}
-                      className={["px-4 py-3", ALIGN_CLASS[col.align || "left"], col.cellClassName || ""].filter(Boolean).join(" ")}
+                      className={[
+                        "px-3 py-2.5 sm:px-4",
+                        ALIGN_CLASS[col.align || "left"],
+                        hasStickyActions && (col.key === "islem" || col.key === "actions")
+                          ? "sticky right-0 z-10 bg-white shadow-[-5px_0_8px_-8px_rgb(15_23_42/0.45)] group-hover:bg-slate-50"
+                          : "",
+                        col.cellClassName || "",
+                      ].filter(Boolean).join(" ")}
                     >
                       {col.render(row)}
                     </td>

@@ -41,14 +41,14 @@ export const ConfirmProvider: React.FC<{ children: React.ReactNode }> = ({ child
       {children}
       {pending && (
         <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-900/40 px-4"
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/50 px-3 backdrop-blur-[1px]"
           role="alertdialog"
           aria-modal="true"
           aria-labelledby="confirm-dialog-message"
           onClick={() => respond(false)}
         >
           <div
-            className="w-full max-w-sm animate-fade-in rounded-2xl bg-white p-5 shadow-2xl"
+            className="w-full max-w-sm animate-fade-in rounded-lg border border-slate-200 bg-white p-5 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
             {pending.title && (
@@ -62,14 +62,14 @@ export const ConfirmProvider: React.FC<{ children: React.ReactNode }> = ({ child
                 type="button"
                 autoFocus
                 onClick={() => respond(false)}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
               >
                 {pending.cancelText || "Vazgeç"}
               </button>
               <button
                 type="button"
                 onClick={() => respond(true)}
-                className={`rounded-xl px-4 py-2 text-sm font-bold text-white ${
+                className={`rounded-lg px-4 py-2 text-sm font-bold text-white ${
                   pending.danger ? "bg-red-600 hover:bg-red-700" : "bg-primary hover:bg-primary/90"
                 }`}
               >

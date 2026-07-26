@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { computeDoctorMonthlyHakedis, computeDoctorMonthlyOdenen, monthRangeUtc } from "@/lib/hakedis";
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
@@ -22,7 +23,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   }
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
@@ -37,8 +39,39 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     });
     if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
+    if (body.tutar !== undefined && (!Number.isFinite(Number(body.tutar)) || Number(body.tutar) <= 0)) {
+      return NextResponse.json({ error: "Tutar pozitif bir sayı olmalıdır" }, { status: 400 });
+    }
+    if (body.kdvOrani !== undefined && (!Number.isFinite(Number(body.kdvOrani)) || Number(body.kdvOrani) < 0 || Number(body.kdvOrani) > 100)) {
+      return NextResponse.json({ error: "KDV oranı 0-100 arasında olmalıdır" }, { status: 400 });
+    }
+
     if (existing.doctorId && body.yontem !== undefined && body.yontem !== "NAKIT" && body.yontem !== "HAVALE_EFT") {
       return NextResponse.json({ error: "Doktor hakedişi ödemeleri sadece nakit veya havale/EFT ile yapılabilir" }, { status: 400 });
+    }
+
+    // Bir hakediş ödemesinin hangi döneme (ay/yıl) sayıldığı, kayıt
+    // oluşturulduktan sonra değiştirilemez — aksi halde tek bir işlemle iki
+    // farklı ayın "ödenen" toplamı geriye dönük olarak bozulur.
+    if (existing.doctorId && (body.periodYear !== undefined || body.periodMonth !== undefined)) {
+      const nextYear = body.periodYear ?? existing.periodYear;
+      const nextMonth = body.periodMonth ?? existing.periodMonth;
+      if (nextYear !== existing.periodYear || nextMonth !== existing.periodMonth) {
+        return NextResponse.json({ error: "Hakediş ödemesinin dönemi (ay/yıl) sonradan değiştirilemez — gerekiyorsa kaydı iptal edip yeniden oluşturun." }, { status: 400 });
+      }
+    }
+
+    // Doktora bağlı olmayan bir gider, kategorisi "Doktor Hakedişi"ye
+    // değiştirilerek doktor alanı boş kalamaz — aksi halde tutar hiçbir
+    // doktorun hakediş hesabına yansımadan kaydedilir (bkz. POST'taki aynı kontrol).
+    if (!existing.doctorId && body.categoryId) {
+      const targetCategory = await (prisma as any).expenseCategory.findUnique({
+        where: { id: body.categoryId },
+        select: { isDoctorPayout: true },
+      });
+      if (targetCategory?.isDoctorPayout) {
+        return NextResponse.json({ error: "\"Doktor Hakedişi\" kategorisine sadece doktor seçilerek (yeni kayıt olarak) geçilebilir." }, { status: 400 });
+      }
     }
 
     // Tutar artırılıyorsa, doktorun o dönem hakedişini aşmadığından emin ol —
@@ -105,7 +138,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;

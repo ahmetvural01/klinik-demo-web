@@ -187,7 +187,7 @@ function HastaEkleContent() {
     const timer = setTimeout(async () => {
       setDuplicateLoading(true);
       try {
-        const res = await fetch(`/api/patients?q=${encodeURIComponent(searchValue)}&take=5`, { cache: "no-store" });
+        const res = await fetch(`/api/patients?q=${encodeURIComponent(searchValue)}&take=5&summary=false`, { cache: "no-store" });
         const body = await res.json().catch(() => ({}));
         const rows = Array.isArray(body?.patients) ? body.patients : [];
         setDuplicates(rows.filter((row: DuplicatePatient) => row.id !== editId));

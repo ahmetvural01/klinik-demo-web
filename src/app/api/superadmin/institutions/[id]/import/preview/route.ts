@@ -41,7 +41,8 @@ function rowErrors<T>(rows: ParsedRow<T>[]) {
 // Yüklenen dosyayı ayrıştırır ve DOĞRULAR ama HİÇBİR ŞEY YAZMAZ — süperadmin
 // "Onayla" demeden önce kaç kayıt ekleneceğini, kaçının zaten var olduğunu ve
 // hangi satırlarda hata olduğunu görür.
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });

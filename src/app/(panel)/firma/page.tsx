@@ -85,7 +85,6 @@ export default function FirmaPage() {
       setFirmas(rows);
       sessionStorage.setItem(FIRMA_CACHE_KEY, JSON.stringify(rows));
     } catch (error) {
-      setFirmas([]);
       showToast("error", error instanceof Error ? error.message : "Tedarikçi verileri yüklenemedi.");
     } finally {
       setLoading(false);
@@ -95,14 +94,15 @@ export default function FirmaPage() {
   const loadStockItems = useCallback(async () => {
     try {
       const r = await fetch("/api/stock", { cache: "no-store" });
-      const d = await r.json();
+      const d = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(d?.message || "Stok verileri yüklenemedi.");
       const rows = Array.isArray(d) ? d : [];
       setStockItems(rows);
       sessionStorage.setItem(STOCK_CACHE_KEY, JSON.stringify(rows));
-    } catch {
-      setStockItems([]);
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Stok verileri yüklenemedi.");
     }
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     loadFirmas();
@@ -150,10 +150,17 @@ export default function FirmaPage() {
   const topBorc = firmas.reduce((s, f) => s + f.borc, 0);
   const topOdeme = firmas.reduce((s, f) => s + f.odenen, 0);
   const topBakiye = firmas.reduce((s, f) => s + f.bakiye, 0);
-  const filteredFirmas = firmas.filter(f =>
-    !search || f.name.toLowerCase().includes(search.toLowerCase()) ||
-    FIRMA_KATEGORILERI[f.kategori]?.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredFirmas = firmas.filter(f => {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (
+      f.name.toLowerCase().includes(q) ||
+      FIRMA_KATEGORILERI[f.kategori]?.toLowerCase().includes(q) ||
+      (f.phone || "").toLowerCase().includes(q) ||
+      (f.iban || "").toLowerCase().includes(q) ||
+      (f.primaryKontakt?.ad || "").toLowerCase().includes(q)
+    );
+  });
 
   const exportFirmasCsv = () => {
     downloadCsv(`tedarikci-cari-${new Date().toISOString().slice(0, 10)}.csv`, filteredFirmas.map((f) => ({
@@ -234,7 +241,7 @@ export default function FirmaPage() {
         <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
           <IconButton icon={Eye} title="Detay" href={`/firma-detay?id=${f.id}`} />
           {f.kategori === "LAB" ? (
-            <Button variant="secondary" size="sm" href={`/lab?new=1&labName=${encodeURIComponent(f.name)}`}>Lab Siparişi Oluştur</Button>
+            <Button variant="secondary" size="sm" href={`/lab?new=1&labName=${encodeURIComponent(f.name)}`}>Laboratuvar İşi Oluştur</Button>
           ) : (
             <Button variant="danger" size="sm" onClick={() => purchaseManager.openAddPurchase(f.id)}>Alım</Button>
           )}
@@ -259,7 +266,7 @@ export default function FirmaPage() {
       <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           <input ref={searchInputRef} value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Firma veya tedarikçi ara ( / )" className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
+            placeholder="Firma, telefon, IBAN veya kontakt ara ( / )" className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
           <Button icon={Plus} onClick={() => setShowAddFirma(true)}>
             Yeni Firma
           </Button>

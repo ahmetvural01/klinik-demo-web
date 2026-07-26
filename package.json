@@ -13,7 +13,7 @@
     "build:render": "prisma generate && next build",
     "start": "next start",
     "start:render": "node scripts/start-render.mjs",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma:migrate:deploy": "prisma migrate deploy",
@@ -27,6 +27,8 @@
     "worker:sms": "tsx scripts/sms-worker.ts",
     "verify:redis:realtime": "tsx scripts/verify-redis-realtime.ts",
     "test:integration": "tsx scripts/integration-basic.ts",
+    "test:working-hours": "tsx scripts/working-hours-rules-test.ts",
+    "test:visual": "node scripts/visual-audit.mjs",
     "preflight:prod": "tsx scripts/preflight-prod.ts",
     "backup:db": "node scripts/backup-postgres.mjs",
     "encrypt:legacy-data": "tsx scripts/encrypt-existing-sensitive-data.ts"
@@ -51,8 +53,8 @@
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.8",
     "lucide-react": "^0.462.0",
-    "next": "14.2.35",
-    "nodemailer": "^8.0.7",
+    "next": "^15.5.21",
+    "nodemailer": "^9.0.3",
     "otplib": "^12.0.1",
     "papaparse": "^5.5.4",
     "qrcode": "^1.5.4",
@@ -63,6 +65,7 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@eslint/eslintrc": "^3.3.6",
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "20.16.5",
@@ -70,12 +73,24 @@
     "@types/react": "18.3.5",
     "@types/react-dom": "18.3.0",
     "autoprefixer": "10.4.20",
-    "eslint": "8.57.0",
-    "eslint-config-next": "14.2.35",
-    "postcss": "8.4.45",
+    "eslint": "^9.39.2",
+    "eslint-config-next": "^15.5.21",
+    "playwright-core": "^1.62.0",
+    "postcss": "^8.5.23",
     "prisma": "^5.17.0",
     "tailwindcss": "3.4.13",
     "tsx": "^4.19.1",
     "typescript": "5.5.4"
+  },
+  "overrides": {
+    "exceljs": {
+      "archiver": "8.0.0",
+      "unzipper": "0.12.5",
+      "uuid": "11.1.1"
+    },
+    "next": {
+      "postcss": "8.5.23",
+      "sharp": "0.35.3"
+    }
   }
 }

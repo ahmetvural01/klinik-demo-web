@@ -44,9 +44,6 @@ const FIRMA_KATEGORILERI: Record<string, string> = {
   KONTRAKTOR: "Yüklenici", BANK: "Banka", DIGER: "Diğer"
 };
 const ISLEM_TIPI: Record<string, string> = { ALIM: "Alım", HIZMET: "Hizmet", ODEME: "Ödeme" };
-const YONTEMLER: Record<string, string> = {
-  NAKIT: "Nakit", KREDI_KARTI: "Kredi Kartı", HAVALE_EFT: "Havale/EFT", MAIL_ORDER: "Mail Order", DIGER: "Diğer"
-};
 const TIPI_TONE: Record<string, "critical" | "warning" | "success"> = {
   ALIM: "critical", HIZMET: "warning", ODEME: "success"
 };
@@ -67,6 +64,9 @@ function FirmaDetayContent() {
     } catch { return []; }
   });
   const [firmaPurchases, setFirmaPurchases] = useState<Purchase[]>([]);
+  const [ekstreTipi, setEkstreTipi] = useState("");
+  const [ekstreFrom, setEkstreFrom] = useState("");
+  const [ekstreTo, setEkstreTo] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -98,37 +98,40 @@ function FirmaDetayContent() {
       if (!r.ok) throw new Error(d?.message);
       setEkstre(d);
     } catch {
-      setEkstre({ islemler: [], topBorc: 0, topOdeme: 0, netBakiye: 0 });
+      showToast("error", "Firma ekstresi güncellenemedi; son başarılı kayıtlar korunuyor.");
     }
-  }, [id]);
+  }, [id, showToast]);
 
   const loadKontaktler = useCallback(async () => {
     if (!id) return;
     try {
       const r = await fetch(`/api/firma/${id}/kontaktler`, { cache: "no-store" });
-      const d = await r.json();
+      const d = await r.json().catch(() => null);
+      if (!r.ok) throw new Error();
       setKontaktler(Array.isArray(d) ? d : []);
-    } catch { setKontaktler([]); }
-  }, [id]);
+    } catch { showToast("error", "Firma iletişim bilgileri güncellenemedi."); }
+  }, [id, showToast]);
 
   const loadStockItems = useCallback(async () => {
     try {
       const r = await fetch("/api/stock", { cache: "no-store" });
-      const d = await r.json();
+      const d = await r.json().catch(() => null);
+      if (!r.ok) throw new Error();
       const rows = Array.isArray(d) ? d : [];
       setStockItems(rows);
       sessionStorage.setItem(STOCK_CACHE_KEY, JSON.stringify(rows));
-    } catch { setStockItems([]); }
-  }, []);
+    } catch { showToast("error", "Stok seçenekleri güncellenemedi."); }
+  }, [showToast]);
 
   const loadFirmaPurchases = useCallback(async () => {
     if (!id) return;
     try {
       const r = await fetch(`/api/purchases?firmaId=${id}`, { cache: "no-store" });
-      const d = await r.json();
+      const d = await r.json().catch(() => null);
+      if (!r.ok) throw new Error();
       setFirmaPurchases(Array.isArray(d) ? d : []);
-    } catch { setFirmaPurchases([]); }
-  }, [id]);
+    } catch { showToast("error", "Satın alma geçmişi güncellenemedi."); }
+  }, [id, showToast]);
 
   const refreshAll = useCallback(() => {
     void loadFirma(); void loadEkstre(); void loadKontaktler(); void loadStockItems(); void loadFirmaPurchases();
@@ -175,45 +178,18 @@ function FirmaDetayContent() {
     else { const e = await r.json(); showToast("error", e.error || "Hata oluştu"); }
   };
 
-  // ── Hizmet/Ödeme Ekle modal ───────────────────────────────────────────────
-  const [showAddIslem, setShowAddIslem] = useState(false);
-  const [isSubmittingIslem, setIsSubmittingIslem] = useState(false);
-  const [islemForm, setIslemForm] = useState({
-    tarih: new Date().toISOString().split("T")[0], islemTipi: "HIZMET", urunHizmet: "", aciklama: "",
-    tutar: "", faturaNo: "", yontem: "NAKIT", kdvOrani: "0"
-  });
-  const openAddIslem = () => {
-    setIslemForm((current) => ({
-      ...current,
-      islemTipi: isLabFirma ? "ODEME" : current.islemTipi,
-      urunHizmet: isLabFirma ? "" : current.urunHizmet,
-    }));
-    setShowAddIslem(true);
-  };
-  const handleAddIslem = async () => {
-    if (!firma || !islemForm.tarih || !islemForm.islemTipi || !islemForm.tutar) { showToast("error", "Zorunlu alanlar eksik"); return; }
-    if (isSubmittingIslem) return;
-    setIsSubmittingIslem(true);
-    const r = await fetch(`/api/firma/${firma.id}/islemler`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        tarih: islemForm.tarih, islemTipi: islemForm.islemTipi,
-        urunHizmet: islemForm.urunHizmet || null, aciklama: islemForm.aciklama || null,
-        tutar: Number(islemForm.tutar), faturaNo: islemForm.faturaNo || null,
-        yontem: islemForm.yontem || null, kdvOrani: Number(islemForm.kdvOrani),
-      }),
+  const toggleFirmaActive = async () => {
+    if (!firma) return;
+    const nextActive = !firma.isActive;
+    const message = nextActive ? "Firma tekrar aktif edilsin mi?" : "Firma pasife alınsın mı? Pasif firmalar yeni alım/hizmet kaydında listelenmez.";
+    if (!(await confirmDialog({ message, danger: !nextActive, confirmText: nextActive ? "Aktif Et" : "Pasife Al" }))) return;
+    const r = await fetch(`/api/firma/${firma.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: nextActive }),
     });
-    const data = await r.json();
-    if (r.ok) {
-      setShowAddIslem(false);
-      setIslemForm({ tarih: new Date().toISOString().split("T")[0], islemTipi: "HIZMET", urunHizmet: "", aciklama: "", tutar: "", faturaNo: "", yontem: "NAKIT", kdvOrani: "0" });
-      showToast("success", data.message || "İşlem eklendi");
-      await Promise.all([loadEkstre(), loadFirma()]);
-    } else {
-      showToast("error", data.error || "Hata oluştu");
-    }
-    setIsSubmittingIslem(false);
+    if (r.ok) { showToast("success", nextActive ? "Firma aktif edildi" : "Firma pasife alındı"); await loadFirma(); }
+    else { const e = await r.json().catch(() => ({})); showToast("error", e.error || "Hata oluştu"); }
   };
+
   const cancelIslem = async (iid: string) => {
     if (!firma) return;
     if (!(await confirmDialog({ message: "Bu işlemi iptal etmek istediğinizden emin misiniz?", danger: true, confirmText: "İptal Et" }))) return;
@@ -246,6 +222,45 @@ function FirmaDetayContent() {
       showToast("error", e.error || "Kontakt eklenemedi");
     }
     setIsSubmittingKontakt(false);
+  };
+
+  const [editingKontakt, setEditingKontakt] = useState<FirmaKontakt | null>(null);
+  const [editKontaktForm, setEditKontaktForm] = useState({ ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false });
+  const [isSavingKontakt, setIsSavingKontakt] = useState(false);
+
+  const openEditKontakt = (k: FirmaKontakt) => {
+    setEditingKontakt(k);
+    setEditKontaktForm({ ad: k.ad, unvan: k.unvan || "", email: k.email || "", telefon: k.telefon || "", rol: k.rol || "", isPrimary: k.isPrimary });
+  };
+
+  const handleSaveKontakt = async () => {
+    if (!firma || !editingKontakt || !editKontaktForm.ad.trim()) { showToast("error", "Kontakt adı zorunlu"); return; }
+    if (isSavingKontakt) return;
+    setIsSavingKontakt(true);
+    const r = await fetch(`/api/firma/${firma.id}/kontaktler/${editingKontakt.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editKontaktForm),
+    });
+    if (r.ok) {
+      setEditingKontakt(null);
+      showToast("success", "Kontakt güncellendi");
+      await loadKontaktler();
+    } else {
+      const e = await r.json().catch(() => ({}));
+      showToast("error", e.error || "Kontakt güncellenemedi");
+    }
+    setIsSavingKontakt(false);
+  };
+
+  const handleDeleteKontakt = async (k: FirmaKontakt) => {
+    if (!firma) return;
+    if (!(await confirmDialog({ message: `${k.ad} kontaktı silinsin mi?`, danger: true, confirmText: "Sil" }))) return;
+    const r = await fetch(`/api/firma/${firma.id}/kontaktler/${k.id}`, { method: "DELETE" });
+    if (r.ok) {
+      showToast("success", "Kontakt silindi");
+      await loadKontaktler();
+    } else {
+      showToast("error", "Kontakt silinemedi");
+    }
   };
 
   const purchaseByIslemId = new Map(firmaPurchases.map(p => [p.firmaIslemId, p]));
@@ -316,6 +331,11 @@ function FirmaDetayContent() {
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-black text-slate-900">{firma.name}</h1>
               <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{FIRMA_KATEGORILERI[firma.kategori] || firma.kategori}</span>
+              {firma.isActive ? (
+                <Badge tone="success">Aktif</Badge>
+              ) : (
+                <Badge tone="critical">Pasif</Badge>
+              )}
             </div>
             <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
               {firma.phone && <span>Tel: {firma.phone}</span>}
@@ -326,8 +346,11 @@ function FirmaDetayContent() {
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" href="/firma">Tedarikçi Listesi</Button>
             <Button variant="secondary" onClick={openEditFirma}>Düzenle</Button>
+            <Button variant={firma.isActive ? "secondary" : "primary"} onClick={() => void toggleFirmaActive()}>
+              {firma.isActive ? "Pasife Al" : "Aktif Et"}
+            </Button>
             {isLabFirma ? (
-              <Button variant="primary" href={`/lab?new=1&labName=${encodeURIComponent(firma.name)}`}>Lab Siparişi Oluştur</Button>
+              <Button variant="primary" href={`/lab?new=1&labName=${encodeURIComponent(firma.name)}`}>Laboratuvar İşi Oluştur</Button>
             ) : (
               <Button variant="danger" onClick={() => purchaseManager.openAddPurchase(firma.id)}>Malzeme Alımı</Button>
             )}
@@ -378,7 +401,7 @@ function FirmaDetayContent() {
                     Bu firma laboratuvar olarak çalışır. Malzeme siparişi açılmaz; lab işi ve faturası Laboratuvar ekranından kaydedilir, tutarlar aşağıdaki hesap ekstresine hizmet borcu olarak düşer.
                   </p>
                 </div>
-                <Button size="sm" variant="primary" href={`/lab?new=1&labName=${encodeURIComponent(firma.name)}`}>Lab Siparişi Oluştur</Button>
+                <Button size="sm" variant="primary" href={`/lab?new=1&labName=${encodeURIComponent(firma.name)}`}>Laboratuvar İşi Oluştur</Button>
               </div>
             </div>
           ) : (
@@ -395,10 +418,25 @@ function FirmaDetayContent() {
                     <button key={p.id} onClick={() => purchaseManager.openPurchaseDetail(p.id)}
                       className="flex w-full items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-left hover:bg-slate-50">
                       <span>
-                        <span className="block text-sm font-semibold text-slate-800">{fmtDate(p.tarih)} · {p._count?.items ?? p.items?.length ?? 0} kalem</span>
+                        <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-800">
+                          {fmtDate(p.tarih)} · {p._count?.items ?? p.items?.length ?? 0} kalem
+                          <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
+                            p.receiptStatus === "SIPARIS_VERILDI"
+                              ? "bg-amber-100 text-amber-700"
+                              : "bg-emerald-100 text-emerald-700"
+                          }`}>
+                            {p.receiptStatus === "SIPARIS_VERILDI" ? "Teslimat bekliyor" : "Teslim alındı"}
+                          </span>
+                        </span>
                         {p.faturaNo && <span className="block text-xs text-slate-400">Fatura: {p.faturaNo}</span>}
                       </span>
-                      <span className="text-sm font-bold text-red-700">{fmt(Number(p.firmaIslem?.tutar || 0))}</span>
+                      <span className="text-sm font-bold text-red-700">
+                        {fmt(Number(
+                          p.total
+                          || p.firmaIslem?.tutar
+                          || (p.items || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0),
+                        ))}
+                      </span>
                     </button>
                   ))}
                 </div>
@@ -418,10 +456,16 @@ function FirmaDetayContent() {
             <div className="space-y-2">
               {kontaktler.map(k => (
                 <div key={k.id} className="rounded-xl border border-slate-100 p-3">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="font-bold text-slate-800">{k.ad}</p>
-                    {k.isPrimary && <Badge tone="info">Ana Kontakt</Badge>}
-                    {k.unvan && <span className="text-sm text-slate-500">{k.unvan}</span>}
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="font-bold text-slate-800">{k.ad}</p>
+                      {k.isPrimary && <Badge tone="info">Ana Kontakt</Badge>}
+                      {k.unvan && <span className="text-sm text-slate-500">{k.unvan}</span>}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => openEditKontakt(k)} className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50">Düzenle</button>
+                      <button onClick={() => void handleDeleteKontakt(k)} className="rounded-lg border border-red-200 px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50">Sil</button>
+                    </div>
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
                     {k.telefon && <span>Tel: {k.telefon}</span>}
@@ -436,13 +480,42 @@ function FirmaDetayContent() {
       </div>
 
         <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-          <div className="border-b border-slate-200 bg-slate-50 px-4 py-2">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2">
             <span className="text-sm font-bold text-slate-700">Hesap Ekstresi</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <select value={ekstreTipi} onChange={e => setEkstreTipi(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:border-primary focus:outline-none">
+                <option value="">Tüm işlem tipleri</option>
+                <option value="ALIM">Alım</option>
+                <option value="HIZMET">Hizmet</option>
+                <option value="ODEME">Ödeme</option>
+              </select>
+              <input type="date" value={ekstreFrom} onChange={e => setEkstreFrom(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:border-primary focus:outline-none" />
+              <span className="text-xs text-slate-400">—</span>
+              <input type="date" value={ekstreTo} onChange={e => setEkstreTo(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:border-primary focus:outline-none" />
+              {(ekstreTipi || ekstreFrom || ekstreTo) && (
+                <button type="button" onClick={() => { setEkstreTipi(""); setEkstreFrom(""); setEkstreTo(""); }} className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-500 hover:bg-slate-50">
+                  Temizle
+                </button>
+              )}
+            </div>
           </div>
           {!ekstre || ekstre.islemler.length === 0 ? (
             <div className="py-10 text-center text-sm text-slate-500">Henüz alım, hizmet veya ödeme işlemi yok</div>
           ) : (
-            <ProfessionalDataTable data={ekstre.islemler} columns={ekstreColumns} emptyText="Henüz alım, hizmet veya ödeme işlemi yok" pageSize={12} />
+            (() => {
+              const filteredIslemler = ekstre.islemler.filter((i) => {
+                if (ekstreTipi && i.islemTipi !== ekstreTipi) return false;
+                const day = i.tarih.substring(0, 10);
+                if (ekstreFrom && day < ekstreFrom) return false;
+                if (ekstreTo && day > ekstreTo) return false;
+                return true;
+              });
+              return filteredIslemler.length === 0 ? (
+                <div className="py-10 text-center text-sm text-slate-500">Filtreyle eşleşen işlem yok</div>
+              ) : (
+                <ProfessionalDataTable data={filteredIslemler} columns={ekstreColumns} emptyText="Henüz alım, hizmet veya ödeme işlemi yok" pageSize={12} />
+              );
+            })()
           )}
         </div>
 
@@ -481,71 +554,6 @@ function FirmaDetayContent() {
       </Modal>
 
       <Modal
-        open={showAddIslem}
-        onClose={() => setShowAddIslem(false)}
-        title={isLabFirma ? "Firma Ödemesi Ekle" : "Hizmet veya Ödeme Ekle"}
-        description={
-          isLabFirma
-            ? `${firma.name} laboratuvar faturaları Laboratuvar ekranından oluşur. Burada firmaya yapılan ödeme kaydedilir.`
-            : `${firma.name} için cari ve gider kaydı birlikte güncellenir. Malzeme/ürün alımı için "Malzeme Alımı" butonunu kullanın.`
-        }
-        size="lg"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setShowAddIslem(false)}>Vazgeç</Button>
-            <Button onClick={handleAddIslem} loading={isSubmittingIslem}>Kaydet</Button>
-          </>
-        }
-      >
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField label="Tarih" required>
-            <input type="date" value={islemForm.tarih} onChange={e => setIslemForm({ ...islemForm, tarih: e.target.value })} className={formInput} />
-          </FormField>
-          <FormField label="İşlem Tipi" required>
-            <select value={islemForm.islemTipi} onChange={e => setIslemForm({ ...islemForm, islemTipi: e.target.value })} className={formInput}>
-              {!isLabFirma && <option value="HIZMET">Hizmet Alımı</option>}
-              <option value="ODEME">Firmaya Ödeme</option>
-            </select>
-          </FormField>
-          {!isLabFirma && (
-            <div className="sm:col-span-2">
-              <FormField label="Ürün veya Hizmet Adı">
-                <input value={islemForm.urunHizmet} onChange={e => setIslemForm({ ...islemForm, urunHizmet: e.target.value })} className={formInput} />
-              </FormField>
-            </div>
-          )}
-          {(islemForm.islemTipi === "HIZMET" || islemForm.islemTipi === "ODEME") && (
-            <div className="sm:col-span-2 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-medium text-emerald-700">
-              {isLabFirma ? "Ödeme kaydedildiğinde laboratuvar firmasının cari bakiyesi güncellenir." : "Bu işlem kaydedildiğinde muhasebe gider kaydı otomatik oluşur."}
-            </div>
-          )}
-          <div className="sm:col-span-2">
-            <FormField label="Açıklama">
-              <input value={islemForm.aciklama} onChange={e => setIslemForm({ ...islemForm, aciklama: e.target.value })} className={formInput} />
-            </FormField>
-          </div>
-          <FormField label="Tutar (₺)" required>
-            <input type="number" value={islemForm.tutar} onChange={e => setIslemForm({ ...islemForm, tutar: e.target.value })} placeholder="0.00" className={formInput} />
-          </FormField>
-          <FormField label="Fatura No">
-            <input value={islemForm.faturaNo} onChange={e => setIslemForm({ ...islemForm, faturaNo: e.target.value })} className={formInput} />
-          </FormField>
-          {islemForm.islemTipi === "ODEME" && (
-            <FormField label="Ödeme Yöntemi">
-              <select value={islemForm.yontem} onChange={e => setIslemForm({ ...islemForm, yontem: e.target.value })} className={formInput}>
-                {Object.entries(YONTEMLER).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-              </select>
-            </FormField>
-          )}
-          <FormField label="KDV Oranı (%)">
-            <select value={islemForm.kdvOrani} onChange={e => setIslemForm({ ...islemForm, kdvOrani: e.target.value })} className={formInput}>
-              <option value="0">%0</option><option value="10">%10</option><option value="20">%20</option>
-            </select>
-          </FormField>
-        </div>
-      </Modal>
-
-      <Modal
         open={showAddKontakt}
         onClose={() => setShowAddKontakt(false)}
         title="Kontakt Ekle"
@@ -574,6 +582,40 @@ function FirmaDetayContent() {
           </FormField>
           <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
             <input type="checkbox" checked={kontaktForm.isPrimary} onChange={e => setKontaktForm({ ...kontaktForm, isPrimary: e.target.checked })} />
+            Ana kontakt olarak işaretle
+          </label>
+        </div>
+      </Modal>
+
+      <Modal
+        open={Boolean(editingKontakt)}
+        onClose={() => setEditingKontakt(null)}
+        title="Kontaktı Düzenle"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setEditingKontakt(null)}>Vazgeç</Button>
+            <Button onClick={handleSaveKontakt} loading={isSavingKontakt}>Kaydet</Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
+          <FormField label="Ad Soyad" required>
+            <input value={editKontaktForm.ad} onChange={e => setEditKontaktForm({ ...editKontaktForm, ad: e.target.value })} className={formInput} />
+          </FormField>
+          <FormField label="Unvan">
+            <input value={editKontaktForm.unvan} onChange={e => setEditKontaktForm({ ...editKontaktForm, unvan: e.target.value })} className={formInput} />
+          </FormField>
+          <FormField label="Telefon">
+            <input value={editKontaktForm.telefon} onChange={e => setEditKontaktForm({ ...editKontaktForm, telefon: e.target.value })} className={formInput} />
+          </FormField>
+          <FormField label="E-posta">
+            <input value={editKontaktForm.email} onChange={e => setEditKontaktForm({ ...editKontaktForm, email: e.target.value })} className={formInput} />
+          </FormField>
+          <FormField label="Rol">
+            <input value={editKontaktForm.rol} onChange={e => setEditKontaktForm({ ...editKontaktForm, rol: e.target.value })} className={formInput} />
+          </FormField>
+          <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+            <input type="checkbox" checked={editKontaktForm.isPrimary} onChange={e => setEditKontaktForm({ ...editKontaktForm, isPrimary: e.target.checked })} />
             Ana kontakt olarak işaretle
           </label>
         </div>

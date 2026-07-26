@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { DEFAULT_SUPERADMIN_MODULES, normalizeModules } from "@/lib/superadmin-modules";
 
 export async function GET() {
-  const user = decodeTokenUser();
+  const user = await decodeTokenUser();
 
   if (!user) return NextResponse.json({ message: "Oturum gerekli" }, { status: 401 });
   if (user.role !== "SUPERADMIN") return NextResponse.json({ message: "Bu işlem için süper yönetici yetkisi gerekli." }, { status: 403 });

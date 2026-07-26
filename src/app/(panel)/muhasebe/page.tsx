@@ -1,17 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { ListPager } from "@/components/ui/ListPager";
 import { Modal } from "@/components/ui/Modal";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { HakedisMonthlyPanel } from "@/components/hakedis/HakedisMonthlyPanel";
 import { Button } from "@/components/ui/Button";
 import { stripSystemTags } from "@/lib/format-text";
-import { addPdfSection, addPdfTitle, createPdfDoc } from "@/lib/pdf-export";
 import { useRouter, useSearchParams } from "next/navigation";
 import { cachedGet } from "@/lib/client-cache";
+import { Plus } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Payment = {
@@ -24,7 +25,7 @@ type Payment = {
 type Expense = {
   id: string; tarih: string; category: string; categoryId?: string | null; description?: string | null;
   tutar: number; yontem?: string | null; faturaNo?: string | null; kdvOrani?: number | null;
-  doctorId?: string | null;
+  doctorId?: string | null; doctor?: { id: string; fullName: string } | null;
 };
 type GiderKategori = { id: string; name: string; isActive: boolean; isDoctorPayout?: boolean };
 type PatientOption = { id: string; fullName: string };
@@ -50,8 +51,6 @@ type Doctor = { id: string; fullName: string; role: string; profile?: { hideAsDo
 // DOKTOR rolü her zaman; YONETICI ise sadece "randevu/hakediş ekranlarında doktor
 // olarak görünsün" işaretlenmişse (profile.hideAsDoctor === false) hakediş süreçlerine dahil olur.
 const isEffectiveDoctor = (u: Doctor) => u.role === "DOKTOR" || (u.role === "YONETICI" && !u.profile?.hideAsDoctor);
-type StockItem = { id: string; quantity: number; minQuantity: number };
-type TrendMonth = { label: string; gelir: number; gider: number };
 type AlacakRow = {
   id: string;
   fullName: string;
@@ -65,6 +64,7 @@ type AlacakRow = {
   doctorNames?: string[];
   lastPaymentAt?: string | null;
   lastTreatmentAt?: string | null;
+  hasActiveTaksitPlan?: boolean;
 };
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -83,12 +83,6 @@ const DOCTOR_PAYOUT_METHOD_LABELS: Record<string, string> = {
   NAKIT: "Nakit", HAVALE_EFT: "Havale/EFT",
 };
 const POS_REQUIRED_METHODS = new Set(["KREDI_KARTI", "MAIL_ORDER"]);
-const AGING4_META: Record<string, { label: string; tone: string; bg: string; border: string }> = {
-  current: { label: "Vadesi Gelmemiş", tone: "text-slate-700", bg: "bg-slate-50", border: "border-slate-100" },
-  d0_30: { label: "0-30 Gün", tone: "text-amber-700", bg: "bg-amber-50", border: "border-amber-100" },
-  d31_60: { label: "31-60 Gün", tone: "text-orange-700", bg: "bg-orange-50", border: "border-orange-100" },
-  d60p: { label: "60+ Gün", tone: "text-red-700", bg: "bg-red-50", border: "border-red-100" },
-};
 const requiresPos = (method: string) => POS_REQUIRED_METHODS.has(method);
 const AY_ADLARI = [
   "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran",
@@ -124,13 +118,8 @@ function readMuhasebeCache() {
   try {
     const cached = JSON.parse(raw) as {
       userRole?: string;
-      kasaToday?: { total: number; byMethod: Record<string, number>; payments: Payment[] };
-      expenseToday?: { total: number };
-      expenseMonth?: { total: number; expenses: Expense[] };
       firmas?: FirmaData[];
-      stockItems?: StockItem[];
       taksitOverdue?: { count: number; amount: number };
-      trendData?: TrendMonth[];
       alacaklar?: AlacakRow[];
       alacakTotal?: number;
       patients?: PatientOption[];
@@ -141,13 +130,8 @@ function readMuhasebeCache() {
     };
     return {
       userRole: cached.userRole || "",
-      kasaToday: cached.kasaToday || { total: 0, byMethod: {}, payments: [] },
-      expenseToday: cached.expenseToday || { total: 0 },
-      expenseMonth: cached.expenseMonth || { total: 0, expenses: [] },
       firmas: Array.isArray(cached.firmas) ? cached.firmas : [],
-      stockItems: Array.isArray(cached.stockItems) ? cached.stockItems : [],
       taksitOverdue: cached.taksitOverdue || { count: 0, amount: 0 },
-      trendData: Array.isArray(cached.trendData) ? cached.trendData : [],
       alacaklar: Array.isArray(cached.alacaklar) ? cached.alacaklar : [],
       alacakTotal: Number(cached.alacakTotal || 0),
       patients: Array.isArray(cached.patients) ? cached.patients : [],
@@ -167,7 +151,7 @@ const TABS = [
   { id: "hakedis",  label: "Hakediş",   hint: "Doktor kazanç ve ödeme dökümü" },
 ] as const;
 type VisibleTabId = (typeof TABS)[number]["id"];
-type TabId = VisibleTabId | "genel" | "gelir" | "gider" | "cari";
+type TabId = VisibleTabId;
 type TransactionKind = "gelir" | "gider";
 type ExpenseEntryKind = "normal" | "firma";
 
@@ -247,7 +231,6 @@ export default function MuhasebePage() {
   }, []);
 
   // ── Summary state ─────────────────────────────────────────────────────────
-  const [loading,       setLoading]       = useState(true);
   // Başlangıçta sessionStorage'dan oku — flash'siz render
   const [userRole,      setUserRole]      = useState<string>(() =>
     typeof window !== "undefined" ? (sessionStorage.getItem("dev-preview-role") || "") : ""
@@ -258,50 +241,22 @@ export default function MuhasebePage() {
     if (userRole === "DOKTOR" || userRole === "ASISTAN") return TABS.filter(() => false);
     return TABS;
   }, [userRole]);
-  const [kasaToday,     setKasaToday]     = useState<{ total: number; byMethod: Record<string, number>; payments: Payment[] }>({ total: 0, byMethod: {}, payments: [] });
-  const [expenseToday,  setExpenseToday]  = useState<{ total: number }>({ total: 0 });
-  const [expenseMonth,  setExpenseMonth]  = useState<{ total: number; expenses: Expense[] }>({ total: 0, expenses: [] });
   const [firmas,        setFirmas]        = useState<FirmaData[]>([]);
-  const [stockItems,    setStockItems]    = useState<StockItem[]>([]);
   const [taksitOverdue, setTaksitOverdue] = useState<{ count: number; amount: number }>({ count: 0, amount: 0 });
 
   const refreshSummary = useCallback(async (role?: string) => {
-    // Anlık rol: parametre > state > sessionStorage
+    // İşlem formu için firma seçenekleri ve sekme uyarısı için geciken taksitler.
     const effectiveRole = role || (typeof window !== "undefined" ? (sessionStorage.getItem("dev-preview-role") || "") : "");
     const isBankoRole = effectiveRole === "BANKO";
-    const today = new Date().toISOString().split("T")[0];
-    const ms = new Date(); ms.setDate(1);
-    const monthStart = ms.toISOString().split("T")[0];
-    const [k, gt, gm, fr, sr, tr] = await Promise.all([
-      fetch(`/api/kasa?date=${today}`, { cache: "no-store" }).then(r => r.json()).catch(() => ({})),
-      // BANKO için /api/gider yasak — çekilmez
-      !isBankoRole ? fetch(`/api/gider?from=${today}&to=${today}&take=50`, { cache: "no-store" }).then(r => r.json()).catch(() => ({})) : Promise.resolve({}),
-      !isBankoRole ? fetch(`/api/gider?from=${monthStart}&to=${today}&take=50`, { cache: "no-store" }).then(r => r.json()).catch(() => ({})) : Promise.resolve({}),
-      // BANKO için /api/firma ve /api/stock yasak — çekilmez
+    const [fr, tr] = await Promise.all([
       !isBankoRole ? fetch("/api/firma", { cache: "no-store" }).then(r => r.json()).catch(() => []) : Promise.resolve([]),
-      !isBankoRole ? fetch("/api/stock", { cache: "no-store" }).then(r => r.json()).catch(() => []) : Promise.resolve([]),
       fetch("/api/taksit-plani?status=GECIKTI", { cache: "no-store" }).then(r => r.json()).catch(() => []),
     ]);
-    setKasaToday({ total: Number(k?.total || 0), byMethod: k?.byMethod || {}, payments: Array.isArray(k?.payments) ? k.payments : [] });
-    setExpenseToday({ total: Number(gt?.total || 0) });
-    setExpenseMonth({ total: Number(gm?.total || 0), expenses: Array.isArray(gm?.expenses) ? gm.expenses : [] });
     setFirmas(Array.isArray(fr) ? fr : []);
-    setStockItems(Array.isArray(sr) ? sr : []);
     if (Array.isArray(tr)) {
       const items = (tr as TaksitPlan[]).flatMap(p => (p.taksitler || []).filter(t => t.status === "GECIKTI"));
       setTaksitOverdue({ count: items.length, amount: items.reduce((s, t) => s + Number(t.kalan || 0), 0) });
     }
-  }, []);
-
-  const supplierDebt  = useMemo(() => firmas.reduce((s, f) => s + Number(f.bakiye || 0), 0), [firmas]);
-  const criticalStock = useMemo(() => stockItems.filter(i => Number(i.quantity) < Number(i.minQuantity)), [stockItems]);
-  const todayNet      = kasaToday.total - expenseToday.total;
-
-  // ── Trend (aylık 6 ay) ───────────────────────────────────────────────────
-  const [trendData, setTrendData] = useState<TrendMonth[]>([]);
-  const loadTrend = useCallback(async () => {
-    const r = await fetch("/api/muhasebe/trend").catch(() => null);
-    if (r?.ok) { const d = await r.json(); if (Array.isArray(d)) setTrendData(d); }
   }, []);
 
   useEffect(() => {
@@ -316,7 +271,6 @@ export default function MuhasebePage() {
 
     syncRole();
     fetch("/api/taksit-plani/mark-gecikti", { method: "POST" }).catch(() => null);
-    setLoading(false);
 
     const onPreview = () => syncRole();
     window.addEventListener("preview-role-change", onPreview);
@@ -341,12 +295,24 @@ export default function MuhasebePage() {
   const [alacakTotal,    setAlacakTotal]    = useState(0);
   const [alacakLoading,  setAlacakLoading]  = useState(false);
   const [alacakSearch,   setAlacakSearch]   = useState("");
+  const [alacakError,    setAlacakError]    = useState("");
 
   const loadAlacaklar = useCallback(async () => {
     setAlacakLoading(true);
-    const r = await fetch("/api/muhasebe/alacaklar", { cache: "no-store" }).catch(() => null);
-    if (r?.ok) { const d = await r.json(); setAlacaklar(d.rows || []); setAlacakTotal(d.toplamAlacak || 0); }
-    setAlacakLoading(false);
+    setAlacakError("");
+    try {
+      const r = await fetch("/api/muhasebe/alacaklar", { cache: "no-store" });
+      const d = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(d?.message || "Hasta alacakları yüklenemedi.");
+      setAlacaklar(Array.isArray(d?.rows) ? d.rows : []);
+      setAlacakTotal(Number(d?.toplamAlacak || 0));
+    } catch (error) {
+      setAlacaklar([]);
+      setAlacakTotal(0);
+      setAlacakError(error instanceof Error ? error.message : "Hasta alacakları yüklenemedi.");
+    } finally {
+      setAlacakLoading(false);
+    }
   }, []);
 
   const filteredAlacaklar = useMemo(() => {
@@ -369,6 +335,7 @@ export default function MuhasebePage() {
       take: "20",
       sortBy: "fullName",
       sortDir: "asc",
+      summary: "false",
     });
     fetch(`/api/patients?${params.toString()}`, { cache: "no-store" })
       .then(r => r.ok ? r.json() : null)
@@ -393,24 +360,29 @@ export default function MuhasebePage() {
 
   // ── TAB: Gelir / Tahsilat ─────────────────────────────────────────────────
   const [allPayments,  setAllPayments]  = useState<Payment[]>([]);
-  const [showTahForm,  setShowTahForm]  = useState(false);
   const [tahForm,      setTahForm]      = useState({ tarih: todayIso(), patientId: "", doctorId: "", method: "NAKIT", amount: "", description: "", posId: "" });
   const [tahFormErrors, setTahFormErrors] = useState<{ tarih?: string; patientId?: string; doctorId?: string; method?: string; posId?: string; amount?: string }>({});
   const [patientSearch, setPatientSearch] = useState("");
   const [doctorSearch, setDoctorSearch] = useState("");
   const [tahSaving,    setTahSaving]    = useState(false);
-  const [pmtSearch,    setPmtSearch]    = useState("");
-  const [pmtFrom,      setPmtFrom]      = useState("");
-  const [pmtTo,        setPmtTo]        = useState("");
-  const [pmtPage,      setPmtPage]      = useState(1);
-  const PMT_PAGE_SIZE = 50;
+  const tahsilatRequestKeyRef = useRef("");
+  const [ledgerErrors, setLedgerErrors] = useState<{ payments?: string; expenses?: string }>({});
 
   const loadPayments = useCallback(async () => {
-    const r = await fetch("/api/payments", { cache: "no-store" }).catch(() => null);
-    if (r?.ok) { const d = await r.json(); setAllPayments(Array.isArray(d) ? d : []); }
+    try {
+      const r = await fetch("/api/payments", { cache: "no-store" });
+      const d = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(d?.message || "Tahsilat kayıtları yüklenemedi.");
+      setAllPayments(Array.isArray(d) ? d : []);
+      setLedgerErrors((current) => ({ ...current, payments: undefined }));
+    } catch (error) {
+      setAllPayments([]);
+      setLedgerErrors((current) => ({ ...current, payments: error instanceof Error ? error.message : "Tahsilat kayıtları yüklenemedi." }));
+    }
   }, []);
 
   const submitTahsilat = async () => {
+    if (tahSaving) return;
     const errors: { tarih?: string; patientId?: string; doctorId?: string; method?: string; posId?: string; amount?: string } = {};
     if (!tahForm.tarih) errors.tarih = "Tarih zorunlu";
     if (!tahForm.patientId) errors.patientId = "Hasta seçimi zorunlu";
@@ -420,6 +392,12 @@ export default function MuhasebePage() {
     if (!tahForm.amount || Number(tahForm.amount) <= 0) errors.amount = "Geçerli bir tutar giriniz";
     setTahFormErrors(errors);
     if (Object.keys(errors).length > 0) return;
+    const requestKey =
+      tahsilatRequestKeyRef.current ||
+      (typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `payment-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    tahsilatRequestKeyRef.current = requestKey;
     setTahSaving(true);
     const payload: Record<string, unknown> = {
       ...tahForm,
@@ -430,16 +408,20 @@ export default function MuhasebePage() {
     delete payload.tarih;
     if (!requiresPos(String(payload.method || ""))) delete payload.posId;
     if (!payload.posId)     delete payload.posId;
-    const r = await fetch("/api/payments", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }).catch(() => null);
+    const r = await fetch("/api/payments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
+      body: JSON.stringify(payload),
+    }).catch(() => null);
     setTahSaving(false);
     if (r?.ok) {
       showToast("success", "Tahsilat kaydedildi");
-      setShowTahForm(false);
       setTransactionOpen(false);
       setTahForm({ tarih: todayIso(), patientId: "", doctorId: "", method: "NAKIT", amount: "", description: "", posId: "" });
       setPatientSearch("");
       setDoctorSearch("");
       setTahFormErrors({});
+      tahsilatRequestKeyRef.current = "";
       loadPayments(); refreshSummary();
     } else {
       const e = await r?.json().catch(() => ({}));
@@ -447,21 +429,9 @@ export default function MuhasebePage() {
     }
   };
 
-  const filteredPayments = useMemo(() => allPayments.filter(p => {
-    if (pmtSearch && !p.patient?.fullName?.toLowerCase().includes(pmtSearch.toLowerCase()) && !p.description?.toLowerCase().includes(pmtSearch.toLowerCase())) return false;
-    const pDate = p.createdAt.substring(0, 10);
-    if (pmtFrom && pDate < pmtFrom) return false;
-    if (pmtTo   && pDate > pmtTo)   return false;
-    return true;
-  }), [allPayments, pmtSearch, pmtFrom, pmtTo]);
-  useEffect(() => { setPmtPage(1); }, [pmtSearch, pmtFrom, pmtTo]);
-  const pmtPageCount = Math.max(1, Math.ceil(filteredPayments.length / PMT_PAGE_SIZE));
-  const pagedPayments = useMemo(() => filteredPayments.slice((pmtPage - 1) * PMT_PAGE_SIZE, pmtPage * PMT_PAGE_SIZE), [filteredPayments, pmtPage]);
-
   // ── TAB: Gider ────────────────────────────────────────────────────────────
   const [allExpenses,   setAllExpenses]   = useState<Expense[]>([]);
   const [giderKats,     setGiderKats]     = useState<GiderKategori[]>([]);
-  const [showGiderForm, setShowGiderForm] = useState(false);
   const [showCatMgr,    setShowCatMgr]    = useState(false);
   const [newCatName,    setNewCatName]    = useState("");
   const [editingCatNames, setEditingCatNames] = useState<Record<string, string>>({});
@@ -474,18 +444,21 @@ export default function MuhasebePage() {
   });
   const [giderSaving, setGiderSaving] = useState(false);
   const [giderFormErrors, setGiderFormErrors] = useState<{ tarih?: string; tutar?: string; category?: string; doctorId?: string; donem?: string }>({});
-  const [expSearch,   setExpSearch]   = useState("");
-  const [expFrom,     setExpFrom]     = useState("");
-  const [expTo,       setExpTo]       = useState("");
-  const [expPage,     setExpPage]     = useState(1);
-  const EXP_PAGE_SIZE = 50;
 
   const loadExpenses = useCallback(async () => {
     const m3 = new Date(); m3.setMonth(m3.getMonth() - 3);
     const from = m3.toISOString().split("T")[0];
     const to   = new Date().toISOString().split("T")[0];
-    const r = await fetch(`/api/gider?from=${from}&to=${to}&take=300`, { cache: "no-store" }).catch(() => null);
-    if (r?.ok) { const d = await r.json(); setAllExpenses(Array.isArray(d?.expenses) ? d.expenses : []); }
+    try {
+      const r = await fetch(`/api/gider?from=${from}&to=${to}&take=300`, { cache: "no-store" });
+      const d = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(d?.message || "Gider kayıtları yüklenemedi.");
+      setAllExpenses(Array.isArray(d?.expenses) ? d.expenses : []);
+      setLedgerErrors((current) => ({ ...current, expenses: undefined }));
+    } catch (error) {
+      setAllExpenses([]);
+      setLedgerErrors((current) => ({ ...current, expenses: error instanceof Error ? error.message : "Gider kayıtları yüklenemedi." }));
+    }
   }, []);
 
   const loadGiderKats = useCallback(async () => {
@@ -576,14 +549,16 @@ export default function MuhasebePage() {
     setGiderSaving(false);
     if (r?.ok) {
       showToast("success", isDoctorPayoutCategory ? "Hakediş ödemesi kaydedildi" : "Gider kaydedildi");
-      setShowGiderForm(false);
       setTransactionOpen(false);
       const payoutDoctorId = giderForm.doctorId;
       setGiderForm({ tarih: new Date().toISOString().split("T")[0], categoryId: "", category: "", description: "", tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0", doctorId: "", donem: new Date().toISOString().slice(0, 7) });
       setGiderTurSearch("");
       setGiderFormErrors({});
       loadExpenses(); refreshSummary();
-      if (isDoctorPayoutCategory && (payoutDoctorId === selectedDoctor)) { loadDoctorFinance(selectedDoctor); loadHakedis(selectedDoctor); }
+      if (isDoctorPayoutCategory) {
+        setHakedisRefreshToken(t => t + 1);
+        if (payoutDoctorId === selectedDoctor) loadDoctorFinance(selectedDoctor);
+      }
     } else {
       const e = await r?.json().catch(() => ({}));
       showToast("error", e?.error || "Gider kaydedilemedi");
@@ -627,16 +602,6 @@ export default function MuhasebePage() {
     }
   };
 
-  const filteredExpenses = useMemo(() => allExpenses.filter(e => {
-    if (expSearch && !e.category?.toLowerCase().includes(expSearch.toLowerCase()) && !e.description?.toLowerCase().includes(expSearch.toLowerCase())) return false;
-    if (expFrom && e.tarih < expFrom) return false;
-    if (expTo   && e.tarih > expTo + "T23:59:59") return false;
-    return true;
-  }), [allExpenses, expSearch, expFrom, expTo]);
-  useEffect(() => { setExpPage(1); }, [expSearch, expFrom, expTo]);
-  const expPageCount = Math.max(1, Math.ceil(filteredExpenses.length / EXP_PAGE_SIZE));
-  const pagedExpenses = useMemo(() => filteredExpenses.slice((expPage - 1) * EXP_PAGE_SIZE, expPage * EXP_PAGE_SIZE), [filteredExpenses, expPage]);
-
   // ── Unified transaction entry ────────────────────────────────────────────
   const [transactionOpen, setTransactionOpen] = useState(false);
   const [transactionKind, setTransactionKind] = useState<TransactionKind>("gelir");
@@ -654,6 +619,7 @@ export default function MuhasebePage() {
   const [editGiderTurSearch, setEditGiderTurSearch] = useState("");
   const [firmaPayErrors, setFirmaPayErrors] = useState<{ firmaId?: string; tutar?: string; tarih?: string }>({});
   const [firmaPaySaving, setFirmaPaySaving] = useState(false);
+  const firmaPaymentRequestKeyRef = useRef("");
 
   useEffect(() => {
     if (!transactionOpen || transactionKind !== "gelir") return;
@@ -663,6 +629,8 @@ export default function MuhasebePage() {
 
 
   const openTransaction = useCallback((kind: TransactionKind | "firma" = "gelir") => {
+    tahsilatRequestKeyRef.current = "";
+    firmaPaymentRequestKeyRef.current = "";
     setTransactionKind(kind === "firma" ? "gider" : kind);
     setExpenseEntryKind(kind === "firma" ? "firma" : "normal");
     setTransactionOpen(true);
@@ -680,9 +648,15 @@ export default function MuhasebePage() {
     if (Object.keys(errors).length > 0) return;
 
     setFirmaPaySaving(true);
+    const requestKey =
+      firmaPaymentRequestKeyRef.current
+      || (typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random()}`);
+    firmaPaymentRequestKeyRef.current = requestKey;
     const r = await fetch(`/api/firma/${firmaPayForm.firmaId}/islemler`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
       body: JSON.stringify({
         tarih: firmaPayForm.tarih,
         islemTipi: "ODEME",
@@ -696,7 +670,9 @@ export default function MuhasebePage() {
     setFirmaPaySaving(false);
 
     if (r?.ok) {
-      showToast("success", "Firma ödemesi kaydedildi");
+      const result = await r.json().catch(() => null);
+      firmaPaymentRequestKeyRef.current = "";
+      showToast("success", result?.message || "Firma ödemesi kaydedildi");
       setTransactionOpen(false);
       setFirmaPayForm({ firmaId: "", tarih: todayIso(), tutar: "", yontem: "HAVALE_EFT", faturaNo: "", kdvOrani: "0", aciklama: "" });
       setFirmaPayErrors({});
@@ -896,37 +872,6 @@ export default function MuhasebePage() {
   // taksitPlans artık sadece geçerli sayfayı içeriyor, tam liste değil.
   const taksitKPIs = taksitStats;
 
-  const alacakAging = useMemo(
-    () => (taksitStats.aging4 || []).map((b) => ({ ...AGING4_META[b.key], ...b })),
-    [taksitStats]
-  );
-
-  const recentLedger = useMemo(() => {
-    const gelirRows = kasaToday.payments.map((payment) => ({
-      id: `p-${payment.id}`,
-      date: payment.createdAt,
-      type: "Tahsilat",
-      name: payment.patient?.fullName || payment.description || "Hasta tahsilatı",
-      method: METHOD_LABELS[payment.method] || payment.method,
-      amount: Number(payment.amount || 0),
-      tone: "text-emerald-700",
-      sign: "+",
-    }));
-    const giderRows = expenseMonth.expenses.map((expense) => ({
-      id: `e-${expense.id}`,
-      date: expense.tarih,
-      type: "Gider",
-      name: expense.category || stripSystemTags(expense.description) || "Klinik gideri",
-      method: expense.yontem ? (METHOD_LABELS[expense.yontem] || expense.yontem) : "-",
-      amount: Number(expense.tutar || 0),
-      tone: "text-red-700",
-      sign: "-",
-    }));
-    return [...gelirRows, ...giderRows]
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-      .slice(0, 10);
-  }, [expenseMonth.expenses, kasaToday.payments]);
-
   const [ledgerSearch, setLedgerSearch] = useState("");
   const [ledgerType, setLedgerType] = useState<"HEPSI" | "TAHSILAT" | "GIDER">("HEPSI");
   const [ledgerMethod, setLedgerMethod] = useState("HEPSI");
@@ -964,7 +909,7 @@ export default function MuhasebePage() {
       label: "Gider",
       name: expense.category || "Klinik gideri",
       description: stripFinanceTags(expense.description) || expense.faturaNo || "",
-      incomeType: "",
+      incomeType: expense.doctor?.fullName ? `Dr. ${expense.doctor.fullName}` : "",
       method: expense.yontem ? (METHOD_LABELS[expense.yontem] || expense.yontem) : "-",
       amount: Number(expense.tutar || 0),
       tone: "text-red-700",
@@ -984,12 +929,13 @@ export default function MuhasebePage() {
         if (ledgerTo && day > ledgerTo) return false;
         return true;
       })
-      .filter((row) => !q || row.name.toLowerCase().includes(q) || row.description.toLowerCase().includes(q) || row.method.toLowerCase().includes(q))
+      .filter((row) => !q || row.name.toLowerCase().includes(q) || row.description.toLowerCase().includes(q) || row.method.toLowerCase().includes(q) || row.incomeType.toLowerCase().includes(q))
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [allExpenses, allPayments, ledgerFrom, ledgerMethod, ledgerSearch, ledgerTo, ledgerType]);
   useEffect(() => { setLedgerPage(1); }, [ledgerFrom, ledgerMethod, ledgerSearch, ledgerTo, ledgerType]);
   const ledgerPageCount = Math.max(1, Math.ceil(ledgerRows.length / LEDGER_PAGE_SIZE));
   const pagedLedgerRows = useMemo(() => ledgerRows.slice((ledgerPage - 1) * LEDGER_PAGE_SIZE, ledgerPage * LEDGER_PAGE_SIZE), [ledgerRows, ledgerPage]);
+  const ledgerError = [ledgerErrors.payments, ledgerErrors.expenses].filter(Boolean).join(" ");
 
   const [editingKind, setEditingKind] = useState<"TAHSILAT" | "GIDER" | null>(null);
   const [editingId, setEditingId] = useState("");
@@ -1161,7 +1107,8 @@ export default function MuhasebePage() {
     URL.revokeObjectURL(a.href);
   };
 
-  const exportLedgerPdf = () => {
+  const exportLedgerPdf = async () => {
+    const { addPdfSection, addPdfTitle, createPdfDoc } = await import("@/lib/pdf-export");
     const doc = createPdfDoc("l");
     addPdfTitle(doc, "Muhasebe Defteri", `Oluşturma tarihi: ${new Date().toLocaleString("tr-TR")} · Kayıt sayısı: ${exportRows.length}`);
     addPdfSection(doc, 28, "Hareketler", ["Tarih", "Tip", "Ad", "Tür", "Açıklama", "Yöntem", "Tutar"],
@@ -1174,9 +1121,6 @@ export default function MuhasebePage() {
   const filteredTaksitPlans = taksitPlans;
 
   // ── TAB: Tedarikçi / Cari ─────────────────────────────────────────────────
-  const [cariSearch, setCariSearch] = useState("");
-  const filteredFirmas = useMemo(() => firmas.filter(f => !cariSearch || f.name.toLowerCase().includes(cariSearch.toLowerCase())), [firmas, cariSearch]);
-
   // ── TAB: Hakedişler ──────────────────────────────────────────────────────
   const [hakDoctors,     setHakDoctors]     = useState<Doctor[]>([]);
   const [selectedDoctor, setSelectedDoctor] = useState("");
@@ -1185,136 +1129,17 @@ export default function MuhasebePage() {
   const [hakTo, setHakTo] = useState(() => new Date().toISOString().split("T")[0]);
   const [doctorFinance,  setDoctorFinance]  = useState<Record<string, unknown> | null>(null);
   const [hakLoading,     setHakLoading]     = useState(false);
-  type HakedisMonth = { year: number; month: number; hakedilen: number; odenen: number; kalan: number };
-  const [hakedisMonths, setHakedisMonths] = useState<HakedisMonth[]>([]);
-  const [hakedisLoading, setHakedisLoading] = useState(false);
+  const [hakedisRefreshToken, setHakedisRefreshToken] = useState(0);
+  type HakedisOzetRow = { doctor: { id: string; fullName: string }; ciro: number; hakedilen: number; odenen: number; kalan: number };
+  const [hakedisOzet, setHakedisOzet] = useState<HakedisOzetRow[]>([]);
+  const [hakedisOzetLoading, setHakedisOzetLoading] = useState(false);
 
-  type HakedisDetail = {
-    doctor: { id: string; fullName: string };
-    year: number; month: number;
-    rates: { kkYuzde: number; genelYuzde: number; maasYuzde: number };
-    summary: { hakedilen: number; odenen: number; kalan: number };
-    breakdown: { ciro: number; kk: number; kkMasraf: number; genelMasraf: number; labCost: number; toplamGider: number; brut: number; hakedilen: number };
-    examinations: { id: string; tarih: string; hasta: string; tedavi: string; dis: string | null; tutar: number }[];
-    patientPayments: { id: string; tarih: string; hasta: string; yontem: string; tutar: number }[];
-    labInvoices: { id: string; tarih: string; lab: string; kalem: string; tutar: number }[];
-    payoutExpenses: { id: string; tarih: string; tutar: number; aciklama: string | null; yontem: string }[];
-  };
-  const [hakedisDetailOpen, setHakedisDetailOpen] = useState(false);
-  const [hakedisDetail, setHakedisDetail] = useState<HakedisDetail | null>(null);
-  const [hakedisDetailLoading, setHakedisDetailLoading] = useState(false);
-
-  const openHakedisDetail = async (doctorId: string, year: number, month: number) => {
-    setHakedisDetailOpen(true);
-    setHakedisDetailLoading(true);
-    setHakedisDetail(null);
-    const r = await fetch(`/api/hakedis/detay?doctorId=${doctorId}&year=${year}&month=${month}`, { cache: "no-store" }).catch(() => null);
-    if (r?.ok) setHakedisDetail(await r.json());
-    else showToast("error", "Hakediş detayı yüklenemedi");
-    setHakedisDetailLoading(false);
-  };
-
-  const hakedisDetailFileName = hakedisDetail
-    ? `hakedis-${hakedisDetail.doctor.fullName.replace(/\s+/g, "-")}-${hakedisDetail.year}-${String(hakedisDetail.month).padStart(2, "0")}`
-    : "hakedis-detay";
-
-  const hakedisBreakdownRows = (d: HakedisDetail): (string | number)[][] => [
-    ["Toplam Ciro (Muayene/Tedavi)", fmt(d.breakdown.ciro)],
-    [`Kredi Kartı Tahsilatı (KK masrafı %${d.rates.kkYuzde} üzerinden hesaplanır)`, fmt(d.breakdown.kk)],
-    [`KK Masrafı (Kredi Kartı Tahsilatı × %${d.rates.kkYuzde})`, "-" + fmt(d.breakdown.kkMasraf)],
-    [`Genel Gider Payı (Ciro × %${d.rates.genelYuzde})`, "-" + fmt(d.breakdown.genelMasraf)],
-    ["Laboratuvar Gideri", "-" + fmt(d.breakdown.labCost)],
-    ["Toplam Gider", "-" + fmt(d.breakdown.toplamGider)],
-    ["Brüt Kâr (Ciro - Toplam Gider)", fmt(d.breakdown.brut)],
-    [`Hakediş (Brüt Kâr × %${d.rates.maasYuzde})`, fmt(d.breakdown.hakedilen)],
-  ];
-
-  const exportHakedisDetailExcel = () => {
-    if (!hakedisDetail) return;
-    const d = hakedisDetail;
-    const section = (title: string, headers: string[], rows: (string | number)[][]) => `
-      <p style="font-weight:700;font-size:13pt;margin:16px 0 6px">${escapeCell(title)}</p>
-      <table><thead><tr>${headers.map(h => `<th>${escapeCell(h)}</th>`).join("")}</tr></thead>
-      <tbody>${rows.length === 0
-        ? `<tr><td colspan="${headers.length}">Kayıt yok</td></tr>`
-        : rows.map(row => `<tr>${row.map((c, i) => `<td class="${i === row.length - 1 ? "amount" : ""}">${escapeCell(c)}</td>`).join("")}</tr>`).join("")
-      }</tbody></table>`;
-    const html = `
-      <html><head><meta charset="UTF-8" />
-      <style>
-        table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:10pt;width:100%;margin-bottom:8px}
-        th{background:#111827;color:#fff;text-align:left;padding:6px;border:1px solid #d1d5db}
-        td{padding:6px;border:1px solid #d1d5db;mso-number-format:"\\@";}
-        .amount{text-align:right;font-weight:700}
-        .title{font-size:16pt;font-weight:700}
-        .meta{color:#475569;margin-bottom:10px}
-      </style></head><body>
-      <div class="title">Hakediş Detayı — ${escapeCell(d.doctor.fullName)}</div>
-      <div class="meta">${AY_ADLARI[d.month - 1]} ${d.year} · Hakedilen: ${fmt(d.summary.hakedilen)} · Ödenen: ${fmt(d.summary.odenen)} · Kalan: ${fmt(d.summary.kalan)}</div>
-      ${section("Hakediş Hesaplama Dökümü", ["Kalem", "Tutar"], hakedisBreakdownRows(d))}
-      ${section("Muayeneler / Tedaviler", ["Tarih", "Hasta", "Tedavi", "Diş", "Tutar"], d.examinations.map(e => [fmtDate(e.tarih), e.hasta, e.tedavi, e.dis || "-", fmt(e.tutar)]))}
-      ${section("Hasta Ödemeleri", ["Tarih", "Hasta", "Yöntem", "Tutar"], d.patientPayments.map(p => [fmtDate(p.tarih), p.hasta, METHOD_LABELS[p.yontem] || p.yontem, fmt(p.tutar)]))}
-      ${section("Laboratuvar Faturaları", ["Tarih", "Lab", "Kalem", "Tutar"], d.labInvoices.map(i => [fmtDate(i.tarih), i.lab, i.kalem, fmt(i.tutar)]))}
-      ${section("Doktora Yapılan Hakediş Ödemeleri", ["Tarih", "Açıklama", "Yöntem", "Tutar"], d.payoutExpenses.map(p => [fmtDate(p.tarih), p.aciklama || "-", METHOD_LABELS[p.yontem] || p.yontem, fmt(p.tutar)]))}
-      </body></html>`;
-    const blob = new Blob(["﻿" + html], { type: "application/vnd.ms-excel;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${hakedisDetailFileName}.xls`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
-
-  const exportHakedisDetailPdf = () => {
-    if (!hakedisDetail) return;
-    const d = hakedisDetail;
-    const doc = createPdfDoc("l");
-    addPdfTitle(doc, `Hakediş Detayı — ${d.doctor.fullName}`,
-      `${AY_ADLARI[d.month - 1]} ${d.year} · Hakedilen: ${fmt(d.summary.hakedilen)} · Ödenen: ${fmt(d.summary.odenen)} · Kalan: ${fmt(d.summary.kalan)}`);
-    let y = 28;
-    y = addPdfSection(doc, y, "Dönem Özeti", ["Kalem", "Tutar"], [
-      ["Toplam hakediş", fmt(d.summary.hakedilen)],
-      ["Ödenen", fmt(d.summary.odenen)],
-      ["Kalan", fmt(d.summary.kalan)],
-      ["Muayene / tedavi kaydı", d.examinations.length],
-      ["Hasta ödeme kaydı", d.patientPayments.length],
-      ["Laboratuvar faturası", d.labInvoices.length],
-    ]);
-    y = addPdfSection(doc, y, "Hakediş Hesaplama Dökümü", ["Kalem", "Tutar"], hakedisBreakdownRows(d));
-    y = addPdfSection(doc, y, "Muayeneler / Tedaviler", ["Tarih", "Hasta", "Tedavi", "Diş", "Tutar"],
-      d.examinations.map(e => [fmtDate(e.tarih), e.hasta, e.tedavi, e.dis || "-", fmt(e.tutar)]));
-    y = addPdfSection(doc, y, "Hasta Ödemeleri", ["Tarih", "Hasta", "Yöntem", "Tutar"],
-      d.patientPayments.map(p => [fmtDate(p.tarih), p.hasta, METHOD_LABELS[p.yontem] || p.yontem, fmt(p.tutar)]));
-    y = addPdfSection(doc, y, "Laboratuvar Faturaları", ["Tarih", "Lab", "Kalem", "Tutar"],
-      d.labInvoices.map(i => [fmtDate(i.tarih), i.lab, i.kalem, fmt(i.tutar)]));
-    addPdfSection(doc, y, "Doktora Yapılan Hakediş Ödemeleri", ["Tarih", "Açıklama", "Yöntem", "Tutar"],
-      d.payoutExpenses.map(p => [fmtDate(p.tarih), p.aciklama || "-", METHOD_LABELS[p.yontem] || p.yontem, fmt(p.tutar)]));
-    doc.save(`${hakedisDetailFileName}.pdf`);
-  };
-
-  const summaryCards = [
-    { label: "Bugün Gelir",     value: fmt(kasaToday.total),       tone: "text-emerald-700", bg: "bg-emerald-50",  border: "border-emerald-100", banko: true,  tab: "defter" as TabId | undefined },
-    { label: "Bugün Net",       value: fmt(todayNet),              tone: todayNet >= 0 ? "text-primary" : "text-red-700", bg: "bg-primary/10", border: "border-primary/20", banko: true, tab: undefined as TabId | undefined },
-    { label: "Gecikmiş Taksit", value: `${taksitOverdue.count} adet`, tone: "text-violet-700", bg: "bg-violet-50", border: "border-violet-100", banko: true,  tab: "alacak" as TabId | undefined, view: "taksit" as typeof alacakView, alert: taksitOverdue.count > 0 },
-    { label: "Firma Borcu",     value: fmt(supplierDebt),          tone: "text-amber-700",   bg: "bg-amber-50",    border: "border-amber-100",   banko: false, tab: undefined as TabId | undefined, alert: supplierDebt > 0 },
-    { label: "Bugün Gider",     value: fmt(expenseToday.total),    tone: "text-red-700",     bg: "bg-red-50",      border: "border-red-100",     banko: false, tab: "defter" as TabId | undefined },
-    { label: "Aylık Gider",     value: fmt(expenseMonth.total),    tone: "text-slate-800",   bg: "bg-slate-50",    border: "border-slate-100",   banko: false, tab: "defter" as TabId | undefined },
-    { label: "Kritik Stok",     value: `${criticalStock.length} kalem`, tone: "text-cyan-700", bg: "bg-cyan-50",  border: "border-cyan-100",    banko: false, tab: undefined as TabId | undefined, alert: criticalStock.length > 0 },
-  ].filter(c => userRole !== "BANKO" || c.banko);
-
-  const primarySummaryCards = summaryCards.slice(0, 4);
-  const secondarySummaryCards = summaryCards.slice(4);
   useLayoutEffect(() => {
     const cached = readMuhasebeCache();
     if (!cached) return;
     setUserRole(cached.userRole);
-    setKasaToday(cached.kasaToday);
-    setExpenseToday(cached.expenseToday);
-    setExpenseMonth(cached.expenseMonth);
     setFirmas(cached.firmas);
-    setStockItems(cached.stockItems);
     setTaksitOverdue(cached.taksitOverdue);
-    setTrendData(cached.trendData);
     setAlacaklar(cached.alacaklar);
     setAlacakTotal(cached.alacakTotal);
     setPatients(cached.patients);
@@ -1322,20 +1147,14 @@ export default function MuhasebePage() {
     setTaksitPlans(cached.taksitPlans);
     setReminders(cached.reminders);
     setHakDoctors(cached.taksitDoctors);
-    setLoading(false);
   }, []);
 
   useEffect(() => {
     try {
       sessionStorage.setItem(MUHASEBE_CACHE_KEY, JSON.stringify({
         userRole,
-        kasaToday,
-        expenseToday,
-        expenseMonth,
         firmas,
-        stockItems,
         taksitOverdue,
-        trendData,
         alacaklar,
         alacakTotal,
         patients,
@@ -1349,13 +1168,8 @@ export default function MuhasebePage() {
     }
   }, [
     userRole,
-    kasaToday,
-    expenseToday,
-    expenseMonth,
     firmas,
-    stockItems,
     taksitOverdue,
-    trendData,
     alacaklar,
     alacakTotal,
     patients,
@@ -1371,15 +1185,6 @@ export default function MuhasebePage() {
     const r = await fetch(`/api/finance?doctorId=${id}&from=${hakFrom}&to=${hakTo}`, { cache: "no-store" });
     setDoctorFinance(await r.json()); setHakLoading(false);
   }, [hakFrom, hakTo]);
-
-  const loadHakedis = useCallback(async (id: string) => {
-    if (!id) { setHakedisMonths([]); return; }
-    setHakedisLoading(true);
-    const r = await fetch(`/api/hakedis?doctorId=${id}&months=12`, { cache: "no-store" }).catch(() => null);
-    if (r?.ok) { const d = await r.json(); setHakedisMonths(Array.isArray(d.months) ? d.months : []); }
-    else setHakedisMonths([]);
-    setHakedisLoading(false);
-  }, []);
 
   const openDoctorPayoutFor = async (doctorId: string, year: number, month: number, kalan: number) => {
     openTransaction("gider");
@@ -1412,8 +1217,20 @@ export default function MuhasebePage() {
   };
 
   useEffect(() => {
-    if (selectedDoctor) { loadDoctorFinance(selectedDoctor); loadHakedis(selectedDoctor); }
-  }, [selectedDoctor, loadDoctorFinance, loadHakedis]);
+    if (selectedDoctor) loadDoctorFinance(selectedDoctor);
+  }, [selectedDoctor, loadDoctorFinance]);
+
+  const loadHakedisOzet = useCallback(async () => {
+    setHakedisOzetLoading(true);
+    const r = await fetch("/api/hakedis/ozet", { cache: "no-store" }).catch(() => null);
+    if (r?.ok) { const d = await r.json(); setHakedisOzet(Array.isArray(d.doctors) ? d.doctors : []); }
+    else setHakedisOzet([]);
+    setHakedisOzetLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab === "hakedis" && !selectedDoctor) loadHakedisOzet();
+  }, [activeTab, selectedDoctor, hakedisRefreshToken, loadHakedisOzet]);
 
   useEffect(() => {
     const legacyTab = searchParams.get("tab");
@@ -1442,15 +1259,8 @@ export default function MuhasebePage() {
 
   // ── Lazy tab data loading ─────────────────────────────────────────────────
   useEffect(() => {
-    if (activeTab === "genel") {
-      refreshSummary();
-      if (trendData.length === 0) loadTrend();
-      if (taksitPlans.length === 0) loadTaksitPlans();
-    }
-    if (activeTab === "defter" || activeTab === "gelir") {
+    if (activeTab === "defter") {
       if (allPayments.length === 0) loadPayments();
-    }
-    if (activeTab === "defter" || activeTab === "gider") {
       if (allExpenses.length === 0) loadExpenses();
       if (giderKats.length === 0) loadGiderKats();
     }
@@ -1471,10 +1281,17 @@ export default function MuhasebePage() {
   // sessizce (sayfa yenilemeden) tazele.
   const refreshActiveTab = useCallback(() => {
     refreshSummary();
-    if (activeTab === "defter" || activeTab === "gelir") loadPayments();
-    if (activeTab === "defter" || activeTab === "gider") { loadExpenses(); loadGiderKats(); }
+    if (activeTab === "defter") {
+      loadPayments();
+      loadExpenses();
+      loadGiderKats();
+    }
     if (activeTab === "alacak") { loadTaksitPlans(); loadAlacaklar(); }
-    if (activeTab === "hakedis" && selectedDoctor) { loadDoctorFinance(selectedDoctor); loadHakedis(selectedDoctor); }
+    if (activeTab === "hakedis") {
+      if (selectedDoctor) loadDoctorFinance(selectedDoctor);
+      else loadHakedisOzet();
+      setHakedisRefreshToken(t => t + 1);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, selectedDoctor]);
 
@@ -1511,17 +1328,27 @@ export default function MuhasebePage() {
 
       {/* Toast */}
       {/* Tab Navigation */}
-      <div className="sticky top-0 z-30 -mx-1 flex gap-1 overflow-x-auto border-b border-slate-200 bg-slate-50/95 px-1 py-2 backdrop-blur">
-        {visibleTabs.map(tab => (
-          <button key={tab.id} onClick={() => changeTab(tab.id)} title={tab.hint}
-            className={`relative shrink-0 rounded-xl px-4 py-2.5 text-sm font-black transition ${activeTab === tab.id ? "bg-primary text-white shadow-sm" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100 hover:text-slate-900"}`}>
-            {tab.label}
-            {(tab.id === "alacak" && taksitOverdue.count > 0) && (
-              <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ${activeTab === tab.id ? "bg-white" : "bg-red-500"}`} />
-            )}
-          </button>
-        ))}
-        <Button onClick={() => openTransaction("gelir")} variant="primary" className="ml-auto">İşlem Ekle</Button>
+      <div className="sticky top-0 z-30 -mx-1 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-slate-200 bg-slate-100/95 px-1 py-2 backdrop-blur">
+        <div className="flex min-w-0 gap-1 overflow-x-auto">
+          {visibleTabs.map(tab => (
+            <button key={tab.id} onClick={() => changeTab(tab.id)} title={tab.hint}
+              className={`relative shrink-0 rounded-lg px-3 py-2 text-sm font-black transition sm:px-4 ${activeTab === tab.id ? "bg-primary text-white shadow-sm" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100 hover:text-slate-900"}`}>
+              {tab.id === "defter" ? (
+                <>
+                  <span className="sm:hidden">Defter</span>
+                  <span className="hidden sm:inline">{tab.label}</span>
+                </>
+              ) : tab.label}
+              {(tab.id === "alacak" && taksitOverdue.count > 0) && (
+                <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ${activeTab === tab.id ? "bg-white" : "bg-red-500"}`} />
+              )}
+            </button>
+          ))}
+        </div>
+        <Button onClick={() => openTransaction("gelir")} variant="primary" size="sm" icon={Plus}>
+          <span className="hidden sm:inline">İşlem Ekle</span>
+          <span className="sm:hidden">İşlem</span>
+        </Button>
       </div>
 
       {/* Page Header */}
@@ -1778,6 +1605,7 @@ export default function MuhasebePage() {
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar <span className="text-red-500">*</span></label>
                 <input type="number" value={firmaPayForm.tutar} onChange={e => { setFirmaPayForm(f => ({ ...f, tutar: e.target.value })); setFirmaPayErrors(er => ({ ...er, tutar: undefined })); }} placeholder="0,00" className={INP + (firmaPayErrors.tutar ? " border-red-400" : "")} />
                 {firmaPayErrors.tutar && <p className="mt-1 text-xs font-medium text-red-600">{firmaPayErrors.tutar}</p>}
+                <p className="mt-1 text-[11px] text-slate-500">Ödeme, firmanın en eski açık borçlarından başlayarak otomatik mahsup edilir.</p>
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Yöntem</label>
@@ -1926,7 +1754,7 @@ export default function MuhasebePage() {
             )}
       </Modal>
 
-      <Modal open={Boolean(showCatMgr && activeTab !== "gider")} onClose={() => setShowCatMgr(false)} title="Gider Türleri" size="sm">
+      <Modal open={showCatMgr} onClose={() => setShowCatMgr(false)} title="Gider Türleri" size="sm">
             <div className="flex gap-2">
               <input value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddCategory()} placeholder="Yeni gider türü" className={INP} />
               <Button onClick={handleAddCategory} variant="primary">Ekle</Button>
@@ -1958,124 +1786,6 @@ export default function MuhasebePage() {
             </div>
       </Modal>
 
-      {/* ════════════════════════════════════════════════════════════════════
-          TAB: GENEL BAKIŞ
-      ════════════════════════════════════════════════════════════════════ */}
-      {activeTab === "genel" && (
-        <div className="space-y-5">
-          {/* 6 Aylık Trend */}
-          {trendData.length > 0 && (() => {
-            const maxVal = Math.max(...trendData.map(t => Math.max(t.gelir, t.gider)), 1);
-            return (
-              <details className="rounded-2xl border border-slate-100 bg-white shadow-sm">
-                <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3">
-                  <h2 className="text-sm font-black text-slate-900">6 Aylık Gelir / Gider Trendi</h2>
-                  <div className="flex gap-4 text-xs text-slate-500">
-                    <span className="flex items-center gap-1.5 text-xs"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-emerald-400" />Gelir</span>
-                    <span className="flex items-center gap-1.5 text-xs"><span className="inline-block h-2.5 w-2.5 rounded-sm bg-red-400" />Gider</span>
-                  </div>
-                </summary>
-                <div className="flex items-end gap-3 border-t border-slate-100 px-4 py-4">
-                  {trendData.map((m, i) => {
-                    const gelirH = Math.max(4, Math.round((m.gelir / maxVal) * 120));
-                    const giderH = Math.max(4, Math.round((m.gider / maxVal) * 120));
-                    const net = m.gelir - m.gider;
-                    return (
-                      <div key={i} className="group relative flex flex-1 flex-col items-center gap-1">
-                        {/* Tooltip */}
-                        <div className="pointer-events-none absolute bottom-full z-10 mb-2 hidden w-40 rounded-xl border border-slate-100 bg-white p-2.5 text-xs shadow-xl group-hover:block">
-                          <p className="font-bold text-slate-800 mb-1">{m.label}</p>
-                          <p className="text-emerald-600">Gelir: {fmt(m.gelir)}</p>
-                          <p className="text-red-600">Gider: {fmt(m.gider)}</p>
-                          <p className={`font-bold ${net >= 0 ? "text-primary" : "text-red-700"}`}>Net: {fmt(net)}</p>
-                        </div>
-                        <div className="flex w-full items-end justify-center gap-0.5">
-                          <div className="w-[45%] rounded-t-md bg-emerald-400 transition-all" style={{ height: `${gelirH}px` }} />
-                          <div className="w-[45%] rounded-t-md bg-red-400 transition-all" style={{ height: `${giderH}px` }} />
-                        </div>
-                        <span className="text-xs font-semibold text-slate-500">{m.label}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              </details>
-            );
-          })()}
-
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
-            <section className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="mb-3 flex items-center justify-between">
-                <div>
-                  <h2 className="text-sm font-black text-slate-900">İşlem Defteri</h2>
-                  <p className="text-xs text-slate-500">Son tahsilat ve gider hareketleri tek akışta.</p>
-                </div>
-                <button onClick={() => changeTab("defter")} className="text-xs font-bold text-primary hover:underline">Defteri Aç →</button>
-              </div>
-              <div className="overflow-hidden rounded-xl border border-slate-100">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                      <th className="px-3 py-2 text-left">Tarih</th>
-                      <th className="px-3 py-2 text-left">İşlem</th>
-                      <th className="px-3 py-2 text-left">Açıklama</th>
-                      <th className="px-3 py-2 text-left">Yöntem</th>
-                      <th className="px-3 py-2 text-right">Tutar</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentLedger.length === 0 ? (
-                      <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">Henüz işlem hareketi yok</td></tr>
-                    ) : recentLedger.map((row) => (
-                      <tr key={row.id} className="border-t border-slate-100">
-                        <td className="px-3 py-2 text-slate-500">{fmtDate(row.date)}</td>
-                        <td className="px-3 py-2 font-bold text-slate-700">{row.type}</td>
-                        <td className="px-3 py-2 text-slate-600">{row.name}</td>
-                        <td className="px-3 py-2 text-slate-500">{row.method}</td>
-                        <td className={`px-3 py-2 text-right font-black ${row.tone}`}>{row.sign}{fmt(row.amount)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-              <div className="flex items-center justify-between border-b border-slate-50 px-4 py-3">
-                <div>
-                  <h2 className="text-sm font-black text-slate-900">Alacak Yaşlandırma</h2>
-                  <p className="text-xs text-slate-500">Vadesi yaklaşan ve geciken tahsilatlar.</p>
-                </div>
-                <button onClick={() => { changeTab("alacak"); setAlacakView("taksit"); }} className="shrink-0 text-xs font-bold text-primary hover:underline">Detay →</button>
-              </div>
-              <div className="grid gap-2 p-3 sm:grid-cols-2 xl:grid-cols-1">
-                {alacakAging.map((bucket) => (
-                  <button key={bucket.key} onClick={() => { changeTab("alacak"); setAlacakView("taksit"); }} className={`${bucket.bg} ${bucket.border} rounded-xl border px-3 py-2 text-left transition hover:shadow-sm`}>
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-xs font-bold text-slate-500">{bucket.label}</span>
-                      <span className="text-xs font-semibold text-slate-400">{bucket.count} taksit</span>
-                    </div>
-                    <p className={`mt-1 text-base font-black ${bucket.tone}`}>{fmt(bucket.amount)}</p>
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex items-center justify-between border-y border-slate-50 bg-slate-50/60 px-4 py-2">
-                <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Kasa Kontrolü — bugün</p>
-                <button onClick={() => changeTab("defter")} className="text-xs font-bold text-primary hover:underline">Defter →</button>
-              </div>
-              <div className="space-y-2 p-3">
-                {(["NAKIT","KREDI_KARTI","HAVALE_EFT"] as const).map((method) => (
-                  <div key={method} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2.5">
-                    <span className="text-sm font-semibold text-slate-700">{METHOD_LABELS[method]}</span>
-                    <span className="text-sm font-black text-slate-900">{fmt(kasaToday.byMethod?.[method] || 0)}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          </div>
-        </div>
-      )}
-
       {activeTab === "defter" && (
         <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
           <div className="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center">
@@ -2091,7 +1801,7 @@ export default function MuhasebePage() {
                 </button>
               ))}
             </div>
-            <input value={ledgerSearch} onChange={e => setLedgerSearch(e.target.value)} placeholder="Hasta, gider türü, açıklama veya yöntem ara..." className="h-8 min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none focus:border-primary focus:bg-white" />
+            <input value={ledgerSearch} onChange={e => setLedgerSearch(e.target.value)} placeholder="Hasta, doktor, gider türü, açıklama veya yöntem ara..." className="h-8 min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none focus:border-primary focus:bg-white" />
             <input type="date" value={ledgerFrom} onChange={e => setLedgerFrom(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-primary" />
             <input type="date" value={ledgerTo} onChange={e => setLedgerTo(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-primary" />
             <select value={ledgerMethod} onChange={e => setLedgerMethod(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 outline-none focus:border-primary">
@@ -2110,8 +1820,14 @@ export default function MuhasebePage() {
             <Button size="sm" variant="secondary" className="h-8 border-primary/30 bg-primary/10 text-primary hover:bg-primary/20" onClick={exportLedgerPdf}>PDF</Button>
           </div>
 
+          {ledgerError && (
+            <div className="border-b border-red-100 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+              {ledgerError}
+            </div>
+          )}
+
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <table className="min-w-[780px] w-full text-xs">
               <thead>
                 <tr className="bg-white text-[10px] uppercase tracking-wide text-slate-500">
                   <th className="px-4 py-3 text-left">Tarih</th>
@@ -2126,7 +1842,7 @@ export default function MuhasebePage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {ledgerRows.length === 0 ? (
-                  <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
+                  <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
                 ) : pagedLedgerRows.map((row) => (
                   <tr key={row.id} className="hover:bg-slate-50">
                     <td className="whitespace-nowrap px-4 py-3 text-slate-500">{fmtDate(row.date)}</td>
@@ -2162,312 +1878,6 @@ export default function MuhasebePage() {
             </table>
           </div>
           <ListPager page={ledgerPage} pageCount={ledgerPageCount} pageSize={LEDGER_PAGE_SIZE} total={ledgerRows.length} onPageChange={setLedgerPage} />
-        </div>
-      )}
-
-      {/* ════════════════════════════════════════════════════════════════════
-          TAB: GELİR / TAHSİLAT
-      ════════════════════════════════════════════════════════════════════ */}
-      {activeTab === "gelir" && (
-        <div className="space-y-4">
-          {!showTahForm ? (
-            <button onClick={() => setShowTahForm(true)}
-              className="flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-emerald-700">
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              Tahsilat Ekle
-            </button>
-          ) : (
-            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-sm font-black text-slate-900">Yeni Tahsilat</h2>
-                <button onClick={() => setShowTahForm(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-white">
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta (isteğe bağlı)</label>
-                  <select value={tahForm.patientId} onChange={e => setTahForm(f => ({ ...f, patientId: e.target.value }))} className={INP}>
-                    <option value="">— Hasta seçin —</option>
-                    {patients.map(p => <option key={p.id} value={p.id}>{p.fullName}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor <span className="text-red-500">*</span></label>
-                  <select value={tahForm.doctorId} onChange={e => { setTahForm(f => ({ ...f, doctorId: e.target.value })); setTahFormErrors(er => ({ ...er, doctorId: undefined })); }} className={INP + (tahFormErrors.doctorId ? " border-red-400 focus:ring-red-300" : "")}>
-                    <option value="">— Doktor seçin —</option>
-                    {taksitDoctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
-                  </select>
-                  {tahFormErrors.doctorId && <p className="mt-1 text-xs font-medium text-red-600">{tahFormErrors.doctorId}</p>}
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar (₺) *</label>
-                  <input type="number" value={tahForm.amount} onChange={e => { setTahForm(f => ({ ...f, amount: e.target.value })); setTahFormErrors(er => ({ ...er, amount: undefined })); }} placeholder="0.00" className={INP + " text-lg font-bold" + (tahFormErrors.amount ? " border-red-400 focus:ring-red-300" : "")} />
-                  {tahFormErrors.amount && <p className="mt-1 text-xs font-medium text-red-600">{tahFormErrors.amount}</p>}
-                </div>
-                <div>
-                  <label className="mb-2 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
-                  <div className="flex flex-wrap gap-2">
-                    {(["NAKIT","KREDI_KARTI","HAVALE_EFT","MAIL_ORDER","DIGER"] as const).map(m => (
-                      <button key={m} type="button" onClick={() => setTahForm(f => ({ ...f, method: m, posId: "" }))}
-                        className={`rounded-xl px-3 py-1.5 text-xs font-bold transition ${tahForm.method === m ? "bg-emerald-600 text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"}`}>
-                        {m === "NAKIT" ? "Nakit" : m === "KREDI_KARTI" ? "Kart" : m === "HAVALE_EFT" ? "Havale" : m === "MAIL_ORDER" ? "Mail Order" : "Diğer"}
-                      </button>
-                    ))}
-                  </div>
-                  {(tahForm.method === "KREDI_KARTI" || tahForm.method === "MAIL_ORDER") && (
-                    <select value={tahForm.posId} onChange={e => setTahForm(f => ({ ...f, posId: e.target.value }))} className={INP + " mt-2"}>
-                      <option value="">— POS Cihazı Seçin —</option>
-                      {posDevices.length === 0
-                        ? <option disabled>Kayıtlı POS cihazı yok</option>
-                        : posDevices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                    </select>
-                  )}
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
-                  <input value={tahForm.description} onChange={e => setTahForm(f => ({ ...f, description: e.target.value }))} placeholder="Tedavi türü, notlar…" className={INP} />
-                </div>
-              </div>
-              <div className="mt-4 flex justify-end gap-2">
-                <button onClick={() => setShowTahForm(false)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">İptal</button>
-                <button onClick={submitTahsilat} disabled={tahSaving} className="rounded-xl bg-emerald-600 px-6 py-2 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-60">
-                  {tahSaving ? "Kaydediliyor…" : "Tahsilat Kaydet"}
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
-            <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-4">
-              <h2 className="mr-auto text-sm font-black text-slate-900">Tahsilat Kayıtları</h2>
-              <input placeholder="Hasta / açıklama ara…" value={pmtSearch} onChange={e => setPmtSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-emerald-400" />
-              <input type="date" value={pmtFrom} onChange={e => setPmtFrom(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none" />
-              <input type="date" value={pmtTo}   onChange={e => setPmtTo(e.target.value)}   className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none" />
-              <button onClick={() => {
-                const rows = [["Tarih","Hasta","Yöntem","Açıklama","Tutar"], ...filteredPayments.map(p => [fmtDate(p.createdAt), p.patient?.fullName || "", METHOD_LABELS[p.method] || p.method, stripFinanceTags(p.description), String(p.amount)])];
-                const csv = rows.map(r => r.map(c => `"${c}"`).join(",")).join("\n");
-                const a = document.createElement("a"); a.href = "data:text/csv;charset=utf-8,\uFEFF" + encodeURIComponent(csv); a.download = "tahsilatlar.csv"; a.click();
-              }} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">
-                ↓ CSV
-              </button>
-            </div>
-            <div className="grid grid-cols-2 divide-x divide-slate-100 border-b border-slate-100 sm:grid-cols-4">
-              {(["NAKIT","KREDI_KARTI","HAVALE_EFT","MAIL_ORDER"] as const).map(m => {
-                const total = filteredPayments.filter(p => p.method === m).reduce((s, p) => s + Number(p.amount), 0);
-                return (
-                  <div key={m} className="px-4 py-3">
-                    <p className="text-xs font-bold uppercase text-slate-500">{METHOD_LABELS[m]}</p>
-                    <p className="mt-0.5 text-base font-black text-slate-800">{fmt(total)}</p>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                  <th className="px-4 py-3 text-left">Tarih</th>
-                  <th className="px-4 py-3 text-left">Hasta</th>
-                  <th className="px-4 py-3 text-left">Hekim</th>
-                  <th className="px-4 py-3 text-left">Yöntem</th>
-                  <th className="px-4 py-3 text-left">Açıklama</th>
-                  <th className="px-4 py-3 text-right">Tutar</th>
-                  <th className="px-4 py-3 text-center">İşlem</th>
-                </tr></thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredPayments.length === 0
-                    ? <tr><td colSpan={7} className="px-4 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
-                    : pagedPayments.map(p => (
-                      <tr key={p.id} className="hover:bg-slate-50">
-                        <td className="whitespace-nowrap px-4 py-3 text-slate-400">{fmtDate(p.createdAt)}</td>
-                        <td className="px-4 py-3 font-semibold text-slate-800">{p.patient?.fullName || "—"}</td>
-                        <td className="px-4 py-3 text-slate-600">{p.doctor?.fullName || "—"}</td>
-                        <td className="px-4 py-3">
-                          <Badge tone="success">{METHOD_LABELS[p.method] || p.method}</Badge>
-                        </td>
-                        <td className="px-4 py-3 text-slate-500">{stripFinanceTags(p.description) || "—"}</td>
-                        <td className="px-4 py-3 text-right font-black text-emerald-700">{fmt(p.amount)}</td>
-                        <td className="px-4 py-3 text-center">
-                          <div className="flex items-center justify-center gap-1">
-                            <button onClick={() => startEditPayment(p)} className="rounded-lg bg-slate-100 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-200">Düzenle</button>
-                            <button onClick={() => deletePayment(p.id)} className="rounded-lg bg-red-100 px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-200">Sil</button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  }
-                </tbody>
-              </table>
-            </div>
-            <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-5 py-3">
-              <span className="text-xs text-slate-500">{filteredPayments.length} kayıt</span>
-              <span className="text-sm font-black text-emerald-700">{fmt(filteredPayments.reduce((s, p) => s + Number(p.amount), 0))} toplam</span>
-            </div>
-            <ListPager page={pmtPage} pageCount={pmtPageCount} pageSize={PMT_PAGE_SIZE} total={filteredPayments.length} onPageChange={setPmtPage} />
-          </div>
-        </div>
-      )}
-
-      {/* ════════════════════════════════════════════════════════════════════
-          TAB: GİDER
-      ════════════════════════════════════════════════════════════════════ */}
-      {activeTab === "gider" && (
-        <div className="space-y-4">
-          <div className="flex gap-2">
-            {!showGiderForm && (
-              <button onClick={() => setShowGiderForm(true)}
-                className="flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm hover:bg-red-700">
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-                Gider Ekle
-              </button>
-            )}
-            <button onClick={() => setShowCatMgr(true)} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">
-              Kategoriler
-            </button>
-          </div>
-
-          {showGiderForm && (
-            <div className="rounded-2xl border border-red-200 bg-red-50 p-5">
-              <div className="mb-4 flex items-center justify-between">
-                <h2 className="text-sm font-black text-slate-900">Yeni Gider</h2>
-                <button onClick={() => setShowGiderForm(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-white">
-                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-                </button>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih *</label>
-                  <input type="date" value={giderForm.tarih} onChange={e => { setGiderForm(f => ({ ...f, tarih: e.target.value })); setGiderFormErrors(er => ({ ...er, tarih: undefined })); }} className={INP + (giderFormErrors.tarih ? " border-red-400 focus:ring-red-300" : "")} />
-                  {giderFormErrors.tarih && <p className="mt-1 text-xs font-medium text-red-600">{giderFormErrors.tarih}</p>}
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Kategori *</label>
-                  <select value={giderForm.categoryId} onChange={e => {
-                    const cat = giderKats.find(c => c.id === e.target.value);
-                    setGiderForm(f => ({ ...f, categoryId: e.target.value, category: cat?.name || "" }));
-                    setGiderFormErrors(er => ({ ...er, category: undefined }));
-                  }} className={INP + (giderFormErrors.category ? " border-red-400 focus:ring-red-300" : "")}>
-                    <option value="">— Kategori seçin —</option>
-                    {giderKats.filter(c => c.isActive).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                    <option value="__manual">Manuel Gir…</option>
-                  </select>
-                  {giderForm.categoryId === "__manual" && (
-                    <input value={giderForm.category} onChange={e => { setGiderForm(f => ({ ...f, category: e.target.value })); setGiderFormErrors(er => ({ ...er, category: undefined })); }} placeholder="Kategori adı" className={INP + " mt-2"} />
-                  )}
-                  {giderFormErrors.category && <p className="mt-1 text-xs font-medium text-red-600">{giderFormErrors.category}</p>}
-                </div>
-                <div className="sm:col-span-2">
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
-                  <input value={giderForm.description} onChange={e => setGiderForm(f => ({ ...f, description: e.target.value }))} placeholder="Gider detayı…" className={INP} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar (₺) *</label>
-                  <input type="number" value={giderForm.tutar} onChange={e => { setGiderForm(f => ({ ...f, tutar: e.target.value })); setGiderFormErrors(er => ({ ...er, tutar: undefined })); }} placeholder="0.00" className={INP + " text-lg font-bold" + (giderFormErrors.tutar ? " border-red-400 focus:ring-red-300" : "")} />
-                  {giderFormErrors.tutar && <p className="mt-1 text-xs font-medium text-red-600">{giderFormErrors.tutar}</p>}
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
-                  <select value={giderForm.yontem} onChange={e => setGiderForm(f => ({ ...f, yontem: e.target.value }))} className={INP}>
-                    {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Fatura No</label>
-                  <input value={giderForm.faturaNo} onChange={e => setGiderForm(f => ({ ...f, faturaNo: e.target.value }))} placeholder="Opsiyonel" className={INP} />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">KDV Oranı</label>
-                  <select value={giderForm.kdvOrani} onChange={e => setGiderForm(f => ({ ...f, kdvOrani: e.target.value }))} className={INP}>
-                    {KDV_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div className="mt-4 flex justify-end gap-2">
-                <button onClick={() => setShowGiderForm(false)} className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">İptal</button>
-                <button onClick={submitGider} disabled={giderSaving} className="rounded-xl bg-red-600 px-6 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-60">
-                  {giderSaving ? "Kaydediliyor…" : "Gider Kaydet"}
-                </button>
-              </div>
-            </div>
-          )}
-
-          <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
-            <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-5 py-4">
-              <h2 className="mr-auto text-sm font-black text-slate-900">Gider Kayıtları</h2>
-              <input placeholder="Kategori / açıklama ara…" value={expSearch} onChange={e => setExpSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-red-400" />
-              <input type="date" value={expFrom} onChange={e => setExpFrom(e.target.value)} className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none" />
-              <input type="date" value={expTo}   onChange={e => setExpTo(e.target.value)}   className="rounded-xl border border-slate-200 px-3 py-1.5 text-xs outline-none" />
-              <button onClick={() => {
-                const rows = [["Tarih","Kategori","Açıklama","Yöntem","KDV","Fatura No","Tutar"], ...filteredExpenses.map(e => [fmtDate(e.tarih), e.category, stripSystemTags(e.description), METHOD_LABELS[e.yontem || ""] || "", e.kdvOrani != null ? `%${e.kdvOrani}` : "", e.faturaNo || "", String(e.tutar)])];
-                const csv = rows.map(r => r.map(c => `"${c}"`).join(",")).join("\n");
-                const a = document.createElement("a"); a.href = "data:text/csv;charset=utf-8,\uFEFF" + encodeURIComponent(csv); a.download = "giderler.csv"; a.click();
-              }} className="rounded-xl border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100">
-                ↓ CSV
-              </button>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                  <th className="px-4 py-3 text-left">Tarih</th>
-                  <th className="px-4 py-3 text-left">Kategori</th>
-                  <th className="px-4 py-3 text-left">Açıklama</th>
-                  <th className="px-4 py-3 text-left">Yöntem</th>
-                  <th className="px-4 py-3 text-center">KDV</th>
-                  <th className="px-4 py-3 text-left">Fatura</th>
-                  <th className="px-4 py-3 text-right">Tutar</th>
-                  <th className="px-4 py-3" />
-                </tr></thead>
-                <tbody className="divide-y divide-slate-100">
-                  {filteredExpenses.length === 0
-                    ? <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
-                    : pagedExpenses.map(e => (
-                      <tr key={e.id} className="hover:bg-slate-50">
-                        <td className="whitespace-nowrap px-4 py-3 text-slate-400">{fmtDate(e.tarih)}</td>
-                        <td className="px-4 py-3">
-                          <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs text-slate-700">{e.category}</span>
-                        </td>
-                        <td className="max-w-[160px] truncate px-4 py-3 text-slate-500">{stripSystemTags(e.description) || "—"}</td>
-                        <td className="px-4 py-3">{METHOD_LABELS[e.yontem || ""] || e.yontem || "—"}</td>
-                        <td className="px-4 py-3 text-center">{e.kdvOrani != null ? `%${e.kdvOrani}` : "—"}</td>
-                        <td className="px-4 py-3 text-slate-500">{e.faturaNo || "—"}</td>
-                        <td className="px-4 py-3 text-right font-black text-red-700">{fmt(e.tutar)}</td>
-                        <td className="px-4 py-3">
-                          <button onClick={() => deleteGider(e.id)} className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 hover:text-red-700">Sil</button>
-                        </td>
-                      </tr>
-                    ))
-                  }
-                </tbody>
-              </table>
-            </div>
-            <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-5 py-3">
-              <span className="text-xs text-slate-500">{filteredExpenses.length} kayıt</span>
-              <span className="text-sm font-black text-red-700">{fmt(filteredExpenses.reduce((s, e) => s + Number(e.tutar), 0))} toplam</span>
-            </div>
-            <ListPager page={expPage} pageCount={expPageCount} pageSize={EXP_PAGE_SIZE} total={filteredExpenses.length} onPageChange={setExpPage} />
-          </div>
-
-          {/* Kategori Yönetimi Modal */}
-          <Modal open={showCatMgr} onClose={() => setShowCatMgr(false)} title="Gider Kategorileri" size="sm">
-                <div className="flex gap-2">
-                  <input value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddCategory()}
-                    placeholder="Yeni kategori adı…" className="flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
-                  <button onClick={handleAddCategory} className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary/90">Ekle</button>
-                </div>
-                <div className="mt-4 max-h-56 space-y-1.5 overflow-y-auto">
-                  {giderKats.map(c => (
-                    <div key={c.id} className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2">
-                      <span className={`text-sm ${c.isActive ? "text-slate-700" : "text-slate-400 line-through"}`}>{c.name}</span>
-                      <button onClick={async () => {
-                        await fetch(`/api/gider-kategorileri/${c.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: !c.isActive }) });
-                        loadGiderKats();
-                      }} className={`text-xs font-semibold ${c.isActive ? "text-red-500" : "text-emerald-600"}`}>
-                        {c.isActive ? "Devre Dışı" : "Aktif Et"}
-                      </button>
-                    </div>
-                  ))}
-                </div>
-          </Modal>
         </div>
       )}
 
@@ -2824,7 +2234,7 @@ export default function MuhasebePage() {
               <p className="mt-0.5 text-xs text-slate-500">Tedavi tutarı eksi ödemelerden kalan hasta borçları</p>
             </div>
             <div className="flex gap-2">
-              <input placeholder="Hasta / tel ara…" value={alacakSearch} onChange={e => setAlacakSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-violet-400" />
+              <input placeholder="Hasta, telefon veya doktor ara…" value={alacakSearch} onChange={e => setAlacakSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-violet-400" />
               <button onClick={loadAlacaklar} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">↻ Yenile</button>
               <button onClick={() => {
                 const rows = [["Hasta","Tel","Hekimler","Ödenen","Kalan","Son Hareket"], ...filteredAlacaklar.map(a => [a.fullName, a.phone, (a.doctorNames || []).join(" / "), String(a.odenen), String(a.bakiye), a.lastPaymentAt ? fmtDate(a.lastPaymentAt) : (a.lastTreatmentAt ? fmtDate(a.lastTreatmentAt) : "-")])];
@@ -2854,6 +2264,8 @@ export default function MuhasebePage() {
 
           {alacakLoading
             ? <div className="py-12 text-center text-sm text-slate-400">Hesaplanıyor…</div>
+            : alacakError
+              ? <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-6 text-sm font-semibold text-red-700">{alacakError}</div>
             : (
               <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
                 <table className="w-full text-xs">
@@ -2894,7 +2306,18 @@ export default function MuhasebePage() {
                                 </div>
                               </div>
                             </td>
-                            <td className="px-4 py-3 text-right font-black text-violet-700">{fmt(a.bakiye)}</td>
+                            <td className="px-4 py-3 text-right">
+                              <span className="font-black text-violet-700">{fmt(a.bakiye)}</span>
+                              {a.hasActiveTaksitPlan && (
+                                <button
+                                  onClick={() => setAlacakView("taksit")}
+                                  title="Bu hastanın aktif bir taksit planı var — taksit tahsilatları bu tutara yansımaz, gerçek kalan için Taksitli Planlar'a bakın"
+                                  className="mt-1 block w-full rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700 hover:bg-amber-100"
+                                >
+                                  Taksitli plan var →
+                                </button>
+                              )}
+                            </td>
                             <td className="px-4 py-3 text-slate-600">
                               <span className="block font-semibold">{lastDate ? fmtDate(lastDate) : "-"}</span>
                               <span className="text-[11px] text-slate-400">{a.lastPaymentAt ? "Son ödeme" : "Tedavi tarihi"}</span>
@@ -2924,72 +2347,20 @@ export default function MuhasebePage() {
       )}
 
       {/* ════════════════════════════════════════════════════════════════════
-          TAB: TEDARİKÇİ / CARİ
-      ════════════════════════════════════════════════════════════════════ */}
-      {activeTab === "cari" && (
-        <div className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-sm font-black text-slate-900">Tedarikçi Cari Hesaplar</h2>
-            <div className="flex gap-2">
-              <input placeholder="Firma ara…" value={cariSearch} onChange={e => setCariSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-primary/30" />
-              <Link href="/firma" className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary/90">Satın Alma / Ödeme</Link>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 divide-x divide-slate-100 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-            {[
-              { label: "Toplam Tedarikçi Borcu", value: fmt(filteredFirmas.reduce((s, f) => s + f.bakiye, 0)), tone: "text-amber-700"   },
-              { label: "Toplam Alınan",           value: fmt(filteredFirmas.reduce((s, f) => s + f.borc, 0)),  tone: "text-red-700"     },
-              { label: "Toplam Ödenen",           value: fmt(filteredFirmas.reduce((s, f) => s + f.odenen, 0)),tone: "text-emerald-700" },
-            ].map(c => (
-              <div key={c.label} className="p-4">
-                <p className="text-xs font-bold uppercase text-slate-500">{c.label}</p>
-                <p className={`mt-1 text-xl font-black ${c.tone}`}>{c.value}</p>
-              </div>
-            ))}
-          </div>
-          <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-            <table className="w-full text-xs">
-              <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                <th className="px-4 py-3 text-left">Firma</th>
-                <th className="px-4 py-3 text-right">Toplam Alınan</th>
-                <th className="px-4 py-3 text-right">Toplam Ödenen</th>
-                <th className="px-4 py-3 text-right">Net Bakiye</th>
-                <th className="px-4 py-3 text-center">Durum</th>
-                <th className="px-4 py-3" />
-              </tr></thead>
-              <tbody className="divide-y divide-slate-100">
-                {filteredFirmas.length === 0
-                  ? <tr><td colSpan={6} className="px-4 py-10 text-center text-slate-400">Firma bulunamadı</td></tr>
-                  : filteredFirmas.map(f => (
-                    <tr key={f.id} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-semibold text-slate-800">{f.name}</td>
-                      <td className="px-4 py-3 text-right font-bold text-red-700">{fmt(f.borc)}</td>
-                      <td className="px-4 py-3 text-right font-bold text-emerald-700">{fmt(f.odenen)}</td>
-                      <td className="px-4 py-3 text-right font-black text-slate-900">{fmt(f.bakiye)}</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`rounded-lg px-2 py-1 text-xs font-bold ${f.bakiye > 0 ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
-                          {f.bakiye > 0 ? "Borçlu" : "Kapalı"}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <Link href="/firma" className="text-xs font-bold text-primary hover:underline">Detay</Link>
-                      </td>
-                    </tr>
-                  ))
-                }
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* ════════════════════════════════════════════════════════════════════
           TAB: HAKEDİŞLER
       ════════════════════════════════════════════════════════════════════ */}
       {activeTab === "hakedis" && (
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-3">
             <h2 className="mr-auto text-sm font-black text-slate-900">Doktor Hakedişleri</h2>
+            {selectedDoctor && (
+              <button
+                onClick={() => { setSelectedDoctor(""); setHakedisDoctorSearch(""); }}
+                className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-50"
+              >
+                ← Tüm Doktorlar
+              </button>
+            )}
             <div className="w-64">
               <SearchSelect
                 query={hakedisDoctorSearch}
@@ -3008,7 +2379,48 @@ export default function MuhasebePage() {
             </div>
           </div>
           {!selectedDoctor
-            ? <div className="rounded-2xl bg-slate-50 py-16 text-center text-sm text-slate-400">Görüntülemek için bir doktor seçin</div>
+            ? (
+                <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+                  <div className="border-b border-slate-100 px-5 py-4">
+                    <h3 className="text-sm font-black text-slate-900">Genel Bakış — Bu Ay</h3>
+                    <p className="mt-0.5 text-xs text-slate-500">Tüm doktorların içinde bulunulan aya ait hakedilen/ödenen/kalan özeti. Detay için bir doktora tıklayın.</p>
+                  </div>
+                  {hakedisOzetLoading ? (
+                    <div className="p-8 text-center text-sm text-slate-400">Yükleniyor…</div>
+                  ) : hakedisOzet.length === 0 ? (
+                    <div className="p-8 text-center text-sm text-slate-400">Kayıtlı doktor bulunamadı</div>
+                  ) : (
+                    <table className="w-full text-xs">
+                      <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
+                        <th className="px-4 py-3 text-left">Doktor</th>
+                        <th className="px-4 py-3 text-right">Bu Ay Ciro</th>
+                        <th className="px-4 py-3 text-right">Hakedilen</th>
+                        <th className="px-4 py-3 text-right">Ödenen</th>
+                        <th className="px-4 py-3 text-right">Kalan</th>
+                      </tr></thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {hakedisOzet.map(row => (
+                          <tr
+                            key={row.doctor.id}
+                            onClick={() => { setSelectedDoctor(row.doctor.id); setHakedisDoctorSearch(row.doctor.fullName); }}
+                            className="cursor-pointer hover:bg-slate-50"
+                          >
+                            <td className="px-4 py-3 font-bold text-slate-800">{row.doctor.fullName}</td>
+                            <td className="px-4 py-3 text-right font-medium text-slate-600">{fmt(row.ciro)}</td>
+                            <td className="px-4 py-3 text-right font-medium text-slate-700">{fmt(row.hakedilen)}</td>
+                            <td className="px-4 py-3 text-right font-medium text-emerald-700">{fmt(row.odenen)}</td>
+                            <td className="px-4 py-3 text-right">
+                              <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-black ${row.kalan > 0.5 ? "bg-amber-100 text-amber-700" : row.kalan < -0.5 ? "bg-red-100 text-red-700" : "bg-emerald-100 text-emerald-700"}`}>
+                                {fmt(row.kalan)}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              )
             : (
                 <div className="space-y-4">
                   {doctorFinance && (
@@ -3026,56 +2438,12 @@ export default function MuhasebePage() {
                     </div>
                   )}
 
-                  {/* Ay ay hakediş / ödenen / kalan */}
-                  <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-                    <div className="border-b border-slate-100 px-5 py-4">
-                      <h3 className="text-sm font-black text-slate-900">Aylık Hakediş Dökümü (son 12 ay)</h3>
-                      <p className="mt-0.5 text-xs text-slate-500">Hakedilen: o ayki cirodan hesaplanan hakediş tutarı. Ödenen: o aya etiketlenmiş gider kayıtlarının toplamı. Kalan: hakedilen - ödenen.</p>
-                    </div>
-                    {hakedisLoading ? (
-                      <div className="p-8 text-center text-sm text-slate-400">Yükleniyor…</div>
-                    ) : hakedisMonths.length === 0 ? (
-                      <div className="p-8 text-center text-sm text-slate-400">Bu doktor için hakediş verisi yok</div>
-                    ) : (
-                      <table className="w-full text-xs">
-                        <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                          <th className="px-4 py-3 text-left">Ay</th>
-                          <th className="px-4 py-3 text-right">Hakedilen</th>
-                          <th className="px-4 py-3 text-right">Ödenen</th>
-                          <th className="px-4 py-3 text-right">Kalan</th>
-                          <th className="px-4 py-3 text-right">İşlem</th>
-                        </tr></thead>
-                        <tbody className="divide-y divide-slate-100">
-                          {hakedisMonths.map(m => {
-                            const now = new Date();
-                            const isCurrentMonth = m.year === now.getFullYear() && m.month === now.getMonth() + 1;
-                            const isPayable = !isCurrentMonth && m.kalan > 0.5;
-                            return (
-                              <tr key={`${m.year}-${m.month}`} className="hover:bg-slate-50">
-                                <td className="px-4 py-3 font-bold text-slate-800">
-                                  {AY_ADLARI[m.month - 1]} {m.year}
-                                  {isCurrentMonth && <span className="ml-1.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">devam ediyor</span>}
-                                </td>
-                                <td className="px-4 py-3 text-right font-medium text-slate-700">{fmt(m.hakedilen)}</td>
-                                <td className="px-4 py-3 text-right font-medium text-emerald-700">{fmt(m.odenen)}</td>
-                                <td className={`px-4 py-3 text-right font-black ${isPayable ? "text-amber-700" : m.kalan < -0.5 ? "text-red-700" : "text-slate-400"}`}>
-                                  {isCurrentMonth ? "—" : fmt(m.kalan)}
-                                </td>
-                                <td className="px-4 py-3 text-right">
-                                  <div className="flex items-center justify-end gap-1.5">
-                                    <button onClick={() => openHakedisDetail(selectedDoctor, m.year, m.month)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-50">Detay</button>
-                                    {isPayable && (
-                                      <button onClick={() => openDoctorPayoutFor(selectedDoctor, m.year, m.month, m.kalan)} className="rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-bold text-primary hover:bg-primary/20">Öde</button>
-                                    )}
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    )}
-                  </div>
+                  <HakedisMonthlyPanel
+                    doctorId={selectedDoctor}
+                    canPay
+                    onPay={openDoctorPayoutFor}
+                    refreshToken={hakedisRefreshToken}
+                  />
 
                   {doctorFinance && Array.isArray(doctorFinance.topExaminations) && (doctorFinance.topExaminations as { type: string; count: number }[]).length > 0 && (
                     <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
@@ -3103,152 +2471,6 @@ export default function MuhasebePage() {
           }
         </div>
       )}
-
-      {/* Modal: Hakediş Detayı */}
-      <Modal
-        open={hakedisDetailOpen}
-        onClose={() => setHakedisDetailOpen(false)}
-        title={`Hakediş Detayı${hakedisDetail ? ` — ${hakedisDetail.doctor.fullName}` : ""}`}
-        description={hakedisDetail ? `${AY_ADLARI[hakedisDetail.month - 1]} ${hakedisDetail.year}` : undefined}
-        size="xl"
-      >
-            <div className="mb-4 flex flex-wrap items-center gap-2">
-              <button onClick={exportHakedisDetailExcel} disabled={!hakedisDetail} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">Excel</button>
-              <button onClick={exportHakedisDetailPdf} disabled={!hakedisDetail} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">PDF</button>
-            </div>
-
-            {hakedisDetailLoading ? (
-              <div className="py-16 text-center text-sm text-slate-400">Yükleniyor…</div>
-            ) : !hakedisDetail ? (
-              <div className="py-16 text-center text-sm text-slate-400">Detay yüklenemedi</div>
-            ) : (
-              <div className="mt-4 space-y-5">
-                <div className="grid divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-                  <div className="p-4">
-                    <p className="text-xs font-bold uppercase text-slate-500">Hakedilen</p>
-                    <p className="mt-1 text-xl font-black text-primary">{fmt(hakedisDetail.summary.hakedilen)}</p>
-                  </div>
-                  <div className="p-4">
-                    <p className="text-xs font-bold uppercase text-slate-500">Ödenen</p>
-                    <p className="mt-1 text-xl font-black text-emerald-700">{fmt(hakedisDetail.summary.odenen)}</p>
-                  </div>
-                  <div className="p-4">
-                    <p className="text-xs font-bold uppercase text-slate-500">Kalan</p>
-                    <p className="mt-1 text-xl font-black text-amber-700">{fmt(hakedisDetail.summary.kalan)}</p>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="mb-2 text-sm font-black text-slate-900">Hakediş Hesaplama Dökümü</h3>
-                  <div className="overflow-hidden rounded-xl border border-slate-100">
-                    <table className="w-full text-xs">
-                      <tbody className="divide-y divide-slate-100">
-                        {hakedisBreakdownRows(hakedisDetail).map(([label, value], i, arr) => (
-                          <tr key={label} className={i === arr.length - 1 ? "bg-primary/10" : ""}>
-                            <td className="px-4 py-2 text-slate-600">{label}</td>
-                            <td className={`px-4 py-2 text-right font-bold ${i === arr.length - 1 ? "text-primary" : "text-slate-800"}`}>{value}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="mb-2 text-sm font-black text-slate-900">Muayeneler / Tedaviler ({hakedisDetail.examinations.length})</h3>
-                  <div className="overflow-hidden rounded-xl border border-slate-100">
-                    <table className="w-full text-xs">
-                      <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                        <th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Hasta</th><th className="px-3 py-2 text-left">Tedavi</th><th className="px-3 py-2 text-left">Diş</th><th className="px-3 py-2 text-right">Tutar</th>
-                      </tr></thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {hakedisDetail.examinations.length === 0
-                          ? <tr><td colSpan={5} className="px-3 py-4 text-center text-slate-400">Kayıt yok</td></tr>
-                          : hakedisDetail.examinations.map(e => (
-                            <tr key={e.id} className="hover:bg-slate-50">
-                              <td className="whitespace-nowrap px-3 py-2 text-slate-500">{fmtDate(e.tarih)}</td>
-                              <td className="px-3 py-2 font-medium text-slate-700">{e.hasta}</td>
-                              <td className="px-3 py-2 text-slate-600">{e.tedavi}</td>
-                              <td className="px-3 py-2 text-slate-500">{e.dis || "—"}</td>
-                              <td className="px-3 py-2 text-right font-bold text-slate-900">{fmt(e.tutar)}</td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="mb-2 text-sm font-black text-slate-900">Hasta Ödemeleri ({hakedisDetail.patientPayments.length})</h3>
-                  <div className="overflow-hidden rounded-xl border border-slate-100">
-                    <table className="w-full text-xs">
-                      <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                        <th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Hasta</th><th className="px-3 py-2 text-left">Yöntem</th><th className="px-3 py-2 text-right">Tutar</th>
-                      </tr></thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {hakedisDetail.patientPayments.length === 0
-                          ? <tr><td colSpan={4} className="px-3 py-4 text-center text-slate-400">Kayıt yok</td></tr>
-                          : hakedisDetail.patientPayments.map(p => (
-                            <tr key={p.id} className="hover:bg-slate-50">
-                              <td className="whitespace-nowrap px-3 py-2 text-slate-500">{fmtDate(p.tarih)}</td>
-                              <td className="px-3 py-2 font-medium text-slate-700">{p.hasta}</td>
-                              <td className="px-3 py-2 text-slate-600">{METHOD_LABELS[p.yontem] || p.yontem}</td>
-                              <td className="px-3 py-2 text-right font-bold text-emerald-700">{fmt(p.tutar)}</td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="mb-2 text-sm font-black text-slate-900">Laboratuvar Faturaları ({hakedisDetail.labInvoices.length})</h3>
-                  <div className="overflow-hidden rounded-xl border border-slate-100">
-                    <table className="w-full text-xs">
-                      <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                        <th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Lab</th><th className="px-3 py-2 text-left">Kalem</th><th className="px-3 py-2 text-right">Tutar</th>
-                      </tr></thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {hakedisDetail.labInvoices.length === 0
-                          ? <tr><td colSpan={4} className="px-3 py-4 text-center text-slate-400">Kayıt yok</td></tr>
-                          : hakedisDetail.labInvoices.map(i => (
-                            <tr key={i.id} className="hover:bg-slate-50">
-                              <td className="whitespace-nowrap px-3 py-2 text-slate-500">{fmtDate(i.tarih)}</td>
-                              <td className="px-3 py-2 font-medium text-slate-700">{i.lab}</td>
-                              <td className="px-3 py-2 text-slate-600">{i.kalem}</td>
-                              <td className="px-3 py-2 text-right font-bold text-red-700">{fmt(i.tutar)}</td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="mb-2 text-sm font-black text-slate-900">Doktora Yapılan Hakediş Ödemeleri ({hakedisDetail.payoutExpenses.length})</h3>
-                  <div className="overflow-hidden rounded-xl border border-slate-100">
-                    <table className="w-full text-xs">
-                      <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                        <th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Açıklama</th><th className="px-3 py-2 text-left">Yöntem</th><th className="px-3 py-2 text-right">Tutar</th>
-                      </tr></thead>
-                      <tbody className="divide-y divide-slate-100">
-                        {hakedisDetail.payoutExpenses.length === 0
-                          ? <tr><td colSpan={4} className="px-3 py-4 text-center text-slate-400">Kayıt yok</td></tr>
-                          : hakedisDetail.payoutExpenses.map(p => (
-                            <tr key={p.id} className="hover:bg-slate-50">
-                              <td className="whitespace-nowrap px-3 py-2 text-slate-500">{fmtDate(p.tarih)}</td>
-                              <td className="px-3 py-2 text-slate-600">{p.aciklama || "—"}</td>
-                              <td className="px-3 py-2 text-slate-600">{METHOD_LABELS[p.yontem] || p.yontem}</td>
-                              <td className="px-3 py-2 text-right font-bold text-primary">{fmt(p.tutar)}</td>
-                            </tr>
-                          ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              </div>
-            )}
-      </Modal>
 
     </div>
   );

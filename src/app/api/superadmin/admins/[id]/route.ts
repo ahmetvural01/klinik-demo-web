@@ -3,10 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
 import { normalizeModules } from "@/lib/superadmin-modules";
 
-export async function PATCH(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+export async function PATCH(request: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN")

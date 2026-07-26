@@ -58,7 +58,7 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
     return { sent: 0, failed: 0, failedRecipients: [], message: "SMS servisi pasif" };
   }
   if (!institution) {
-    return { sent: 0, failed: 0, failedRecipients: [], message: "Klinik bulunamadi" };
+    return { sent: 0, failed: 0, failedRecipients: [], message: "Klinik bulunamadı." };
   }
 
   const appointments = await prisma.appointment.findMany({
@@ -73,7 +73,7 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
   });
 
   if (!appointments.length) {
-    return { sent: 0, failed: 0, failedRecipients: [], message: "Randevu bulunamadi" };
+    return { sent: 0, failed: 0, failedRecipients: [], message: "Randevu bulunamadı." };
   }
 
   const reservation = await prisma.institution.updateMany({
@@ -162,7 +162,7 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
     sent,
     failed: failedRecipients.length,
     failedRecipients,
-    message: `${sent} SMS gonderildi${failedRecipients.length ? `, ${failedRecipients.length} basarisiz` : ""}`,
+    message: `${sent} SMS gönderildi${failedRecipients.length ? `; ${failedRecipients.length} gönderim başarısız` : ""}.`,
   };
 }
 

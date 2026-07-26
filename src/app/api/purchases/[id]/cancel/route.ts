@@ -3,10 +3,12 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { applyStockMovement } from "@/lib/stock-ledger";
 import { findPurchasePayments, firmaIslemToken } from "@/lib/purchase-payment-links";
+import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
 
 // POST /api/purchases/[id]/cancel — tüm kalemlerin stoğu geri alınır (gerçek FK üzerinden,
 // tag-eşleştirme yok), bağlı FirmaIslem ve Purchase İPTAL olarak işaretlenir.
-export async function POST(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
@@ -21,20 +23,54 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
     }
 
     await (prisma as any).$transaction(async (tx: any) => {
-      for (const item of purchase.items) {
-        await applyStockMovement({
-          tx,
-          stockItemId: item.stockItemId,
-          institutionId: auth.user.institutionId,
-          userId: auth.user.id,
-          type: "CIKIS",
-          quantity: Number(item.quantity),
-          note: `Satın alma iptali: ${purchase.firma.name} (${item.productName})`,
+      const systemLinkedPayments = await findPurchasePayments(tx, purchase.id, purchase.firmaId);
+      const systemLinkedPaymentIds = new Set(systemLinkedPayments.map((payment: any) => payment.id));
+      if (purchase.firmaIslemId) {
+        const allocations = await tx.firmaPaymentAllocation.findMany({
+          where: { debtIslemId: purchase.firmaIslemId },
+          select: {
+            paymentIslemId: true,
+            paymentIslem: {
+              select: {
+                paymentAllocations: {
+                  select: { debtIslemId: true },
+                },
+              },
+            },
+          },
         });
+        const hasExternalPayment = allocations.some(
+          (allocation: any) => !systemLinkedPaymentIds.has(allocation.paymentIslemId),
+        );
+        const hasSharedPayment = allocations.some(
+          (allocation: any) => allocation.paymentIslem.paymentAllocations.some(
+            (item: any) => item.debtIslemId !== purchase.firmaIslemId,
+          ),
+        );
+        if (hasExternalPayment || hasSharedPayment) {
+          throw new Error(
+            "Bu satın alma firma ödemelerinden mahsup edilmiş. Önce ilgili firma ödeme kaydını iptal edin veya düzeltin.",
+          );
+        }
       }
-      await tx.firmaIslem.update({ where: { id: purchase.firmaIslemId }, data: { status: "IPTAL" } });
-      const linkedPayments = await findPurchasePayments(tx, purchase.id, purchase.firmaId);
-      for (const payment of linkedPayments) {
+
+      if (purchase.receiptStatus === "TESLIM_ALINDI") {
+        for (const item of purchase.items) {
+          await applyStockMovement({
+            tx,
+            stockItemId: item.stockItemId,
+            institutionId: auth.user.institutionId,
+            userId: auth.user.id,
+            type: "CIKIS",
+            quantity: Number(item.quantity),
+            note: `Satın alma iptali: ${purchase.firma.name} (${item.productName})`,
+          });
+        }
+      }
+      if (purchase.firmaIslemId) {
+        await tx.firmaIslem.update({ where: { id: purchase.firmaIslemId }, data: { status: "IPTAL" } });
+      }
+      for (const payment of systemLinkedPayments) {
         await tx.firmaIslem.update({ where: { id: payment.id }, data: { status: "IPTAL" } });
         await tx.expense.updateMany({
           where: {
@@ -45,11 +81,17 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
         });
       }
       await tx.purchase.update({ where: { id: purchase.id }, data: { status: "IPTAL" } });
+      await rebuildFirmaPaymentAllocations(tx, purchase.firmaId);
     });
 
     await writeAudit(auth.user.id, "PURCHASE_CANCEL", `${purchase.firma.name} satın alması iptal edildi (${params.id})`);
 
-    return NextResponse.json({ ok: true, message: "Satın alma iptal edildi, stok ve firma bakiyesi geri alındı" });
+    return NextResponse.json({
+      ok: true,
+      message: purchase.receiptStatus === "TESLIM_ALINDI"
+        ? "Satın alma iptal edildi, stok ve firma bakiyesi geri alındı"
+        : "Teslim alınmamış sipariş iptal edildi; stok ve firma bakiyesi değişmedi",
+    });
   } catch (e) {
     console.error("[purchases/:id/cancel POST]", e);
     const message = e instanceof Error ? e.message : "Satın alma iptal edilemedi";

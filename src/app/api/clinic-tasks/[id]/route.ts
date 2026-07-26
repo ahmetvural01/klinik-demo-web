@@ -3,14 +3,15 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { clinicTaskUpdateSchema } from "@/lib/validators";
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
-export async function PUT(request: NextRequest, { params }: Params) {
+export async function PUT(request: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("dashboard:read");
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
-    return NextResponse.json({ message: "Kurum baglantisi bulunamadi" }, { status: 403 });
+    return NextResponse.json({ message: "Kurum bağlantısı bulunamadı." }, { status: 403 });
   }
 
   const existing = await prisma.clinicTask.findFirst({
@@ -38,7 +39,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
       select: { id: true },
     });
     if (assignees.length !== requestedAssignees.length) {
-      return NextResponse.json({ message: "Atanan personellerden bazi kayitlar kurumda bulunamadi" }, { status: 400 });
+      return NextResponse.json({ message: "Atanan personellerden bazıları kurumda bulunamadı." }, { status: 400 });
     }
   }
 
@@ -93,12 +94,13 @@ export async function PUT(request: NextRequest, { params }: Params) {
   return NextResponse.json(task);
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("dashboard:read");
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
-    return NextResponse.json({ message: "Kurum baglantisi bulunamadi" }, { status: 403 });
+    return NextResponse.json({ message: "Kurum bağlantısı bulunamadı." }, { status: 403 });
   }
 
   const existing = await prisma.clinicTask.findFirst({

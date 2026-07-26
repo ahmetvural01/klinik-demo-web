@@ -83,6 +83,8 @@ export async function POST(request: NextRequest) {
       port: Number(body.port) || 587,
       secure: Boolean(body.secure),
       auth: { user: body.username, pass: body.password },
+      disableFileAccess: true,
+      disableUrlAccess: true,
     });
 
     await transporter.verify();

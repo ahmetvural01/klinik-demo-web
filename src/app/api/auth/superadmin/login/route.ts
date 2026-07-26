@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { setAuthCookie, signPendingTwoFactorToken, signToken, verifyPassword } from "@/lib/auth";
 import { writeAudit } from "@/lib/api";
 import { DEFAULT_SUPERADMIN_MODULES, normalizeModules } from "@/lib/superadmin-modules";
+import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 
 type AttemptState = { count: number; blockedUntil?: number };
 
@@ -11,9 +12,7 @@ const MAX_ATTEMPT = 5;
 const BLOCK_MINUTES = 15;
 
 function getClientIp(request: NextRequest) {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0].trim();
-  return request.headers.get("x-real-ip") || "unknown";
+  return getClientIpFromHeaders(request.headers);
 }
 
 function getAttemptKey(request: NextRequest, identityNo: string) {
@@ -48,6 +47,14 @@ function clearAttempt(key: string) {
 }
 
 export async function POST(request: NextRequest) {
+  // Superadmin login öncesinde global IP bazlı sınır yoktu — sadece IP+identityNo
+  // bazlı 5 denemelik kilit vardı, bu da spoofable X-Forwarded-For ile aşılabilirdi
+  // (bkz. denetim raporu). login/route.ts'deki aynı desen burada da uygulanıyor.
+  const preLimit = checkRateLimit(`auth:${getClientIp(request)}`, 30, 60_000);
+  if (!preLimit.ok) {
+    return NextResponse.json({ message: "Çok fazla giriş denemesi yapıldı. Lütfen biraz sonra tekrar deneyin." }, { status: 429 });
+  }
+
   const body = (await request.json()) as { identityNo?: string; password?: string };
   const identityNo = body.identityNo?.trim() || "";
   const password = body.password || "";
@@ -74,13 +81,13 @@ export async function POST(request: NextRequest) {
 
   if (!user) {
     failAttempt(attemptKey);
-    return NextResponse.json({ message: "Superadmin kullanici bulunamadi" }, { status: 404 });
+    return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
   }
 
   const isValid = await verifyPassword(password, user.passwordHash);
   if (!isValid) {
     failAttempt(attemptKey);
-    return NextResponse.json({ message: "Sifre hatali" }, { status: 401 });
+    return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
   }
 
   clearAttempt(attemptKey);
@@ -103,7 +110,7 @@ export async function POST(request: NextRequest) {
     fullName: user.fullName,
     superadminModules: modules,
   });
-  setAuthCookie(token);
+  await setAuthCookie(token);
   await writeAudit(user.id, "LOGIN", "Superadmin sisteme giris yapti");
 
   return NextResponse.json({

@@ -1,10 +1,11 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { Role } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { validateWorkHoursRange } from "@/lib/working-hours-core";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { checkStaffLimit } from "@/lib/staff-limits";
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
 const ROLE_LABELS: Record<string, string> = {
   YONETICI: "Yönetici",
@@ -25,7 +26,8 @@ function roleLabel(v: unknown): string {
   return ROLE_LABELS[val] || val || "-";
 }
 
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("staff:read");
   if (auth.error) return auth.error;
 
@@ -59,7 +61,8 @@ export async function GET(_: NextRequest, { params }: Params) {
   return NextResponse.json(user);
 }
 
-export async function PUT(request: NextRequest, { params }: Params) {
+export async function PUT(request: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("staff:write");
   if (auth.error) return auth.error;
 
@@ -76,9 +79,46 @@ export async function PUT(request: NextRequest, { params }: Params) {
   if (body.role === "SUPERADMIN") {
     return NextResponse.json({ message: "Bu rol atanamaz" }, { status: 403 });
   }
+  const workStart = body.workStart !== undefined ? body.workStart : (existing.profile?.workStart || "08:30");
+  const workEnd = body.workEnd !== undefined ? body.workEnd : (existing.profile?.workEnd || "18:00");
+  const workHoursError = validateWorkHoursRange(workStart, workEnd, "Personel çalışma saatleri");
+  if (workHoursError) {
+    return NextResponse.json({ message: workHoursError }, { status: 400 });
+  }
 
   const newRole = (body.role || existing.role) as string;
   const newIsActive = typeof body.isActive === "boolean" ? body.isActive : existing.isActive;
+
+  // Bir doktor/personel pasife alınırken, ona bağlı gelecek randevular/açık
+  // planlar/açık takipler kimse fark etmeden "hayalet" bir kullanıcıya bağlı
+  // kalmasın diye önce uyarıyoruz — kullanıcı `force:true` ile onaylarsa
+  // pasifleştirme yine de gerçekleşir (kayıtlar silinmez/devredilmez, sadece
+  // bilinçli bir kararla ilerlenmiş olur).
+  if (existing.isActive && !newIsActive && !body.force) {
+    const [futureAppointments, openTreatmentPlans, openFollowUps] = await Promise.all([
+      prisma.appointment.count({
+        where: { doctorId: existing.id, startAt: { gte: new Date() }, status: { notIn: ["IPTAL", "GELMEDI"] } },
+      }),
+      (prisma as any).treatmentPlan.count({
+        where: { doctorId: existing.id, status: { notIn: ["TAMAMLANDI", "IPTAL"] } },
+      }),
+      prisma.patientFollowUp.count({
+        where: { doctorId: existing.id, status: "ACIK" },
+      }),
+    ]);
+    if (futureAppointments > 0 || openTreatmentPlans > 0 || openFollowUps > 0) {
+      const parts: string[] = [];
+      if (futureAppointments > 0) parts.push(`${futureAppointments} gelecek randevu`);
+      if (openTreatmentPlans > 0) parts.push(`${openTreatmentPlans} açık tedavi planı`);
+      if (openFollowUps > 0) parts.push(`${openFollowUps} açık hasta takibi`);
+      return NextResponse.json({
+        message: `Bu personelin ${parts.join(", ")} var. Pasife almadan önce bunları başka bir doktora devredin ya da kapatın.`,
+        requiresForce: true,
+        counts: { futureAppointments, openTreatmentPlans, openFollowUps },
+      }, { status: 409 });
+    }
+  }
+
   if (existing.institutionId) {
     const limitError = await checkStaffLimit({
       institutionId: existing.institutionId,
@@ -109,14 +149,14 @@ export async function PUT(request: NextRequest, { params }: Params) {
       profile: {
         upsert: {
           update: {
-            workStart: body.workStart !== undefined ? body.workStart : (existing.profile?.workStart || "08:30"),
-            workEnd: body.workEnd !== undefined ? body.workEnd : (existing.profile?.workEnd || "18:00"),
+            workStart,
+            workEnd,
             ...(body.photoUrl !== undefined && { photoUrl: body.photoUrl || null }),
             ...(typeof body.hideAsDoctor === "boolean" && { hideAsDoctor: body.hideAsDoctor }),
           },
           create: {
-            workStart: body.workStart || "08:30",
-            workEnd: body.workEnd || "18:00",
+            workStart,
+            workEnd,
             photoUrl: body.photoUrl || null,
             hideAsDoctor: typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : false,
           }
@@ -164,6 +204,39 @@ export async function PUT(request: NextRequest, { params }: Params) {
   pushDiff("KK Yüzde", existing.kkYuzde, updated.kkYuzde);
   pushDiff("Genel Yüzde", existing.genelYuzde, updated.genelYuzde);
   pushDiff("Maaş Yüzde", existing.maasYuzde, updated.maasYuzde);
+
+  // Oranlardan biri değiştiyse dönem-damgalı bir geçmiş satırı ekle — geçmiş
+  // ayların hakediş hesabı bu yeni orandan etkilenmesin, sadece bu andan
+  // itibaren geçerli olsun (bkz. DoctorRateHistory tanımı).
+  const ratesChanged = String(existing.kkYuzde ?? "") !== String(updated.kkYuzde ?? "")
+    || String(existing.genelYuzde ?? "") !== String(updated.genelYuzde ?? "")
+    || String(existing.maasYuzde ?? "") !== String(updated.maasYuzde ?? "");
+  if (ratesChanged) {
+    const hasHistory = await prisma.doctorRateHistory.findFirst({ where: { doctorId: updated.id }, select: { id: true } });
+    if (!hasHistory) {
+      // İlk değişiklik: geçmiş ayların ESKİ orana göre hesaplanmaya devam
+      // etmesi için, değişiklik anına kadar geçerli olan eski oranı da
+      // (çok eski bir tarihten itibaren geçerliymiş gibi) kaydediyoruz.
+      await prisma.doctorRateHistory.create({
+        data: {
+          doctorId: updated.id,
+          kkYuzde: existing.kkYuzde ?? 3,
+          genelYuzde: existing.genelYuzde ?? 15,
+          maasYuzde: existing.maasYuzde ?? 40,
+          effectiveFrom: new Date(0),
+        },
+      });
+    }
+    await prisma.doctorRateHistory.create({
+      data: {
+        doctorId: updated.id,
+        kkYuzde: updated.kkYuzde ?? 3,
+        genelYuzde: updated.genelYuzde ?? 15,
+        maasYuzde: updated.maasYuzde ?? 40,
+        effectiveFrom: new Date(),
+      },
+    });
+  }
   pushDiff("Mesai Başlangıç", existing.profile?.workStart, updated.profile?.workStart);
   pushDiff("Mesai Bitiş", existing.profile?.workEnd, updated.profile?.workEnd);
   pushDiff("Profil Fotoğrafı", existing.profile?.photoUrl, updated.profile?.photoUrl);
@@ -179,7 +252,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
   return NextResponse.json(updated);
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("staff:delete");
   if (auth.error) return auth.error;
 

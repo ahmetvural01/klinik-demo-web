@@ -60,6 +60,8 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
     const risk = (request.nextUrl.searchParams.get("risk") || "").trim();
     const missing = (request.nextUrl.searchParams.get("missing") || "").trim();
     const insurance = (request.nextUrl.searchParams.get("insurance") || "").trim();
+    const doctorId = (request.nextUrl.searchParams.get("doctorId") || "").trim();
+    const includeSummary = request.nextUrl.searchParams.get("summary") !== "false";
 
     const tenantWhere: Prisma.PatientWhereInput = auth.user.institutionId ? { institutionId: auth.user.institutionId } : {};
     const filters: Prisma.PatientWhereInput[] = [];
@@ -77,6 +79,14 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
     if (gender) filters.push({ gender });
     if (insurance) filters.push({ insurance: { contains: insurance, mode: "insensitive" } });
     if (risk === "medical") filters.push(buildMedicalRiskWhere());
+    if (doctorId) {
+      filters.push({
+        OR: [
+          { examinations: { some: { doctorId } } },
+          { appointments: { some: { doctorId } } },
+        ],
+      });
+    }
     if (missing === "true") filters.push(buildMissingInfoWhere());
 
     const where: Prisma.PatientWhereInput = filters.length ? { AND: [tenantWhere, ...filters] } : tenantWhere;
@@ -84,7 +94,7 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
     currentMonthStart.setDate(1);
     currentMonthStart.setHours(0, 0, 0, 0);
 
-    const [patients, total, summaryTotal, summaryNewThisMonth, summaryMedicalRisk, summaryMissingInfo] = await Promise.all([
+    const [patients, total, summaryTotal, summaryNewThisMonth] = await Promise.all([
       prisma.patient.findMany({
         where,
         select: {
@@ -117,11 +127,11 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
         skip,
         take,
       }),
-      prisma.patient.count({ where }),
-      prisma.patient.count({ where: tenantWhere }),
-      prisma.patient.count({ where: { AND: [tenantWhere, { createdAt: { gte: currentMonthStart } }] } }),
-      prisma.patient.count({ where: { AND: [tenantWhere, buildMedicalRiskWhere()] } }),
-      prisma.patient.count({ where: { AND: [tenantWhere, buildMissingInfoWhere()] } }),
+      includeSummary ? prisma.patient.count({ where }) : Promise.resolve(0),
+      includeSummary ? prisma.patient.count({ where: tenantWhere }) : Promise.resolve(0),
+      includeSummary
+        ? prisma.patient.count({ where: { AND: [tenantWhere, { createdAt: { gte: currentMonthStart } }] } })
+        : Promise.resolve(0),
     ]);
 
     const hidePhone = shouldHidePatientPhone(auth.user.role);
@@ -138,8 +148,6 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
       sortDir,
       summary: {
         total: summaryTotal,
-        medicalRisk: summaryMedicalRisk,
-        missingInfo: summaryMissingInfo,
         newThisMonth: summaryNewThisMonth,
       },
     });

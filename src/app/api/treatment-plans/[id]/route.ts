@@ -13,7 +13,8 @@ function treatmentPlanTenantWhere(id: string, institutionId: string | null | und
   };
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth("treatment:read");
   if (auth.error) return auth.error;
   const user = auth.user;
@@ -42,7 +43,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   return NextResponse.json(result);
 }
 
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth("treatment:write");
   if (auth.error) return auth.error;
   const user = auth.user;
@@ -51,7 +53,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 
   const body = await req.json();
-  const { status, stepUpdates } = body;
+  const { status, stepUpdates, stepDeletes } = body;
 
   if (status !== undefined && !PLAN_STATUSES.includes(status)) {
     return NextResponse.json({ error: "Geçersiz plan durumu" }, { status: 400 });
@@ -67,11 +69,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // açılmadıkça değiştirilemez (bkz. denetim raporu Tema 5 — önceden sunucu
   // tarafında hiçbir geçiş doğrulaması yoktu).
   const planStaysClosedOrClosing = CLOSED_PLAN_STATUSES.has(status ?? existing.status);
-  if (stepUpdates && Array.isArray(stepUpdates) && stepUpdates.length > 0 && planStaysClosedOrClosing) {
+  const hasStepChanges = (stepUpdates && Array.isArray(stepUpdates) && stepUpdates.length > 0) ||
+    (stepDeletes && Array.isArray(stepDeletes) && stepDeletes.length > 0);
+  if (hasStepChanges && planStaysClosedOrClosing) {
     return NextResponse.json(
       { error: "Tamamlanmış/iptal edilmiş planın adımları değiştirilemez. Önce planı yeniden açın." },
       { status: 400 }
     );
+  }
+
+  if (stepDeletes && Array.isArray(stepDeletes) && stepDeletes.length > 0) {
+    await (prisma as any).treatmentStep.deleteMany({
+      where: { id: { in: stepDeletes }, planId: params.id },
+    });
   }
 
   if (stepUpdates && Array.isArray(stepUpdates)) {
@@ -86,9 +96,13 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
   }
 
+  const recomputedTotalCost = stepDeletes && Array.isArray(stepDeletes) && stepDeletes.length > 0
+    ? await (prisma as any).treatmentStep.aggregate({ where: { planId: params.id }, _sum: { amount: true } }).then((r: any) => Number(r._sum.amount ?? 0))
+    : undefined;
+
   const plan = await (prisma as any).treatmentPlan.update({
     where: { id: params.id },
-    data: { ...(status ? { status } : {}) },
+    data: { ...(status ? { status } : {}), ...(recomputedTotalCost !== undefined ? { totalCost: recomputedTotalCost } : {}) },
     include: {
       patient: { select: { id: true, fullName: true } },
       doctor:  { select: { id: true, fullName: true } },
@@ -100,7 +114,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   return NextResponse.json(plan);
 }
 
-export async function DELETE(req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth("treatment:delete");
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {

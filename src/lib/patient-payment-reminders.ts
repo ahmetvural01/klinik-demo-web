@@ -41,6 +41,10 @@ export async function runPatientPaymentReminderSweep(): Promise<{
   let failed = 0;
   let skippedRecent = 0;
   let skippedNoBalance = 0;
+  // Bir hastanın aynı sweep çalıştırmasında birden fazla geciken/yaklaşan
+  // taksiti varsa, her biri için ayrı ayrı SMS gitmesin — spam algısı ve
+  // gereksiz SMS kredisi tüketimi (bkz. denetim raporu).
+  const remindedPatientIdsThisRun = new Set<string>();
 
   for (const setting of settings) {
     const institution = await prisma.institution.findUnique({
@@ -69,6 +73,11 @@ export async function runPatientPaymentReminderSweep(): Promise<{
       checked += 1;
       const patient = taksit.plan.patient;
       if (!patient.phone) { failed += 1; continue; }
+
+      if (remindedPatientIdsThisRun.has(patient.id)) {
+        skippedRecent += 1;
+        continue;
+      }
 
       const lastReminder = await prisma.taksitReminderLog.findFirst({
         where: { taksitId: taksit.id },
@@ -117,6 +126,7 @@ export async function runPatientPaymentReminderSweep(): Promise<{
 
       if (result.success) {
         sent += 1;
+        remindedPatientIdsThisRun.add(patient.id);
         await prisma.taksitReminderLog.create({ data: { taksitId: taksit.id, sentTo: patient.phone, status: "SENT" } });
       } else {
         failed += 1;

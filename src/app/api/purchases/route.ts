@@ -5,7 +5,18 @@ import { purchaseCreateSchema, formatZodError } from "@/lib/validators";
 import { applyStockMovement } from "@/lib/stock-ledger";
 import { resolveOrCreateStockItem } from "@/lib/purchase-helpers";
 import { applyFirmaIslemIntegration } from "@/lib/firma-integration";
+import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
 import { purchasePaymentToken } from "@/lib/purchase-payment-links";
+
+function toPublicPurchase(purchase: any) {
+  if (!purchase) return purchase;
+  const {
+    requestKey: _requestKey,
+    receiptRequestKey: _receiptRequestKey,
+    ...publicPurchase
+  } = purchase;
+  return publicPurchase;
+}
 
 // GET /api/purchases?firmaId=&from=&to=&q= — tüm satın alımlar (firmaId verilmezse kurumdaki tüm firmalar)
 export const GET = withApiTiming("purchases", async function GET(req: NextRequest) {
@@ -42,13 +53,26 @@ export const GET = withApiTiming("purchases", async function GET(req: NextReques
       include: {
         firma: { select: { id: true, name: true } },
         firmaIslem: { select: { tutar: true, dueDate: true } },
+        items: { select: { lineTotal: true } },
         _count: { select: { items: true } },
       },
       orderBy: { tarih: "desc" },
       take: 2000, // güvenlik sınırı: tek istek asla tüm tabloyu döndürmesin
     });
 
-    return NextResponse.json(purchases);
+    return NextResponse.json(purchases.map((purchase: any) => {
+      const publicPurchase = toPublicPurchase(purchase);
+      const { items, ...summary } = publicPurchase;
+      return {
+        ...summary,
+        total: Math.round(
+          Number(
+            purchase.firmaIslem?.tutar
+            || items.reduce((sum: number, item: any) => sum + Number(item.lineTotal || 0), 0),
+          ) * 100,
+        ) / 100,
+      };
+    }));
   } catch (e) {
     console.error("[purchases GET]", e);
     return NextResponse.json({ message: "Satın alımlar yüklenemedi" }, { status: 503 });
@@ -58,15 +82,44 @@ export const GET = withApiTiming("purchases", async function GET(req: NextReques
 // POST /api/purchases — çok kalemli satın alma: her satır stoğa girer, toplam tek bir ALIM
 // tipi FirmaIslem'e yazılır (firma bakiyesi/ekstre hesabı bu satırdan hiç etkilenmeden çalışır).
 export async function POST(req: NextRequest) {
+  let requestKey: string | null = null;
+  let institutionId: string | null = null;
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
+    institutionId = auth.user.institutionId;
+    requestKey = req.headers.get("Idempotency-Key")?.trim().slice(0, 180) || null;
+
+    if (requestKey) {
+      const existing = await (prisma as any).purchase.findFirst({
+        where: {
+          requestKey,
+          ...(institutionId ? { institutionId } : {}),
+        },
+        include: { items: true },
+      });
+      if (existing) {
+        return NextResponse.json({ ...toPublicPurchase(existing), duplicateRequest: true }, { status: 200 });
+      }
+    }
 
     const parsed = purchaseCreateSchema.safeParse(await req.json());
     if (!parsed.success) {
       return NextResponse.json({ error: "Satın alma bilgileri geçersiz", errors: formatZodError(parsed.error) }, { status: 400 });
     }
-    const { firmaId, tarih, faturaNo, aciklama, kdvOrani, items, paidNow, paymentDate, paymentMethod, paymentAmount } = parsed.data;
+    const {
+      firmaId,
+      tarih,
+      receiptStatus,
+      faturaNo,
+      aciklama,
+      kdvOrani,
+      items,
+      paidNow,
+      paymentDate,
+      paymentMethod,
+      paymentAmount,
+    } = parsed.data;
 
     const firma = await (prisma as any).firma.findFirst({
       where: {
@@ -97,49 +150,57 @@ export async function POST(req: NextRequest) {
       }
 
       const total = Math.round(lineData.reduce((s, l) => s + l.lineTotal, 0) * 100) / 100;
+      const isReceived = receiptStatus === "TESLIM_ALINDI";
 
-      const firmaIslem = await tx.firmaIslem.create({
-        data: {
-          firmaId: firma.id,
-          tarih: transactionDate,
-          islemTipi: "ALIM",
-          urunHizmet: `${lineData.length} kalem`,
-          aciklama: aciklama || null,
-          tutar: total,
-          faturaNo: faturaNo || null,
-          dueDate: null,
-          kdvOrani,
-          status: "AKTIF",
-        },
-      });
+      const firmaIslem = isReceived
+        ? await tx.firmaIslem.create({
+            data: {
+              firmaId: firma.id,
+              tarih: transactionDate,
+              islemTipi: "ALIM",
+              urunHizmet: `${lineData.length} kalem`,
+              aciklama: aciklama || null,
+              tutar: total,
+              faturaNo: faturaNo || null,
+              dueDate: null,
+              kdvOrani,
+              status: "AKTIF",
+            },
+          })
+        : null;
 
       const purchase = await tx.purchase.create({
         data: {
           institutionId: auth.user.institutionId,
           firmaId: firma.id,
-          firmaIslemId: firmaIslem.id,
+          firmaIslemId: firmaIslem?.id || null,
           tarih: transactionDate,
+          receiptStatus,
+          receivedAt: isReceived ? transactionDate : null,
           faturaNo: faturaNo || null,
           aciklama: aciklama || null,
           kdvOrani,
           status: "AKTIF",
           createdById: auth.user.id,
+          requestKey,
         },
       });
 
       const createdItems = [];
       for (const line of lineData) {
-        const movement = await applyStockMovement({
-          tx,
-          stockItemId: line.stockItemId,
-          institutionId: auth.user.institutionId,
-          userId: auth.user.id,
-          type: "GIRIS",
-          quantity: line.quantity,
-          note: `${firma.name} satın alma${faturaNo ? ` (Fatura: ${faturaNo})` : ""}`,
-          supplier: firma.name,
-          unitPrice: line.unitPrice,
-        });
+        const movement = isReceived
+          ? await applyStockMovement({
+              tx,
+              stockItemId: line.stockItemId,
+              institutionId: auth.user.institutionId,
+              userId: auth.user.id,
+              type: "GIRIS",
+              quantity: line.quantity,
+              note: `${firma.name} satın alma${faturaNo ? ` (Fatura: ${faturaNo})` : ""}`,
+              supplier: firma.name,
+              unitPrice: line.unitPrice,
+            })
+          : null;
 
         const purchaseItem = await tx.purchaseItem.create({
           data: {
@@ -150,14 +211,14 @@ export async function POST(req: NextRequest) {
             unit: line.unit,
             unitPrice: line.unitPrice,
             lineTotal: line.lineTotal,
-            stockMovementId: movement.movement.id,
+            stockMovementId: movement?.movement.id || null,
           },
         });
         createdItems.push(purchaseItem);
       }
 
       let paymentIslem = null;
-      if (paidNow) {
+      if (isReceived && paidNow) {
         const amount = Math.round(Number(paymentAmount ?? total) * 100) / 100;
         const paymentTransactionDate = new Date(paymentDate || tarih);
         paymentIslem = await tx.firmaIslem.create({
@@ -173,6 +234,7 @@ export async function POST(req: NextRequest) {
             dueDate: null,
             kdvOrani,
             status: "AKTIF",
+            requestKey: requestKey ? `${requestKey}:payment` : null,
           },
         });
 
@@ -186,19 +248,49 @@ export async function POST(req: NextRequest) {
             kdvOrani: Number(paymentIslem.kdvOrani),
           },
         });
+        await rebuildFirmaPaymentAllocations(tx, firma.id, {
+          preferredDebtByPayment: new Map([[paymentIslem.id, [firmaIslem!.id]]]),
+        });
+      } else if (firmaIslem) {
+        await rebuildFirmaPaymentAllocations(tx, firma.id);
       }
 
-      return { purchase, items: createdItems, total, firmaIslem, paymentIslem };
+      return { purchase, items: createdItems, total, firmaIslem, paymentIslem, isReceived };
     });
 
     await writeAudit(
       auth.user.id,
       "PURCHASE_CREATE",
-      `${firma.name} için ${result.items.length} kalemlik satın alma kaydedildi. Toplam: ${result.total.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} TL${result.paymentIslem ? " · ödeme de işlendi" : ""}`,
+      `${firma.name} için ${result.items.length} kalemlik ${result.isReceived ? "teslim alınmış satın alma" : "sipariş"} kaydedildi. Toplam: ${result.total.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} TL${result.paymentIslem ? " · ödeme de işlendi" : ""}`,
     );
 
-    return NextResponse.json({ ...result.purchase, items: result.items, total: result.total, paymentIslem: result.paymentIslem }, { status: 201 });
+    return NextResponse.json({
+      ...toPublicPurchase(result.purchase),
+      items: result.items,
+      total: result.total,
+      paymentIslem: result.paymentIslem
+        ? (({ requestKey: _requestKey, ...publicPayment }: any) => publicPayment)(result.paymentIslem)
+        : null,
+    }, { status: 201 });
   } catch (e) {
+    if (
+      requestKey
+      && e
+      && typeof e === "object"
+      && "code" in e
+      && (e as { code?: string }).code === "P2002"
+    ) {
+      const existing = await (prisma as any).purchase.findFirst({
+        where: {
+          requestKey,
+          ...(institutionId ? { institutionId } : {}),
+        },
+        include: { items: true },
+      });
+      if (existing) {
+        return NextResponse.json({ ...toPublicPurchase(existing), duplicateRequest: true }, { status: 200 });
+      }
+    }
     console.error("[purchases POST]", e);
     const message = e instanceof Error ? e.message : "Satın alma kaydedilemedi";
     return NextResponse.json({ error: message }, { status: 400 });

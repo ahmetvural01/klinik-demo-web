@@ -7,9 +7,11 @@ import {
   buildFirmaIntegrationMessage,
   writeFirmaIntegrationAudit,
 } from "@/lib/firma-integration";
+import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
 
 // GET: Firma ekstre (tum islemler + cari bakiye)
-export const GET = withApiTiming("firma-islemler", async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export const GET = withApiTiming("firma-islemler", async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
@@ -46,7 +48,8 @@ export const GET = withApiTiming("firma-islemler", async function GET(req: NextR
       const tutar = Number(i.tutar);
       if (i.islemTipi === "ALIM" || i.islemTipi === "HIZMET") bakiye += tutar;
       else if (i.islemTipi === "ODEME") bakiye -= tutar;
-      return { ...i, cumBakiye: bakiye };
+      const { requestKey: _requestKey, ...publicMovement } = i;
+      return { ...publicMovement, cumBakiye: bakiye };
     });
 
     let topBorc = 0;
@@ -65,10 +68,15 @@ export const GET = withApiTiming("firma-islemler", async function GET(req: NextR
 });
 
 // POST: Yeni islem ekle
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
+  let requestKey: string | null = null;
+  let institutionId: string | null = null;
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
+    institutionId = auth.user.institutionId;
+    requestKey = req.headers.get("Idempotency-Key")?.trim().slice(0, 180) || null;
 
     const parsed = firmaIslemCreateSchema.safeParse(await req.json());
     if (!parsed.success) {
@@ -87,6 +95,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       stockQuantity,
     } = parsed.data;
 
+    if (islemTipi !== "ODEME") {
+      return NextResponse.json(
+        {
+          error: islemTipi === "ALIM"
+            ? "Malzeme alımları Satın Alma formundan kaydedilmelidir."
+            : "Firma hizmet borçları ilgili işlem ekranından otomatik oluşturulur.",
+        },
+        { status: 400 },
+      );
+    }
+
     const firma = await (prisma as any).firma.findFirst({
       where: {
         id: params.id,
@@ -99,11 +118,42 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ error: "Firma bulunamadı" }, { status: 404 });
     }
 
+    if (requestKey) {
+      const existing = await (prisma as any).firmaIslem.findFirst({
+        where: { firmaId: firma.id, requestKey },
+      });
+      if (existing) {
+        const { requestKey: _requestKey, ...publicMovement } = existing;
+        return NextResponse.json(
+          { islem: publicMovement, message: "Bu ödeme daha önce kaydedilmişti.", duplicateRequest: true },
+          { status: 200 },
+        );
+      }
+    }
+
     const { islem, summary } = await (prisma as any).$transaction(async (tx: any) => {
+      await tx.$queryRaw`SELECT "id" FROM "Firma" WHERE "id" = ${firma.id} FOR UPDATE`;
+
+      const balanceRows = await tx.firmaIslem.groupBy({
+        by: ["islemTipi"],
+        where: { firmaId: firma.id, status: "AKTIF" },
+        _sum: { tutar: true },
+      });
+      const balance = Math.round(balanceRows.reduce((sum: number, row: any) => {
+        const amount = Number(row._sum.tutar || 0);
+        return sum + (row.islemTipi === "ODEME" ? -amount : amount);
+      }, 0) * 100) / 100;
+      if (tutar > balance) {
+        throw new Error(
+          `Ödeme tutarı firma bakiyesini aşamaz. Güncel kalan: ${balance.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} TL`,
+        );
+      }
+
       const transactionDate = new Date(tarih);
       const created = await tx.firmaIslem.create({
         data: {
           firmaId: params.id,
+          requestKey,
           tarih: transactionDate,
           islemTipi,
           urunHizmet: urunHizmet || null,
@@ -129,15 +179,46 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         stockItemId: stockItemId || null,
         stockQuantity,
       });
+      const allocation = await rebuildFirmaPaymentAllocations(tx, firma.id);
+      if (allocation.allocatedTotal > 0) {
+        integrationSummary.notes.push("ödeme açık firma borçlarına otomatik mahsup edildi");
+      }
 
       return { islem: created, summary: integrationSummary };
     });
 
     await writeFirmaIntegrationAudit(auth.user.id, "FIRMA_ISLEM_CREATE", firma.name, islemTipi, tutar, summary);
 
-    return NextResponse.json({ islem, message: buildFirmaIntegrationMessage(summary), integration: summary }, { status: 201 });
+    const { requestKey: _requestKey, ...publicMovement } = islem;
+    return NextResponse.json({ islem: publicMovement, message: buildFirmaIntegrationMessage(summary), integration: summary }, { status: 201 });
   } catch (e) {
+    if (
+      requestKey
+      && e
+      && typeof e === "object"
+      && "code" in e
+      && (e as { code?: string }).code === "P2002"
+    ) {
+      const existing = await (prisma as any).firmaIslem.findFirst({
+        where: {
+          requestKey,
+          firma: {
+            ...(institutionId ? { institutionId } : {}),
+          },
+        },
+      });
+      if (existing) {
+        const { requestKey: _requestKey, ...publicMovement } = existing;
+        return NextResponse.json(
+          { islem: publicMovement, message: "Bu ödeme daha önce kaydedilmişti.", duplicateRequest: true },
+          { status: 200 },
+        );
+      }
+    }
     console.error(e);
-    return NextResponse.json({ error: "Islem eklenemedi" }, { status: 503 });
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Firma ödemesi kaydedilemedi" },
+      { status: 400 },
+    );
   }
 }

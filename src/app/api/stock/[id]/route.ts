@@ -26,7 +26,8 @@ function normalizeCategory(value?: string | null) {
   return normalized;
 }
 
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth("stock:read");
   if (auth.error) return auth.error;
 
@@ -48,7 +49,8 @@ export async function GET(_req: NextRequest, { params }: { params: { id: string 
   return NextResponse.json({ ...item, category: normalizeCategory(item.category) });
 }
 
-export async function PUT(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PUT(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth("stock:write");
   if (auth.error) return auth.error;
 
@@ -112,7 +114,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
 }
 
 // PATCH: stock movement (GIRIS/CIKIS)
-export async function PATCH(req: NextRequest, { params }: { params: { id: string } }) {
+export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth("stock:write");
   if (auth.error) return auth.error;
 
@@ -143,7 +146,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   }
 }
 
-export async function DELETE(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function DELETE(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth("stock:delete");
   if (auth.error) return auth.error;
 

@@ -29,7 +29,10 @@ export const GET = withApiTiming("gider", async function GET(req: NextRequest) {
     const [expenses, totalAgg] = await Promise.all([
       (prisma as any).expense.findMany({
         where,
-        include: { expenseCategory: { select: { id: true, name: true } } },
+        include: {
+          expenseCategory: { select: { id: true, name: true } },
+          doctor: { select: { id: true, fullName: true } },
+        },
         orderBy: { tarih: "desc" },
         take,
       }),
@@ -55,6 +58,14 @@ export async function POST(req: NextRequest) {
 
     if (!tarih || !tutar) {
       return NextResponse.json({ error: "Tarih ve tutar zorunlu" }, { status: 400 });
+    }
+    const tutarNum = Number(tutar);
+    const kdvOraniNum = Number(kdvOrani);
+    if (!Number.isFinite(tutarNum) || tutarNum <= 0) {
+      return NextResponse.json({ error: "Tutar pozitif bir sayı olmalıdır" }, { status: 400 });
+    }
+    if (!Number.isFinite(kdvOraniNum) || kdvOraniNum < 0 || kdvOraniNum > 100) {
+      return NextResponse.json({ error: "KDV oranı 0-100 arasında olmalıdır" }, { status: 400 });
     }
 
     let resolvedDoctorId: string | null = null;
@@ -90,6 +101,18 @@ export async function POST(req: NextRequest) {
         });
         categoryId = payoutCategory.id;
         category = payoutCategory.name;
+      }
+    } else if (categoryId) {
+      // doctorId gönderilmeden doğrudan "Doktor Hakedişi" kategorisiyle kayıt
+      // atılmaya çalışılırsa reddet — aksi halde gider kaydedilir ama hiçbir
+      // doktorun hakediş hesabına yansımaz, para "kaybolmuş" gibi görünür
+      // (bkz. denetim raporu: sessiz veri bozulması riski).
+      const category_ = await (prisma as any).expenseCategory.findUnique({
+        where: { id: categoryId },
+        select: { isDoctorPayout: true },
+      });
+      if (category_?.isDoctorPayout) {
+        return NextResponse.json({ error: "\"Doktor Hakedişi\" kategorisiyle gider kaydedilirken doktor seçilmesi zorunludur." }, { status: 400 });
       }
     }
 

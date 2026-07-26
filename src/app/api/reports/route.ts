@@ -65,7 +65,7 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
     : undefined;
 
   // ── Paralel sorgular ──────────────────────────────────────────────────────
-  const [payments, examinations, labOrders, expenses, firmaIslemler, newPatients, taksitler, doctors] =
+  const [payments, examinations, labOrders, expenses, firmaIslemler, newPatients, taksitler] =
     await Promise.all([
       prisma.payment.findMany({
         where: institutionId
@@ -119,24 +119,7 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
           ? { status: "GECIKTI", plan: { patient: { institutionId } } }
           : { status: "GECIKTI" },
       }),
-      // Doktorlar ve yüzdeleri (hakediş için)
-      institutionId
-        ? Promise.resolve(institutionDoctors)
-        : prisma.user.findMany({
-            where: effectiveDoctorWhere(null),
-            select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
-          }),
     ]);
-
-  // Doktor yüzde map
-  const doctorRateMap: Record<string, { kkYuzde: number; genelYuzde: number; maasYuzde: number }> = {};
-  for (const d of doctors) {
-    doctorRateMap[d.id] = {
-      kkYuzde:    Number(d.kkYuzde    ?? 3),
-      genelYuzde: Number(d.genelYuzde ?? 15),
-      maasYuzde:  Number(d.maasYuzde  ?? 40),
-    };
-  }
 
   // ── Ödeme yöntemi toplamları ──────────────────────────────────────────────
   let totalRevenue = 0, cashTotal = 0, cardTotal = 0, transferTotal = 0, mailOrderTotal = 0, otherTotal = 0;
@@ -149,101 +132,6 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
     else if (p.method === "MAIL_ORDER")  mailOrderTotal += amt;
     else                                 otherTotal += amt;
   }
-
-  // ── Doktor bazlı ödeme yöntemleri (payments'tan doktorId ile) ─────────────
-  // Payment'ta doktorId yok; examinations üzerinden doktor-hasta eşleştiriyoruz.
-  // Doktor başına KK/Nakit/Havale/MO ayrımı için: patient→doctor eşleşmesi
-  // Strateji: examination → doctorId, payment → patientId. patient başına son doctorId
-  const patientLastDoctorId: Record<string, string> = {};
-  for (const e of examinations) {
-    if (e.patientId && e.doctorId) patientLastDoctorId[e.patientId] = e.doctorId;
-  }
-
-  // Doktor map (hakediş hesabı için)
-  type DoctorStat = {
-    id: string; fullName: string;
-    examinationCount: number;
-    ciro: number; kk: number; nakit: number; havale: number; mo: number;
-    labCost: number; labOrderCount: number;
-    patientIds: Set<string>;
-  };
-  const doctorMap: Record<string, DoctorStat> = {};
-
-  const ensureDoctor = (id: string, name: string) => {
-    if (!doctorMap[id]) doctorMap[id] = {
-      id, fullName: name,
-      examinationCount: 0,
-      ciro: 0, kk: 0, nakit: 0, havale: 0, mo: 0,
-      labCost: 0, labOrderCount: 0,
-      patientIds: new Set(),
-    };
-  };
-
-  for (const exam of examinations) {
-    if (!exam.doctorId) continue;
-    const dName = exam.doctor?.fullName || "Bilinmiyor";
-    ensureDoctor(exam.doctorId, dName);
-    doctorMap[exam.doctorId].examinationCount++;
-    doctorMap[exam.doctorId].patientIds.add(exam.patientId);
-  }
-
-  // Doktor başına geliri payment'tan al (patient'ın son doktorundan)
-  for (const p of payments) {
-    if (!p.patientId) continue;
-    const docId = patientLastDoctorId[p.patientId];
-    if (!docId || !doctorMap[docId]) continue;
-    const amt = Number(p.amount);
-    doctorMap[docId].ciro += amt;
-    if (p.method === "KREDI_KARTI")  doctorMap[docId].kk      += amt;
-    else if (p.method === "NAKIT")    doctorMap[docId].nakit   += amt;
-    else if (p.method === "HAVALE_EFT") doctorMap[docId].havale += amt;
-    else if (p.method === "MAIL_ORDER") doctorMap[docId].mo     += amt;
-  }
-
-  for (const lab of labOrders) {
-    if (!lab.doctorId) continue;
-    ensureDoctor(lab.doctorId, lab.doctor?.fullName || "Bilinmiyor");
-    doctorMap[lab.doctorId].labOrderCount++;
-    doctorMap[lab.doctorId].labCost += Number(lab.price || 0);
-  }
-
-  // ── Hakediş hesabı (VBA formülüne birebir uygun) ─────────────────────────
-  const doctorReports = Object.values(doctorMap).map((d) => {
-    const rates  = doctorRateMap[d.id] ?? { kkYuzde: 3, genelYuzde: 15, maasYuzde: 40 };
-    const kkMasraf     = d.kk   * (rates.kkYuzde    / 100);
-    const genelMasraf  = d.ciro * (rates.genelYuzde  / 100);
-    const toplamGider  = kkMasraf + d.labCost + genelMasraf;
-    const brut         = d.ciro - toplamGider;
-    const hakEdis      = brut * (rates.maasYuzde / 100);
-    return {
-      id:                 d.id,
-      fullName:           d.fullName,
-      examinationCount:   d.examinationCount,
-      // Gelir dağılımı
-      ciro:               d.ciro,
-      kk:                 d.kk,
-      nakit:              d.nakit,
-      havale:             d.havale,
-      mo:                 d.mo,
-      // Masraf kalemleri
-      kkMasraf,
-      labCost:            d.labCost,
-      genelMasraf,
-      toplamGider,
-      // Hakediş
-      brut,
-      hakEdis,
-      // Yüzdeler
-      kkYuzde:            rates.kkYuzde,
-      genelYuzde:         rates.genelYuzde,
-      maasYuzde:          rates.maasYuzde,
-      // Eski alanlar (geriye uyumluluk)
-      examinationRevenue: d.ciro,
-      labOrderCount:      d.labOrderCount,
-      netRevenue:         hakEdis,
-      uniquePatients:     d.patientIds.size,
-    };
-  }).sort((a, b) => b.hakEdis - a.hakEdis);
 
   // ── Gider özeti ────────────────────────────────────────────────────────────
   const totalExpenses = expenses.reduce((s: number, e: any) => s + Number(e.tutar), 0);
@@ -418,8 +306,6 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
     transfer:  transferTotal,
     mailOrder: mailOrderTotal,
     other:     otherTotal,
-    // Doktor raporu (hakediş dahil)
-    doctorReports,
     // Gider
     expenseByCategory: Object.entries(expenseByCategory).sort((a,b)=>b[1]-a[1]).map(([category,amount])=>({category,amount})),
     // Tedarikçi

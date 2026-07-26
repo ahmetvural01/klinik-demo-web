@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import type { PaymentMethod } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
-import { deleteIntegratedPayment, updateIntegratedPayment } from "@/lib/payment-ledger";
-import { effectiveDoctorWhere } from "@/lib/hakedis";
+import { deleteIntegratedPayment, toPublicPayment, updateIntegratedPayment } from "@/lib/payment-ledger";
+import { effectiveDoctorWhere, isDoctorPeriodSettled } from "@/lib/hakedis";
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
 const METHOD_LABELS: Record<string, string> = {
   NAKIT: "Nakit",
@@ -41,19 +41,31 @@ async function findAccessiblePayment(id: string, auth: { user: { role: string; i
       id,
       OR: [
         { patient: { institutionId: auth.user.institutionId } },
-        { doctorId: { in: userIds } },
+        { patientId: null, doctorId: { in: userIds } },
       ],
     },
     include,
   });
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("payments:write");
   if (auth.error) return auth.error;
 
   const existing = await findAccessiblePayment(params.id, auth);
   if (!existing) return NextResponse.json({ message: "Ödeme bulunamadı" }, { status: 404 });
+
+  if (existing.doctorId && auth.user.role !== "SUPERADMIN") {
+    const d = new Date(existing.createdAt);
+    const settled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId, d.getUTCFullYear(), d.getUTCMonth() + 1);
+    if (settled) {
+      return NextResponse.json(
+        { message: "Bu ödemenin ait olduğu dönem için doktora zaten hakediş ödemesi yapılmış — bu kayıt silinemez." },
+        { status: 400 },
+      );
+    }
+  }
 
   try {
     const { taksitReverseInfo } = await prisma.$transaction(
@@ -83,7 +95,8 @@ export async function DELETE(_: NextRequest, { params }: Params) {
   }
 }
 
-export async function PATCH(request: NextRequest, { params }: Params) {
+export async function PATCH(request: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("payments:write");
   if (auth.error) return auth.error;
 
@@ -96,6 +109,23 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   const nextAmount = body.amount !== undefined ? Number(body.amount) : undefined;
   if (nextAmount !== undefined && (!Number.isFinite(nextAmount) || nextAmount <= 0)) {
     return NextResponse.json({ message: "Geçerli ödeme tutarı girin" }, { status: 400 });
+  }
+
+  // Bu ödeme bir doktorun cirosuna/ödemesine sayılıyorsa ve o dönem için
+  // zaten hakediş ödemesi yapılmışsa, tutar/tarih/doktor değişikliği o
+  // dönemin hakedişini geriye dönük tutarsız hale getirir.
+  if (existing.doctorId && auth.user.role !== "SUPERADMIN") {
+    const touchesSettledFields = body.amount !== undefined || body.createdAt !== undefined || body.doctorId !== undefined;
+    if (touchesSettledFields) {
+      const d = new Date(existing.createdAt);
+      const settled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId, d.getUTCFullYear(), d.getUTCMonth() + 1);
+      if (settled) {
+        return NextResponse.json(
+          { message: "Bu ödemenin ait olduğu dönem için doktora zaten hakediş ödemesi yapılmış — tutar, tarih veya doktor değiştirilemez." },
+          { status: 400 },
+        );
+      }
+    }
   }
 
   const validMethods = new Set(["NAKIT", "KREDI_KARTI", "HAVALE_EFT", "MAIL_ORDER", "DIGER"]);
@@ -128,6 +158,22 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   }
   if (posRequiredMethods.has(finalMethod) && !finalPosId) {
     return NextResponse.json({ message: "Kart / mail order tahsilatı için POS seçimi zorunlu" }, { status: 400 });
+  }
+  if (!posRequiredMethods.has(finalMethod) && finalPosId) {
+    return NextResponse.json({ message: "POS yalnızca kredi kartı veya mail order tahsilatında seçilebilir" }, { status: 400 });
+  }
+  if (finalPosId) {
+    const pos = await prisma.posDevice.findFirst({
+      where: {
+        id: finalPosId,
+        isActive: true,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      },
+      select: { id: true },
+    });
+    if (!pos) {
+      return NextResponse.json({ message: "Seçilen POS bu kuruma ait değil veya kullanım dışı" }, { status: 403 });
+    }
   }
 
   let paymentResult;
@@ -191,5 +237,5 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   ].join("\n");
 
   await writeAudit(auth.user.id, "PAYMENT_UPDATE", detail);
-  return NextResponse.json({ ...payment, taksitReverseInfo, taksitInfo });
+  return NextResponse.json({ ...toPublicPayment(payment), taksitReverseInfo, taksitInfo });
 }

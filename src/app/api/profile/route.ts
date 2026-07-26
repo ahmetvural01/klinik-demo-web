@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
+import { validateWorkHoursRange } from "@/lib/working-hours-core";
 import { requireAuth, writeAudit } from "@/lib/api";
 
 function fmt(v: unknown): string {
@@ -59,6 +60,12 @@ export async function PUT(request: NextRequest) {
     currentProfile = null;
   }
   const passwordUpdated = Boolean(body.newPassword);
+  const workStart = body.workStart ?? currentProfile?.workStart ?? "08:30";
+  const workEnd = body.workEnd ?? currentProfile?.workEnd ?? "18:00";
+  const workHoursError = validateWorkHoursRange(workStart, workEnd, "Çalışma saatleri");
+  if (workHoursError) {
+    return NextResponse.json({ message: workHoursError }, { status: 400 });
+  }
 
   if (body.newPassword) {
     const passwordHash = await bcrypt.hash(body.newPassword, 10);
@@ -78,16 +85,16 @@ export async function PUT(request: NextRequest) {
     profile = await prisma.profile.upsert({
       where: { userId: auth.user.id },
       update: {
-        workStart: body.workStart,
-        workEnd: body.workEnd,
+        workStart,
+        workEnd,
         hideAsDoctor: typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : (currentProfile?.hideAsDoctor ?? false),
         educationMode: typeof body.educationMode === "boolean" ? body.educationMode : (currentProfile?.educationMode ?? false),
         ...(body.photoUrl !== undefined && { photoUrl: body.photoUrl || null }),
       },
       create: {
         userId: auth.user.id,
-        workStart: body.workStart ?? "08:30",
-        workEnd: body.workEnd ?? "18:00",
+        workStart,
+        workEnd,
         hideAsDoctor: typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : false,
         educationMode: typeof body.educationMode === "boolean" ? body.educationMode : false,
         photoUrl: body.photoUrl || null,

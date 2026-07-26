@@ -9,7 +9,8 @@ const MAX_FILE_BYTES = 5 * 1024 * 1024;
 // /preview ile aynı dosyayı tekrar ayrıştırır ve bu kez GERÇEKTEN YAZAR.
 // Zaten var olan hastalar (aynı TC) tekrar oluşturulmaz — mevcut kaydı bulup
 // ödeme geçmişini ona bağlar (bkz. Patient.@@unique([institutionId, tcNo])).
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });

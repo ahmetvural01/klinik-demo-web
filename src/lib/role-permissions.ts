@@ -80,7 +80,11 @@ export const PERMISSION_DETAILS: Record<string, PermissionDetail> = {
   "patients:read":          { code: "patients:read",          risk: "dusuk",   title: "Hasta — Kart Görüntüleme",                   description: "Hasta listesini açabilir, hasta kartını görebilir. Telefon numarası bu yetkiyle gizlidir." },
   "patients:write":         { code: "patients:write",         risk: "orta",    title: "Hasta — Kayıt Oluşturma ve Düzenleme",       description: "Yeni hasta ekleyebilir, ad/soyad/doğum tarihi/adres gibi bilgileri güncelleyebilir." },
   "patients:delete":        { code: "patients:delete",        risk: "yuksek",  title: "Hasta — Silme",                              description: "Hasta kaydını sistemden kalıcı olarak silebilir. Bu işlem KVKK kapsamında loglanır." },
-  "patients:phone":         { code: "patients:phone",         risk: "yuksek",  title: "Hasta — Telefon Numarası Görüntüleme",        description: "Hasta telefon numarasını açık biçimde görebilir. Bu yetki olmadan numara *** ile gizlenir. KVKK uyumu için dikkatli kullanın." },
+  // NOT: Telefon maskeleme şu anda bu yetkiden BAĞIMSIZ, sabit bir rol
+  // kuralıyla uygulanıyor (bkz. src/lib/patient-visibility.ts — DOKTOR ve
+  // ASISTAN rolünden gizlenir). Bu satırı buradan kaldırmak yerine, admin'i
+  // yanıltmamak için açıklamada bunu net belirtiyoruz.
+  "patients:phone":         { code: "patients:phone",         risk: "yuksek",  title: "Hasta — Telefon Numarası Görüntüleme (bilgi amaçlı)", description: "Bu yetki şu an panelden değiştirilemez bir bilgi kaydıdır: telefon numarası maskeleme kuralı sistemde sabittir (Doktor ve Asistan rolünden her zaman gizlenir, diğer rollerde her zaman açıktır). Bu kutuyu açıp kapatmak gerçek görünürlüğü etkilemez." },
   "patients:merge":         { code: "patients:merge",         risk: "yuksek",  title: "Hasta — Kayıt Birleştirme",                  description: "Mükerrer hasta kayıtlarını tek kayıtta birleştirebilir. Geri alınamaz bir işlemdir." },
   // ── MUAYENE ──────────────────────────────────────────────────────────────
   "examinations:read":      { code: "examinations:read",      risk: "dusuk",   title: "Muayene — Kayıt Görüntüleme",                description: "Hastanın muayene geçmişini, klinik notları ve bulguları görebilir." },
@@ -230,7 +234,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
     "finance:read", "finance:write", "finance:export",
     "reports:read", "reports:write", "reports:export",
     "prices:read", "prices:write",
-    "payments:read",
+    "payments:read", "payments:write",
     "installments:read", "installments:write",
     "stock:read", "stock:write", "stock:delete",
     "lab:read",

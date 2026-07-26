@@ -11,7 +11,8 @@ function permissionForCategory(category: string, action: "read" | "write" | "del
   return category === "BELGE" ? `documents:${action}` : `xray:${action}`;
 }
 
-export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth();
   if (auth.error) return auth.error;
 

@@ -2,7 +2,7 @@
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
 function fmt(v: unknown): string {
   if (v === null || v === undefined || v === "") return "-";
@@ -16,7 +16,8 @@ function supportTenantWhere(id: string, role: string, institutionId: string | nu
   };
 }
 
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("support:read");
   if (auth.error) return auth.error;
 
@@ -32,7 +33,8 @@ export async function GET(_: NextRequest, { params }: Params) {
   return NextResponse.json(ticket);
 }
 
-export async function PUT(request: NextRequest, { params }: Params) {
+export async function PUT(request: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("support:write");
   if (auth.error) return auth.error;
 
@@ -78,7 +80,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
   return NextResponse.json(ticket);
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("support:write");
   if (auth.error) return auth.error;
 

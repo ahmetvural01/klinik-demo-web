@@ -2,9 +2,10 @@
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("prescriptions:read");
   if (auth.error) return auth.error;
 
@@ -22,7 +23,8 @@ export async function GET(_: NextRequest, { params }: Params) {
   return NextResponse.json(prescription);
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("prescriptions:write");
   if (auth.error) return auth.error;
 

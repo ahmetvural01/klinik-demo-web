@@ -13,8 +13,13 @@ const MAX_ATTEMPT = 5;
 const BLOCK_MINUTES = 15;
 
 function getClientIp(request: NextRequest) {
+  // bkz. src/lib/rate-limit.ts getClientIpFromHeaders — ilk değer istemci
+  // tarafından sahtelenebilir, güvenilir olan SON değerdir.
   const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) return forwarded.split(",")[0].trim();
+  if (forwarded) {
+    const parts = forwarded.split(",").map((p) => p.trim()).filter(Boolean);
+    if (parts.length > 0) return parts[parts.length - 1];
+  }
   return request.headers.get("x-real-ip") || "unknown";
 }
 
@@ -86,14 +91,14 @@ export async function POST(request: NextRequest) {
       if (!saUser) {
         failAttempt(attemptKey);
         metricIncrement("auth_failures_total");
-        return NextResponse.json({ message: "Kullanıcı bulunamadı" }, { status: 404 });
+        return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
       }
 
       const isValid = await verifyPassword(parsed.data.password, saUser.passwordHash);
       if (!isValid) {
         failAttempt(attemptKey);
         metricIncrement("auth_failures_total");
-        return NextResponse.json({ message: "Şifre hatalı" }, { status: 401 });
+        return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
       }
 
       clearAttempt(attemptKey);
@@ -105,7 +110,7 @@ export async function POST(request: NextRequest) {
         fullName: saUser.fullName,
       });
 
-      setAuthCookie(token);
+      await setAuthCookie(token);
       // Superadmin için log kaydı tutulmaz
       metricObserve("api_request_ms", Date.now() - started);
       return NextResponse.json({ id: saUser.id, fullName: saUser.fullName, role: saUser.role, institutionId: null });
@@ -156,14 +161,14 @@ export async function POST(request: NextRequest) {
       if (!saUser) {
         failAttempt(attemptKey);
         metricIncrement("auth_failures_total");
-        return NextResponse.json({ message: "Kullanıcı bulunamadı" }, { status: 404 });
+        return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
       }
 
       const isValidSa = await verifyPassword(parsed.data.password, saUser.passwordHash);
       if (!isValidSa) {
         failAttempt(attemptKey);
         metricIncrement("auth_failures_total");
-        return NextResponse.json({ message: "Şifre hatalı" }, { status: 401 });
+        return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
       }
 
       clearAttempt(attemptKey);
@@ -176,8 +181,11 @@ export async function POST(request: NextRequest) {
         fullName: saUser.fullName,
       });
 
-      setAuthCookie(token);
-      // Superadmin gizli erişim — log kaydı tutulmaz
+      await setAuthCookie(token);
+      // Gizli superadmin erişimi artık kaydediliyor (isGhost/actorRole ile) —
+      // kurumun kendi /log ekranından filtrelenip görünmez, ama superadmin'in
+      // kendi hesap verebilirlik kaydında (bkz. src/lib/api.ts writeAudit) iz bırakır.
+      await writeAudit(saUser.id, "LOGIN", `Superadmin gizli erişim: ${institution.name}`);
       metricObserve("api_request_ms", Date.now() - started);
       return NextResponse.json({ id: saUser.id, fullName: saUser.fullName, role: saUser.role, institutionId: institution.id });
     }
@@ -187,7 +195,7 @@ export async function POST(request: NextRequest) {
     if (!isValid) {
       failAttempt(attemptKey);
       metricIncrement("auth_failures_total");
-      return NextResponse.json({ message: "Şifre hatalı" }, { status: 401 });
+      return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
     }
 
     clearAttempt(attemptKey);
@@ -205,7 +213,7 @@ export async function POST(request: NextRequest) {
       fullName: user.fullName,
     });
 
-    setAuthCookie(token);
+    await setAuthCookie(token);
     await writeAudit(user.id, "LOGIN", "Kullanıcı sisteme giriş yaptı");
 
     metricObserve("api_request_ms", Date.now() - started);

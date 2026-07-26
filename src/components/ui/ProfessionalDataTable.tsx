@@ -41,16 +41,16 @@ export function ProfessionalDataTable<TData>({
   const rows = table.getRowModel().rows;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="min-w-[760px] w-full text-sm">
           <thead className="sticky top-0 z-10">
             {table.getHeaderGroups().map((headerGroup) => (
               <tr key={headerGroup.id} className="bg-slate-50 text-left">
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
-                    className={`px-4 py-3 text-xs font-bold uppercase tracking-wide text-slate-500 ${
+                    className={`whitespace-nowrap px-3 py-2.5 text-xs font-bold uppercase tracking-normal text-slate-500 sm:px-4 ${
                       header.column.id === "actions" ? "sticky right-0 z-10 bg-slate-50 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)]" : ""
                     }`}
                   >
@@ -87,7 +87,7 @@ export function ProfessionalDataTable<TData>({
                   {row.getVisibleCells().map((cell) => (
                     <td
                       key={cell.id}
-                      className={`px-4 py-3 ${
+                      className={`px-3 py-2.5 sm:px-4 ${
                         cell.column.id === "actions" ? "sticky right-0 z-10 bg-white shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)] group-hover:bg-slate-50" : ""
                       }`}
                     >
@@ -102,7 +102,7 @@ export function ProfessionalDataTable<TData>({
       </div>
 
       {data.length > pageSize && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 bg-slate-50 px-4 py-2 text-xs text-slate-600">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:px-4">
           <span>
             {table.getState().pagination.pageIndex + 1} / {table.getPageCount()} sayfa · {data.length} kayıt
           </span>

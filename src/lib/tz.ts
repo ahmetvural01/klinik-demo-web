@@ -39,3 +39,9 @@ export function turkeyTimeKey(date: Date): string {
   const m = String(t.getUTCMinutes()).padStart(2, "0");
   return `${h}:${m}`;
 }
+
+/** Türkiye yerel tarih/saat alanlarını UTC Date nesnesine dönüştürür. */
+export function turkeyLocalDateTimeToUtc(dateKey: string, timeKey: string): Date {
+  const localAsUtc = new Date(`${dateKey}T${timeKey}:00.000Z`);
+  return new Date(localAsUtc.getTime() - TURKEY_OFFSET_MS);
+}

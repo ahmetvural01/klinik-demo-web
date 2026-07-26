@@ -3,6 +3,9 @@ import { prisma } from "@/lib/prisma";
 import { writeAudit } from "@/lib/api";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 import { formatZodError, publicBookingSchema } from "@/lib/validators";
+import { getDailySchedules } from "@/lib/working-hours";
+import { checkWorkingDay } from "@/lib/working-hours-core";
+import { turkeyDateKey } from "@/lib/tz";
 
 export async function POST(req: NextRequest) {
   const ip = getClientIpFromHeaders(req.headers);
@@ -20,13 +23,26 @@ export async function POST(req: NextRequest) {
     const { kurum, fullName, phone, tcNo, doctorId, preferredFrom, note } = parsed.data;
 
     const preferredDate = new Date(preferredFrom);
-    if (preferredDate < new Date()) return NextResponse.json({ error: "Geçmiş bir tarih seçilemez" }, { status: 400 });
+    const preferredDateKey = turkeyDateKey(preferredDate);
+    if (preferredDateKey < turkeyDateKey()) {
+      return NextResponse.json({ error: "Geçmiş bir tarih seçilemez." }, { status: 400 });
+    }
 
     const institution = await prisma.institution.findFirst({
       where: { name: { equals: kurum, mode: "insensitive" }, isActive: true },
       select: { id: true, ownerId: true },
     });
     if (!institution) return NextResponse.json({ error: "Kurum bulunamadı" }, { status: 404 });
+
+    const dailySchedules = await getDailySchedules(institution.id);
+    const workingDayError = checkWorkingDay(
+      preferredDateKey,
+      dailySchedules,
+      "Randevu talebi"
+    );
+    if (workingDayError) {
+      return NextResponse.json({ error: workingDayError }, { status: 400 });
+    }
 
     if (doctorId) {
       const doctor = await prisma.user.findFirst({ where: { id: doctorId, institutionId: institution.id, isActive: true }, select: { id: true } });

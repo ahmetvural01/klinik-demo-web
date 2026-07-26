@@ -1,8 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { paymentSchema } from "@/lib/validators";
-import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
-import { createIntegratedPayment } from "@/lib/payment-ledger";
+import { requireAuth, withApiTiming } from "@/lib/api";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { stripSystemTags } from "@/lib/format-text";
 
@@ -203,68 +201,3 @@ export const GET = withApiTiming("finance", async function GET(request: NextRequ
     }))
   });
 });
-
-export async function POST(request: NextRequest) {
-  const auth = await requireAuth("finance:write");
-  if (auth.error) return auth.error;
-
-  const body = await request.json();
-  const parsed = paymentSchema.safeParse(body);
-
-  if (!parsed.success) {
-    return NextResponse.json({ message: "Geçersiz ödeme verisi" }, { status: 400 });
-  }
-
-  if (auth.user.institutionId) {
-    const institutionDoctors = await prisma.user.findMany({
-      where: effectiveDoctorWhere(auth.user.institutionId),
-      select: { id: true },
-    });
-    const doctorIds = institutionDoctors.map((doctor) => doctor.id);
-
-    if (parsed.data.doctorId && !doctorIds.includes(parsed.data.doctorId)) {
-      return NextResponse.json({ message: "Bu doktor kurum kapsamı disinda" }, { status: 403 });
-    }
-
-    if (parsed.data.patientId) {
-      const relatedPatient = await prisma.patient.findFirst({
-        where: {
-          id: parsed.data.patientId,
-          institutionId: auth.user.institutionId,
-        },
-        select: { id: true },
-      });
-
-      if (!relatedPatient) {
-        return NextResponse.json({ message: "Hasta kurum kapsamı disinda" }, { status: 403 });
-      }
-    }
-  }
-
-  try {
-    const { payment } = await prisma.$transaction(
-      (tx) =>
-        createIntegratedPayment({
-          tx,
-          patientId: parsed.data.patientId,
-          doctorId: parsed.data.doctorId,
-          method: parsed.data.method,
-          amount: Number(parsed.data.amount),
-          description: parsed.data.description,
-          posId: parsed.data.posId,
-        }),
-      { isolationLevel: "Serializable" }
-    );
-
-    await writeAudit(auth.user.id, "PAYMENT_CREATE", `${payment.amount.toString()} ödeme alindi`);
-    return NextResponse.json(payment, { status: 201 });
-  } catch (e) {
-    if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2034") {
-      return NextResponse.json(
-        { message: "Bu hasta için aynı anda başka bir ödeme işlendi. Lütfen tekrar deneyin." },
-        { status: 409 }
-      );
-    }
-    return NextResponse.json({ message: "Ödeme kaydedilemedi" }, { status: 503 });
-  }
-}

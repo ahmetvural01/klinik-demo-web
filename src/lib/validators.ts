@@ -183,6 +183,7 @@ const purchaseItemSchema = z.object({
 export const purchaseCreateSchema = z.object({
   firmaId: z.string().min(1, "Firma seçimi zorunlu"),
   tarih: z.string().refine((value) => !Number.isNaN(new Date(value).getTime()), "Geçerli işlem tarihi girin"),
+  receiptStatus: z.enum(["SIPARIS_VERILDI", "TESLIM_ALINDI"]).default("TESLIM_ALINDI"),
   faturaNo: optionalNullableTrimmed(80),
   aciklama: optionalNullableTrimmed(1000),
   kdvOrani: z.coerce.number().int().min(0).max(100).default(0),
@@ -193,6 +194,13 @@ export const purchaseCreateSchema = z.object({
   paymentAmount: z.preprocess(emptyToNull, z.coerce.number().finite().positive("Ödeme tutarı 0'dan büyük olmalı").max(100_000_000).nullable()),
 }).superRefine((data, ctx) => {
   const total = data.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0);
+  if (data.receiptStatus === "SIPARIS_VERILDI" && data.paidNow) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["paidNow"],
+      message: "Teslim alınmamış sipariş için ödeme kaydedilemez",
+    });
+  }
   if (!data.paidNow) return;
   if (!data.paymentMethod) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["paymentMethod"], message: "Ödeme yapıldıysa ödeme yöntemi zorunlu" });
@@ -217,6 +225,28 @@ export const purchaseUpdateSchema = z.object({
     unitPrice: z.coerce.number().finite().min(0).max(100_000_000),
   })).min(1, "En az bir satır olmalı").max(100),
 });
+
+export const purchaseReceiveSchema = z.object({
+  receivedAt: z.string().refine((value) => !Number.isNaN(new Date(value).getTime()), "Geçerli teslim tarihi girin"),
+  paidNow: z.boolean().default(false),
+  paymentDate: optionalNullableDateString,
+  paymentMethod: z.preprocess(emptyToNull, z.enum(["NAKIT", "KREDI_KARTI", "HAVALE_EFT", "MAIL_ORDER", "DIGER"]).nullable()),
+  paymentAmount: z.preprocess(emptyToNull, z.coerce.number().finite().positive("Ödeme tutarı 0'dan büyük olmalı").max(100_000_000).nullable()),
+}).superRefine((data, ctx) => {
+  if (data.paidNow && !data.paymentMethod) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["paymentMethod"], message: "Ödeme yapıldıysa ödeme yöntemi zorunlu" });
+  }
+});
+
+export const labInvoiceCreateSchema = z.object({
+  item: z.string().trim().min(2, "Fatura kalemi zorunlu").max(180),
+  amount: z.coerce.number().finite().positive("Tutar 0'dan büyük olmalı").max(100_000_000),
+  invoiceNo: optionalNullableTrimmed(80),
+  issuedAt: optionalNullableDateString,
+  note: optionalNullableTrimmed(1000),
+});
+
+export const labInvoiceUpdateSchema = labInvoiceCreateSchema;
 
 export const patientFollowUpCreateSchema = z.object({
   patientId: z.string().min(1),

@@ -4,14 +4,15 @@ import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
 
 export const dynamic = "force-dynamic";
 
-export async function POST(req: NextRequest, { params }: { params: { id: string } }) {
+export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
 
   const body = await req.json();
   const { description, sentAt, sentNote } = body;
 
-  if (!description) return NextResponse.json({ error: "description zorunlu" }, { status: 400 });
+  if (!description) return NextResponse.json({ error: "Gönderilen iş bilgisi zorunludur." }, { status: 400 });
 
   const order = await (prisma as any).labOrder.findFirst({
     where: {

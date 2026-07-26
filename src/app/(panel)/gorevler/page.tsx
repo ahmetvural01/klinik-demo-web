@@ -105,7 +105,7 @@ export default function GorevlerPage() {
     if (patientSearch.trim().length < 2) { setPatientResults([]); setPatientSearchLoading(false); return; }
     const timer = setTimeout(() => {
       setPatientSearchLoading(true);
-      fetch(`/api/patients?q=${encodeURIComponent(patientSearch.trim())}&take=8`, { cache: "no-store" })
+      fetch(`/api/patients?q=${encodeURIComponent(patientSearch.trim())}&take=8&summary=false`, { cache: "no-store" })
         .then((r) => r.json())
         .then((d) => {
           const rows = Array.isArray(d?.patients) ? d.patients : Array.isArray(d) ? d : [];
@@ -378,7 +378,7 @@ export default function GorevlerPage() {
             <option value="IPTAL">İptal</option>
           </select>
           <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{sorted.length} kayıt</span>
-          {sorted.some((task) => task.priority >= 4) && (
+          {sorted.some((task) => task.priority >= 3 && task.status === "ACIK") && (
             <Badge tone="critical">Yüksek öncelik</Badge>
           )}
           <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => void load()} className="ml-auto">Yenile</Button>

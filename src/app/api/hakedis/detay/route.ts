@@ -17,12 +17,20 @@ export const GET = withApiTiming("hakedis-detay", async function GET(req: NextRe
     return NextResponse.json({ message: "doctorId, year ve month (1-12) zorunlu" }, { status: 400 });
   }
 
+  // DOKTOR rolü: sadece kendi verilerini görebilir.
+  if (auth.user.role === "DOKTOR" && doctorId !== auth.user.id) {
+    return NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 });
+  }
+
   const doctor = await findEligibleDoctor({ doctorId, institutionId: auth.user.institutionId });
   if (!doctor) {
     return NextResponse.json({ message: "Doktor bulunamadı" }, { status: 404 });
   }
 
-  const rates = {
+  // Fallback: doktorun GÜNCEL oranı — sadece bu ay için hiç oran geçmişi
+  // yoksa kullanılır. Aksi halde breakdown, o ayda gerçekte geçerli olan
+  // orana göre hesaplanır (bkz. getDoctorRatesForMonth).
+  const currentRates = {
     kkYuzde: Number(doctor.kkYuzde ?? 3),
     genelYuzde: Number(doctor.genelYuzde ?? 15),
     maasYuzde: Number(doctor.maasYuzde ?? 40),
@@ -31,7 +39,7 @@ export const GET = withApiTiming("hakedis-detay", async function GET(req: NextRe
 
   const [detail, hakedisRows, odenenMap] = await Promise.all([
     getDoctorMonthDetail({ doctorId, institutionId: auth.user.institutionId, year, month }),
-    computeDoctorMonthlyHakedis({ doctorId, rates, rangeStart: start, rangeEnd: end }),
+    computeDoctorMonthlyHakedis({ doctorId, rates: currentRates, rangeStart: start, rangeEnd: end }),
     computeDoctorMonthlyOdenen({ doctorId, institutionId: auth.user.institutionId, rangeStart: start, rangeEnd: end }),
   ]);
 
@@ -40,6 +48,14 @@ export const GET = withApiTiming("hakedis-detay", async function GET(req: NextRe
   const odenen = Math.round((odenenMap.get(`${year}-${String(month).padStart(2, "0")}`) || 0) * 100) / 100;
   const breakdown = monthRow?.breakdown ?? {
     ciro: 0, kk: 0, kkMasraf: 0, genelMasraf: 0, labCost: 0, toplamGider: 0, brut: 0, hakedilen: 0,
+    kkYuzde: currentRates.kkYuzde, genelYuzde: currentRates.genelYuzde, maasYuzde: currentRates.maasYuzde,
+  };
+  // O ay için gerçekte uygulanan oran (breakdown içine gömülü) — UI'da
+  // "bugünkü" değil "o ayki" oranı göstermek için rates yerine bunu kullanıyoruz.
+  const rates = {
+    kkYuzde: breakdown.kkYuzde,
+    genelYuzde: breakdown.genelYuzde,
+    maasYuzde: breakdown.maasYuzde,
   };
 
   return NextResponse.json({

@@ -6,8 +6,9 @@ export const dynamic = "force-dynamic";
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string; tripId: string } }
+  props: { params: Promise<{ id: string; tripId: string }> }
 ) {
+  const params = await props.params;
   const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
 

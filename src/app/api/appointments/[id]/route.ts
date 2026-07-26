@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { appointmentSchema } from "@/lib/validators";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
-import { getDailySchedules, checkWithinWorkingHours } from "@/lib/working-hours";
+import { getDailySchedules, checkWorkingHoursInterval } from "@/lib/working-hours";
+import { checkDoctorWorkingHoursInterval } from "@/lib/working-hours-core";
 
 const APPT_REMINDER_PREFIX = "[APPT_REMINDER]";
 
@@ -50,19 +51,25 @@ async function syncAppointmentReminder(appointment: {
   });
 }
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
 async function isEligibleAppointmentDoctor(doctorId: string, institutionId: string | null | undefined, role: string) {
   const doctor = await prisma.user.findUnique({
     where: { id: doctorId },
-    select: { isActive: true, role: true, institutionId: true, profile: { select: { hideAsDoctor: true } } },
+    select: {
+      isActive: true,
+      role: true,
+      institutionId: true,
+      fullName: true,
+      profile: { select: { hideAsDoctor: true, workStart: true, workEnd: true } },
+    },
   });
 
-  if (!doctor || !doctor.isActive) return false;
-  if (role !== "SUPERADMIN" && doctor.institutionId !== institutionId) return false;
-  if (["DOKTOR", "SUPERADMIN", "ADMIN"].includes(doctor.role)) return true;
-  if (doctor.role === "YONETICI") return !Boolean(doctor.profile?.hideAsDoctor);
-  return false;
+  if (!doctor || !doctor.isActive) return null;
+  if (role !== "SUPERADMIN" && doctor.institutionId !== institutionId) return null;
+  if (["DOKTOR", "SUPERADMIN", "ADMIN"].includes(doctor.role)) return doctor;
+  if (doctor.role === "YONETICI" && !doctor.profile?.hideAsDoctor) return doctor;
+  return null;
 }
 
 function appointmentTenantWhere(id: string, role: string, institutionId: string | null | undefined) {
@@ -89,7 +96,8 @@ function fmtStatus(v: string): string {
   return APPOINTMENT_STATUS_LABELS[v] || v;
 }
 
-export async function GET(_: NextRequest, { params }: Params) {
+export async function GET(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("appointments:read");
   if (auth.error) return auth.error;
 
@@ -105,7 +113,8 @@ export async function GET(_: NextRequest, { params }: Params) {
   return NextResponse.json(appointment);
 }
 
-export async function PUT(request: NextRequest, { params }: Params) {
+export async function PUT(request: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
 
@@ -175,25 +184,41 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
   const eligibleDoctor = await isEligibleAppointmentDoctor(parsed.data.doctorId, auth.user.institutionId, auth.user.role);
   if (!eligibleDoctor) {
-    return NextResponse.json({ message: "Secilen personel randevu doktoru olarak kullanilamaz." }, { status: 400 });
+    return NextResponse.json({ message: "Seçilen personel randevu doktoru olarak kullanılamaz." }, { status: 400 });
   }
 
   const newStart = new Date(parsed.data.startAt);
   const newEnd   = new Date(parsed.data.endAt);
 
   if (newStart >= newEnd) {
-    return NextResponse.json({ message: "Başlangıç saati bitiş saatinden önce olmalıdır" }, { status: 400 });
+    return NextResponse.json({ message: "Başlangıç saati bitiş saatinden önce olmalıdır." }, { status: 400 });
   }
 
   // Çakışma kontrolü — saat/doktor değişiyorsa yeniden kontrol
   const timeChanged   = parsed.data.startAt !== existing.startAt.toISOString() || parsed.data.endAt !== existing.endAt.toISOString();
   const doctorChanged = parsed.data.doctorId !== existing.doctorId;
 
+  if (timeChanged && newStart.getTime() <= Date.now()) {
+    return NextResponse.json({ message: "Randevu geçmiş bir tarih veya saate taşınamaz." }, { status: 400 });
+  }
+
   if (timeChanged) {
     const dailySchedules = await getDailySchedules(auth.user.institutionId);
-    const workingHoursError = checkWithinWorkingHours(newStart, dailySchedules);
+    const workingHoursError = checkWorkingHoursInterval(newStart, newEnd, dailySchedules);
     if (workingHoursError) {
       return NextResponse.json({ message: workingHoursError }, { status: 400 });
+    }
+  }
+  if (timeChanged || doctorChanged) {
+    const doctorHoursError = checkDoctorWorkingHoursInterval(
+      newStart,
+      newEnd,
+      eligibleDoctor.profile?.workStart,
+      eligibleDoctor.profile?.workEnd,
+      eligibleDoctor.fullName
+    );
+    if (doctorHoursError) {
+      return NextResponse.json({ message: doctorHoursError }, { status: 400 });
     }
   }
 
@@ -219,7 +244,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     const blockConflict = await findDoctorBlockConflict(parsed.data.doctorId, newStart, newEnd);
     if (blockConflict) {
       return NextResponse.json({
-        message: `Doktor bu saatte bloke edilmiş (${blockConflict.startTime}–${blockConflict.endTime}${blockConflict.reason ? `: ${blockConflict.reason}` : ""})`,
+        message: `Doktorun bu saat aralığı kapalıdır (${blockConflict.startTime}–${blockConflict.endTime}${blockConflict.reason ? `: ${blockConflict.reason}` : ""})`,
       }, { status: 409 });
     }
   }
@@ -274,7 +299,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
   return NextResponse.json(appointment);
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
 

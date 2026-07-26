@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
-    return NextResponse.json({ message: "Sadece klinik kullanicilari SMS ekranini kullanabilir" }, { status: 403 });
+    return NextResponse.json({ message: "Yalnızca klinik kullanıcıları SMS yönetimini kullanabilir." }, { status: 403 });
   }
 
   const type = request.nextUrl.searchParams.get("type") || "upcoming";
@@ -47,6 +47,7 @@ export async function GET(request: NextRequest) {
       where: {
         user: { institutionId: auth.user.institutionId },
         action: { startsWith: "SMS_" },
+        NOT: { action: { startsWith: "SMS_TEMPLATE_" } },
       },
     }),
   ]);
@@ -73,7 +74,7 @@ export async function POST(request: NextRequest) {
 
   if (!auth.user.institutionId) {
     metricIncrement("api_errors_total");
-    return NextResponse.json({ message: "Sadece klinik kullanicilari SMS gonderebilir" }, { status: 403 });
+    return NextResponse.json({ message: "Yalnızca klinik kullanıcıları SMS gönderebilir." }, { status: 403 });
   }
 
   const body = await request.json() as { appointmentIds?: string[]; smsType?: string };
@@ -97,7 +98,7 @@ export async function POST(request: NextRequest) {
 
   if (!institution) {
     metricIncrement("api_errors_total");
-    return NextResponse.json({ message: "Klinik bulunamadi" }, { status: 404 });
+    return NextResponse.json({ message: "Klinik bulunamadı." }, { status: 404 });
   }
 
   const appointments = await prisma.appointment.findMany({
@@ -113,7 +114,7 @@ export async function POST(request: NextRequest) {
 
   if (!appointments.length) {
     metricIncrement("api_errors_total");
-    return NextResponse.json({ message: "Randevu bulunamadi" }, { status: 404 });
+    return NextResponse.json({ message: "Randevu bulunamadı." }, { status: 404 });
   }
 
   if (dispatchMode === "queue") {
@@ -134,7 +135,7 @@ export async function POST(request: NextRequest) {
 
     if (!queued.queued) {
       metricIncrement("api_errors_total");
-      return NextResponse.json({ message: `Queue islemi basarisiz: ${queued.reason}` }, { status: 503 });
+      return NextResponse.json({ message: `SMS kuyruğuna eklenemedi: ${queued.reason}` }, { status: 503 });
     }
 
     return NextResponse.json({
@@ -235,6 +236,6 @@ export async function POST(request: NextRequest) {
     failed: failedRecipients.length,
     failedRecipients,
     remainingBalance: refreshedInstitution?.smsBalance ?? institution.smsBalance,
-    message: `${sent} hastaya ${smsType === "BILGI" ? "bilgi" : smsType === "HATIRLATMA" ? "hatirlatma" : "anket"} SMS'i gonderildi${failedRecipients.length ? `, ${failedRecipients.length} gonderim basarisiz` : ""}`,
+    message: `${sent} hastaya ${smsType === "BILGI" ? "bilgilendirme" : smsType === "HATIRLATMA" ? "hatırlatma" : "anket"} SMS'i gönderildi${failedRecipients.length ? `; ${failedRecipients.length} gönderim başarısız` : ""}.`,
   });
 }

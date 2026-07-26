@@ -1,4 +1,5 @@
 import { writeAudit } from "@/lib/api";
+import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
 import { applyStockMovement } from "@/lib/stock-ledger";
 
 const SOURCE_PREFIX = "[SISTEM:FIRMA_ISLEM:";
@@ -106,6 +107,10 @@ export async function applyFirmaIslemIntegration({
 
 export async function reverseFirmaIslemIntegration(tx: TxClient, userId: string, islemId: string) {
   const tag = buildSourceTag(islemId);
+  const sourceIslem = await tx.firmaIslem.findUnique({
+    where: { id: islemId },
+    select: { firmaId: true },
+  });
 
   const stockMovements = await tx.stockMovement.findMany({
     where: {
@@ -116,21 +121,14 @@ export async function reverseFirmaIslemIntegration(tx: TxClient, userId: string,
   });
 
   for (const movement of stockMovements) {
-    const nextQuantity = Math.max(0, Number(movement.stockItem.quantity) - Number(movement.quantity));
-
-    await tx.stockItem.update({
-      where: { id: movement.stockItemId },
-      data: { quantity: nextQuantity },
-    });
-
-    await tx.stockMovement.create({
-      data: {
-        stockItemId: movement.stockItemId,
-        type: "CIKIS",
-        quantity: Number(movement.quantity),
-        note: `İptal geri alımı ${tag}`,
-        userId,
-      },
+    await applyStockMovement({
+      tx,
+      stockItemId: movement.stockItemId,
+      institutionId: movement.stockItem.institutionId,
+      userId,
+      type: "CIKIS",
+      quantity: Number(movement.quantity),
+      note: `İptal geri alımı ${tag}`,
     });
   }
 
@@ -141,6 +139,10 @@ export async function reverseFirmaIslemIntegration(tx: TxClient, userId: string,
     },
     data: { status: "IPTAL" },
   });
+
+  if (sourceIslem?.firmaId) {
+    await rebuildFirmaPaymentAllocations(tx, sourceIslem.firmaId);
+  }
 }
 
 export function buildFirmaIntegrationMessage(summary: IntegrationSummary) {

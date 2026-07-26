@@ -6,6 +6,7 @@ import { showToastSafe } from "@/lib/toast-client";
 import { useSlashFocus } from "@/lib/use-slash-focus";
 import { SearchSelect } from "@/components/ui/SearchSelect";
 import { LabOrderForm } from "@/components/lab/LabOrderForm";
+import { LabOrderDetailPanel } from "@/components/lab/LabOrderDetailPanel";
 import { cachedGet } from "@/lib/client-cache";
 import { Modal as SharedModal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
@@ -14,6 +15,7 @@ import { FormField } from "@/components/ui/FormField";
 import { ListTable } from "@/components/ui/ListTable";
 import type { ListTableColumn } from "@/components/ui/ListTable";
 import { Plus } from "lucide-react";
+import { confirmDialog } from "@/lib/confirm-client";
 
 type LabInvoice = {
   id: string;
@@ -546,11 +548,13 @@ export default function LabPage() {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [firmaLabNames, setFirmaLabNames] = useState<string[]>([]);
 
-  const [modal, setModal] = useState<"new" | "trip" | "receive" | "invoice" | "editTrip" | null>(null);
+  const [modal, setModal] = useState<"new" | "trip" | "receive" | "invoice" | "editInvoice" | "editTrip" | null>(null);
   const [activeOrder, setActiveOrder] = useState<LabOrder | null>(null);
   const [activeTrip, setActiveTrip] = useState<(LabTrip & { labOrder: LabOrder }) | null>(null);
+  const [editingInvoiceId, setEditingInvoiceId] = useState<string | null>(null);
 
   const [orderForm, setOrderForm] = useState(emptyOrderForm);
+  const orderRequestKeyRef = useRef("");
   const [orderPatientSearch, setOrderPatientSearch] = useState("");
   const [orderDoctorSearch, setOrderDoctorSearch] = useState("");
   const [orderLabSearch, setOrderLabSearch] = useState("");
@@ -558,6 +562,7 @@ export default function LabPage() {
   const [tripForm, setTripForm] = useState(emptyTripForm);
   const [receiveForm, setReceiveForm] = useState(emptyReceiveForm);
   const [invoiceForm, setInvoiceForm] = useState(emptyInvoiceForm);
+  const invoiceRequestKeyRef = useRef("");
   const [editTripForm, setEditTripForm] = useState(emptyEditTripForm);
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<"all" | "fresh" | "atLab" | "returned" | "completed">("all");
@@ -585,6 +590,8 @@ export default function LabPage() {
         throw new Error(
           (payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
             ? payload.error
+            : payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string"
+            ? payload.message
             : null) || "Laboratuvar verileri alınamadı.",
         );
       }
@@ -637,13 +644,6 @@ export default function LabPage() {
 
   useEffect(() => {
     load();
-    fetch("/api/patients?limit=200", { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => {
-        const nextPatients = Array.isArray(d) ? d : d.patients || [];
-        setPatients(nextPatients);
-      })
-      .catch(() => {});
 
     cachedGet<unknown>("/api/staff", 60_000)
       .then((d) => {
@@ -664,6 +664,59 @@ export default function LabPage() {
       .catch(() => setFirmaLabNames([]));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [load]);
+
+  // Hasta listesinin tamamını sayfa açılırken yüklemek büyük kliniklerde hem
+  // gereksiz veri taşır hem de laboratuvar ekranını yavaşlatır. Arama,
+  // kullanıcı yazdıkça sunucuda yapılır.
+  useEffect(() => {
+    if (modal !== "new") return;
+    const query = orderPatientSearch.trim();
+    if (query.length < 2) {
+      if (!orderForm.patientId) setPatients([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      fetch(`/api/patients?q=${encodeURIComponent(query)}&take=20&summary=false`, {
+        cache: "no-store",
+        signal: controller.signal,
+      })
+        .then((response) => (response.ok ? response.json() : null))
+        .then((payload) => {
+          if (!payload) return;
+          setPatients(Array.isArray(payload) ? payload : Array.isArray(payload.patients) ? payload.patients : []);
+        })
+        .catch((error) => {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          setPatients([]);
+        });
+    }, 250);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [modal, orderForm.patientId, orderPatientSearch]);
+
+  // Hasta detayından "Yeni laboratuvar işi" ile gelindiğinde arama sonucuna
+  // bağlı kalmadan doğru hastayı doğrudan yükle.
+  useEffect(() => {
+    if (!autoNewFromPatient || !prefillPatientId) return;
+    if (patients.some((patient) => patient.id === prefillPatientId)) return;
+
+    const controller = new AbortController();
+    fetch(`/api/patients/${prefillPatientId}`, { cache: "no-store", signal: controller.signal })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((patient) => {
+        if (patient?.id) setPatients((current) => [patient, ...current.filter((row) => row.id !== patient.id)]);
+      })
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+      });
+
+    return () => controller.abort();
+  }, [autoNewFromPatient, patients, prefillPatientId]);
 
   // Başka bir personel laboratuvar siparişi ekleyip güncellediğinde listeyi tazele.
   useEffect(() => {
@@ -703,7 +756,8 @@ export default function LabPage() {
         return (
           o.patient.fullName.toLowerCase().includes(q) ||
           o.labName.toLowerCase().includes(q) ||
-          o.labType.toLowerCase().includes(q)
+          o.labType.toLowerCase().includes(q) ||
+          o.doctor.fullName.toLowerCase().includes(q)
         );
       });
   }, [orders, search]);
@@ -791,6 +845,7 @@ export default function LabPage() {
     setOrderDoctorSearch(doctors.find((doctor) => doctor.id === defaultDoctorId)?.fullName || "");
     setOrderLabSearch(queryLab || currentLab || knownLabs[0] || "");
     setOrderLabTypeSearch("");
+    orderRequestKeyRef.current = "";
     setModal("new");
     prefillHandledRef.current = true;
 
@@ -918,6 +973,7 @@ export default function LabPage() {
     setModal(null);
     setActiveOrder(null);
     setActiveTrip(null);
+    setEditingInvoiceId(null);
   };
 
   async function createOrder() {
@@ -928,12 +984,18 @@ export default function LabPage() {
     }
     setSaving(true);
     try {
+      const requestKey =
+        orderRequestKeyRef.current
+        || (typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random()}`);
+      orderRequestKeyRef.current = requestKey;
       const firstDescription = orderForm.requestedItem
         ? `${orderForm.sentItem} → ${orderForm.requestedItem}`
         : orderForm.sentItem;
       const res = await fetch("/api/lab-orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
         body: JSON.stringify({
           patientId: orderForm.patientId,
           doctorId: orderForm.doctorId,
@@ -951,6 +1013,7 @@ export default function LabPage() {
       if (!res.ok) throw new Error(payload?.error || "Laboratuvar işi oluşturulamadı.");
 
       replaceOrder(payload as LabOrder);
+      orderRequestKeyRef.current = "";
       setOrderForm({ ...emptyOrderForm });
       closeModal();
       dispatchRealtimeSync();
@@ -1057,14 +1120,29 @@ export default function LabPage() {
     }
   }
 
-  async function addInvoice() {
+  async function saveInvoice() {
     if (saving || !activeOrder || !invoiceForm.item || !invoiceForm.amount) return;
     setSaving(true);
     try {
       const orderId = activeOrder.id;
-      const res = await fetch(`/api/lab-orders/${orderId}/invoices`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const isEdit = modal === "editInvoice" && Boolean(editingInvoiceId);
+      const requestKey = isEdit
+        ? ""
+        : invoiceRequestKeyRef.current
+          || (typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random()}`);
+      if (!isEdit) invoiceRequestKeyRef.current = requestKey;
+      const res = await fetch(
+        isEdit
+          ? `/api/lab-orders/${orderId}/invoices/${editingInvoiceId}`
+          : `/api/lab-orders/${orderId}/invoices`,
+        {
+        method: isEdit ? "PATCH" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(!isEdit ? { "Idempotency-Key": requestKey } : {}),
+        },
         body: JSON.stringify({
           item: invoiceForm.item,
           amount: Number(invoiceForm.amount),
@@ -1074,13 +1152,18 @@ export default function LabPage() {
         }),
       });
       const payload = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(payload?.error || "Fatura eklenemedi.");
+      if (!res.ok) throw new Error(payload?.error || (isEdit ? "Fatura güncellenemedi." : "Fatura eklenemedi."));
 
       await refreshOrder(orderId);
+      invoiceRequestKeyRef.current = "";
       setInvoiceForm({ ...emptyInvoiceForm, issuedAt: today() });
       closeModal();
       dispatchRealtimeSync();
-      showToastSafe({ title: "Laboratuvar ücreti eklendi", message: "Fatura ve özet güncellendi.", type: "success" });
+      showToastSafe({
+        title: isEdit ? "Laboratuvar faturası güncellendi" : "Laboratuvar ücreti eklendi",
+        message: "Fatura, firma borcu ve iş toplamı birlikte güncellendi.",
+        type: "success",
+      });
     } catch (error) {
       showToastSafe({ title: "İşlem yapılamadı", message: error instanceof Error ? error.message : "Lütfen tekrar deneyin.", type: "error" });
     } finally {
@@ -1198,8 +1281,54 @@ export default function LabPage() {
 
   const openInvoiceModal = (order: LabOrder) => {
     setActiveOrder(order);
+    setEditingInvoiceId(null);
+    invoiceRequestKeyRef.current = "";
     setInvoiceForm({ ...emptyInvoiceForm, item: order.labType, issuedAt: today() });
     setModal("invoice");
+  };
+
+  const openEditInvoiceModal = (order: LabOrder, invoice: LabInvoice) => {
+    setActiveOrder(order);
+    setEditingInvoiceId(invoice.id);
+    invoiceRequestKeyRef.current = "";
+    setInvoiceForm({
+      item: invoice.item,
+      amount: String(invoice.amount),
+      invoiceNo: invoice.invoiceNo || "",
+      issuedAt: invoice.issuedAt.slice(0, 10),
+      note: invoice.note || "",
+    });
+    setModal("editInvoice");
+  };
+
+  const deleteInvoice = async (order: LabOrder, invoice: LabInvoice) => {
+    const approved = await confirmDialog({
+      message: `${invoice.item} faturası iptal edilsin mi? Firma borcu ve laboratuvar toplamı otomatik düzeltilecek.`,
+      danger: true,
+      confirmText: "Faturayı İptal Et",
+    });
+    if (!approved) return;
+    setSaving(true);
+    try {
+      const response = await fetch(`/api/lab-orders/${order.id}/invoices/${invoice.id}`, { method: "DELETE" });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error || "Fatura iptal edilemedi.");
+      replaceOrder(payload as LabOrder);
+      dispatchRealtimeSync();
+      showToastSafe({
+        title: "Laboratuvar faturası iptal edildi",
+        message: "Firma borcu ve iş toplamı birlikte düzeltildi.",
+        type: "success",
+      });
+    } catch (error) {
+      showToastSafe({
+        title: "Fatura iptal edilemedi",
+        message: error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
+        type: "error",
+      });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const openReceiveModal = (order: LabOrder, trip: LabTrip) => {
@@ -1358,6 +1487,7 @@ export default function LabPage() {
                 setOrderDoctorSearch("");
                 setOrderLabSearch(defaultLab);
                 setOrderLabTypeSearch("");
+                orderRequestKeyRef.current = "";
                 setModal("new");
               }}
             >
@@ -1375,7 +1505,7 @@ export default function LabPage() {
               ref={searchInputRef}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Hasta veya laboratuvar ara ( / )"
+              placeholder="Hasta, doktor veya laboratuvar ara ( / )"
               className="h-9 w-full rounded-lg border border-slate-200 bg-white pl-9 pr-3 text-sm text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
             />
           </div>
@@ -1446,14 +1576,16 @@ export default function LabPage() {
           onClose={() => setDetailOrderId(null)}
           wide
         >
-          <LabOrderDetailModalContent
+          <LabOrderDetailPanel
             order={detailOrder}
-            onAddTrip={openTripModal}
-            onAddInvoice={openInvoiceModal}
-            onReceive={openReceiveModal}
-            onEditTrip={openEditTripModal}
-            onComplete={requestComplete}
-            onRpt={requestRpt}
+            onAddTrip={(order) => openTripModal(order as LabOrder)}
+            onAddInvoice={(order) => openInvoiceModal(order as LabOrder)}
+            onEditInvoice={(order, invoice) => openEditInvoiceModal(order as LabOrder, invoice as LabInvoice)}
+            onDeleteInvoice={(order, invoice) => void deleteInvoice(order as LabOrder, invoice as LabInvoice)}
+            onReceive={(order, trip) => openReceiveModal(order as LabOrder, trip as LabTrip)}
+            onEditTrip={(order, trip) => openEditTripModal(order as LabOrder, trip as LabTrip)}
+            onComplete={(order) => requestComplete(order as LabOrder)}
+            onRpt={(order) => requestRpt(order as LabOrder)}
           />
         </Modal>
       )}
@@ -1604,8 +1736,8 @@ export default function LabPage() {
         </Modal>
       )}
 
-      {modal === "invoice" && activeOrder && (
-        <Modal title="Fatura Kalemi" subtitle={`${activeOrder.patient.fullName} · ${activeOrder.labName}`} onClose={closeModal}>
+      {(modal === "invoice" || modal === "editInvoice") && activeOrder && (
+        <Modal title={modal === "editInvoice" ? "Faturayı Düzenle" : "Fatura Kalemi"} subtitle={`${activeOrder.patient.fullName} · ${activeOrder.labName}`} onClose={closeModal}>
           <div className="space-y-3">
             <FormField label="Kalem" required>
               <input value={invoiceForm.item} onChange={(e) => setInvoiceForm((p) => ({ ...p, item: e.target.value }))} className="field" placeholder="Zirkon alt yapı, glaze…" />
@@ -1625,7 +1757,13 @@ export default function LabPage() {
               <input value={invoiceForm.note} onChange={(e) => setInvoiceForm((p) => ({ ...p, note: e.target.value }))} className="field" />
             </FormField>
           </div>
-          <ModalActions onClose={closeModal} onSave={addInvoice} saving={saving} saveText="Ekle" disabled={!invoiceForm.item || !invoiceForm.amount} />
+          <ModalActions
+            onClose={closeModal}
+            onSave={saveInvoice}
+            saving={saving}
+            saveText={modal === "editInvoice" ? "Değişiklikleri Kaydet" : "Ekle"}
+            disabled={!invoiceForm.item || !invoiceForm.amount}
+          />
         </Modal>
       )}
 
@@ -2079,200 +2217,6 @@ function OrderRow({
           </div>
         </div>
       )}
-    </div>
-  );
-}
-
-function LabOrderDetailModalContent({
-  order,
-  onAddTrip,
-  onAddInvoice,
-  onReceive,
-  onEditTrip,
-  onComplete,
-  onRpt,
-}: {
-  order: LabOrder;
-  onAddTrip: (order: LabOrder) => void;
-  onAddInvoice: (order: LabOrder) => void;
-  onReceive: (order: LabOrder, trip: LabTrip) => void;
-  onEditTrip: (order: LabOrder, trip: LabTrip) => void;
-  onComplete: (order: LabOrder) => void;
-  onRpt: (order: LabOrder) => void;
-}) {
-  const summary = getOrderSummary(order);
-  const pendingDesc = summary.pendingTrip ? parseDesc(summary.pendingTrip.description) : null;
-  const rpt = isRptOrder(order);
-  const latestProvaFollowUpTrip = getLatestProvaFollowUpTrip(order);
-  const latestProvaParts = latestProvaFollowUpTrip ? parseDesc(latestProvaFollowUpTrip.description) : null;
-  const canSendToLab = !summary.pendingTrip && !summary.isDone;
-  const canReceiveFromLab = Boolean(summary.pendingTrip) && !summary.isDone;
-  const canComplete = !summary.pendingTrip && !summary.isDone;
-  const statusLabel = summary.isDone
-    ? "Tamamlandı"
-    : summary.pendingTrip
-    ? summary.pendingDays >= 4
-      ? "Gecikiyor"
-      : "Laboratuvarda"
-    : summary.totalCount > 0
-    ? "Klinikte"
-    : "Yeni";
-
-  return (
-    <div className="space-y-5">
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_240px]">
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <div className="flex flex-wrap gap-2 text-xs">
-            <Badge tone="neutral">{statusLabel}</Badge>
-            <Badge tone="neutral">İlerleme {summary.doneCount}/{summary.totalCount}</Badge>
-            <Badge tone={summary.pendingTrip ? "warning" : "success"}>
-              {summary.pendingTrip ? `${summary.pendingDays || 0}g bekliyor` : "Bekleyen yok"}
-            </Badge>
-            <Badge tone="neutral">
-              {summary.totalAmount > 0 ? CUR.format(summary.totalAmount) : "Fatura yok"}
-            </Badge>
-            {rpt && <Badge tone="info">RPT ücretsiz tekrar</Badge>}
-          </div>
-          <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-            <div><dt className="text-xs font-bold uppercase text-slate-400">Hasta</dt><dd className="font-semibold text-slate-900">{order.patient.fullName}</dd></div>
-            <div><dt className="text-xs font-bold uppercase text-slate-400">Hekim</dt><dd className="font-semibold text-slate-900">{order.doctor.fullName}</dd></div>
-            <div><dt className="text-xs font-bold uppercase text-slate-400">Laboratuvar</dt><dd className="font-semibold text-slate-900">{order.labName}</dd></div>
-            <div><dt className="text-xs font-bold uppercase text-slate-400">Diş / Üye</dt><dd className="font-semibold text-slate-900">{order.teeth || "Belirtilmedi"}</dd></div>
-          </dl>
-        </div>
-
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-          <p className="text-xs font-black uppercase tracking-wide text-slate-400">Sıradaki İşlem</p>
-          <p className="mt-2 text-sm font-bold text-slate-900">
-            {summary.nextStep ? `${summary.nextStep.send} → ${summary.nextStep.request}` : "Süreç tamamlandı"}
-          </p>
-          {pendingDesc && (
-            <p className="mt-2 text-xs font-semibold text-amber-700">
-              Bekleyen: {pendingDesc.sentItem}{pendingDesc.requestedItem ? ` → ${pendingDesc.requestedItem}` : ""}
-            </p>
-          )}
-        </div>
-      </div>
-
-      {latestProvaFollowUpTrip && latestProvaParts && (
-        <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3">
-          <p className="text-xs font-black uppercase tracking-wide text-violet-600">Hasta Takip Bağlantısı</p>
-          <p className="mt-1 text-sm font-semibold text-violet-900">
-            {latestProvaParts.requestedItem || latestProvaParts.sentItem} için hasta aranıp prova randevusu verilecek.
-          </p>
-          <p className="mt-1 text-xs text-violet-700">
-            Hasta Takip ekranında en güncel lab prova aksiyonu olarak görünür.
-          </p>
-        </div>
-      )}
-
-      <div>
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-sm font-black text-slate-900">Süreç Zaman Çizelgesi</h3>
-          {canSendToLab && (
-            <Button size="sm" onClick={() => onAddTrip(order)}>Laboratuvara Gönder</Button>
-          )}
-        </div>
-        {summary.sortedTrips.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-400">Henüz laboratuvar gönderimi eklenmedi.</p>
-        ) : (
-          <div className="space-y-2">
-            {summary.sortedTrips.slice().reverse().map((trip) => {
-              const parts = parseDesc(trip.description);
-              const done = Boolean(trip.receivedAt);
-              const receivedItem = getReceivedItemFromNote(trip.receivedNote, parts.requestedItem || parts.sentItem);
-              const receivedDiffers = done && parts.requestedItem && !isSameWorkflowValue(receivedItem, parts.requestedItem);
-              const isCycleStart = (trip.sentNote || "").includes("RPT_RESET_START");
-              return (
-                <div key={trip.id} className="rounded-xl border border-slate-200 bg-white px-3 py-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-bold text-slate-900">{done ? "Laboratuvardan geldi" : "Laboratuvara gönderildi"}</p>
-                        <Badge tone={done ? "success" : "warning"}>
-                          {done ? "Geldi" : "Laboratuvarda"}
-                        </Badge>
-                        {isCycleStart && <Badge tone="info">RPT başlangıcı</Badge>}
-                      </div>
-                      <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
-                        <div className="rounded-lg bg-slate-50 px-3 py-2">
-                          <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">Gönderilen</p>
-                          <p className="mt-0.5 font-semibold text-slate-800">{parts.sentItem || "-"}</p>
-                        </div>
-                        <div className="rounded-lg bg-slate-50 px-3 py-2">
-                          <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">{done ? "Gelen / Prova" : "Gelmesi Beklenen"}</p>
-                          <p className="mt-0.5 font-semibold text-slate-800">{done ? receivedItem || "-" : parts.requestedItem || "-"}</p>
-                          {receivedDiffers && <p className="mt-1 text-xs font-bold text-amber-700">Beklenen: {parts.requestedItem}</p>}
-                        </div>
-                      </div>
-                      <p className="mt-1 text-xs text-slate-400">{fmt(trip.sentAt)}{trip.receivedAt ? ` · ${fmt(trip.receivedAt)}` : " · bekliyor"}</p>
-                      {trip.sentNote && <p className="mt-1 text-xs text-slate-500">{trip.sentNote}</p>}
-                      {cleanReceivedNote(trip.receivedNote) && <p className="mt-1 text-xs text-slate-500">{cleanReceivedNote(trip.receivedNote)}</p>}
-                    </div>
-                    <div className="flex shrink-0 gap-1.5">
-                      {!done && (
-                        <Button size="sm" variant="secondary" onClick={() => onReceive(order, trip)}>Geliş Kaydet</Button>
-                      )}
-                      <Button size="sm" variant="secondary" onClick={() => onEditTrip(order, trip)}>Düzenle</Button>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_260px]">
-        <div className="rounded-xl border border-slate-200 bg-white">
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <h3 className="text-sm font-black text-slate-900">Fatura ve Firma Bağlantısı</h3>
-            <Button size="sm" variant="secondary" onClick={() => onAddInvoice(order)} disabled={rpt}>
-              {rpt ? "RPT Ücretsiz" : "Fatura Ekle"}
-            </Button>
-          </div>
-          {order.invoices.length === 0 ? (
-            <p className="px-4 py-6 text-center text-sm text-slate-400">Fatura eklenmedi; firma borcu oluşmadı.</p>
-          ) : (
-            <div className="divide-y divide-slate-100">
-              {order.invoices.map((inv) => (
-                <div key={inv.id} className="grid gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_120px_120px]">
-                  <span className="truncate font-semibold text-slate-800">{inv.item}</span>
-                  <span className="text-slate-500">{inv.invoiceNo || "Fatura no yok"}</span>
-                  <span className="text-right font-bold text-slate-900">{CUR.format(inv.amount)}</span>
-                </div>
-              ))}
-              <div className="flex justify-between px-4 py-3 text-sm font-black text-slate-900">
-                <span>Toplam</span>
-                <span>{CUR.format(summary.totalAmount)}</span>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <p className="text-xs font-black uppercase tracking-wide text-slate-400">Kontrol</p>
-          <div className="mt-2 space-y-2 text-xs font-semibold">
-            <p className={order.invoices.length > 0 || rpt ? "text-emerald-700" : "text-amber-700"}>
-              {order.invoices.length > 0 ? "Firma borcu işlendi" : rpt ? "RPT ücretsiz takipte" : "Fatura bekliyor"}
-            </p>
-            <p className="text-slate-600">Hasta: {order.patient.fullName}</p>
-            <p className="text-slate-600">Hekim: {order.doctor.fullName}</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
-        {canReceiveFromLab && summary.pendingTrip && (
-          <Button variant="secondary" onClick={() => onReceive(order, summary.pendingTrip!)}>Laboratuvardan Geldi</Button>
-        )}
-        {canComplete && (
-          <Button variant="secondary" onClick={() => onComplete(order)}>Tamamla</Button>
-        )}
-        {summary.isDone && (
-          <Button variant="secondary" onClick={() => onRpt(order)}>RPT Olarak Yeniden Aç</Button>
-        )}
-      </div>
     </div>
   );
 }

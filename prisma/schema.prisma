@@ -360,8 +360,28 @@ model User {
   twoFactorSecret         String?
   twoFactorEnabled        Boolean                @default(false)
   twoFactorBackupCodes    String?
+  rateHistory             DoctorRateHistory[]    @relation("DoctorRateHistoryDoctor")
 
   @@unique([institutionId, identityNo])
+}
+
+// Doktor komisyon oranları (kkYuzde/genelYuzde/maasYuzde) personel ekranından
+// değiştirildiğinde, User üzerindeki alanlar sadece "şu anki" oranı tutuyordu
+// — geçmiş ayların hakediş hesabı da yeni orana göre yeniden hesaplanıyor,
+// zaten ödenmiş bir ayın "hakedilen" tutarı sessizce değişebiliyordu. Her
+// oran değişikliği burada dönem-damgalı bir satır olarak saklanır; hakediş
+// hesabı her ay için o ayın başında geçerli olan orana bakar.
+model DoctorRateHistory {
+  id            String   @id @default(cuid())
+  doctorId      String
+  kkYuzde       Decimal  @db.Decimal(5, 2)
+  genelYuzde    Decimal  @db.Decimal(5, 2)
+  maasYuzde     Decimal  @db.Decimal(5, 2)
+  effectiveFrom DateTime
+  createdAt     DateTime @default(now())
+  doctor        User     @relation("DoctorRateHistoryDoctor", fields: [doctorId], references: [id])
+
+  @@index([doctorId, effectiveFrom])
 }
 
 model SuperadminPermission {
@@ -387,50 +407,50 @@ model Profile {
 }
 
 model Patient {
-  id              String                 @id @default(cuid())
-  institutionId   String?
-  tcNo            String
-  fullName        String
-  phone           String
-  address         String?
-  profession      String?
-  gender          String
-  birthDate       DateTime?
-  insurance       String?
-  discountRate    Int                    @default(0)
-  notes           String?
-  hasAllergy      Boolean                @default(false)
-  hasHepatitis    Boolean                @default(false)
-  hasKidney       Boolean                @default(false)
-  hasDiabetes     Boolean                @default(false)
-  hasHeart        Boolean                @default(false)
-  hasBloodIssue   Boolean                @default(false)
-  hasContagiousDisease  Boolean          @default(false)
+  id                    String                 @id @default(cuid())
+  institutionId         String?
+  tcNo                  String
+  fullName              String
+  phone                 String
+  address               String?
+  profession            String?
+  gender                String
+  birthDate             DateTime?
+  insurance             String?
+  discountRate          Int                    @default(0)
+  notes                 String?
+  hasAllergy            Boolean                @default(false)
+  hasHepatitis          Boolean                @default(false)
+  hasKidney             Boolean                @default(false)
+  hasDiabetes           Boolean                @default(false)
+  hasHeart              Boolean                @default(false)
+  hasBloodIssue         Boolean                @default(false)
+  hasContagiousDisease  Boolean                @default(false)
   contagiousDiseaseNote String?
-  surgeries       String?
-  medications     String?
-  otherDiseases   String?
-  createdAt       DateTime               @default(now())
-  updatedAt       DateTime               @updatedAt
-  bloodType       String?
-  toothChart      String?
-  referrer        String?
-  institution     Institution?           @relation(fields: [institutionId], references: [id])
-  appointments    Appointment[]
-  examinations    Examination[]
-  labOrders       LabOrder[]
-  payments        Payment[]
-  prescriptions   Prescription[]
-  reminders       Reminder[]
-  followUps       PatientFollowUp[]
-  followUpEvents  PatientFollowUpEvent[]
-  clinicTasks     ClinicTask[]
-  taksitPlanlari  TaksitPlan[]
-  treatmentPlans  TreatmentPlan[]
-  documents       Document[]
-  consents        PatientConsent[]
-  waitlistEntries Waitlist[]
-  birthdaySmsLogs BirthdaySmsLog[]
+  surgeries             String?
+  medications           String?
+  otherDiseases         String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  bloodType             String?
+  toothChart            String?
+  referrer              String?
+  institution           Institution?           @relation(fields: [institutionId], references: [id])
+  appointments          Appointment[]
+  examinations          Examination[]
+  labOrders             LabOrder[]
+  payments              Payment[]
+  prescriptions         Prescription[]
+  reminders             Reminder[]
+  followUps             PatientFollowUp[]
+  followUpEvents        PatientFollowUpEvent[]
+  clinicTasks           ClinicTask[]
+  taksitPlanlari        TaksitPlan[]
+  treatmentPlans        TreatmentPlan[]
+  documents             Document[]
+  consents              PatientConsent[]
+  waitlistEntries       Waitlist[]
+  birthdaySmsLogs       BirthdaySmsLog[]
 
   @@unique([institutionId, tcNo])
   @@index([institutionId])
@@ -439,23 +459,23 @@ model Patient {
 }
 
 model Appointment {
-  id          String            @id @default(cuid())
-  patientId   String
-  doctorId    String
-  startAt     DateTime
-  endAt       DateTime
-  colorCode   String            @default("#2a9d8f")
-  type        AppointmentType   @default(STANDART)
-  note        String?
-  smsInfo     Boolean           @default(true)
-  smsReminder Boolean           @default(false)
-  smsSurvey   Boolean           @default(false)
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  status      String            @default("BEKLIYOR")
-  doctor      User              @relation(fields: [doctorId], references: [id])
-  followUps   PatientFollowUp[]
-  patient     Patient           @relation(fields: [patientId], references: [id])
+  id              String            @id @default(cuid())
+  patientId       String
+  doctorId        String
+  startAt         DateTime
+  endAt           DateTime
+  colorCode       String            @default("#2a9d8f")
+  type            AppointmentType   @default(STANDART)
+  note            String?
+  smsInfo         Boolean           @default(true)
+  smsReminder     Boolean           @default(false)
+  smsSurvey       Boolean           @default(false)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  status          String            @default("BEKLIYOR")
+  doctor          User              @relation(fields: [doctorId], references: [id])
+  followUps       PatientFollowUp[]
+  patient         Patient           @relation(fields: [patientId], references: [id])
   waitlistEntries Waitlist[]
 
   @@index([doctorId])
@@ -633,6 +653,7 @@ model Examination {
 
 model Payment {
   id             String        @id @default(cuid())
+  requestKey     String?       @unique
   patientId      String?
   doctorId       String?
   method         PaymentMethod @default(NAKIT)
@@ -686,40 +707,40 @@ model AuditLog {
 }
 
 model Setting {
-  id                  String      @id @default(cuid())
-  institutionName     String
-  institutionAddress  String?
-  institutionPhone    String?
-  institutionWebsite  String?
-  openingTime         String      @default("08:30")
-  closingTime         String      @default("23:00")
-  appointmentDuration Int         @default(15)
-  holidayDays         String      @default("[]")
+  id                        String      @id @default(cuid())
+  institutionName           String
+  institutionAddress        String?
+  institutionPhone          String?
+  institutionWebsite        String?
+  openingTime               String      @default("08:30")
+  closingTime               String      @default("23:00")
+  appointmentDuration       Int         @default(15)
+  holidayDays               String      @default("[]")
   // Günlük özel çalışma saatleri: JSON array of {day:"pazartesi",open:"08:30",close:"17:00",lunchStart:"12:00",lunchEnd:"13:00",isHoliday:false}
-  dailySchedules      String      @default("[]")
+  dailySchedules            String      @default("[]")
   // Genel öğle arası (günlük override yoksa kullanılır)
-  lunchStart          String      @default("")
-  lunchEnd            String      @default("")
-  smsEnabled          Boolean     @default(true)
-  smsDefaultInfo      Boolean     @default(true)
-  smsDefaultReminder  Boolean     @default(false)
-  smsDefaultSurvey    Boolean     @default(false)
+  lunchStart                String      @default("")
+  lunchEnd                  String      @default("")
+  smsEnabled                Boolean     @default(true)
+  smsDefaultInfo            Boolean     @default(true)
+  smsDefaultReminder        Boolean     @default(false)
+  smsDefaultSurvey          Boolean     @default(false)
   // Hastanın taksit/ödeme vadesi yaklaştığında veya geciktiğinde otomatik SMS
   // gönderilsin mi (bkz. src/lib/patient-payment-reminders.ts). Varsayılan
   // kapalı: SMS kurumun kendi bakiyesinden düşer, bu yüzden bilinçli açılmalı.
-  paymentReminderSmsEnabled Boolean @default(false)
+  paymentReminderSmsEnabled Boolean     @default(false)
   // Ödeme hatırlatması vadeden kaç gün önce gönderilsin (klinik ayarlanabilir).
-  paymentReminderWindowDays Int     @default(3)
+  paymentReminderWindowDays Int         @default(3)
   // Değerlendirme (ANKET) SMS şablonunda {{surveyLink}} yer tutucusu için
   // kliniğin kendi belirlediği bağlantı (ör. Google yorum linki). Opsiyonel.
-  reviewLink          String?
+  reviewLink                String?
   // Doğum günü olan hastalara otomatik kutlama SMS'i (bkz. src/lib/birthday-reminders.ts).
-  birthdaySmsEnabled  Boolean     @default(false)
-  updatedAt           DateTime    @updatedAt
-  institutionId       String      @unique
-  activePriceList     String      @default("standard")
-  followUpCustomTypes String      @default("[]")
-  institution         Institution @relation(fields: [institutionId], references: [id])
+  birthdaySmsEnabled        Boolean     @default(false)
+  updatedAt                 DateTime    @updatedAt
+  institutionId             String      @unique
+  activePriceList           String      @default("standard")
+  followUpCustomTypes       String      @default("[]")
+  institution               Institution @relation(fields: [institutionId], references: [id])
 }
 
 // Kuruma özel randevu tedavi türleri ve renkleri (Ayarlar > Tedavi Türleri)
@@ -839,6 +860,7 @@ model TreatmentStep {
 
 model LabOrder {
   id        String            @id @default(cuid())
+  requestKey String?          @unique
   patientId String
   doctorId  String
   // labName tarihsel/gösterim amaçlı serbest metin olarak kalır; asıl ilişki
@@ -867,18 +889,18 @@ model LabOrder {
 }
 
 model LabTrip {
-  id           String    @id @default(cuid())
+  id           String            @id @default(cuid())
   labOrderId   String
   order        Int
   description  String
-  sentAt       DateTime  @default(now())
+  sentAt       DateTime          @default(now())
   expectedAt   DateTime?
   followUps    PatientFollowUp[]
   receivedAt   DateTime?
   sentNote     String?
   receivedNote String?
-  createdAt    DateTime  @default(now())
-  labOrder     LabOrder  @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
+  createdAt    DateTime          @default(now())
+  labOrder     LabOrder          @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
 
   @@unique([labOrderId, order])
   @@index([labOrderId])
@@ -887,6 +909,7 @@ model LabTrip {
 model LabOrderInvoice {
   id         String   @id @default(cuid())
   labOrderId String
+  requestKey String?  @unique
   item       String
   amount     Decimal  @db.Decimal(10, 2)
   invoiceNo  String?
@@ -973,20 +996,20 @@ model TaksitPlan {
 }
 
 model Taksit {
-  id            String              @id @default(cuid())
-  planId        String
-  siraNo        Int
-  vadeDate      DateTime
-  tutar         Decimal             @db.Decimal(10, 2)
-  odenen        Decimal             @default(0) @db.Decimal(10, 2)
-  kalan         Decimal             @db.Decimal(10, 2)
-  status        TaksitStatus        @default(BEKLIYOR)
-  note          String?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-  plan          TaksitPlan          @relation(fields: [planId], references: [id], onDelete: Cascade)
-  odemeler      TaksitOdeme[]
-  reminderLogs  TaksitReminderLog[]
+  id           String              @id @default(cuid())
+  planId       String
+  siraNo       Int
+  vadeDate     DateTime
+  tutar        Decimal             @db.Decimal(10, 2)
+  odenen       Decimal             @default(0) @db.Decimal(10, 2)
+  kalan        Decimal             @db.Decimal(10, 2)
+  status       TaksitStatus        @default(BEKLIYOR)
+  note         String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  plan         TaksitPlan          @relation(fields: [planId], references: [id], onDelete: Cascade)
+  odemeler     TaksitOdeme[]
+  reminderLogs TaksitReminderLog[]
 
   @@index([planId])
   @@index([vadeDate])
@@ -1015,13 +1038,13 @@ model TaksitOdeme {
 // saatlik taramada tekrar tekrar SMS gitmesin diye (bkz. InvoiceReminder ile
 // aynı desen, src/lib/patient-payment-reminders.ts).
 model TaksitReminderLog {
-  id        String   @id @default(cuid())
-  taksitId  String
-  sentTo    String
-  status    String
+  id          String   @id @default(cuid())
+  taksitId    String
+  sentTo      String
+  status      String
   errorDetail String?
-  sentAt    DateTime @default(now())
-  taksit    Taksit   @relation(fields: [taksitId], references: [id], onDelete: Cascade)
+  sentAt      DateTime @default(now())
+  taksit      Taksit   @relation(fields: [taksitId], references: [id], onDelete: Cascade)
 
   @@index([taksitId])
 }
@@ -1122,6 +1145,7 @@ model Firma {
   kontaktler        FirmaKontakt[]
   purchases         Purchase[]
   labOrders         LabOrder[]
+  paymentAllocations FirmaPaymentAllocation[]
 
   @@unique([institutionId, name])
   @@index([institutionId])
@@ -1132,6 +1156,7 @@ model Firma {
 model FirmaIslem {
   id         String         @id @default(cuid())
   firmaId    String
+  requestKey String?        @unique
   tarih      DateTime
   islemTipi  FirmaIslemTipi @default(ALIM)
   urunHizmet String?
@@ -1146,10 +1171,28 @@ model FirmaIslem {
   updatedAt  DateTime       @updatedAt
   firma      Firma          @relation(fields: [firmaId], references: [id])
   purchase   Purchase?
+  paymentAllocations FirmaPaymentAllocation[] @relation("FirmaPaymentMovement")
+  debtAllocations    FirmaPaymentAllocation[] @relation("FirmaDebtMovement")
 
   @@index([firmaId])
   @@index([tarih])
   @@index([dueDate])
+}
+
+model FirmaPaymentAllocation {
+  id              String     @id @default(cuid())
+  firmaId         String
+  paymentIslemId  String
+  debtIslemId     String
+  tutar           Decimal    @db.Decimal(10, 2)
+  createdAt       DateTime   @default(now())
+  firma           Firma      @relation(fields: [firmaId], references: [id], onDelete: Cascade)
+  paymentIslem    FirmaIslem @relation("FirmaPaymentMovement", fields: [paymentIslemId], references: [id], onDelete: Cascade)
+  debtIslem       FirmaIslem @relation("FirmaDebtMovement", fields: [debtIslemId], references: [id], onDelete: Cascade)
+
+  @@unique([paymentIslemId, debtIslemId])
+  @@index([firmaId])
+  @@index([debtIslemId])
 }
 
 model FirmaKontakt {
@@ -1177,8 +1220,12 @@ model Purchase {
   id            String         @id @default(cuid())
   institutionId String?
   firmaId       String
-  firmaIslemId  String         @unique
+  firmaIslemId  String?        @unique
+  requestKey    String?        @unique
+  receiptRequestKey String?     @unique
   tarih         DateTime
+  receiptStatus PurchaseReceiptStatus @default(TESLIM_ALINDI)
+  receivedAt    DateTime?
   faturaNo      String?
   aciklama      String?
   kdvOrani      Int            @default(0)
@@ -1188,7 +1235,7 @@ model Purchase {
   updatedAt     DateTime       @updatedAt
   institution   Institution?   @relation(fields: [institutionId], references: [id])
   firma         Firma          @relation(fields: [firmaId], references: [id])
-  firmaIslem    FirmaIslem     @relation(fields: [firmaIslemId], references: [id])
+  firmaIslem    FirmaIslem?    @relation(fields: [firmaIslemId], references: [id])
   createdBy     User?          @relation("PurchaseCreatedBy", fields: [createdById], references: [id])
   items         PurchaseItem[]
 
@@ -1355,6 +1402,11 @@ enum FirmaIslemTipi {
   ALIM
   HIZMET
   ODEME
+}
+
+enum PurchaseReceiptStatus {
+  SIPARIS_VERILDI
+  TESLIM_ALINDI
 }
 
 enum FirmaKategori {

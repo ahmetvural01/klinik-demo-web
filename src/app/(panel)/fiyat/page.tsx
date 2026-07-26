@@ -5,6 +5,7 @@ import { showToastSafe } from "@/lib/toast-client";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { confirmDialog } from "@/lib/confirm-client";
 
 type Price = { id: string; code: string; treatment: string; amount: number; isCustom: boolean; isTemplate?: boolean; catalogYear?: number };
 type PriceMeta = { activeCatalogYear: number; latestPublishedYear: number; updateAvailable: boolean; officialPdfUrl: string };
@@ -107,12 +108,20 @@ function PriceTable({ title, prices, isCustom, favorites, toggleFav, onEdit, onD
 }
 
 async function readJsonArray(response: Response) {
-	const text = response.ok ? await response.text() : "[]";
+	const text = await response.text();
+	if (!response.ok) {
+		let message = "Fiyat listesi yüklenemedi.";
+		try {
+			const body = text ? JSON.parse(text) : null;
+			if (body?.message) message = body.message;
+		} catch {}
+		throw new Error(message);
+	}
 	try {
 		const parsed = text ? JSON.parse(text) : [];
 		return Array.isArray(parsed) ? parsed : [];
 	} catch {
-		return [];
+		throw new Error("Fiyat listesi beklenmeyen bir biçimde döndü.");
 	}
 }
 
@@ -125,11 +134,14 @@ function FiyatManagement() {
 	const [editItem, setEditItem] = useState<Price | null>(null);
 	const [editAmount, setEditAmount] = useState("");
 	const [priceMeta, setPriceMeta] = useState<PriceMeta | null>(null);
+	const [loadError, setLoadError] = useState("");
 
 	const showToast = (type: "success" | "error", text: string) => {
 		showToastSafe({ message: text, type });
 	};
 
+	// Fiyat listesi ve kurum kapsamındaki etkin kaynak ilk açılışta bir kez yüklenir.
+	// eslint-disable-next-line react-hooks/exhaustive-deps
 	useEffect(() => {
 		const stored = window.localStorage.getItem(ACTIVE_PRICE_LIST_STORAGE_KEY);
 		if (stored === "standard" || stored === "custom") setActiveList(stored);
@@ -140,12 +152,15 @@ function FiyatManagement() {
 	const loadSettings = async () => {
 		try {
 			const res = await fetch("/api/settings", { cache: "no-store" });
-			const settings = res.ok ? await res.json() : null;
+			const settings = await res.json().catch(() => null);
+			if (!res.ok) throw new Error(settings?.message || "Fiyat listesi ayarı yüklenemedi.");
 			if (settings?.activePriceList === "standard" || settings?.activePriceList === "custom") {
 				setActiveList(settings.activePriceList);
 				window.localStorage.setItem(ACTIVE_PRICE_LIST_STORAGE_KEY, settings.activePriceList);
 			}
-		} catch {}
+		} catch (error) {
+			showToast("error", error instanceof Error ? error.message : "Fiyat listesi ayarı yüklenemedi.");
+		}
 	};
 
 	const changeActiveList = async (next: "standard" | "custom") => {
@@ -166,15 +181,17 @@ function FiyatManagement() {
 
 	const loadAll = async () => {
 		setLoading(true);
+		setLoadError("");
 		try {
 			const [stdRes, custRes, metaRes] = await Promise.all([fetch("/api/prices?type=standard"), fetch("/api/prices?type=custom"), fetch("/api/prices?meta=1")]);
 			const [std, cust] = await Promise.all([readJsonArray(stdRes), readJsonArray(custRes)]);
 			setStandardPrices(std as Price[]);
 			setCustomPrices(cust as Price[]);
-			if (metaRes.ok) setPriceMeta(await metaRes.json());
-		} catch {
-			setStandardPrices([]);
-			setCustomPrices([]);
+			const meta = await metaRes.json().catch(() => null);
+			if (!metaRes.ok) throw new Error(meta?.message || "Tarife bilgisi yüklenemedi.");
+			setPriceMeta(meta);
+		} catch (error) {
+			setLoadError(error instanceof Error ? error.message : "Fiyat listeleri yüklenemedi.");
 		} finally {
 			setLoading(false);
 		}
@@ -191,8 +208,22 @@ function FiyatManagement() {
 	};
 
 	const deletePrice = async (id: string) => {
-		await fetch("/api/prices/" + id, { method: "DELETE" });
-		void loadAll();
+		const confirmed = await confirmDialog({
+			title: "Özel fiyat silinsin mi?",
+			message: "Bu kayıt fiyat listesinden kaldırılacak. İşlem geri alınamaz.",
+			confirmText: "Fiyatı Sil",
+			danger: true,
+		});
+		if (!confirmed) return;
+		try {
+			const res = await fetch("/api/prices/" + id, { method: "DELETE" });
+			const data = await res.json().catch(() => null);
+			if (!res.ok) throw new Error(data?.message || "Fiyat silinemedi.");
+			showToast("success", "Fiyat silindi");
+			void loadAll();
+		} catch (error) {
+			showToast("error", error instanceof Error ? error.message : "Fiyat silinemedi.");
+		}
 	};
 
 	const saveEdit = async () => {
@@ -239,6 +270,14 @@ function FiyatManagement() {
 				TDB Tarifesi, Türk Dişhekimleri Birliği {priceMeta?.activeCatalogYear ?? 2026} rehber tarife değerleriyle gösterilir. Bu seçim kurum ayarıdır; hasta kartında tedavi ekleyen tüm personel aynı aktif listeyi görür.
 				{priceMeta?.updateAvailable && <span className="ml-1 font-bold">Yeni TDB {priceMeta.latestPublishedYear} listesi yayımlanmış görünüyor; katalog güncellemesi gerekli.</span>}
 			</div>
+			{loadError && (
+				<div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+					<span>{loadError}</span>
+					<Button variant="secondary" size="sm" onClick={() => void loadAll()}>
+						Yeniden Dene
+					</Button>
+				</div>
+			)}
 			{editItem && (
 				<div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
 					<div className="flex flex-wrap items-center gap-3">
@@ -251,9 +290,9 @@ function FiyatManagement() {
 				</div>
 			)}
 			{activeList === "standard" ? (
-				<PriceTable title="TDB Tarife Fiyatları" prices={standardPrices} isCustom={false} loading={loading} />
+				<PriceTable key="standard" title="TDB Tarife Fiyatları" prices={standardPrices} isCustom={false} loading={loading} />
 			) : (
-				<PriceTable title="Özel Fiyatlar" prices={customPrices} isCustom={true} favorites={favorites} toggleFav={toggleFav} onEdit={(p) => { setEditItem(p); setEditAmount(String(p.amount)); }} onDelete={deletePrice} onAdd={addCustom} loading={loading} />
+				<PriceTable key="custom" title="Özel Fiyatlar" prices={customPrices} isCustom={true} favorites={favorites} toggleFav={toggleFav} onEdit={(p) => { setEditItem(p); setEditAmount(String(p.amount)); }} onDelete={deletePrice} onAdd={addCustom} loading={loading} />
 			)}
 		</section>
 	);

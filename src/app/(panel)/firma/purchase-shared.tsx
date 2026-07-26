@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { confirmDialog } from "@/lib/confirm-client";
 import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
 
@@ -11,7 +11,9 @@ export type PurchaseItemRow = {
 };
 
 export type Purchase = {
-  id: string; firmaId: string; firmaIslemId: string; tarih: string;
+  id: string; firmaId: string; firmaIslemId?: string | null; tarih: string;
+  receiptStatus: "SIPARIS_VERILDI" | "TESLIM_ALINDI"; receivedAt?: string | null;
+  total?: number;
   faturaNo?: string | null; aciklama?: string | null; kdvOrani: number; status: string;
   firma?: { id: string; name: string };
   firmaIslem?: { tutar: number; dueDate?: string | null };
@@ -192,14 +194,27 @@ export function usePurchaseModals({
   const [purchaseFirmaQuery, setPurchaseFirmaQuery] = useState("");
   const [purchaseForm, setPurchaseForm] = useState({
     tarih: new Date().toISOString().split("T")[0], faturaNo: "", aciklama: "", kdvOrani: "0",
+    receiptStatus: "TESLIM_ALINDI" as "SIPARIS_VERILDI" | "TESLIM_ALINDI",
     paidNow: false, paymentDate: new Date().toISOString().split("T")[0], paymentMethod: "NAKIT", paymentAmount: "",
     items: [emptyLine()] as PurchaseLineForm[],
   });
   const [isSubmittingPurchase, setIsSubmittingPurchase] = useState(false);
+  const purchaseRequestKeyRef = useRef("");
 
   const [showPurchaseDetail, setShowPurchaseDetail] = useState(false);
   const [viewingPurchase, setViewingPurchase] = useState<Purchase | null>(null);
   const [purchaseDetailLoading, setPurchaseDetailLoading] = useState(false);
+  const [showReceivePurchase, setShowReceivePurchase] = useState(false);
+  const [receivingPurchase, setReceivingPurchase] = useState<Purchase | null>(null);
+  const [isReceivingPurchase, setIsReceivingPurchase] = useState(false);
+  const receiveRequestKeyRef = useRef("");
+  const [receiveForm, setReceiveForm] = useState({
+    receivedAt: new Date().toISOString().split("T")[0],
+    paidNow: false,
+    paymentDate: new Date().toISOString().split("T")[0],
+    paymentMethod: "NAKIT",
+    paymentAmount: "",
+  });
 
   const [showEditPurchase, setShowEditPurchase] = useState(false);
   const [editingPurchaseId, setEditingPurchaseId] = useState<string | null>(null);
@@ -211,6 +226,7 @@ export function usePurchaseModals({
 
   useEscapeClose(() => setShowAddPurchase(false), showAddPurchase);
   useEscapeClose(() => setShowPurchaseDetail(false), showPurchaseDetail);
+  useEscapeClose(() => setShowReceivePurchase(false), showReceivePurchase);
   useEscapeClose(() => setShowEditPurchase(false), showEditPurchase);
 
   const openAddPurchase = (firmaId?: string) => {
@@ -218,7 +234,19 @@ export function usePurchaseModals({
     setPurchaseFirmaId(firmaId || "");
     setPurchaseFirmaQuery(targetFirma?.name || "");
     const today = new Date().toISOString().split("T")[0];
-    setPurchaseForm({ tarih: today, faturaNo: "", aciklama: "", kdvOrani: "0", paidNow: false, paymentDate: today, paymentMethod: "NAKIT", paymentAmount: "", items: [emptyLine()] });
+    setPurchaseForm({
+      tarih: today,
+      faturaNo: "",
+      aciklama: "",
+      kdvOrani: "0",
+      receiptStatus: "TESLIM_ALINDI",
+      paidNow: false,
+      paymentDate: today,
+      paymentMethod: "NAKIT",
+      paymentAmount: "",
+      items: [emptyLine()],
+    });
+    purchaseRequestKeyRef.current = newLineKey();
     setShowAddPurchase(true);
   };
 
@@ -232,7 +260,7 @@ export function usePurchaseModals({
       if (line.unitPrice === "" || Number(line.unitPrice) < 0) { showToast("error", "Her satırda geçerli bir birim fiyat girin"); return; }
     }
     const total = purchaseTotal(items);
-    if (purchaseForm.paidNow) {
+    if (purchaseForm.receiptStatus === "TESLIM_ALINDI" && purchaseForm.paidNow) {
       const paidAmount = purchaseForm.paymentAmount === "" ? total : Number(purchaseForm.paymentAmount);
       if (!purchaseForm.paymentMethod) { showToast("error", "Ödeme yapıldıysa ödeme yöntemi seçin"); return; }
       if (!paidAmount || paidAmount <= 0) { showToast("error", "Geçerli bir ödeme tutarı girin"); return; }
@@ -240,17 +268,20 @@ export function usePurchaseModals({
     }
     if (isSubmittingPurchase) return;
     setIsSubmittingPurchase(true);
+    const requestKey = purchaseRequestKeyRef.current || newLineKey();
+    purchaseRequestKeyRef.current = requestKey;
     const r = await fetch("/api/purchases", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
       body: JSON.stringify({
         firmaId: purchaseFirmaId, tarih: purchaseForm.tarih,
+        receiptStatus: purchaseForm.receiptStatus,
         faturaNo: purchaseForm.faturaNo || null, aciklama: purchaseForm.aciklama || null,
         kdvOrani: Number(purchaseForm.kdvOrani),
-        paidNow: purchaseForm.paidNow,
-        paymentDate: purchaseForm.paidNow ? purchaseForm.paymentDate : null,
-        paymentMethod: purchaseForm.paidNow ? purchaseForm.paymentMethod : null,
-        paymentAmount: purchaseForm.paidNow ? (purchaseForm.paymentAmount === "" ? total : Number(purchaseForm.paymentAmount)) : null,
+        paidNow: purchaseForm.receiptStatus === "TESLIM_ALINDI" && purchaseForm.paidNow,
+        paymentDate: purchaseForm.receiptStatus === "TESLIM_ALINDI" && purchaseForm.paidNow ? purchaseForm.paymentDate : null,
+        paymentMethod: purchaseForm.receiptStatus === "TESLIM_ALINDI" && purchaseForm.paidNow ? purchaseForm.paymentMethod : null,
+        paymentAmount: purchaseForm.receiptStatus === "TESLIM_ALINDI" && purchaseForm.paidNow ? (purchaseForm.paymentAmount === "" ? total : Number(purchaseForm.paymentAmount)) : null,
         items: items.map(line => ({
           stockItemId: line.stockItemId || null,
           newProductName: line.stockItemId ? null : line.productQuery.trim(),
@@ -261,8 +292,16 @@ export function usePurchaseModals({
     });
     const data = await r.json().catch(() => ({}));
     if (r.ok) {
+      purchaseRequestKeyRef.current = "";
       setShowAddPurchase(false);
-      showToast("success", purchaseForm.paidNow ? "Satın alma kaydedildi; stok, cari ve ödeme gideri işlendi" : "Satın alma kaydedildi; stok ve firma borcu güncellendi");
+      showToast(
+        "success",
+        purchaseForm.receiptStatus === "SIPARIS_VERILDI"
+          ? "Sipariş kaydedildi; teslim alınana kadar stok ve firma bakiyesi değişmedi"
+          : purchaseForm.paidNow
+            ? "Teslim alınan ürünler stoğa, borç ve ödeme muhasebeye işlendi"
+            : "Teslim alınan ürünler stoğa ve firma borcuna işlendi",
+      );
       await onChanged(purchaseFirmaId);
     } else {
       showToast("error", data.error || "Satın alma kaydedilemedi");
@@ -278,6 +317,70 @@ export function usePurchaseModals({
     if (r.ok) setViewingPurchase(await r.json());
     else showToast("error", "Satın alma detayı yüklenemedi");
     setPurchaseDetailLoading(false);
+  };
+
+  const openReceivePurchase = (purchase: Purchase) => {
+    const today = new Date().toISOString().split("T")[0];
+    const total = (purchase.items || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
+    setReceivingPurchase(purchase);
+    setReceiveForm({
+      receivedAt: today,
+      paidNow: false,
+      paymentDate: today,
+      paymentMethod: "NAKIT",
+      paymentAmount: String(total),
+    });
+    receiveRequestKeyRef.current = newLineKey();
+    setShowReceivePurchase(true);
+  };
+
+  const submitReceivePurchase = async () => {
+    if (!receivingPurchase || isReceivingPurchase) return;
+    const total = (receivingPurchase.items || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
+    const amount = receiveForm.paymentAmount === "" ? total : Number(receiveForm.paymentAmount);
+    if (!receiveForm.receivedAt) { showToast("error", "Teslim tarihi zorunlu"); return; }
+    if (receiveForm.paidNow) {
+      if (!receiveForm.paymentMethod) { showToast("error", "Ödeme yöntemi zorunlu"); return; }
+      if (!amount || amount <= 0 || amount > total) {
+        showToast("error", "Ödeme tutarı 0'dan büyük ve sipariş toplamından küçük olmalı");
+        return;
+      }
+    }
+
+    setIsReceivingPurchase(true);
+    const requestKey = receiveRequestKeyRef.current || newLineKey();
+    receiveRequestKeyRef.current = requestKey;
+    try {
+      const response = await fetch(`/api/purchases/${receivingPurchase.id}/receive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
+        body: JSON.stringify({
+          receivedAt: receiveForm.receivedAt,
+          paidNow: receiveForm.paidNow,
+          paymentDate: receiveForm.paidNow ? receiveForm.paymentDate : null,
+          paymentMethod: receiveForm.paidNow ? receiveForm.paymentMethod : null,
+          paymentAmount: receiveForm.paidNow ? amount : null,
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(payload.error || "Sipariş teslim alınamadı");
+      setShowReceivePurchase(false);
+      setReceivingPurchase(null);
+      receiveRequestKeyRef.current = "";
+      setViewingPurchase(payload as Purchase);
+      showToast(
+        "success",
+        receiveForm.paidNow
+          ? "Sipariş teslim alındı; stok, firma borcu ve ödeme gideri işlendi"
+          : "Sipariş teslim alındı; stok ve firma borcu işlendi",
+      );
+      await onChanged(receivingPurchase.firmaId);
+      await openPurchaseDetail(receivingPurchase.id);
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Sipariş teslim alınamadı");
+    } finally {
+      setIsReceivingPurchase(false);
+    }
   };
 
   const openPurchaseEdit = async (purchaseId: string) => {
@@ -347,8 +450,42 @@ export function usePurchaseModals({
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" {...backdropClose(() => setShowAddPurchase(false))}>
           <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl space-y-4">
             <div>
-              <h3 className="text-xl font-black text-slate-900">Malzeme Alımı</h3>
-              <p className="mt-1 text-sm text-slate-500">Her satır ilgili stok kalemine otomatik giriş yapar; toplam tutar firma borcuna eklenir.</p>
+              <h3 className="text-xl font-black text-slate-900">Satın Alma Kaydı</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                Sipariş ile teslimatı ayırın; stok ve firma borcu yalnızca ürünler kliniğe ulaştığında oluşur.
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-1">
+              <div className="grid grid-cols-2 gap-1">
+                <button
+                  type="button"
+                  onClick={() => setPurchaseForm(f => ({ ...f, receiptStatus: "TESLIM_ALINDI" }))}
+                  className={`rounded-lg px-3 py-2.5 text-sm font-bold transition ${
+                    purchaseForm.receiptStatus === "TESLIM_ALINDI"
+                      ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Ürünler Teslim Alındı
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPurchaseForm(f => ({ ...f, receiptStatus: "SIPARIS_VERILDI", paidNow: false }))}
+                  className={`rounded-lg px-3 py-2.5 text-sm font-bold transition ${
+                    purchaseForm.receiptStatus === "SIPARIS_VERILDI"
+                      ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200"
+                      : "text-slate-500 hover:text-slate-800"
+                  }`}
+                >
+                  Sadece Sipariş Verildi
+                </button>
+              </div>
+              <p className="px-3 pb-2 pt-1.5 text-xs text-slate-500">
+                {purchaseForm.receiptStatus === "TESLIM_ALINDI"
+                  ? "Kayıtla birlikte stok girişi ve firma borcu oluşur."
+                  : "Ürünler stokta görünmez, firma borcu ve gider oluşmaz. Teslimatta tek adımla işlenir."}
+              </p>
             </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -400,7 +537,8 @@ export function usePurchaseModals({
               stockItems={stockItems}
             />
 
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+            {purchaseForm.receiptStatus === "TESLIM_ALINDI" && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <h4 className="text-sm font-black text-slate-900">Ödeme Durumu</h4>
@@ -452,13 +590,18 @@ export function usePurchaseModals({
                 </div>
               )}
             </div>
+            )}
 
             <div className="flex gap-2 pt-1">
               <button onClick={() => setShowAddPurchase(false)}
                 className={`${modalAction} border border-slate-200 text-slate-700 hover:bg-slate-50`}>Vazgeç</button>
               <button onClick={submitPurchase} disabled={isSubmittingPurchase}
                 className={`${modalAction} bg-red-600 text-white hover:bg-red-700 disabled:opacity-60`}>
-                {isSubmittingPurchase ? "Kaydediliyor..." : "Satın Almayı Kaydet"}
+                {isSubmittingPurchase
+                  ? "Kaydediliyor..."
+                  : purchaseForm.receiptStatus === "SIPARIS_VERILDI"
+                    ? "Siparişi Kaydet"
+                    : "Satın Almayı Kaydet"}
               </button>
             </div>
           </div>
@@ -483,6 +626,25 @@ export function usePurchaseModals({
                   </p>
                   {viewingPurchase.aciklama && <p className="mt-1 text-sm italic text-slate-500">{viewingPurchase.aciklama}</p>}
                 </div>
+                {viewingPurchase.receiptStatus === "SIPARIS_VERILDI" ? (
+                  <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+                    <div>
+                      <p className="text-sm font-black text-amber-900">Teslimat bekleniyor</p>
+                      <p className="mt-0.5 text-xs text-amber-700">Stok ve firma borcu henüz oluşmadı.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => openReceivePurchase(viewingPurchase)}
+                      className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-bold text-white hover:bg-amber-700"
+                    >
+                      Teslim Al
+                    </button>
+                  </div>
+                ) : (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-800">
+                    Teslim alındı{viewingPurchase.receivedAt ? ` · ${fmtDate(viewingPurchase.receivedAt)}` : ""}
+                  </div>
+                )}
                 {viewingPurchase.paymentSummary && (
                   <div className="grid grid-cols-3 gap-2 rounded-xl border border-slate-100 bg-slate-50 p-2">
                     <div className="rounded-lg bg-white px-3 py-2">
@@ -524,7 +686,12 @@ export function usePurchaseModals({
                   </table>
                 </div>
                 <div className="flex justify-end">
-                  <p className="text-lg font-black text-slate-900">Toplam: {fmt(Number(viewingPurchase.firmaIslem?.tutar || 0))}</p>
+                  <p className="text-lg font-black text-slate-900">
+                    Toplam: {fmt(Number(
+                      viewingPurchase.firmaIslem?.tutar
+                      || (viewingPurchase.items || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0),
+                    ))}
+                  </p>
                 </div>
                 <div className="flex justify-end">
                   <button onClick={() => setShowPurchaseDetail(false)}
@@ -532,6 +699,87 @@ export function usePurchaseModals({
                 </div>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Siparişi Teslim Al */}
+      {showReceivePurchase && receivingPurchase && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-4" {...backdropClose(() => setShowReceivePurchase(false))}>
+          <div className="w-full max-w-xl space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
+            <div>
+              <h3 className="text-xl font-black text-slate-900">Siparişi Teslim Al</h3>
+              <p className="mt-1 text-sm text-slate-500">
+                {receivingPurchase.firma?.name} · {(receivingPurchase.items || []).length} kalem ·{" "}
+                {fmt((receivingPurchase.items || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0))}
+              </p>
+            </div>
+
+            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+              Onaylandığında ürünler stoğa girer ve toplam tutar firma borcuna eklenir.
+            </div>
+
+            <div>
+              <label className={formLabel}>Teslim Tarihi *</label>
+              <input
+                type="date"
+                value={receiveForm.receivedAt}
+                onChange={event => setReceiveForm(form => ({ ...form, receivedAt: event.target.value }))}
+                className={formInput}
+              />
+            </div>
+
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-black text-slate-900">Ödeme</p>
+                  <p className="mt-0.5 text-xs text-slate-500">Ödeme yapılmadıysa yalnızca firma borcu oluşur.</p>
+                </div>
+                <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1">
+                  <button
+                    type="button"
+                    onClick={() => setReceiveForm(form => ({ ...form, paidNow: false }))}
+                    className={`rounded-md px-3 py-1.5 text-xs font-bold ${!receiveForm.paidNow ? "bg-slate-900 text-white" : "text-slate-600"}`}
+                  >
+                    Ödenmedi
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setReceiveForm(form => ({ ...form, paidNow: true }))}
+                    className={`rounded-md px-3 py-1.5 text-xs font-bold ${receiveForm.paidNow ? "bg-emerald-600 text-white" : "text-slate-600"}`}
+                  >
+                    Ödendi
+                  </button>
+                </div>
+              </div>
+              {receiveForm.paidNow && (
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-500">Ödeme Tarihi</label>
+                    <input type="date" value={receiveForm.paymentDate} onChange={event => setReceiveForm(form => ({ ...form, paymentDate: event.target.value }))} className={formInput} />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-500">Yöntem *</label>
+                    <select value={receiveForm.paymentMethod} onChange={event => setReceiveForm(form => ({ ...form, paymentMethod: event.target.value }))} className={formInput}>
+                      {PAYMENT_METHODS.map(method => <option key={method.value} value={method.value}>{method.label}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-500">Tutar *</label>
+                    <input type="number" min="0" step="0.01" value={receiveForm.paymentAmount} onChange={event => setReceiveForm(form => ({ ...form, paymentAmount: event.target.value }))} className={formInput} />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex gap-2">
+              <button onClick={() => setShowReceivePurchase(false)} className={`${modalAction} border border-slate-200 text-slate-700 hover:bg-slate-50`}>
+                Vazgeç
+              </button>
+              <button onClick={submitReceivePurchase} disabled={isReceivingPurchase} className={`${modalAction} bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50`}>
+                {isReceivingPurchase ? "İşleniyor..." : "Teslimatı Onayla"}
+              </button>
+            </div>
           </div>
         </div>
       )}

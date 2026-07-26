@@ -23,6 +23,8 @@ export async function getSmtpTransporter() {
         user: config.username,
         pass: config.password,
       },
+      disableFileAccess: true,
+      disableUrlAccess: true,
     }),
     from: `"${config.fromName}" <${config.fromEmail}>`,
   };

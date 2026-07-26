@@ -3,9 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { patientFollowUpUpdateSchema } from "@/lib/validators";
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
-export async function PUT(request: NextRequest, { params }: Params) {
+export async function PUT(request: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
 
@@ -69,7 +70,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
   return NextResponse.json(updated);
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(_: NextRequest, props: Params) {
+  const params = await props.params;
   const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
 

@@ -6,7 +6,8 @@ import { sendSms } from "@/lib/sms";
 import { turkeyDayRangeUtc } from "@/lib/tz";
 import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
-import { getDailySchedules, checkWithinWorkingHours } from "@/lib/working-hours";
+import { getDailySchedules, checkWorkingHoursInterval } from "@/lib/working-hours";
+import { checkDoctorWorkingHoursInterval } from "@/lib/working-hours-core";
 import { resolveSmsTemplate } from "@/lib/sms-templates";
 
 const APPT_REMINDER_PREFIX = "[APPT_REMINDER]";
@@ -127,14 +128,20 @@ async function isDoctorVisibleManager(userId: string) {
 async function isEligibleAppointmentDoctor(doctorId: string, institutionId?: string | null) {
   const doctor = await prisma.user.findUnique({
     where: { id: doctorId },
-    select: { isActive: true, role: true, institutionId: true, profile: { select: { hideAsDoctor: true } } },
+    select: {
+      isActive: true,
+      role: true,
+      institutionId: true,
+      fullName: true,
+      profile: { select: { hideAsDoctor: true, workStart: true, workEnd: true } },
+    },
   });
 
-  if (!doctor || !doctor.isActive) return false;
-  if (institutionId && doctor.institutionId !== institutionId) return false;
-  if (["DOKTOR", "SUPERADMIN", "ADMIN"].includes(doctor.role)) return true;
-  if (doctor.role === "YONETICI") return !Boolean(doctor.profile?.hideAsDoctor);
-  return false;
+  if (!doctor || !doctor.isActive) return null;
+  if (institutionId && doctor.institutionId !== institutionId) return null;
+  if (["DOKTOR", "SUPERADMIN", "ADMIN"].includes(doctor.role)) return doctor;
+  if (doctor.role === "YONETICI" && !doctor.profile?.hideAsDoctor) return doctor;
+  return null;
 }
 
 function canCreateAppointment(role: string) {
@@ -221,7 +228,7 @@ export async function POST(request: NextRequest) {
 
   const eligibleDoctor = await isEligibleAppointmentDoctor(parsed.data.doctorId, auth.user.institutionId);
   if (!eligibleDoctor) {
-    return NextResponse.json({ message: "Secilen personel randevu doktoru olarak kullanilamaz." }, { status: 400 });
+    return NextResponse.json({ message: "Seçilen personel randevu doktoru olarak kullanılamaz." }, { status: 400 });
   }
 
   if (auth.user.institutionId) {
@@ -230,7 +237,7 @@ export async function POST(request: NextRequest) {
       select: { id: true },
     });
     if (!patient) {
-      return NextResponse.json({ message: "Hasta kurum kapsamı disinda" }, { status: 403 });
+      return NextResponse.json({ message: "Hasta kurum kapsamı dışında." }, { status: 403 });
     }
   }
 
@@ -239,14 +246,27 @@ export async function POST(request: NextRequest) {
 
   // Başlangıç / bitiş mantık kontrolü
   if (startAt >= endAt) {
-    return NextResponse.json({ message: "Başlangıç saati bitiş saatinden önce olmalıdır" }, { status: 400 });
+    return NextResponse.json({ message: "Başlangıç saati bitiş saatinden önce olmalıdır." }, { status: 400 });
+  }
+  if (startAt.getTime() <= Date.now()) {
+    return NextResponse.json({ message: "Geçmiş bir tarih veya saate yeni randevu oluşturulamaz." }, { status: 400 });
   }
 
   // ── Çalışma saatleri / tatil günü kontrolü ──────────────────────────────
   const dailySchedules = await getDailySchedules(auth.user.institutionId);
-  const workingHoursError = checkWithinWorkingHours(startAt, dailySchedules);
+  const workingHoursError = checkWorkingHoursInterval(startAt, endAt, dailySchedules);
   if (workingHoursError) {
     return NextResponse.json({ message: workingHoursError }, { status: 400 });
+  }
+  const doctorHoursError = checkDoctorWorkingHoursInterval(
+    startAt,
+    endAt,
+    eligibleDoctor.profile?.workStart,
+    eligibleDoctor.profile?.workEnd,
+    eligibleDoctor.fullName
+  );
+  if (doctorHoursError) {
+    return NextResponse.json({ message: doctorHoursError }, { status: 400 });
   }
 
   // ── Doktor çakışma kontrolü ─────────────────────────────────────────────
@@ -279,7 +299,7 @@ export async function POST(request: NextRequest) {
   const blockConflict = await findDoctorBlockConflict(parsed.data.doctorId, startAt, endAt);
   if (blockConflict) {
     return NextResponse.json({
-      message: `Doktor bu saatte bloke edilmiş (${blockConflict.startTime}–${blockConflict.endTime}${blockConflict.reason ? `: ${blockConflict.reason}` : ""})`,
+      message: `Doktorun bu saat aralığı kapalıdır (${blockConflict.startTime}–${blockConflict.endTime}${blockConflict.reason ? `: ${blockConflict.reason}` : ""})`,
     }, { status: 409 });
   }
 

@@ -177,6 +177,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Gerekli alanlar eksik" }, { status: 400 });
     }
 
+    // Mantıksız/negatif değerler sessizce negatif bakiyeli taksitlere yol
+    // açmasın diye burada da (istemcinin yanı sıra) doğrulanıyor.
+    const toplamBorcNum = Number(toplamBorc);
+    const pesnatNum = Number(pesnat) || 0;
+    if (!Number.isFinite(toplamBorcNum) || toplamBorcNum <= 0) {
+      return NextResponse.json({ error: "Toplam borç pozitif bir sayı olmalıdır" }, { status: 400 });
+    }
+    if (!Number.isFinite(pesnatNum) || pesnatNum < 0) {
+      return NextResponse.json({ error: "Peşinat negatif olamaz" }, { status: 400 });
+    }
+    if (pesnatNum > toplamBorcNum) {
+      return NextResponse.json({ error: "Peşinat toplam borçtan büyük olamaz" }, { status: 400 });
+    }
+    if (!customTaksitler?.length) {
+      const taksitSayisiNum = Number(taksitSayisi);
+      if (!Number.isInteger(taksitSayisiNum) || taksitSayisiNum < 1) {
+        return NextResponse.json({ error: "Taksit sayısı en az 1 olmalıdır" }, { status: 400 });
+      }
+    }
+
     if (user.role !== "SUPERADMIN") {
       const [patient, doctor] = await Promise.all([
         (prisma as any).patient.findFirst({

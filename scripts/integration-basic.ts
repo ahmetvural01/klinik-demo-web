@@ -14,7 +14,7 @@ async function main() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       institution: process.env.INTEGRATION_INSTITUTION || "whitedental",
-      identityNo: process.env.INTEGRATION_IDENTITY || "11509380760",
+      identityNo: process.env.INTEGRATION_IDENTITY || "90000000001",
       password: process.env.INTEGRATION_PASSWORD || "10711453",
     }),
   });

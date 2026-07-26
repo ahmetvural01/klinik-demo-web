@@ -3,6 +3,7 @@ import {
   reverseFirmaIslemIntegration,
   type IntegrationSummary,
 } from "@/lib/firma-integration";
+import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
 
 type TxClient = any;
 export const LAB_SOURCE_PREFIX = "[SISTEM:LAB_FATURA:";
@@ -54,8 +55,19 @@ async function findOrCreateLabFirma(tx: TxClient, labName: string, institutionId
   // firmaId zaten biliniyorsa (LabOrder.firmaId) doğrudan onu kullan — isimle
   // yeniden arama yapmaya, dolayısıyla yanlış eşleşme/çakışma riskine gerek yok.
   if (firmaId) {
-    const byId = await tx.firma.findUnique({ where: { id: firmaId }, select: LAB_FIRMA_SELECT });
-    if (byId) return { firma: byId, created: false };
+    const byId = await tx.firma.findFirst({
+      where: {
+        id: firmaId,
+        isActive: true,
+        kategori: "LAB",
+        ...(institutionId ? { institutionId } : {}),
+      },
+      select: LAB_FIRMA_SELECT,
+    });
+    if (!byId) {
+      throw new Error("Laboratuvar firması bulunamadı veya kurumla eşleşmiyor");
+    }
+    return { firma: byId, created: false };
   }
 
   const name = labName.trim();
@@ -173,6 +185,7 @@ export async function applyLabInvoiceFirmaIntegration(input: LabFirmaInput): Pro
       kdvOrani: Number(islem.kdvOrani),
     },
   });
+  await rebuildFirmaPaymentAllocations(input.tx, firma.id);
 
   return {
     firmaId: firma.id,

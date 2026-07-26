@@ -43,7 +43,7 @@ export function DemoRequestForm() {
 
   if (demo) {
     return (
-      <div className="rounded-2xl border border-white/20 bg-white p-5 text-slate-900 shadow-2xl">
+      <div className="rounded-lg border border-slate-200 bg-white p-5 text-slate-900 shadow-xl">
         <p className="text-xs font-bold uppercase text-emerald-600">Demo erişimi hazır</p>
         <h4 className="mt-2 text-xl font-black">Size özel demo kurumu oluşturuldu.</h4>
         <div className="mt-4 space-y-2 rounded-xl bg-slate-50 p-4 text-sm">
@@ -63,7 +63,7 @@ export function DemoRequestForm() {
   }
 
   return (
-    <form onSubmit={submit} className="rounded-2xl border border-white/20 bg-white p-5 text-slate-900 shadow-2xl">
+    <form onSubmit={submit} className="rounded-lg border border-slate-200 bg-white p-5 text-slate-900 shadow-xl">
       <p className="text-xs font-bold uppercase text-cyan-600">Demo talep formu</p>
       <div className="mt-4 grid gap-3">
         <input

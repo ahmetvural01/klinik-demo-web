@@ -6,6 +6,20 @@ import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 
 export const dynamic = "force-dynamic";
 
+function toPublicOrder(order: any) {
+  if (!order) return order;
+  const { requestKey: _requestKey, ...publicOrder } = order;
+  return {
+    ...publicOrder,
+    invoices: Array.isArray(publicOrder.invoices)
+      ? publicOrder.invoices.map((invoice: any) => {
+          const { requestKey: _invoiceRequestKey, ...publicInvoice } = invoice;
+          return publicInvoice;
+        })
+      : publicOrder.invoices,
+  };
+}
+
 export const GET = withApiTiming("lab-orders", async function GET(req: NextRequest) {
   const auth = await requireAuth("lab:read");
   if (auth.error) return auth.error;
@@ -57,13 +71,17 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
     });
   } catch (error) {
     console.error("[lab-orders GET] fallback:", error);
-    orders = [];
+    return NextResponse.json(
+      { message: "Laboratuvar işleri yüklenemedi. Lütfen sistem yöneticinize bildiriniz." },
+      { status: 503 },
+    );
   }
 
   const hidePhone = shouldHidePatientPhone(user.role);
+  const publicOrders = orders.map(toPublicOrder);
   const masked = hidePhone
-    ? orders.map((o: any) => ({ ...o, patient: o.patient ? { ...o.patient, phone: "***" } : o.patient }))
-    : orders;
+    ? publicOrders.map((o: any) => ({ ...o, patient: o.patient ? { ...o.patient, phone: "***" } : o.patient }))
+    : publicOrders;
 
   return NextResponse.json(masked);
 });
@@ -72,12 +90,13 @@ export async function POST(req: NextRequest) {
   const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
   const user = auth.user;
+  const requestKey = req.headers.get("Idempotency-Key")?.trim().slice(0, 180) || null;
 
   const body = await req.json();
   const { patientId, doctorId, labName, labType, teeth, notes, price, invoiceNo, firstTrip, firstInvoice } = body;
 
   if (!patientId || !doctorId || !labName || !labType) {
-    return NextResponse.json({ error: "Zorunlu alanlar eksik" }, { status: 400 });
+    return NextResponse.json({ error: "Hasta, doktor, laboratuvar ve iş türü zorunludur." }, { status: 400 });
   }
 
   const labFirma = await prisma.firma.findFirst({
@@ -97,6 +116,24 @@ export async function POST(req: NextRequest) {
   }
   const normalizedLabName = labFirma.name;
 
+  if (requestKey) {
+    const existingOrder = await (prisma as any).labOrder.findFirst({
+      where: {
+        requestKey,
+        ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
+      },
+      include: {
+        invoices: { orderBy: { issuedAt: "asc" } },
+        patient: { select: { id: true, fullName: true, phone: true } },
+        doctor: { select: { id: true, fullName: true } },
+        trips: { orderBy: { order: "asc" } },
+      },
+    });
+    if (existingOrder) {
+      return NextResponse.json({ ...toPublicOrder(existingOrder), duplicateRequest: true }, { status: 200 });
+    }
+  }
+
   if (auth.user.institutionId) {
     const [patient, doctor] = await Promise.all([
       prisma.patient.findFirst({
@@ -110,7 +147,7 @@ export async function POST(req: NextRequest) {
     ]);
     const eligibleDoctor = doctor && (doctor.role === "DOKTOR" || (doctor.role === "YONETICI" && doctor.profile?.hideAsDoctor === false));
     if (!patient || !eligibleDoctor) {
-      return NextResponse.json({ error: "Hasta veya doktor kurum kapsamı disinda" }, { status: 403 });
+      return NextResponse.json({ error: "Hasta veya doktor bu kuruma bağlı değil." }, { status: 403 });
     }
   }
 
@@ -120,6 +157,7 @@ export async function POST(req: NextRequest) {
     const result = await (prisma as any).$transaction(async (tx: any) => {
       const createdOrder = await tx.labOrder.create({
         data: {
+          requestKey,
           patientId,
           doctorId,
           labName: normalizedLabName,
@@ -131,6 +169,7 @@ export async function POST(req: NextRequest) {
           invoiceNo: invoiceNo || firstInvoice?.invoiceNo || null,
           invoices: firstInvoice?.item && firstInvoice?.amount ? {
             create: [{
+              requestKey: requestKey ? `${requestKey}:invoice` : null,
               item: firstInvoice.item,
               amount: Number(firstInvoice.amount),
               invoiceNo: firstInvoice.invoiceNo || null,
@@ -139,6 +178,7 @@ export async function POST(req: NextRequest) {
             }],
           } : price ? {
             create: [{
+              requestKey: requestKey ? `${requestKey}:invoice` : null,
               item: labType,
               amount: Number(price),
               invoiceNo: invoiceNo || null,
@@ -190,11 +230,34 @@ export async function POST(req: NextRequest) {
     order = result.order;
     firmaIntegration = result.firmaIntegration;
   } catch (error) {
+    if (
+      requestKey
+      && error
+      && typeof error === "object"
+      && "code" in error
+      && (error as { code?: string }).code === "P2002"
+    ) {
+      const existingOrder = await (prisma as any).labOrder.findFirst({
+        where: {
+          requestKey,
+          ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
+        },
+        include: {
+          invoices: { orderBy: { issuedAt: "asc" } },
+          patient: { select: { id: true, fullName: true, phone: true } },
+          doctor: { select: { id: true, fullName: true } },
+          trips: { orderBy: { order: "asc" } },
+        },
+      });
+      if (existingOrder) {
+        return NextResponse.json({ ...toPublicOrder(existingOrder), duplicateRequest: true }, { status: 200 });
+      }
+    }
     console.error("[lab-orders POST] fallback:", error);
     return NextResponse.json({ error: "Laboratuvar kaydı oluşturulamadı" }, { status: 503 });
   }
 
   await writeAudit(auth.user.id, "LAB_ORDER_CREATE", `${normalizedLabName} (${labType}) laboratuvar siparişi oluşturuldu`);
   await bumpRealtimeInstitution(auth.user.institutionId || null);
-  return NextResponse.json({ ...order, firmaIntegration }, { status: 201 });
+  return NextResponse.json({ ...toPublicOrder(order), firmaIntegration }, { status: 201 });
 }

@@ -9,7 +9,7 @@ export async function GET(request: NextRequest) {
     if (auth.error) return auth.error;
 
     if (!auth.user.institutionId) {
-      return NextResponse.json({ message: "Kurum baglantisi bulunamadi" }, { status: 403 });
+      return NextResponse.json({ message: "Kurum bağlantısı bulunamadı." }, { status: 403 });
     }
 
     const sp = request.nextUrl.searchParams;
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
-    return NextResponse.json({ message: "Kurum baglantisi bulunamadi" }, { status: 403 });
+    return NextResponse.json({ message: "Kurum bağlantısı bulunamadı." }, { status: 403 });
   }
 
   const body = await request.json();
@@ -76,7 +76,7 @@ export async function POST(request: NextRequest) {
       select: { id: true },
     });
     if (assignees.length !== requestedAssignees.length) {
-      return NextResponse.json({ message: "Atanan personellerden bazi kayitlar kurumda bulunamadi" }, { status: 400 });
+      return NextResponse.json({ message: "Atanan personellerden bazıları kurumda bulunamadı." }, { status: 400 });
     }
   }
 

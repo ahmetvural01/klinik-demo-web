@@ -65,7 +65,7 @@ async function sendViaNetgsm(
     return {
       success: false,
       providerRaw: "CONFIG_ERROR",
-      error: "NETGSM ayarlari eksik. Kullanici adi, sifre ve gonderen (baslik) zorunludur.",
+      error: "Netgsm ayarları eksik. Kullanıcı adı, şifre ve gönderici başlığı zorunludur.",
       providerCode: provider?.code || "NETGSM",
     };
   }
@@ -115,7 +115,7 @@ async function sendViaTwilio(provider: ProviderConfig, phone: string, message: s
     return {
       success: false,
       providerRaw: "TWILIO_CONFIG_ERROR",
-      error: "Twilio icin username(Account SID), password/apiKey(Auth Token) ve sender(From) zorunlu.",
+      error: "Twilio için Account SID, Auth Token ve gönderici numarası zorunludur.",
       providerCode: provider.code,
     };
   }
@@ -222,7 +222,7 @@ async function sendWithCustomProvider(provider: ProviderConfig, phone: string, m
     return {
       success: ok,
       providerRaw: raw,
-      error: ok ? undefined : `Basari paterni bulunamadi: ${provider.successPattern}`,
+      error: ok ? undefined : `Başarılı yanıt ölçütü bulunamadı: ${provider.successPattern}`,
       providerCode: provider.code,
     };
   }
@@ -292,7 +292,7 @@ export async function testProviderSend(providerId: string, phoneRaw: string, mes
     return {
       success: false,
       providerRaw: "PROVIDER_NOT_FOUND",
-      error: "Saglayici bulunamadi",
+      error: "SMS sağlayıcısı bulunamadı.",
     } as SmsSendResult;
   }
 
@@ -330,7 +330,7 @@ async function getProviderBalanceInternal(provider: ProviderConfig): Promise<Sms
     const url = provider.balanceUrl || "https://api.netgsm.com.tr/balance/list/xml";
 
     if (!usercode || !password) {
-      return { success: false, raw: "", error: "Kullanici/sifre eksik" };
+      return { success: false, raw: "", error: "Kullanıcı adı veya şifre eksik." };
     }
 
     const params = new URLSearchParams({ usercode, password });
@@ -407,7 +407,7 @@ async function getProviderBalanceInternal(provider: ProviderConfig): Promise<Sms
 export async function testProviderBalance(providerId: string) {
   const provider = await prisma.smsProviderConfig.findUnique({ where: { id: providerId } });
   if (!provider) {
-    return { success: false, raw: "", error: "Saglayici bulunamadi" } as SmsBalanceResult;
+    return { success: false, raw: "", error: "SMS sağlayıcısı bulunamadı." } as SmsBalanceResult;
   }
   return getProviderBalanceInternal(provider);
 }
@@ -439,7 +439,7 @@ export async function sendSms(phoneRaw: string, message: string): Promise<SmsSen
     return {
       success: false,
       providerRaw: errors.join(" | "),
-      error: "Tum aktif saglayicilarla gonderim basarisiz",
+      error: "Tüm etkin SMS sağlayıcılarıyla gönderim başarısız oldu.",
     };
   }
 

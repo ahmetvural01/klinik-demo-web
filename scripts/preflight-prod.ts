@@ -1,5 +1,9 @@
 /* eslint-disable no-console */
+import { loadEnvConfig } from "@next/env";
+
 export {};
+
+loadEnvConfig(process.cwd());
 
 const requiredEnv = ["DATABASE_URL", "JWT_SECRET", "APP_URL", "FIELD_ENCRYPTION_KEY"] as const;
 
@@ -26,17 +30,21 @@ async function main() {
     process.exit(1);
   }
 
-  // ecosystem.config.cjs artık web app'i PM2 cluster modda (birden fazla worker)
-  // çalıştırıyor. Redis olmadan her worker'ın gerçek zamanlı (SSE) durumu
-  // birbirinden habersiz kalır — sessizce bozuk bildirim davranışına yol
-  // açmaması için burada sert bir hata olarak kesiyoruz (bkz. src/lib/realtime-bus.ts).
-  if (!process.env.REDIS_URL) {
+  // Render tek web süreciyle `start:render` çalıştırır; bu durumda süreç içi
+  // event bus yeterlidir. PM2/başka bir altyapıda birden fazla web worker
+  // açılırsa SSE olaylarını paylaşmak için Redis zorunlu olur.
+  const webConcurrency = Math.max(1, Number(process.env.WEB_CONCURRENCY || "1"));
+  const sharedRealtimeRequired =
+    webConcurrency > 1 || process.env.REQUIRE_SHARED_REALTIME === "true";
+  if (sharedRealtimeRequired && !process.env.REDIS_URL) {
     console.error(
-      "REDIS_URL tanimli degil. ecosystem.config.cjs web app'i cluster modda (2 worker) calistiriyor; " +
-      "Redis olmadan worker'lar arasi gerçek zamanli bildirimler tutarsiz calisir. " +
-      "REDIS_URL'i tanimlayin veya ecosystem.config.cjs'de instances/exec_mode'u tek worker'a dusurun."
+      `REDIS_URL tanimli degil. WEB_CONCURRENCY=${webConcurrency}; ` +
+      "birden fazla web worker arasinda gerçek zamanli bildirimleri paylaşmak için Redis zorunludur."
     );
     process.exit(1);
+  }
+  if (!process.env.REDIS_URL) {
+    console.warn("REDIS_URL tanimli degil; tek web worker için süreç içi gerçek zamanli bildirim kullaniliyor.");
   }
 
   const baseUrl = process.env.PREFLIGHT_BASE_URL || process.env.APP_URL || "http://localhost:3000";

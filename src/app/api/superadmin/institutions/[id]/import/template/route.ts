@@ -5,7 +5,8 @@ import { buildImportWorkbook } from "@/lib/patient-import";
 
 // GET /api/superadmin/institutions/[id]/import/template
 // Bu kurumun mevcut doktor listesiyle önceden doldurulmuş bir Excel şablonu üretir.
-export async function GET(_req: NextRequest, { params }: { params: { id: string } }) {
+export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  const params = await props.params;
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });

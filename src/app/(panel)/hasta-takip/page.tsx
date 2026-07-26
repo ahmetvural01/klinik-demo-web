@@ -359,6 +359,7 @@ export default function HastaTakipPage() {
   const [followFilter, setFollowFilter] = useState<"TUMU" | "GELMEDI" | "GERI_ARA" | "ULASILAMADI" | "DONUS_BEKLENIYOR" | "DIGER">("TUMU");
   const [followTypeQuery, setFollowTypeQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"TUMU" | "ACIK" | "KAPALI">("ACIK");
+  const [onlyOverdue, setOnlyOverdue] = useState(false);
   const [doctorFilter, setDoctorFilter] = useState("");
   const [showManualCreate, setShowManualCreate] = useState(false);
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -391,6 +392,7 @@ export default function HastaTakipPage() {
     return toIsoInputValue(d);
   });
   const [manualNote, setManualNote] = useState("");
+  const [closeNote, setCloseNote] = useState("");
   const [creatingManual, setCreatingManual] = useState(false);
   const [activeHistoryFollowUpId, setActiveHistoryFollowUpId] = useState("");
   const [followUpEvents, setFollowUpEvents] = useState<FollowUpEvent[]>([]);
@@ -568,24 +570,7 @@ export default function HastaTakipPage() {
         if (!res.ok) throw new Error(body?.message || "Takip tipleri yüklenemedi.");
         const serverTypes = normalizeCustomTypes(Array.isArray(body?.types) ? body.types : []);
         if (cancelled) return;
-
-        let legacyTypes: string[] = [];
-        if (typeof window !== "undefined") {
-          try {
-            const raw = localStorage.getItem("hasta-takip-custom-types");
-            const parsed = raw ? JSON.parse(raw) : [];
-            legacyTypes = normalizeCustomTypes(Array.isArray(parsed) ? parsed : []);
-          } catch {
-            legacyTypes = [];
-          }
-        }
-
-        const merged = normalizeCustomTypes([...serverTypes, ...legacyTypes]);
-        setCustomTypeOptions(merged);
-        if (legacyTypes.length > 0 && merged.length !== serverTypes.length) {
-          await persistCustomTypes(merged).catch(() => {});
-          localStorage.removeItem("hasta-takip-custom-types");
-        }
+        setCustomTypeOptions(serverTypes);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Takip tipleri yüklenemedi.");
       }
@@ -604,7 +589,7 @@ export default function HastaTakipPage() {
     const timer = setTimeout(() => {
       setPatientSearchLoading(true);
       setPatientSearchError("");
-      fetch(`/api/patients?q=${encodeURIComponent(patientSearch.trim())}&take=8`)
+      fetch(`/api/patients?q=${encodeURIComponent(patientSearch.trim())}&take=8&summary=false`)
         .then(async (r) => {
           const body = await r.json().catch(() => ({}));
           if (!r.ok) {
@@ -756,13 +741,17 @@ export default function HastaTakipPage() {
         ].filter(Boolean).join(" ").toLocaleLowerCase("tr-TR");
         return haystack.includes(normalizedQuery);
       })
+      .filter((item) => (onlyOverdue ? item.isOpen && Boolean(item.nextActionAt) && new Date(item.nextActionAt!).getTime() < Date.now() : true))
       .sort((a, b) => {
         if (a.isOpen !== b.isOpen) return a.isOpen ? -1 : 1;
+        const aOverdue = a.isOpen && Boolean(a.nextActionAt) && new Date(a.nextActionAt!).getTime() < Date.now();
+        const bOverdue = b.isOpen && Boolean(b.nextActionAt) && new Date(b.nextActionAt!).getTime() < Date.now();
+        if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
         if (a.isLabProva !== b.isLabProva) return a.isLabProva ? -1 : 1;
         if (a.priority !== b.priority) return b.priority - a.priority;
         return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
       });
-  }, [appointments, manualFollowUps, openManualByAppointment, query, followFilter, followTypeQuery, statusFilter, doctorFilter, hidePhone]);
+  }, [appointments, manualFollowUps, openManualByAppointment, query, followFilter, followTypeQuery, statusFilter, doctorFilter, hidePhone, onlyOverdue]);
 
   const stats = useMemo(() => {
     const all = [...manualFollowUps, ...appointments.filter((a) => appointmentNeedsFollowUp(a.status, a.note))];
@@ -774,6 +763,7 @@ export default function HastaTakipPage() {
       unreachable: items.filter((i) => i.type === "ULASILAMADI").length,
       waitingReturn: items.filter((i) => i.type === "DONUS_BEKLENIYOR").length,
       highPriority: items.filter((i) => i.priority === 3 && i.isOpen).length,
+      overdue: items.filter((i) => i.isOpen && i.nextActionAt && new Date(i.nextActionAt).getTime() < Date.now()).length,
     };
   }, [manualFollowUps, appointments, items]);
 
@@ -1053,6 +1043,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
     setFollowTypeQuery("");
     setStatusFilter("ACIK");
     setDoctorFilter("");
+    setOnlyOverdue(false);
   };
 
   const openDetailModal = async (item: FollowItem) => {
@@ -1071,6 +1062,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
     setSelectedDetailKey("");
     setActiveHistoryFollowUpId("");
     setFollowUpEvents([]);
+    setCloseNote("");
     resetEventForm();
   };
 
@@ -1281,6 +1273,16 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-2 py-2 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{items.length} açık kayıt</span>
+          {stats.overdue > 0 && (
+            <button
+              type="button"
+              onClick={() => setOnlyOverdue((v) => !v)}
+              title="Sonraki adım tarihi geçmiş, hâlâ açık takipler"
+              className={"rounded-full px-2 py-1 text-xs font-bold transition " + (onlyOverdue ? "bg-red-600 text-white" : "bg-red-50 text-red-700 hover:bg-red-100")}
+            >
+              ⚠ {stats.overdue} gecikmiş takip
+            </button>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button variant="secondary" size="sm" onClick={printReport}>PDF</Button>
@@ -1376,7 +1378,14 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                         {/* "Bu hasta neden burada?" cevabı sade görünümde de görünür kalmalı
                             (bkz. denetim raporu Tema 6) — sade modda kısa, detaylı modda uzun. */}
                         <p className="mt-1 text-xs text-slate-700">{shortText(item.note || "Not bulunmuyor.", denseView ? 40 : 65)}</p>
-                        {item.nextActionAt && <p className="mt-0.5 text-xs text-amber-700">Sonraki adım: {new Date(item.nextActionAt).toLocaleString("tr-TR")}</p>}
+                        {item.nextActionAt && (() => {
+                          const isOverdue = item.isOpen && new Date(item.nextActionAt).getTime() < Date.now();
+                          return (
+                            <p className={"mt-0.5 text-xs font-semibold " + (isOverdue ? "text-red-700" : "text-amber-700")}>
+                              {isOverdue ? "⚠ Gecikti — " : "Sonraki adım: "}{new Date(item.nextActionAt).toLocaleString("tr-TR")}
+                            </p>
+                          );
+                        })()}
                       </div>
                       <div className="flex flex-wrap gap-2">
                         <Button variant="secondary" size="sm" onClick={() => void openDetailModal(item)}>Detay</Button>
@@ -1504,7 +1513,14 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
               </div>
             ) : null}
 
-            {detailItem.nextActionAt && <p className="text-xs text-amber-700">Sonraki adım: {new Date(detailItem.nextActionAt).toLocaleString("tr-TR")}</p>}
+            {detailItem.nextActionAt && (() => {
+              const isOverdue = detailItem.isOpen && new Date(detailItem.nextActionAt).getTime() < Date.now();
+              return (
+                <p className={"text-xs font-semibold " + (isOverdue ? "text-red-700" : "text-amber-700")}>
+                  {isOverdue ? "⚠ Gecikti — " : "Sonraki adım: "}{new Date(detailItem.nextActionAt).toLocaleString("tr-TR")}
+                </p>
+              );
+            })()}
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
@@ -1529,7 +1545,24 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                     <Button variant="secondary" size="sm" disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { type: "GERI_ARA", note: buildManualNote("", detailItem.note), lastContactAt: new Date().toISOString(), nextActionAt: new Date(Date.now() + 86400000).toISOString() })}>Tekrar Ara</Button>
                     <Button variant="secondary" size="sm" disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { type: "ULASILAMADI", note: buildManualNote("", detailItem.note), lastContactAt: new Date().toISOString(), nextActionAt: new Date(Date.now() + 2 * 86400000).toISOString() })}>Ulaşılamadı</Button>
                     <Button variant="secondary" size="sm" disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { type: "DONUS_BEKLENIYOR", note: buildManualNote("", detailItem.note), nextActionAt: new Date(Date.now() + 3 * 86400000).toISOString() })}>Dönüş Bekleniyor</Button>
-                    <Button variant="primary" size="sm" disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { close: true, resolutionNote: "Takip kapatildi", lastContactAt: new Date().toISOString() })}>Takibi Kapat</Button>
+                    <div className="mt-1 w-full space-y-1.5">
+                      <textarea
+                        value={closeNote}
+                        onChange={(e) => setCloseNote(e.target.value)}
+                        rows={2}
+                        placeholder="Takibi kapatmadan önce sonucu yazın (örn. hasta ile görüşüldü, randevu planlandı)…"
+                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:outline-none"
+                      />
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        disabled={busyId === detailItem.followUpId || !closeNote.trim()}
+                        title={!closeNote.trim() ? "Kapatmadan önce sonucu yazmanız gerekir" : undefined}
+                        onClick={() => void updateManual(detailItem.followUpId!, { close: true, resolutionNote: closeNote.trim(), lastContactAt: new Date().toISOString() }).then(() => setCloseNote(""))}
+                      >
+                        Takibi Kapat
+                      </Button>
+                    </div>
                   </div>
                 ) : (
                   <div className="flex flex-wrap gap-2">

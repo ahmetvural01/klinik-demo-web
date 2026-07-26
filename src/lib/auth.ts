@@ -5,9 +5,9 @@ import { prisma } from "@/lib/prisma";
 
 const TOKEN_NAME = "klinik_token";
 
-function readAuthToken() {
+async function readAuthToken() {
   try {
-    return cookies().get(TOKEN_NAME)?.value || null;
+    return (await cookies()).get(TOKEN_NAME)?.value || null;
   } catch {
     return null;
   }
@@ -73,7 +73,7 @@ export function verifyToken(token: string) {
 }
 
 export async function getCurrentUser() {
-  const token = readAuthToken();
+  const token = await readAuthToken();
 
   if (!token) {
     return null;
@@ -100,8 +100,8 @@ export async function getCurrentUser() {
  * JWT token'dan DB sorgusu yapmadan kullanıcı bilgilerini çöz.
  * requireAuth için yeterli: id, role, institutionId.
  */
-export function decodeTokenUser(): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean } | null {
-  const token = readAuthToken();
+export async function decodeTokenUser(): Promise<{ id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean } | null> {
+  const token = await readAuthToken();
   if (!token) return null;
   try {
     return decodeTokenUserFromToken(token);
@@ -127,8 +127,8 @@ export function decodeTokenUserFromToken(token: string): { id: string; role: str
 }
 
 /** JWT'den DB sorgusu yapmadan kullanıcı bilgilerini al (layout için hızlı) */
-export function getCurrentUserFast(): { id: string; role: string; rawRole: string; institution: string; fullName: string } | null {
-  const token = readAuthToken();
+export async function getCurrentUserFast(): Promise<{ id: string; role: string; rawRole: string; institution: string; fullName: string } | null> {
+  const token = await readAuthToken();
   if (!token) return null;
   try {
     const payload = verifyToken(token);
@@ -144,8 +144,8 @@ export function getCurrentUserFast(): { id: string; role: string; rawRole: strin
   }
 }
 
-export function setAuthCookie(token: string) {
-  cookies().set(TOKEN_NAME, token, {
+export async function setAuthCookie(token: string) {
+  (await cookies()).set(TOKEN_NAME, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
@@ -154,8 +154,8 @@ export function setAuthCookie(token: string) {
   });
 }
 
-export function clearAuthCookie() {
-  cookies().set(TOKEN_NAME, "", {
+export async function clearAuthCookie() {
+  (await cookies()).set(TOKEN_NAME, "", {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",

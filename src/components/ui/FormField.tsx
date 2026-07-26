@@ -15,7 +15,7 @@ export interface FormFieldProps {
 export function FormField({ label, htmlFor, required, error, hint, children }: FormFieldProps) {
   return (
     <label htmlFor={htmlFor} className="block">
-      <span className="mb-1 block text-sm font-bold text-slate-700">
+      <span className="mb-1 block text-xs font-bold text-slate-600">
         {label}
         {required && <span className="text-red-500"> *</span>}
       </span>
@@ -44,7 +44,7 @@ export interface FormSectionProps {
 
 export function FormSection({ icon: Icon, title, description, children }: FormSectionProps) {
   return (
-    <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+    <section className="rounded-lg border border-slate-200 bg-white p-4">
       <div className="mb-4 flex items-start gap-3 border-b border-slate-100 pb-3">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <Icon className="h-4 w-4" />

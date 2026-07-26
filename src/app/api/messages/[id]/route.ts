@@ -2,13 +2,14 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 
-type RouteContext = { params: { id: string } };
+type RouteContext = { params: Promise<{ id: string }> };
 
 function canManageAll(role: string) {
   return role === "YONETICI" || role === "SUPERADMIN";
 }
 
-export async function PATCH(req: Request, { params }: RouteContext) {
+export async function PATCH(req: Request, props: RouteContext) {
+  const params = await props.params;
   const auth = await requireAuth("messages:write");
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
@@ -46,7 +47,8 @@ export async function PATCH(req: Request, { params }: RouteContext) {
   return NextResponse.json(updated);
 }
 
-export async function DELETE(_: Request, { params }: RouteContext) {
+export async function DELETE(_: Request, props: RouteContext) {
+  const params = await props.params;
   const auth = await requireAuth("messages:write");
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {

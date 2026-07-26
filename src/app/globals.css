@@ -9,17 +9,17 @@
      kök layout'ta (src/app/layout.tsx) satır içi <style> ile ezilir. Burada
      duran değerler yalnızca DB okunamazsa kullanılan güvenli varsayılan
      ("Porselen Klinik") — bkz. src/lib/theme-packages.ts. */
-  --app-bg: 246 244 239;
-  --app-surface: 251 249 245;
-  --app-border: 234 234 230;
-  --app-text: 35 35 31;
-  --app-muted: 132 130 108;
-  --app-primary: 14 107 99;
-  --color-bg: 246 244 239;
-  --color-surface: 251 249 245;
-  --color-primary: 14 107 99;
-  --color-primary-strong: 10 79 73;
-  --color-accent: 177 86 47;
+  --app-bg: 240 244 246;
+  --app-surface: 250 252 252;
+  --app-border: 216 224 228;
+  --app-text: 27 39 45;
+  --app-muted: 94 108 116;
+  --app-primary: 14 116 108;
+  --color-bg: 240 244 246;
+  --color-surface: 250 252 252;
+  --color-primary: 14 116 108;
+  --color-primary-strong: 11 88 82;
+  --color-accent: 37 99 143;
   --color-success: 22 163 74;
   --color-warning: 217 119 6;
   --color-danger: 220 38 38;
@@ -57,13 +57,14 @@
   --color-accent-900: 101 49 27;
   --color-accent-950: 73 35 19;
   --font-sans: "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-display: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+  --font-display: "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
 }
 
 /* Sayfa başlıkları (<h1>) uygulama genelinde aktif temanın başlık yazı
    tipiyle render edilir — tek bir kural, tüm sayfalarda otomatik uygulanır. */
 h1 {
   font-family: var(--font-display);
+  letter-spacing: 0;
 }
 
 body {
@@ -71,6 +72,8 @@ body {
   background: rgb(var(--app-bg));
   color: rgb(var(--app-text));
   font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -98,7 +101,7 @@ body {
 .panel-content input,
 .panel-content select,
 .panel-content textarea {
-  border-radius: 0.75rem;
+  border-radius: 0.5rem;
   font-size: 0.875rem;
 }
 
@@ -132,9 +135,24 @@ body {
 .panel-list-toolbar,
 .panel-filter-bar {
   border: 1px solid rgb(var(--color-slate-200));
-  border-radius: 1rem;
+  border-radius: 0.5rem;
   background: rgb(var(--app-surface));
-  box-shadow: 0 1px 2px rgb(15 23 42 / 0.04);
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.03);
+}
+
+/* Operasyon ekranlarında yüzey hiyerarşisi küçük, tutarlı köşelerle kurulur. */
+.panel-content .rounded-2xl,
+.panel-content .rounded-xl {
+  border-radius: 0.5rem;
+}
+
+.panel-content .shadow-sm {
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.035);
+}
+
+.panel-content .shadow-xl,
+.panel-content .shadow-2xl {
+  box-shadow: 0 16px 36px rgb(15 23 42 / 0.16);
 }
 
 .panel-list-toolbar input,
@@ -171,20 +189,20 @@ body {
   min-height: 32px;
 }
 
-/* Custom scrollbar — thin & elegant */
+/* İnce fakat fare ve dokunmatik yüzeyle rahat tutulabilen kaydırma çubuğu. */
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 6px;
+  height: 6px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: rgb(var(--color-slate-300));
   border-radius: 99px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #64748b;
+  background: rgb(var(--color-slate-500));
 }
 
 /* Smooth animation defaults */

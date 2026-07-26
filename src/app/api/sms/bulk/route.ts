@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
-    return NextResponse.json({ message: "Sadece klinik kullanicilari toplu SMS gonderebilir" }, { status: 403 });
+    return NextResponse.json({ message: "Yalnızca klinik kullanıcıları toplu SMS gönderebilir." }, { status: 403 });
   }
 
   const body = await request.json() as { audience?: "ALL" | "SELECTED"; patientIds?: string[]; content?: string };
@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "SMS servisi pasif durumda" }, { status: 400 });
   }
   if (!institution) {
-    return NextResponse.json({ message: "Klinik bulunamadi" }, { status: 404 });
+    return NextResponse.json({ message: "Klinik bulunamadı." }, { status: 404 });
   }
 
   // institutionId filtresi kritik: bu filtre olmadan baska bir kurumun hasta
@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
       });
 
   if (!patients.length) {
-    return NextResponse.json({ message: "Hedeflenecek hasta bulunamadi" }, { status: 404 });
+    return NextResponse.json({ message: "Seçilen ölçütlere uygun hasta bulunamadı." }, { status: 404 });
   }
 
   const withPhone = patients.filter((p) => p.phone);
@@ -80,6 +80,7 @@ export async function POST(request: NextRequest) {
 
   let sent = 0;
   const failedRecipients: { patientId: string; phone: string; reason: string }[] = [];
+  const packageId = `TOPLU-${Date.now().toString(36).toUpperCase()}`;
 
   const batchSize = 8;
   for (let i = 0; i < withPhone.length; i += batchSize) {
@@ -100,7 +101,7 @@ export async function POST(request: NextRequest) {
         await writeAudit(
           auth.user.id,
           "SMS_TOPLU",
-          `${patient.fullName} (${patient.phone}) - ProviderMsgId: ${sendResult.providerMessageId || "-"}`
+          `[Paket:${packageId}] ${patient.fullName} (${patient.phone}) - ProviderMsgId: ${sendResult.providerMessageId || "-"}`
         );
       } else {
         failedRecipients.push({
@@ -111,7 +112,7 @@ export async function POST(request: NextRequest) {
         await writeAudit(
           auth.user.id,
           "SMS_TOPLU_FAILED",
-          `${patient.fullName} (${patient.phone}) - ${sendResult.error || sendResult.providerRaw}`
+          `[Paket:${packageId}] ${patient.fullName} (${patient.phone}) - ${sendResult.error || sendResult.providerRaw}`
         );
       }
     }

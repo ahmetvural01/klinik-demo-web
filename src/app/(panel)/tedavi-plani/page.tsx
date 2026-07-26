@@ -3,9 +3,11 @@
 import { useEffect, useState } from "react";
 import { Plus } from "lucide-react";
 import { cachedGet } from "@/lib/client-cache";
+import { confirmDialog } from "@/lib/confirm-client";
 import { Button } from "@/components/ui/Button";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
+import { SearchSelect } from "@/components/ui/SearchSelect";
 
 type PlanStatus = "PLANLANDI" | "DEVAM_EDIYOR" | "TAMAMLANDI" | "IPTAL";
 type StepStatus = "BEKLIYOR" | "YAPILDI" | "IPTAL";
@@ -46,6 +48,7 @@ export default function TedaviPlaniPage() {
   const [plans,    setPlans]    = useState<Plan[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [filter,   setFilter]   = useState<"" | PlanStatus>("");
+  const [doctorFilter, setDoctorFilter] = useState("");
   const [search,   setSearch]   = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [selected, setSelected] = useState<Plan | null>(null);
@@ -59,7 +62,7 @@ export default function TedaviPlaniPage() {
     return () => clearTimeout(timer);
   }, [search]);
 
-  useEffect(() => { setPage(1); }, [filter]);
+  useEffect(() => { setPage(1); }, [filter, doctorFilter]);
 
   // New plan form
   const [patients,  setPatients]  = useState<Patient[]>([]);
@@ -67,21 +70,34 @@ export default function TedaviPlaniPage() {
   const [newPlan,   setNewPlan]   = useState({ patientId: "", doctorId: "", title: "", notes: "" });
   const [newSteps,  setNewSteps]  = useState([{ treatmentName: "", toothNo: "", amount: "" }]);
   const [saving,    setSaving]    = useState(false);
+  const [patientQuery, setPatientQuery] = useState("");
 
   useEffect(() => {
-    fetch("/api/patients?limit=200").then(r => r.json()).then(d => setPatients(Array.isArray(d) ? d : (d.patients || []))).catch(() => {});
     cachedGet<unknown>("/api/staff", 60_000).then(d => setDoctors((Array.isArray(d) ? d : []).filter((u: Doctor) => u.role === "DOKTOR" || (u.role === "YONETICI" && u.profile?.hideAsDoctor === false)))).catch(() => {});
   }, []);
 
   useEffect(() => {
+    const q = patientQuery.trim();
+    const timer = setTimeout(() => {
+      const params = new URLSearchParams({ take: "20", summary: "false" });
+      if (q) params.set("q", q);
+      fetch(`/api/patients?${params.toString()}`).then(r => r.json())
+        .then(d => setPatients(Array.isArray(d) ? d : (d.patients || [])))
+        .catch(() => {});
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [patientQuery]);
+
+  useEffect(() => {
     fetchPlans();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filter, debouncedSearch, page]);
+  }, [filter, doctorFilter, debouncedSearch, page]);
 
   function fetchPlans() {
     setLoading(true);
     const params = new URLSearchParams({ page: String(page) });
     if (filter) params.set("status", filter);
+    if (doctorFilter) params.set("doctorId", doctorFilter);
     if (debouncedSearch) params.set("q", debouncedSearch);
     fetch(`/api/treatment-plans?${params.toString()}`)
       .then(r => r.json())
@@ -104,11 +120,13 @@ export default function TedaviPlaniPage() {
     setShowNew(false);
     setNewPlan({ patientId: "", doctorId: "", title: "", notes: "" });
     setNewSteps([{ treatmentName: "", toothNo: "", amount: "" }]);
+    setPatientQuery("");
     setSaving(false);
     fetchPlans();
   }
 
   async function updateStatus(planId: string, status: string) {
+    if (status === "IPTAL" && !(await confirmDialog({ message: "Bu tedavi planı iptal edilsin mi?", danger: true, confirmText: "İptal Et" }))) return;
     await fetch(`/api/treatment-plans/${planId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }).catch(() => {});
     fetchPlans();
     setSelected(s => s ? { ...s, status: status as PlanStatus } : null);
@@ -119,6 +137,18 @@ export default function TedaviPlaniPage() {
     setSelected(s => {
       if (!s) return null;
       return { ...s, steps: s.steps.map(st => st.id === stepId ? { ...st, status } : st) };
+    });
+    fetchPlans();
+  }
+
+  async function deleteStep(planId: string, stepId: string) {
+    if (!(await confirmDialog({ message: "Bu tedavi adımı silinsin mi?", danger: true, confirmText: "Sil" }))) return;
+    const res = await fetch(`/api/treatment-plans/${planId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stepDeletes: [stepId] }) }).catch(() => null);
+    if (!res?.ok) return;
+    const updated = await res.json().catch(() => null);
+    setSelected(s => {
+      if (!s) return null;
+      return { ...s, steps: s.steps.filter(st => st.id !== stepId), totalCost: updated?.totalCost ?? s.totalCost };
     });
     fetchPlans();
   }
@@ -150,6 +180,10 @@ export default function TedaviPlaniPage() {
             {s === "" ? "Tümü" : STATUS_CFG[s].label}
           </button>
         ))}
+        <select value={doctorFilter} onChange={e => setDoctorFilter(e.target.value)} aria-label="Doktor filtresi" className={inp}>
+          <option value="">Tüm doktorlar</option>
+          {doctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+        </select>
       </div>
 
       {/* Stats row */}
@@ -246,7 +280,7 @@ export default function TedaviPlaniPage() {
                 {selected.steps.map(step => {
                   const sCfg = STEP_STATUS[step.status] || STEP_STATUS.BEKLIYOR;
                   return (
-                    <div key={step.id} className="grid gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto] sm:items-center">
+                    <div key={step.id} className="grid gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto_auto] sm:items-center">
                       <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white border border-slate-200 text-xs font-bold text-slate-600">{step.order}</span>
                       <div className="flex-1 min-w-0">
                         <p className="text-sm font-semibold text-slate-800">{step.treatmentName}</p>
@@ -262,6 +296,13 @@ export default function TedaviPlaniPage() {
                         <option value="YAPILDI">Yapıldı</option>
                         <option value="IPTAL">İptal</option>
                       </select>
+                      <button
+                        onClick={() => deleteStep(selected.id, step.id)}
+                        disabled={selected.status === "TAMAMLANDI" || selected.status === "IPTAL"}
+                        className="shrink-0 rounded-lg border border-red-200 px-2.5 py-2 text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        Sil
+                      </button>
                     </div>
                   );
                 })}
@@ -284,10 +325,18 @@ export default function TedaviPlaniPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta</label>
-              <select value={newPlan.patientId} onChange={e => setNewPlan(p => ({ ...p, patientId: e.target.value }))} className={inp + " w-full"}>
-                <option value="">Seçiniz…</option>
-                {patients.map(p => <option key={p.id} value={p.id}>{p.fullName}</option>)}
-              </select>
+              <SearchSelect
+                query={patientQuery}
+                onQueryChange={value => {
+                  setPatientQuery(value);
+                  if (!value) setNewPlan(p => ({ ...p, patientId: "" }));
+                }}
+                options={patients.map(p => ({ id: p.id, label: p.fullName, meta: p.tcNo }))}
+                onSelect={opt => { setNewPlan(p => ({ ...p, patientId: opt.id })); setPatientQuery(opt.label); }}
+                placeholder="Hasta adı yazın…"
+                emptyText="Hasta bulunamadı"
+                className={inp + " w-full"}
+              />
             </div>
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor</label>

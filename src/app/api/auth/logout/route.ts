@@ -3,12 +3,12 @@ import { clearAuthCookie, decodeTokenUser } from "@/lib/auth";
 import { writeAudit } from "@/lib/api";
 
 export async function POST() {
-  const user = decodeTokenUser();
+  const user = await decodeTokenUser();
 
   if (user) {
-    await writeAudit(user.id, "LOGOUT", "Kullanici cikis yapti");
+    await writeAudit(user.id, "LOGOUT", "Kullanıcı sistemden çıkış yaptı.");
   }
 
-  clearAuthCookie();
+  await clearAuthCookie();
   return NextResponse.json({ ok: true });
 }

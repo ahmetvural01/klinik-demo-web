@@ -9,8 +9,14 @@ export const GET = withApiTiming("hakedis", async function GET(req: NextRequest)
   if (auth.error) return auth.error;
 
   const { searchParams } = new URL(req.url);
-  const doctorId = searchParams.get("doctorId");
+  const rawDoctorId = searchParams.get("doctorId");
   const months = Math.min(24, Math.max(1, Number(searchParams.get("months") || 12)));
+
+  // DOKTOR rolü: sadece kendi verilerini görebilir.
+  if (auth.user.role === "DOKTOR" && rawDoctorId && rawDoctorId !== auth.user.id) {
+    return NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 });
+  }
+  const doctorId = auth.user.role === "DOKTOR" ? auth.user.id : rawDoctorId;
 
   if (!doctorId) {
     return NextResponse.json({ message: "doctorId zorunlu" }, { status: 400 });

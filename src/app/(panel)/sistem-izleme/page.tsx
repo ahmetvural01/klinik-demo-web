@@ -105,7 +105,7 @@ export default function SistemIzlemePage() {
       <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="text-sm font-bold text-slate-900">API Gecikme Metrikleri (yavaştan hızlıya)</h2>
-          <span className="text-xs text-slate-400">"Sayfa yavaş" şikayetinde önce buraya bakın.</span>
+          <span className="text-xs text-slate-400">&quot;Sayfa yavaş&quot; şikayetinde önce buraya bakın.</span>
         </div>
         <div className="mt-2 overflow-auto">
           <table className="min-w-full text-sm">
@@ -145,7 +145,10 @@ export default function SistemIzlemePage() {
 
       <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-sm font-bold text-slate-900">Klinik Veri Tutarlılığı</h2>
+          <div>
+            <h2 className="text-sm font-bold text-slate-900">Klinik Veri Tutarlılığı</h2>
+            <Link href="/rapor" className="text-xs font-bold text-primary hover:underline">Seçili döneme göre Rapor&apos;da gör →</Link>
+          </div>
           {consistency && (
             <Badge
               tone={consistency.summary.critical > 0 ? "critical" : consistency.summary.warning > 0 ? "warning" : "success"}

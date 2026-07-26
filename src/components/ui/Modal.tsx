@@ -40,14 +40,14 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/40 px-4"
+      className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/50 px-2 pt-3 backdrop-blur-[1px] sm:items-center sm:px-4 sm:py-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-title"
       {...(closeOnBackdrop ? backdropClose(onClose) : {})}
     >
-      <div className={`flex max-h-[85vh] w-full flex-col rounded-2xl bg-white shadow-2xl ${SIZE_CLASS[size]}`}>
-        <div className="flex items-start justify-between gap-3 border-b border-slate-100 px-5 py-4">
+      <div className={`flex max-h-[calc(100dvh-12px)] w-full flex-col rounded-t-lg border border-slate-200 bg-white shadow-2xl sm:max-h-[calc(100dvh-32px)] sm:rounded-lg ${SIZE_CLASS[size]}`}>
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-4 py-3.5 sm:px-5">
           <div className="min-w-0">
             <h2 id="modal-title" className="text-sm font-black text-slate-900">{title}</h2>
             {description && <p className="mt-0.5 text-xs text-slate-500">{description}</p>}
@@ -56,16 +56,16 @@ export function Modal({
             type="button"
             onClick={onClose}
             aria-label="Kapat"
-            className="shrink-0 rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto px-4 py-4 sm:px-5">
           {children}
         </div>
         {footer && (
-          <div className="flex justify-end gap-2 border-t border-slate-100 px-5 py-3">
+          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3 sm:px-5">
             {footer}
           </div>
         )}

@@ -43,38 +43,64 @@ export default function BulkSendTab() {
   const [sending, setSending] = useState(false);
   const [institutionName, setInstitutionName] = useState("");
   const [institutionPhone, setInstitutionPhone] = useState("");
+  const [patientLoadError, setPatientLoadError] = useState("");
+  const [patientReloadKey, setPatientReloadKey] = useState(0);
 
   useEffect(() => {
     fetch("/api/settings")
-      .then((r) => r.json())
+      .then(async (r) => {
+        const data = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(data?.message || "Kurum bilgileri yüklenemedi.");
+        return data;
+      })
       .then((d) => {
         setInstitutionName(d?.institutionName || "");
         setInstitutionPhone(d?.institutionPhone || "");
       })
-      .catch(() => {});
+      .catch((error) => {
+        showToastSafe({
+          title: "Kurum bilgileri yüklenemedi",
+          message: error instanceof Error ? error.message : "Lütfen sayfayı yenileyin.",
+          type: "error",
+        });
+      });
   }, []);
 
   useEffect(() => {
     fetch("/api/patients?take=1")
-      .then((r) => r.json())
+      .then(async (r) => {
+        const data = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(data?.message || "Hasta sayısı yüklenemedi.");
+        return data;
+      })
       .then((d) => setTotalPatients(typeof d?.total === "number" ? d.total : null))
-      .catch(() => setTotalPatients(null));
+      .catch(() => {
+        setTotalPatients(null);
+        setPatientLoadError("Hasta bilgileri yüklenemedi. Lütfen yeniden deneyin.");
+      });
   }, []);
 
   useEffect(() => {
     if (audience !== "SELECTED") return;
     setLoading(true);
+    setPatientLoadError("");
     const t = setTimeout(() => {
       const params = new URLSearchParams({ take: "50" });
       if (query.trim()) params.set("q", query.trim());
       fetch(`/api/patients?${params.toString()}`)
-        .then((r) => r.json())
+        .then(async (r) => {
+          const data = await r.json().catch(() => null);
+          if (!r.ok) throw new Error(data?.message || "Hasta listesi yüklenemedi.");
+          return data;
+        })
         .then((d) => setPatients(Array.isArray(d?.patients) ? d.patients : []))
-        .catch(() => setPatients([]))
+        .catch((error) => {
+          setPatientLoadError(error instanceof Error ? error.message : "Hasta listesi yüklenemedi.");
+        })
         .finally(() => setLoading(false));
     }, 300);
     return () => clearTimeout(t);
-  }, [query, audience]);
+  }, [query, audience, patientReloadKey]);
 
   const toggleOne = (id: string) => {
     setSelected((prev) => {
@@ -198,6 +224,14 @@ export default function BulkSendTab() {
               <Button variant="ghost" size="sm" onClick={clearSelection}>Seçimi Temizle</Button>
             </div>
             <p className="text-xs font-semibold text-slate-500">{selected.size} hasta seçildi</p>
+            {patientLoadError && (
+              <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                <span>{patientLoadError}</span>
+                <Button variant="secondary" size="sm" onClick={() => setPatientReloadKey((value) => value + 1)}>
+                  Yeniden Dene
+                </Button>
+              </div>
+            )}
             <ListTable
               columns={columns}
               rows={patients}

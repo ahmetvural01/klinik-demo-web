@@ -11,10 +11,16 @@ import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
 import { LabOrderForm } from "@/components/lab/LabOrderForm";
-import { LabOrderDetailPanel, type SharedLabOrder, type SharedLabTrip } from "@/components/lab/LabOrderDetailPanel";
+import {
+  LabOrderDetailPanel,
+  type SharedLabInvoice,
+  type SharedLabOrder,
+  type SharedLabTrip,
+} from "@/components/lab/LabOrderDetailPanel";
 import { MEDICATION_TEMPLATES } from "@/lib/medications";
 import { ACTIVE_PRICE_LIST_STORAGE_KEY, TDB_2026_CORE_PRICE_CATALOG } from "@/lib/dental-treatment-catalog";
 import { confirmDialog } from "@/lib/confirm-client";
+import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 import { addPdfSection, createPdfDoc, pdfSafeText } from "@/lib/pdf-export";
 import { cachedGet } from "@/lib/client-cache";
 
@@ -132,7 +138,7 @@ type PatientDetailData = Patient & {
 const TAB_ITEMS: { key: Tab; label: string }[] = [
   { key: "bilgi", label: "Özet" },
   { key: "randevular", label: "Randevular" },
-  { key: "gorevler", label: "Görevler" },
+  { key: "gorevler", label: "Bu Hastanın Görevleri" },
   { key: "tedavi", label: "Tedavi" },
   { key: "odeme", label: "Finans" },
   { key: "recete", label: "Reçete" },
@@ -501,6 +507,7 @@ export default function HastaDetayContent() {
   const [payDoctorId, setPayDoctorId] = useState("");
   const [editingPaymentId, setEditingPaymentId] = useState("");
   const [payLoading, setPayLoading] = useState(false);
+  const paymentRequestKeyRef = useRef("");
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const closePaymentModal = () => {
     setPaymentModalOpen(false);
@@ -511,6 +518,7 @@ export default function HastaDetayContent() {
     setPayPosId("");
     setPayDoctorId("");
     setPayMethod("NAKIT");
+    paymentRequestKeyRef.current = "";
   };
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState<ExportFormat>("pdf");
@@ -563,6 +571,7 @@ export default function HastaDetayContent() {
   // Recete
   const [rxNote, setRxNote] = useState("");
   const [rxSaving, setRxSaving] = useState(false);
+  const [rxDoctorId, setRxDoctorId] = useState("");
 
   // Dis semasi
   const [toothMap, setToothMap] = useState<Record<string, ToothStatus>>({});
@@ -662,8 +671,9 @@ export default function HastaDetayContent() {
     sentAt: new Date().toISOString().slice(0, 10),
     sentNote: "",
   });
-  const [labDetailAction, setLabDetailAction] = useState<"trip" | "receive" | "invoice" | "rpt" | "editTrip" | null>(null);
+  const [labDetailAction, setLabDetailAction] = useState<"trip" | "receive" | "invoice" | "editInvoice" | "rpt" | "editTrip" | null>(null);
   const [labActiveTrip, setLabActiveTrip] = useState<LabTrip | null>(null);
+  const [editingLabInvoiceId, setEditingLabInvoiceId] = useState<string | null>(null);
   const [labReceiveForm, setLabReceiveForm] = useState({
     receivedAt: new Date().toISOString().slice(0, 10),
     receivedItem: "",
@@ -677,6 +687,8 @@ export default function HastaDetayContent() {
     issuedAt: new Date().toISOString().slice(0, 10),
     note: "",
   });
+  const labInvoiceRequestKeyRef = useRef("");
+  const labOrderRequestKeyRef = useRef("");
   const [labRptReason, setLabRptReason] = useState("");
 
   const toNumber = (value: unknown) => {
@@ -949,6 +961,7 @@ export default function HastaDetayContent() {
 
   const openLabCreateModal = () => {
     setLabCreateError("");
+    labOrderRequestKeyRef.current = "";
     const defaultDoctorId = doctorOptions[0]?.id || "";
     const defaultLabName = knownLabs[0] || "";
     setLabNewForm({
@@ -985,13 +998,19 @@ export default function HastaDetayContent() {
     setLabCreateSaving(true);
     setLabCreateError("");
     try {
+      const requestKey =
+        labOrderRequestKeyRef.current
+        || (typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random()}`);
+      labOrderRequestKeyRef.current = requestKey;
       const firstDescription = labNewForm.requestedItem.trim()
         ? `${labNewForm.sentItem.trim()} → ${labNewForm.requestedItem.trim()}`
         : labNewForm.sentItem.trim();
 
       const createResponse = await fetch("/api/lab-orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
         body: JSON.stringify({
           patientId: id,
           doctorId: labNewForm.doctorId,
@@ -1012,6 +1031,7 @@ export default function HastaDetayContent() {
       if (!createResponse.ok) throw new Error(createdPayload?.error || "Laboratuvar işi oluşturulamadı");
 
       await load();
+      labOrderRequestKeyRef.current = "";
       closeLabCreateModal();
       showToast("success", "Laboratuvar işi oluşturuldu");
     } catch (error) {
@@ -1145,6 +1165,7 @@ export default function HastaDetayContent() {
   const closeLabDetailAction = () => {
     setLabDetailAction(null);
     setLabActiveTrip(null);
+    setEditingLabInvoiceId(null);
     setLabActionError("");
     setLabRptReason("");
     cancelEditTripFromPatientDetail();
@@ -1187,6 +1208,8 @@ export default function HastaDetayContent() {
   };
 
   const openPatientLabInvoiceAction = (order: SharedLabOrder) => {
+    labInvoiceRequestKeyRef.current = "";
+    setEditingLabInvoiceId(null);
     setLabInvoiceForm({
       item: order.labType || "Laboratuvar ücreti",
       amount: "",
@@ -1195,6 +1218,19 @@ export default function HastaDetayContent() {
       note: "",
     });
     setLabDetailAction("invoice");
+  };
+
+  const openPatientLabInvoiceEditAction = (_order: SharedLabOrder, invoice: SharedLabInvoice) => {
+    labInvoiceRequestKeyRef.current = "";
+    setEditingLabInvoiceId(invoice.id);
+    setLabInvoiceForm({
+      item: invoice.item,
+      amount: String(invoice.amount),
+      invoiceNo: invoice.invoiceNo || "",
+      issuedAt: invoice.issuedAt.slice(0, 10),
+      note: invoice.note || "",
+    });
+    setLabDetailAction("editInvoice");
   };
 
   const openPatientLabEditTripAction = (_order: SharedLabOrder, trip: SharedLabTrip) => {
@@ -1244,14 +1280,29 @@ export default function HastaDetayContent() {
     }
   };
 
-  const addLabInvoiceFromPatientDetail = async () => {
+  const saveLabInvoiceFromPatientDetail = async () => {
     if (!labOrderDetail || !labInvoiceForm.item.trim() || !labInvoiceForm.amount) return;
     setLabActionSaving(true);
     setLabActionError("");
     try {
-      const response = await fetch(`/api/lab-orders/${labOrderDetail.id}/invoices`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
+      const isEdit = labDetailAction === "editInvoice" && Boolean(editingLabInvoiceId);
+      const requestKey = isEdit
+        ? ""
+        : labInvoiceRequestKeyRef.current
+          || (typeof crypto !== "undefined" && crypto.randomUUID
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random()}`);
+      if (!isEdit) labInvoiceRequestKeyRef.current = requestKey;
+      const response = await fetch(
+        isEdit
+          ? `/api/lab-orders/${labOrderDetail.id}/invoices/${editingLabInvoiceId}`
+          : `/api/lab-orders/${labOrderDetail.id}/invoices`,
+        {
+        method: isEdit ? "PATCH" : "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(!isEdit ? { "Idempotency-Key": requestKey } : {}),
+        },
         body: JSON.stringify({
           item: labInvoiceForm.item.trim(),
           amount: Number(labInvoiceForm.amount),
@@ -1261,15 +1312,38 @@ export default function HastaDetayContent() {
         }),
       });
       const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.error || "Fatura eklenemedi");
+      if (!response.ok) throw new Error(payload?.error || (isEdit ? "Fatura güncellenemedi" : "Fatura eklenemedi"));
 
       await Promise.all([refreshLabOrderDetail(labOrderDetail.id), load()]);
+      labInvoiceRequestKeyRef.current = "";
       closeLabDetailAction();
-      showToast("success", "Laboratuvar faturası eklendi");
+      setEditingLabInvoiceId(null);
+      showToast("success", isEdit ? "Laboratuvar faturası ve firma borcu güncellendi" : "Laboratuvar faturası eklendi");
     } catch (error) {
       const msg = error instanceof Error ? error.message : "Fatura eklenemedi";
       setLabActionError(msg);
       showToast("error", msg);
+    } finally {
+      setLabActionSaving(false);
+    }
+  };
+
+  const deleteLabInvoiceFromPatientDetail = async (order: SharedLabOrder, invoice: SharedLabInvoice) => {
+    const approved = await confirmDialog({
+      message: `${invoice.item} faturası iptal edilsin mi? Firma borcu ve laboratuvar toplamı otomatik düzeltilecek.`,
+      danger: true,
+      confirmText: "Faturayı İptal Et",
+    });
+    if (!approved) return;
+    setLabActionSaving(true);
+    try {
+      const response = await fetch(`/api/lab-orders/${order.id}/invoices/${invoice.id}`, { method: "DELETE" });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error || "Fatura iptal edilemedi");
+      await Promise.all([refreshLabOrderDetail(order.id), load()]);
+      showToast("success", "Laboratuvar faturası, firma borcu ve iş toplamı birlikte düzeltildi");
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Fatura iptal edilemedi");
     } finally {
       setLabActionSaving(false);
     }
@@ -1648,11 +1722,12 @@ export default function HastaDetayContent() {
   const buildPatientBar = () => {
     if (!data) return "";
     const age = data.birthDate ? Math.floor((Date.now() - new Date(data.birthDate).getTime()) / 31536000000) : null;
+    const phoneText = shouldHidePatientPhone(currentUserRole) ? "***" : (data.phone || "—");
     return `<div class="patient-bar">
       <span><strong>${data.fullName}</strong></span>
       <span>T.C.: <strong>${data.tcNo}</strong></span>
       ${data.birthDate ? `<span>Doğum: <strong>${new Date(data.birthDate).toLocaleDateString("tr-TR")}${age ? ` (${age} yaş)` : ""}</strong></span>` : ""}
-      <span>Tel: <strong>${data.phone || "—"}</strong></span>
+      <span>Tel: <strong>${phoneText}</strong></span>
       ${(data as any).bloodType ? `<span>Kan: <strong>${(data as any).bloodType}</strong></span>` : ""}
     </div>`;
   };
@@ -1896,6 +1971,34 @@ export default function HastaDetayContent() {
     `);
   };
 
+  // Ödeme formu doktor alanını boş açmak yerine, bu hastayı en son tedavi
+  // eden doktoruyla önceden dolduruyoruz — asistan/muhasebeci yanlışlıkla
+  // başka bir doktoru seçip hakedişin yanlış kişiye yazılmasını önler.
+  const recentTreatingDoctorId = useMemo(() => {
+    const exams = data?.examinations || [];
+    if (exams.length === 0) return "";
+    const sorted = [...exams].sort((a, b) => new Date(b.diagnosedAt).getTime() - new Date(a.diagnosedAt).getTime());
+    return sorted[0]?.doctorId || "";
+  }, [data?.examinations]);
+
+  const treatingDoctorNames = useMemo(() => {
+    const exams = data?.examinations || [];
+    const names = new Set<string>();
+    for (const e of exams) if (e.doctor?.fullName) names.add(e.doctor.fullName);
+    return Array.from(names);
+  }, [data?.examinations]);
+
+  useEffect(() => {
+    if (!rxDoctorId && recentTreatingDoctorId) setRxDoctorId(recentTreatingDoctorId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recentTreatingDoctorId]);
+
+  const openNewPaymentModal = () => {
+    setEditingPaymentId("");
+    setPayDoctorId(recentTreatingDoctorId);
+    setPaymentModalOpen(true);
+  };
+
   const startEditPayment = (p: { id: string; createdAt: string; method: string; description?: string | null; amount: string | number; doctorId?: string | null; posId?: string | null }) => {
     setEditingPaymentId(p.id);
     setPayAmount(String(Number(p.amount)));
@@ -1908,12 +2011,19 @@ export default function HastaDetayContent() {
   };
 
   const addPayment = async () => {
+    if (payLoading) return;
     const amount = Number(payAmount);
     if (!Number.isFinite(amount) || amount <= 0) return showToast("error", "Geçerli bir tutar girin");
     if (!payDoctorId) return showToast("error", "Lütfen bir doktor seçin");
     if ((payMethod === "KREDI_KARTI" || payMethod === "MAIL_ORDER") && !payPosId) {
       return showToast("error", "Kart / mail order tahsilatı için POS seçimi zorunlu");
     }
+    const requestKey =
+      paymentRequestKeyRef.current ||
+      (typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `payment-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    paymentRequestKeyRef.current = requestKey;
     setPayLoading(true);
     const res = editingPaymentId
       ? await fetch("/api/payments/" + editingPaymentId, {
@@ -1923,7 +2033,7 @@ export default function HastaDetayContent() {
         })
       : await fetch("/api/payments", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
           body: JSON.stringify({ patientId: id, method: payMethod, amount, description: payDesc, doctorId: payDoctorId, ...(payPosId && { posId: payPosId }) })
         });
     if (res.ok) {
@@ -2065,7 +2175,7 @@ export default function HastaDetayContent() {
     const res = await fetch("/api/prescriptions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ patientId: id, drugs: JSON.stringify(currentRecipeDrugs), note: rxNote })
+      body: JSON.stringify({ patientId: id, drugs: JSON.stringify(currentRecipeDrugs), note: rxNote, doctorId: rxDoctorId || undefined })
     });
     if (res.ok) {
       showToast("success", "Reçete kaydedildi");
@@ -2254,7 +2364,7 @@ export default function HastaDetayContent() {
       detail: `Kalan bakiye ${totalDebt.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} TL`,
       tone: "border-amber-100 bg-amber-50 text-amber-700",
       action: "Ödeme Al",
-      onClick: () => setPaymentModalOpen(true),
+      onClick: openNewPaymentModal,
     }] : []),
     ...(upcomingAppointments[0] ? [{
       id: "next-appointment",
@@ -2695,7 +2805,7 @@ export default function HastaDetayContent() {
         <div className="flex items-center gap-2">
           <details ref={actionMenuRef} className="relative">
             <summary className="cursor-pointer list-none rounded-xl bg-slate-950 px-3 py-2 text-sm font-bold text-white transition hover:bg-slate-800">
-              + İşlem
+              İşlem Ekle
             </summary>
             <div className="absolute right-0 z-30 mt-2 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
               {canOpenTab("tedavi") && (
@@ -2713,7 +2823,7 @@ export default function HastaDetayContent() {
               <button
                 type="button"
                 onClick={() => {
-                  setPaymentModalOpen(true);
+                  openNewPaymentModal();
                   closeActionMenu();
                 }}
                 className="block w-full px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50"
@@ -2729,7 +2839,7 @@ export default function HastaDetayContent() {
                   }}
                   className="block w-full px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50"
                 >
-                  Lab İşi
+                  Laboratuvar İşi
                 </button>
               )}
               {canOpenTab("recete") && (
@@ -2741,7 +2851,7 @@ export default function HastaDetayContent() {
                   }}
                   className="block w-full px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50"
                 >
-                  Reçete
+                  Reçete Oluştur
                 </button>
               )}
               <button
@@ -2764,7 +2874,7 @@ export default function HastaDetayContent() {
           >
             Dışa Aktar
           </button>
-          <Link href="/hasta" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">Liste</Link>
+          <Link href="/hasta" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">Hasta Listesi</Link>
         </div>
         </div>
         <div className="mt-3 grid gap-2 border-t border-slate-100 pt-3 sm:grid-cols-4">
@@ -2930,14 +3040,16 @@ export default function HastaDetayContent() {
                   </div>
                 )}
               </div>
-              <div className="mt-4 border-t border-slate-100 pt-4">
-                <p className="mb-2 text-xs font-bold uppercase text-slate-400">Finans</p>
-                <div className="space-y-1 text-sm">
-                  <div className="flex justify-between"><span className="text-slate-500">Net tedavi</span><span className="font-bold text-slate-900">{discountedTotal.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} TL</span></div>
-                  <div className="flex justify-between"><span className="text-slate-500">Ödenen</span><span className="font-bold text-emerald-700">{totalPaid.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} TL</span></div>
-                  <div className="flex justify-between border-t border-slate-100 pt-1"><span className="font-bold text-slate-700">Kalan</span><span className={`font-black ${totalDebt > 0 ? "text-red-700" : "text-emerald-700"}`}>{totalDebt.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} TL</span></div>
-                </div>
-              </div>
+              {/* Finans özeti kaldırıldı — sayfa üstündeki sabit başlık şeridi
+                  (Ödenen/Kalan) her sekmede zaten görünür durumda, burada
+                  tekrarlamak yerine "Ödeme" sekmesine yönlendirmek yeterli. */}
+              <button
+                type="button"
+                onClick={() => canOpenTab("odeme") && selectTab("odeme")}
+                className="mt-4 block w-full rounded-xl border-t border-slate-100 pt-4 text-left text-xs font-bold uppercase text-primary hover:underline"
+              >
+                Finans detayı için Ödeme sekmesine git →
+              </button>
             </div>
           </aside>
         </div>
@@ -3612,7 +3724,7 @@ export default function HastaDetayContent() {
           </div>
 
           <div className="flex justify-end gap-2">
-            <button onClick={() => setPaymentModalOpen(true)} className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">Ödeme Al</button>
+            <button onClick={openNewPaymentModal} className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">Ödeme Al</button>
           </div>
 
           <div className="rounded-xl border border-slate-100 bg-white shadow-sm overflow-hidden">
@@ -3963,6 +4075,21 @@ export default function HastaDetayContent() {
             )}
 
             <div className="mb-4">
+              <label className="block text-xs font-semibold text-slate-700 mb-1">Reçeteyi Yazan Doktor</label>
+              <select
+                value={rxDoctorId}
+                onChange={e => setRxDoctorId(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
+              >
+                <option value="">— Doktor seçin —</option>
+                {doctorOptions.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
+              </select>
+              {rxDoctorId && treatingDoctorNames.length > 0 && !treatingDoctorNames.includes(doctorOptions.find(d => d.id === rxDoctorId)?.fullName || "") && (
+                <p className="mt-1 text-xs font-semibold text-amber-600">⚠ Seçilen doktor bu hastayı tedavi eden doktorlar arasında değil, kontrol edin.</p>
+              )}
+            </div>
+
+            <div className="mb-4">
               <label className="block text-xs font-semibold text-slate-700 mb-1">Doktor Notları (isteğe bağlı)</label>
               <textarea
                 value={rxNote}
@@ -4044,7 +4171,7 @@ export default function HastaDetayContent() {
                 onClick={openLabCreateModal}
                 className="rounded-md bg-slate-900 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-slate-700"
               >
-                Hasta İçin Yeni İş
+                Yeni Laboratuvar İşi
               </button>
             </div>
           </div>
@@ -4216,6 +4343,7 @@ export default function HastaDetayContent() {
                   <div key={doc.id} className="group relative overflow-hidden rounded-lg border border-slate-200">
                     <a href={`/api/documents/${doc.id}/file`} target="_blank" rel="noopener noreferrer" className="block">
                       {doc.mimeType.startsWith("image/") ? (
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img src={`/api/documents/${doc.id}/file`} alt={doc.fileName} className="h-32 w-full object-cover" />
                       ) : (
                         <div className="flex h-32 w-full flex-col items-center justify-center gap-1 bg-slate-50 text-slate-400">
@@ -4474,6 +4602,8 @@ export default function HastaDetayContent() {
                   order={toSharedLabOrder(labOrderDetail)}
                   onAddTrip={openPatientLabTripAction}
                   onAddInvoice={openPatientLabInvoiceAction}
+                  onEditInvoice={openPatientLabInvoiceEditAction}
+                  onDeleteInvoice={(order, invoice) => void deleteLabInvoiceFromPatientDetail(order, invoice)}
                   onReceive={openPatientLabReceiveAction}
                   onEditTrip={openPatientLabEditTripAction}
                   onComplete={completeLabOrderFromPatientDetail}
@@ -4497,6 +4627,7 @@ export default function HastaDetayContent() {
                   {labDetailAction === "trip" && "Laboratuvara Gönderim Ekle"}
                   {labDetailAction === "receive" && "Laboratuvardan Geliş Kaydet"}
                   {labDetailAction === "invoice" && "Fatura Kalemi"}
+                  {labDetailAction === "editInvoice" && "Faturayı Düzenle"}
                   {labDetailAction === "editTrip" && "Adımı Düzenle"}
                   {labDetailAction === "rpt" && "RPT Olarak Yeniden Aç"}
                 </h3>
@@ -4679,7 +4810,7 @@ export default function HastaDetayContent() {
                 </div>
               )}
 
-              {labDetailAction === "invoice" && (
+              {(labDetailAction === "invoice" || labDetailAction === "editInvoice") && (
                 <div className="space-y-3">
                   <label className="block">
                     <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-slate-500">Kalem *</span>
@@ -4705,8 +4836,8 @@ export default function HastaDetayContent() {
                   </label>
                   <div className="flex gap-2 border-t border-slate-100 pt-4">
                     <button onClick={closeLabDetailAction} className="flex-1 rounded-lg border border-slate-200 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50">Vazgeç</button>
-                    <button onClick={addLabInvoiceFromPatientDetail} disabled={labActionSaving || !labInvoiceForm.item.trim() || !labInvoiceForm.amount} className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white disabled:opacity-40">
-                      {labActionSaving ? "Kaydediliyor..." : "Ekle"}
+                    <button onClick={saveLabInvoiceFromPatientDetail} disabled={labActionSaving || !labInvoiceForm.item.trim() || !labInvoiceForm.amount} className="flex-1 rounded-lg bg-slate-900 py-2 text-sm font-semibold text-white disabled:opacity-40">
+                      {labActionSaving ? "Kaydediliyor..." : labDetailAction === "editInvoice" ? "Değişiklikleri Kaydet" : "Ekle"}
                     </button>
                   </div>
                 </div>
@@ -4898,11 +5029,14 @@ export default function HastaDetayContent() {
               <FormField label="Tutar (₺)" required>
                 <input type="number" placeholder="0.00" className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-lg font-bold focus:border-emerald-400 focus:outline-none" value={payAmount} onChange={e=>setPayAmount(e.target.value)} autoFocus />
               </FormField>
-              <FormField label="Doktor" required>
+              <FormField label="Doktor" required hint={treatingDoctorNames.length > 0 ? `Hastayı tedavi eden: ${treatingDoctorNames.join(", ")}` : undefined}>
                 <select className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" value={payDoctorId} onChange={e=>setPayDoctorId(e.target.value)}>
                   <option value="">— Doktor seçin —</option>
                   {doctorOptions.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
                 </select>
+                {payDoctorId && treatingDoctorNames.length > 0 && !treatingDoctorNames.includes(doctorOptions.find(d => d.id === payDoctorId)?.fullName || "") && (
+                  <p className="mt-1 text-xs font-semibold text-amber-600">⚠ Seçilen doktor bu hastayı tedavi eden doktorlar arasında değil — hakediş yanlış kişiye yazılabilir, kontrol edin.</p>
+                )}
               </FormField>
               {editingPaymentId && (
                 <FormField label="Tarih">

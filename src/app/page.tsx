@@ -2,11 +2,10 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { CalendarDays, CheckCircle2, ClipboardList, CreditCard, ShieldCheck, Stethoscope } from "lucide-react";
+import { CalendarDays, CheckCircle2, ClipboardList, CreditCard, Stethoscope } from "lucide-react";
 import { DemoRequestForm } from "@/components/marketing/DemoRequestForm";
 
-const FALLBACK_HERO =
-  "https://images.unsplash.com/photo-1606811971618-4486d14f3f99?auto=format&fit=crop&w=1800&q=85";
+const HERO_IMAGE = "/clinic-workspace-hero.jpg";
 
 const modules = [
   { title: "Hasta ve randevu", desc: "Hasta kartı, randevu akışı, takip ve görev kayıtları tek dosyada.", icon: CalendarDays },
@@ -24,7 +23,7 @@ const assurances = [
 
 export default function RootPage() {
   return (
-    <main className="min-h-screen bg-white text-slate-950">
+    <main className="min-h-screen bg-slate-100 text-slate-950">
       <header className="border-b border-slate-200 bg-white/95">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-4">
           <Link href="/" className="flex items-center gap-3" aria-label="Ana sayfa">
@@ -47,21 +46,21 @@ export default function RootPage() {
         </div>
       </header>
 
-      <section className="relative overflow-hidden border-b border-slate-200">
+      <section className="relative overflow-hidden border-b border-slate-200 bg-slate-950">
         <Image
-          src={FALLBACK_HERO}
-          alt="Diş kliniği çalışma alanı"
+          src={HERO_IMAGE}
+          alt="Diş hekimliği muayenesi"
           fill
           priority
-          className="object-cover"
+          unoptimized
+          className="object-cover opacity-50"
         />
-        <div className="absolute inset-0 bg-slate-950/72" />
-        <div className="relative mx-auto grid min-h-[620px] max-w-7xl items-center gap-10 px-5 py-16 lg:grid-cols-[1.05fr_0.95fr]">
+        <div className="relative mx-auto flex min-h-[min(72vh,650px)] max-w-7xl items-center px-5 py-14">
           <div className="max-w-3xl text-white">
             <span className="inline-flex items-center rounded-full border border-white/20 bg-white/10 px-3 py-1 text-xs font-bold uppercase tracking-wide text-cyan-100">
               Diş hekimliği klinikleri için
             </span>
-            <h1 className="mt-5 max-w-4xl text-4xl font-black leading-tight tracking-tight md:text-6xl">
+            <h1 className="mt-5 max-w-4xl text-4xl font-black leading-tight md:text-6xl">
               Diş klinikleri için uçtan uca yönetim platformu.
             </h1>
             <p className="mt-5 max-w-2xl text-base leading-7 text-slate-200 md:text-lg">
@@ -83,32 +82,10 @@ export default function RootPage() {
             </div>
           </div>
 
-          <div className="rounded-2xl border border-white/15 bg-white/95 p-5 shadow-2xl">
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-              <div className="mb-4 flex items-center justify-between">
-                <div>
-                  <p className="text-xs font-bold uppercase text-slate-500">Operasyon Özeti</p>
-                  <h2 className="mt-1 text-xl font-black">Tek panel, net süreç</h2>
-                </div>
-                <ShieldCheck className="h-7 w-7 text-emerald-600" />
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                {["Randevu", "Tedavi", "Tahsilat", "Laboratuvar"].map((item, index) => (
-                  <div key={item} className="rounded-lg border border-slate-200 bg-white p-3">
-                    <p className="text-xs font-bold text-slate-500">0{index + 1}</p>
-                    <p className="mt-1 font-black">{item}</p>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-900">
-                Hasta, hekim, lab, stok, firma ve muhasebe kayıtları bağlantılı ilerler.
-              </div>
-            </div>
-          </div>
         </div>
       </section>
 
-      <section id="moduller" className="mx-auto max-w-7xl px-5 py-16">
+      <section id="moduller" className="mx-auto max-w-7xl px-5 py-14">
         <div className="max-w-2xl">
           <p className="text-xs font-black uppercase tracking-wide text-cyan-700">Modüller</p>
           <h2 className="mt-2 text-3xl font-black tracking-tight">Klinik iş akışına göre tasarlanmış yapı</h2>
@@ -120,7 +97,7 @@ export default function RootPage() {
           {modules.map((module) => {
             const Icon = module.icon;
             return (
-              <article key={module.title} className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
+              <article key={module.title} className="rounded-lg border border-slate-200 bg-white p-5">
                 <Icon className="h-6 w-6 text-cyan-700" />
                 <h3 className="mt-4 font-black">{module.title}</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-600">{module.desc}</p>
@@ -141,7 +118,7 @@ export default function RootPage() {
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             {assurances.map((item) => (
-              <div key={item} className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-4">
+              <div key={item} className="flex items-start gap-3 rounded-lg border border-slate-200 bg-white p-4">
                 <CheckCircle2 className="mt-0.5 h-5 w-5 flex-none text-emerald-600" />
                 <p className="text-sm font-semibold text-slate-700">{item}</p>
               </div>

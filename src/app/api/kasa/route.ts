@@ -1,8 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
-import { createIntegratedPayment } from "@/lib/payment-ledger";
-import { effectiveDoctorWhere } from "@/lib/hakedis";
+import { requireAuth } from "@/lib/api";
 
 export async function GET(req: NextRequest) {
   try {
@@ -48,84 +46,5 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     console.error("[kasa GET]", error);
     return NextResponse.json({ message: "Kasa verileri yüklenemedi. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });
-  }
-}
-
-export async function POST(req: NextRequest) {
-  const auth = await requireAuth("payments:write");
-  if (auth.error) return auth.error;
-
-  const institutionDoctors = auth.user.institutionId
-    ? await prisma.user.findMany({
-        where: effectiveDoctorWhere(auth.user.institutionId),
-        select: { id: true },
-      })
-    : [];
-  const doctorIds = institutionDoctors.map((doctor) => doctor.id);
-
-  const body = await req.json();
-  const { patientId, doctorId, method, amount, description, posId } = body;
-  const numericAmount = Number(amount);
-
-  if (!Number.isFinite(numericAmount) || numericAmount <= 0 || !method) {
-    return NextResponse.json({ error: "amount ve method zorunlu" }, { status: 400 });
-  }
-
-  if (patientId && !doctorId) {
-    return NextResponse.json({ error: "Hasta tahsilatı için doktor seçimi zorunlu" }, { status: 400 });
-  }
-
-  if (!patientId && !doctorId) {
-    return NextResponse.json({ error: "Tahsilat hasta veya doktor ile ilişkilendirilmelidir" }, { status: 400 });
-  }
-
-  if ((method === "KREDI_KARTI" || method === "MAIL_ORDER") && !posId) {
-    return NextResponse.json({ error: "Kart / mail order tahsilatı için POS seçimi zorunlu" }, { status: 400 });
-  }
-
-  if (auth.user.institutionId && doctorId && !doctorIds.includes(doctorId)) {
-    return NextResponse.json({ error: "Bu doktor kurum kapsamı disinda" }, { status: 403 });
-  }
-
-  if (auth.user.institutionId && patientId) {
-    const relatedPatient = await prisma.patient.findFirst({
-      where: {
-        id: patientId,
-        institutionId: auth.user.institutionId,
-      },
-      select: { id: true },
-    });
-
-    if (!relatedPatient) {
-      return NextResponse.json({ error: "Hasta kurum kapsamı disinda" }, { status: 403 });
-    }
-  }
-
-  try {
-    const { payment, taksitInfo } = await prisma.$transaction(
-      (tx) =>
-        createIntegratedPayment({
-          tx,
-          patientId,
-          doctorId,
-          method,
-          amount: numericAmount,
-          description,
-          posId,
-        }),
-      { isolationLevel: "Serializable" }
-    );
-
-    await writeAudit(auth.user.id, "KASA_PAYMENT_CREATE", `${numericAmount} TL kasa tahsilatı eklendi`);
-    return NextResponse.json({ ...payment, taksitInfo }, { status: 201 });
-  } catch (e) {
-    if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2034") {
-      return NextResponse.json(
-        { error: "Bu hasta için aynı anda başka bir ödeme işlendi. Lütfen tekrar deneyin." },
-        { status: 409 }
-      );
-    }
-    console.error("[kasa POST]", e);
-    return NextResponse.json({ error: "Ödeme kaydedilemedi" }, { status: 503 });
   }
 }

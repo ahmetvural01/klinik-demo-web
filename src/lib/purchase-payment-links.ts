@@ -1,3 +1,5 @@
+import { getDebtPaymentSummary } from "@/lib/firma-payment-allocation";
+
 type TxClient = any;
 
 export const PURCHASE_PAYMENT_PREFIX = "[SISTEM:PURCHASE_PAYMENT:";
@@ -11,7 +13,16 @@ export function firmaIslemToken(islemId: string) {
   return `${FIRMA_ISLEM_PREFIX}${islemId}]`;
 }
 
-export async function findPurchasePayments(tx: TxClient, purchaseId: string, firmaId?: string | null) {
+export async function findPurchasePayments(
+  tx: TxClient,
+  purchaseId: string,
+  firmaId?: string | null,
+  debtIslemId?: string | null,
+) {
+  if (debtIslemId) {
+    const summary = await getDebtPaymentSummary(tx, debtIslemId);
+    if (summary) return summary.payments;
+  }
   return tx.firmaIslem.findMany({
     where: {
       ...(firmaId ? { firmaId } : {}),

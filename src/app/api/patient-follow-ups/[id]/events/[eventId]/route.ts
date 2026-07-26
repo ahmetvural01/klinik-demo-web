@@ -3,9 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { patientFollowUpEventUpdateSchema } from "@/lib/validators";
 
-type Params = { params: { id: string; eventId: string } };
+type Params = { params: Promise<{ id: string; eventId: string }> };
 
-export async function PUT(request: NextRequest, { params }: Params) {
+export async function PUT(request: NextRequest, props: Params) {
+  const params = await props.params;
   try {
     const auth = await requireAuth("appointments:write");
     if (auth.error) return auth.error;
@@ -27,7 +28,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     });
 
     if (!event) {
-      return NextResponse.json({ message: "Surec notu bulunamadi" }, { status: 404 });
+      return NextResponse.json({ message: "Süreç notu bulunamadı." }, { status: 404 });
     }
 
     const body = await request.json();
@@ -61,7 +62,8 @@ export async function PUT(request: NextRequest, { params }: Params) {
   }
 }
 
-export async function DELETE(_: NextRequest, { params }: Params) {
+export async function DELETE(_: NextRequest, props: Params) {
+  const params = await props.params;
   try {
     const auth = await requireAuth("appointments:write");
     if (auth.error) return auth.error;
@@ -82,7 +84,7 @@ export async function DELETE(_: NextRequest, { params }: Params) {
     });
 
     if (!event) {
-      return NextResponse.json({ message: "Surec notu bulunamadi" }, { status: 404 });
+      return NextResponse.json({ message: "Süreç notu bulunamadı." }, { status: 404 });
     }
 
     await prisma.patientFollowUpEvent.delete({ where: { id: params.eventId } });
