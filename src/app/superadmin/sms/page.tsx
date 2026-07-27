@@ -6,12 +6,14 @@ import PackagesTab from "./_tabs/PackagesTab";
 import StockTab from "./_tabs/StockTab";
 import TemplatesTab from "./_tabs/TemplatesTab";
 import ProviderTab from "./_tabs/ProviderTab";
+import WhatsappProviderTab from "./_tabs/WhatsappProviderTab";
 
 const TABS = [
   { id: "packages", label: "Paketler", Component: PackagesTab },
   { id: "stock", label: "Stok", Component: StockTab },
   { id: "templates", label: "Şablonlar", Component: TemplatesTab },
   { id: "provider", label: "API Bağlantısı", Component: ProviderTab },
+  { id: "whatsapp", label: "WhatsApp", Component: WhatsappProviderTab },
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];

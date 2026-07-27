@@ -159,6 +159,9 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
       ...(body.adIntensity !== undefined && { adIntensity: body.adIntensity }),
       ...(body.paymentGraceUntil !== undefined && { paymentGraceUntil }),
       ...(body.suspendedUntil !== undefined && { suspendedUntil }),
+      // Yalnızca süperadmin açabilir/kapatabilir — klinik kendi ayarlarından
+      // bu bayrağı hiç değiştiremez (bkz. src/lib/notify.ts).
+      ...(body.whatsappEnabled !== undefined && { whatsappEnabled: Boolean(body.whatsappEnabled) }),
     },
     });
   } catch (error) {
@@ -184,6 +187,7 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
   if (body.suspendedUntil !== undefined && String(existing.suspendedUntil) !== String(updated.suspendedUntil)) changedFields.push(`suspendedUntil: ${existing.suspendedUntil?.toISOString() || "-"} → ${updated.suspendedUntil?.toISOString() || "-"}`);
   if (body.maxActiveUsers !== undefined && existing.maxActiveUsers !== updated.maxActiveUsers) changedFields.push(`maxActiveUsers: ${existing.maxActiveUsers ?? "-"} → ${updated.maxActiveUsers ?? "-"}`);
   if (body.maxActiveDoctors !== undefined && existing.maxActiveDoctors !== updated.maxActiveDoctors) changedFields.push(`maxActiveDoctors: ${existing.maxActiveDoctors ?? "-"} → ${updated.maxActiveDoctors ?? "-"}`);
+  if (body.whatsappEnabled !== undefined && existing.whatsappEnabled !== updated.whatsappEnabled) changedFields.push(`whatsappEnabled: ${existing.whatsappEnabled} → ${updated.whatsappEnabled}`);
   await writeAudit(
     auth.user.id,
     "SUPERADMIN_INSTITUTION_UPDATE",

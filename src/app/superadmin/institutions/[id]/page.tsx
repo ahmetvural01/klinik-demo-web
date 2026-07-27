@@ -70,6 +70,7 @@ type Institution = {
   updatedAt: string;
   adIntensity: AdIntensity;
   adsEnabled: boolean;
+  whatsappEnabled: boolean;
   maxActiveDoctors: number | null;
   maxActiveUsers: number | null;
   paymentGraceUntil: string | null;
@@ -103,6 +104,7 @@ type EditForm = {
   maxActiveDoctors: string;
   adsEnabled: boolean;
   adIntensity: AdIntensity;
+  whatsappEnabled: boolean;
 };
 
 const SERVICE_MODE_HINTS: Record<ServiceMode, string> = {
@@ -151,6 +153,7 @@ function formToInstitution(i: Institution): EditForm {
     maxActiveDoctors: i.maxActiveDoctors != null ? String(i.maxActiveDoctors) : "",
     adsEnabled: i.adsEnabled,
     adIntensity: i.adIntensity,
+    whatsappEnabled: i.whatsappEnabled,
   };
 }
 
@@ -268,6 +271,7 @@ export default function InstitutionDetailPage() {
       maxActiveDoctors: editForm.maxActiveDoctors ? Number(editForm.maxActiveDoctors) : null,
       adsEnabled: editForm.adsEnabled,
       adIntensity: editForm.adIntensity,
+      whatsappEnabled: editForm.whatsappEnabled,
     };
     const res = await fetch(`/api/superadmin/institutions/${institution.id}`, {
       method: "PUT",
@@ -750,6 +754,22 @@ export default function InstitutionDetailPage() {
                   </FormField>
                 </div>
               </div>
+            </FormSection>
+
+            <FormSection icon={ShieldAlert} title="WhatsApp Bildirim Kanalı">
+              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                <input
+                  type="checkbox"
+                  checked={editForm.whatsappEnabled}
+                  onChange={(e) => setEditForm((f) => f && { ...f, whatsappEnabled: e.target.checked })}
+                />
+                Bu klinik için WhatsApp bildirimlerini etkinleştir
+              </label>
+              <p className="mt-1.5 text-xs text-slate-500">
+                Açıldığında randevu bildirimleri gibi süreçler SMS bakiyesi tüketmeden WhatsApp üzerinden
+                gönderilmeye çalışılır (aktif bir sağlayıcı yoksa otomatik olarak SMS'e döner).
+                Sağlayıcı ayarları SMS Yönetimi &gt; WhatsApp sekmesinden yapılır.
+              </p>
             </FormSection>
 
             <FormSection icon={ShieldAlert} title="Reklamlar">

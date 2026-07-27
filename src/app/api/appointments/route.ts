@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { appointmentSchema, formatZodError } from "@/lib/validators";
 import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { sendSms } from "@/lib/sms";
+import { sendWhatsapp } from "@/lib/whatsapp";
 import { turkeyDayRangeUtc } from "@/lib/tz";
 import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
@@ -45,21 +46,12 @@ async function sendAppointmentInfoSms(params: {
     resolveSmsTemplate(params.institutionId, "BILGI"),
   ]);
 
-  if (!settings?.smsEnabled) return { status: "skipped", message: "Kurum SMS gönderimi kapalı." };
   if (!institution) return { status: "failed", message: "Kurum bilgisi bulunamadı." };
   if (!appointment.patient.phone) return { status: "failed", message: "Hastanın telefon numarası yok." };
 
-  // Bakiyeyi atomik olarak rezerve et — düz "smsBalance <= 0" kontrolü ile ayrı bir
-  // decrement arasında yarış durumu olursa bakiye eksiye düşebilir.
-  const reservation = await prisma.institution.updateMany({
-    where: { id: institution.id, smsBalance: { gte: 1 } },
-    data: { smsBalance: { decrement: 1 } },
-  });
-  if (reservation.count === 0) return { status: "failed", message: "SMS bakiyesi yetersiz." };
-
   const dateText = new Date(appointment.startAt).toLocaleString("tr-TR");
-  const institutionName = settings.institutionName || institution.name;
-  const institutionPhone = settings.institutionPhone || institution.phone || "";
+  const institutionName = settings?.institutionName || institution.name;
+  const institutionPhone = settings?.institutionPhone || institution.phone || "";
   const fallbackMessage = `${institutionName}: Sayın ${appointment.patient.fullName}, randevunuz oluşturuldu. Tarih: ${dateText}, Doktor: ${appointment.doctor.fullName}.`;
   const message = smsTemplate
     ? renderTemplate(smsTemplate.content, {
@@ -70,6 +62,33 @@ async function sendAppointmentInfoSms(params: {
         dateTime: dateText,
       })
     : fallbackMessage;
+
+  // WhatsApp kanalı açıksa SMS bakiyesi hiç kontrol edilmeden önce denenir —
+  // başarılı olursa aşağıdaki SMS-özel rezervasyon/iade akışına hiç girilmez
+  // (bkz. src/lib/notify.ts).
+  if (institution.whatsappEnabled) {
+    const waResult = await sendWhatsapp(appointment.patient.phone, message);
+    if (waResult.success) {
+      await writeAudit(
+        params.createdByUserId,
+        "WHATSAPP_BILGI_AUTO",
+        `${appointment.patient.fullName} (${appointment.patient.phone}) - ProviderMsgId: ${waResult.providerMessageId || "-"}`
+      );
+      return { status: "sent", message: "Bilgilendirme WhatsApp mesajı gönderildi." };
+    }
+    // WhatsApp denendi ama başarısız oldu (ör. sağlayıcı henüz ayarlanmamış)
+    // — hastaya bilgilendirme hiç gitmemesindense aşağıdaki SMS akışına düşülür.
+  }
+
+  if (!settings?.smsEnabled) return { status: "skipped", message: "Kurum SMS gönderimi kapalı." };
+
+  // Bakiyeyi atomik olarak rezerve et — düz "smsBalance <= 0" kontrolü ile ayrı bir
+  // decrement arasında yarış durumu olursa bakiye eksiye düşebilir.
+  const reservation = await prisma.institution.updateMany({
+    where: { id: institution.id, smsBalance: { gte: 1 } },
+    data: { smsBalance: { decrement: 1 } },
+  });
+  if (reservation.count === 0) return { status: "failed", message: "SMS bakiyesi yetersiz." };
 
   const sendResult = await sendSms(appointment.patient.phone, message);
   if (sendResult.success) {

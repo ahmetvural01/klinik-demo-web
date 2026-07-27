@@ -20,6 +20,9 @@ model Institution {
   subscriptionPlan    SubscriptionPlan          @default(TEMEL)
   billingCycle        BillingCycle              @default(AYLIK)
   smsBalance          Int                       @default(0)
+  // Yalnızca süperadmin tarafından açılabilir (klinik kendi başına
+  // etkinleştiremez) — bkz. WhatsappProviderConfig yorumu.
+  whatsappEnabled     Boolean                   @default(false)
   isActive            Boolean                   @default(true)
   ownerId             String?                   @unique
   createdAt           DateTime                  @default(now())
@@ -211,6 +214,41 @@ model SmsProviderConfig {
 }
 
 model MockSmsLog {
+  id           String   @id @default(cuid())
+  phone        String
+  message      String
+  sender       String?
+  status       String   @default("SENT")
+  responseData String?
+  createdAt    DateTime @default(now())
+}
+
+// WhatsApp, SMS'e paralel bir bildirim kanalı olarak eklendi. Amaç: SMS gönderimi
+// klinik başına satılan bir kredi tükettiği için gelir kaynağıdır; WhatsApp ise
+// yalnızca süperadmin'in özel olarak açtığı kliniklerde SMS kredisi tüketmeden
+// aynı süreçleri (randevu bilgilendirme, hatırlatma, toplu gönderim vb.)
+// yürütür. Şema, henüz seçilmiş bir sağlayıcı olmadığından SmsProviderConfig
+// ile aynı genel (jenerik HTTP + mock) yapıyı kullanır.
+model WhatsappProviderConfig {
+  id             String   @id @default(cuid())
+  code           String   @unique
+  name           String
+  isActive       Boolean  @default(false)
+  priority       Int      @default(100)
+  sendUrl        String?
+  httpMethod     String   @default("POST")
+  username       String?
+  password       String?
+  apiKey         String?
+  sender         String?
+  headersJson    String?
+  bodyTemplate   String?
+  successPattern String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model MockWhatsappLog {
   id           String   @id @default(cuid())
   phone        String
   message      String
