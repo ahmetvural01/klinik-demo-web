@@ -293,8 +293,6 @@ function FirmaDetayContent() {
           return (
             <div className="flex justify-end gap-1">
               <Button size="sm" variant="secondary" onClick={() => purchaseManager.openPurchaseDetail(purchase.id)}>Detay</Button>
-              <Button size="sm" variant="secondary" onClick={() => purchaseManager.openPurchaseEdit(purchase.id)}>Düzenle</Button>
-              <Button size="sm" variant="danger" onClick={() => purchaseManager.cancelPurchase(purchase.id, purchase.firmaId)}>İptal</Button>
             </div>
           );
         }

@@ -693,7 +693,23 @@ export function usePurchaseModals({
                     ))}
                   </p>
                 </div>
-                <div className="flex justify-end">
+                <div className="flex flex-wrap justify-end gap-2">
+                  {viewingPurchase.status === "AKTIF" && (
+                    <>
+                      <button
+                        onClick={() => { setShowPurchaseDetail(false); void openPurchaseEdit(viewingPurchase.id); }}
+                        className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
+                      >
+                        Düzenle
+                      </button>
+                      <button
+                        onClick={() => { setShowPurchaseDetail(false); void cancelPurchase(viewingPurchase.id, viewingPurchase.firmaId); }}
+                        className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-100"
+                      >
+                        İptal
+                      </button>
+                    </>
+                  )}
                   <button onClick={() => setShowPurchaseDetail(false)}
                     className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">Kapat</button>
                 </div>

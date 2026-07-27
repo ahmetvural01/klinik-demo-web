@@ -59,6 +59,7 @@ export default function StokPage() {
 
   const [saving,     setSaving]     = useState(false);
 
+  const [detailItem, setDetailItem] = useState<StockItem | null>(null);
   const [historyItem, setHistoryItem] = useState<StockItem | null>(null);
   const [historyMovements, setHistoryMovements] = useState<StockMovement[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -391,28 +392,8 @@ export default function StokPage() {
         const item = row.original;
         return (
           <div className="flex items-center justify-end gap-1 whitespace-nowrap">
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={() => {
-                setMoveItem(item);
-                setMove({
-                  type: "CIKIS",
-                  quantity: "",
-                  note: "",
-                });
-              }}
-            >
-              Stok Çıkışı
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => void openHistory(item)}>
-              Hareketler
-            </Button>
-            <Button size="sm" variant="secondary" onClick={() => openEdit(item)}>
-              Düzenle
-            </Button>
-            <Button size="sm" variant="ghost" onClick={() => void deleteItem(item)}>
-              Arşivle
+            <Button size="sm" variant="secondary" onClick={() => setDetailItem(item)}>
+              Detay
             </Button>
           </div>
         );
@@ -514,6 +495,59 @@ export default function StokPage() {
           </div>
           <p className="text-xs text-slate-500">Bu form yalnızca ürün kartı açar. Tedarikçi, fatura, alış miktarı ve fiyatı Satın Alma & Tedarikçiler ekranındaki satın alma kaydında tutulur.</p>
         </div>
+      </Modal>
+
+      {/* Stock Item Detail Modal */}
+      <Modal
+        open={Boolean(detailItem)}
+        onClose={() => setDetailItem(null)}
+        title={detailItem?.name || "Stok Kartı"}
+        description={detailItem ? `${detailItem.category} · ${detailItem.quantity} ${detailItem.unit} mevcut (Min ${detailItem.minQuantity})` : undefined}
+      >
+        {detailItem && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm sm:grid-cols-3">
+              <div>
+                <p className="text-[11px] font-bold uppercase text-slate-400">Son Alış</p>
+                <p className="mt-0.5 font-semibold text-slate-800">
+                  {detailItem.lastPurchase ? `${CURRENCY.format(Number(detailItem.lastPurchase.unitPrice || 0))}/${detailItem.unit}` : "Satın alma yok"}
+                </p>
+                {detailItem.lastPurchase?.supplier && <p className="text-[11px] text-slate-400">{detailItem.lastPurchase.supplier}</p>}
+              </div>
+              <div>
+                <p className="text-[11px] font-bold uppercase text-slate-400">Ort. Maliyet</p>
+                <p className="mt-0.5 font-semibold text-slate-800">{averageCost(detailItem) !== null ? CURRENCY.format(averageCost(detailItem)!) : "Maliyet yok"}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-bold uppercase text-slate-400">Stok Değeri</p>
+                <p className="mt-0.5 font-semibold text-slate-800">{CURRENCY.format(stockValue(detailItem))}</p>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Button
+                variant="primary"
+                onClick={() => {
+                  const item = detailItem;
+                  setDetailItem(null);
+                  if (!item) return;
+                  setMoveItem(item);
+                  setMove({ type: "CIKIS", quantity: "", note: "" });
+                }}
+              >
+                Stok Çıkışı
+              </Button>
+              <Button variant="secondary" onClick={() => { const item = detailItem; setDetailItem(null); if (item) void openHistory(item); }}>
+                Hareketler
+              </Button>
+              <Button variant="secondary" onClick={() => { const item = detailItem; setDetailItem(null); if (item) openEdit(item); }}>
+                Düzenle
+              </Button>
+              <Button variant="ghost" onClick={() => { const item = detailItem; setDetailItem(null); if (item) void deleteItem(item); }}>
+                Arşivle
+              </Button>
+            </div>
+          </div>
+        )}
       </Modal>
 
       {/* Edit Item Modal */}
