@@ -2711,7 +2711,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                         onChange={e => { setEditPatientSearch(e.target.value); setEditPatientDropdownOpen(true); if (!e.target.value) setEditPatientId(""); }}
                         onFocus={() => editPatientSearch.trim().length >= 2 && setEditPatientDropdownOpen(true)}
                         className="flex-1 bg-transparent text-sm outline-none" />
-                      {editPatientId && <button type="button" onClick={() => { setEditPatientId(""); setEditPatientSearch(""); setEditPatientResults([]); }} aria-label="Hasta seçimini temizle" title="Hasta seçimini temizle" className="text-slate-400 hover:text-red-500 text-base leading-none">×</button>}
+                      {editPatientId && <button type="button" onClick={() => { setEditPatientId(""); setEditPatientSearch(""); setEditPatientResults([]); }} aria-label="Hasta seçimini temizle" title="Hasta seçimini temizle" className="flex shrink-0 items-center justify-center border-0 bg-transparent p-0 text-base leading-none text-slate-400 hover:text-red-500">×</button>}
                       {editPatientLoading && <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-slate-300 border-t-primary" />}
                     </div>
                     {editPatientDropdownOpen && (editPatientResults.length > 0 || (editPatientSearch.trim().length >= 2 && !editPatientLoading)) && (

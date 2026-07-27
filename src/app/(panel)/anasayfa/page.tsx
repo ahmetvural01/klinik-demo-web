@@ -517,6 +517,8 @@ export default function AnasayfaPage() {
   };
 
   const deleteAnn = async (id: string) => {
+    const ok = await confirmDialog({ message: "Duyuru silinsin mi?", danger: true, confirmText: "Sil" });
+    if (!ok) return;
     const res = await fetch("/api/announcements", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
     if (res.ok) setAnnouncements(prev => prev.filter(a => a.id !== id));
   };
