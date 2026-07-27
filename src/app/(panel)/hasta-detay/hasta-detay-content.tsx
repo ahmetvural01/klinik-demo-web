@@ -24,6 +24,7 @@ import { confirmDialog } from "@/lib/confirm-client";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 import { addPdfSection, createPdfDoc, pdfSafeText } from "@/lib/pdf-export";
 import { cachedGet } from "@/lib/client-cache";
+import { PatientPackagesSection } from "./PatientPackagesSection";
 
 type PatientDocument = {
   id: string;
@@ -122,7 +123,7 @@ type ClinicTask = {
   createdBy?: { id: string; fullName: string } | null;
   createdAt: string;
 };
-type Tab = "bilgi" | "randevular" | "gorevler" | "tedavi" | "odeme" | "recete" | "notlar" | "lab" | "belgeler" | "duzenle";
+type Tab = "bilgi" | "randevular" | "gorevler" | "tedavi" | "odeme" | "paket" | "recete" | "notlar" | "lab" | "belgeler" | "duzenle";
 type ToothStatus = TSType;
 type ExportFormat = "pdf" | "excel";
 type PatientExportSection = "profile" | "completedTreatments" | "plannedTreatments" | "payments" | "balance" | "appointments" | "labOrders" | "prescriptions" | "documents" | "notes";
@@ -142,6 +143,7 @@ const TAB_ITEMS: { key: Tab; label: string }[] = [
   { key: "gorevler", label: "Bu Hastanın Görevleri" },
   { key: "tedavi", label: "Tedavi" },
   { key: "odeme", label: "Finans" },
+  { key: "paket", label: "Paketler" },
   { key: "recete", label: "Reçete" },
   { key: "notlar", label: "Notlar" },
   { key: "lab", label: "Laboratuvar" },
@@ -150,13 +152,14 @@ const TAB_ITEMS: { key: Tab; label: string }[] = [
 ];
 
 const PRIMARY_TAB_ORDER: Tab[] = ["bilgi", "tedavi", "lab", "odeme", "randevular"];
-const MORE_TAB_ORDER: Tab[] = ["recete", "notlar", "gorevler", "belgeler", "duzenle"];
+const MORE_TAB_ORDER: Tab[] = ["paket", "recete", "notlar", "gorevler", "belgeler", "duzenle"];
 const TAB_SHORT_LABELS: Partial<Record<Tab, string>> = {
   bilgi: "Özet",
   tedavi: "Tedavi",
   lab: "Laboratuvar",
   odeme: "Finans",
   randevular: "Randevular",
+  paket: "Paketler",
   recete: "Reçete",
   notlar: "Notlar",
   gorevler: "Görevler",
@@ -4154,6 +4157,10 @@ export default function HastaDetayContent() {
             )}
           </div>
         </div>
+      )}
+
+      {tab === "paket" && (
+        <PatientPackagesSection patientId={data.id} doctorOptions={doctorOptions} />
       )}
 
       {tab === "notlar" && (

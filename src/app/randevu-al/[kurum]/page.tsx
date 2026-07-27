@@ -26,6 +26,34 @@ export default function RandevuAlPage() {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState("");
 
+  const [code, setCode] = useState("");
+  const [codeSentTo, setCodeSentTo] = useState("");
+  const [sendingCode, setSendingCode] = useState(false);
+  const [codeError, setCodeError] = useState("");
+  const phoneValid = /^0?5\d{9}$/.test(phone);
+  const codeSent = codeSentTo === phone && codeSentTo !== "";
+
+  const sendCode = async () => {
+    setCodeError("");
+    if (!phoneValid) { setCodeError("Geçerli bir telefon numarası girin."); return; }
+    setSendingCode(true);
+    try {
+      const res = await fetch("/api/public/booking/send-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kurum, phone }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setCodeError(data?.error || "Kod gönderilemedi."); return; }
+      setCodeSentTo(phone);
+      setCode("");
+    } catch {
+      setCodeError("Bağlantı hatası, lütfen tekrar deneyin.");
+    } finally {
+      setSendingCode(false);
+    }
+  };
+
   useEffect(() => {
     if (!kurum) return;
     fetch(`/api/public/booking/doctors?kurum=${encodeURIComponent(kurum)}`)
@@ -51,6 +79,8 @@ export default function RandevuAlPage() {
     setError("");
     if (fullName.trim().length < 3) { setError("Lütfen ad soyad girin."); return; }
     if (!/^0\d{10}$/.test(phone)) { setError("Telefon numarası 0 ile başlamalı ve 11 haneli olmalı."); return; }
+    if (!codeSent) { setError("Önce telefon numaranızı doğrulayın."); return; }
+    if (!/^\d{6}$/.test(code)) { setError("Lütfen telefonunuza gelen 6 haneli kodu girin."); return; }
     if (!preferredDate) { setError("Lütfen tercih ettiğiniz tarihi seçin."); return; }
     if (preferredDateError) { setError(preferredDateError); return; }
 
@@ -63,6 +93,7 @@ export default function RandevuAlPage() {
           kurum,
           fullName: fullName.trim(),
           phone,
+          code,
           tcNo: tcNo.trim() || undefined,
           doctorId: doctorId || undefined,
           preferredFrom: new Date(preferredDate).toISOString(),
@@ -132,7 +163,36 @@ export default function RandevuAlPage() {
           </div>
           <div>
             <label className="mb-1 block text-xs font-semibold text-slate-600">Telefon *</label>
-            <input value={phone} onChange={(e) => setPhone(e.target.value.replace(/\D/g, "").slice(0, 11))} placeholder="05XXXXXXXXX" inputMode="numeric" className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
+            <div className="flex gap-2">
+              <input
+                value={phone}
+                onChange={(e) => { setPhone(e.target.value.replace(/\D/g, "").slice(0, 11)); setCodeError(""); }}
+                placeholder="05XXXXXXXXX"
+                inputMode="numeric"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+              <button
+                type="button"
+                onClick={sendCode}
+                disabled={!phoneValid || sendingCode}
+                className="shrink-0 rounded-lg border border-primary px-3 py-2.5 text-xs font-bold text-primary transition hover:bg-primary/5 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {sendingCode ? "Gönderiliyor…" : codeSent ? "Tekrar Gönder" : "Kod Gönder"}
+              </button>
+            </div>
+            {codeError && <p className="mt-1 text-xs font-semibold text-red-600">{codeError}</p>}
+            {codeSent && (
+              <div className="mt-2">
+                <label className="mb-1 block text-xs font-semibold text-slate-600">Telefonunuza Gelen Kod *</label>
+                <input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="6 haneli kod"
+                  inputMode="numeric"
+                  className="w-full rounded-lg border border-emerald-300 bg-emerald-50/40 px-3 py-2.5 text-sm tracking-widest focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+              </div>
+            )}
           </div>
           <div>
             <label className="mb-1 block text-xs font-semibold text-slate-600">TC Kimlik No (opsiyonel)</label>
@@ -159,7 +219,7 @@ export default function RandevuAlPage() {
 
           {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{error}</p>}
 
-          <button onClick={submit} disabled={submitting || Boolean(preferredDateError)} className="w-full rounded-xl bg-primary py-3 text-sm font-bold text-white transition hover:bg-primary-strong disabled:cursor-not-allowed disabled:opacity-50">
+          <button onClick={submit} disabled={submitting || Boolean(preferredDateError) || !codeSent || code.length !== 6} className="w-full rounded-xl bg-primary py-3 text-sm font-bold text-white transition hover:bg-primary-strong disabled:cursor-not-allowed disabled:opacity-50">
             {submitting ? "Gönderiliyor…" : "Randevu Talebi Gönder"}
           </button>
           <p className="text-center text-[11px] text-slate-400">Bu bir kesin randevu değildir; talebiniz klinik tarafından onaylandığında randevunuz oluşturulur.</p>

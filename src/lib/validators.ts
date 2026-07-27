@@ -334,10 +334,16 @@ export const clinicTaskCreateSchema = z.object({
   assignedToIds: z.array(z.string()).max(20).optional(),
 });
 
+export const publicBookingSendCodeSchema = z.object({
+  kurum: z.string().trim().min(1, "Kurum belirtilmedi"),
+  phone: z.string().trim().regex(PHONE_REGEX, PHONE_MESSAGE),
+});
+
 export const publicBookingSchema = z.object({
   kurum: z.string().trim().min(1, "Kurum belirtilmedi"),
   fullName: z.string().trim().min(3, "Ad soyad zorunlu"),
   phone: z.string().trim().regex(PHONE_REGEX, PHONE_MESSAGE),
+  code: z.string().trim().regex(/^\d{6}$/, "Doğrulama kodu 6 haneli olmalıdır"),
   tcNo: z.preprocess(emptyToNull, z.string().regex(TC_NO_REGEX, TC_NO_MESSAGE).nullable()),
   doctorId: z.preprocess(emptyToNull, z.string().nullable()),
   preferredFrom: z.string().refine((value) => !Number.isNaN(new Date(value).getTime()), "Geçersiz tarih"),

@@ -7,6 +7,7 @@ import { getDailySchedules } from "@/lib/working-hours";
 import { checkWorkingDay } from "@/lib/working-hours-core";
 import { turkeyDateKey } from "@/lib/tz";
 import { maskPatientName, maskPatientPhone } from "@/lib/audit-mask";
+import { verifyPublicBookingOtp } from "@/lib/public-booking-otp";
 
 export async function POST(req: NextRequest) {
   const ip = getClientIpFromHeaders(req.headers);
@@ -21,7 +22,7 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) {
       return NextResponse.json({ error: formatZodError(parsed.error)[0] || "Geçersiz veri" }, { status: 400 });
     }
-    const { kurum, fullName, phone, tcNo, doctorId, preferredFrom, note } = parsed.data;
+    const { kurum, fullName, phone, code, tcNo, doctorId, preferredFrom, note } = parsed.data;
 
     const preferredDate = new Date(preferredFrom);
     const preferredDateKey = turkeyDateKey(preferredDate);
@@ -34,6 +35,11 @@ export async function POST(req: NextRequest) {
       select: { id: true, ownerId: true },
     });
     if (!institution) return NextResponse.json({ error: "Kurum bulunamadı" }, { status: 404 });
+
+    const otpResult = verifyPublicBookingOtp(institution.id, phone, code);
+    if (!otpResult.ok) {
+      return NextResponse.json({ error: otpResult.error || "Doğrulama kodu hatalı" }, { status: 400 });
+    }
 
     const dailySchedules = await getDailySchedules(institution.id);
     const workingDayError = checkWorkingDay(

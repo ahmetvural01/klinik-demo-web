@@ -63,6 +63,8 @@ model Institution {
   consentTemplates    ConsentTemplate[]
   patientConsents     PatientConsent[]
   smsTemplates        SmsTemplate[]
+  packageDefinitions  PackageDefinition[]
+  patientPackages     PatientPackage[]
 }
 
 model DemoRequest {
@@ -414,6 +416,8 @@ model User {
   // yeniden kullanılmasını engeller (bkz. denetim raporu).
   twoFactorLastStep       Int?
   rateHistory             DoctorRateHistory[]    @relation("DoctorRateHistoryDoctor")
+  patientPackagesSold     PatientPackage[]       @relation("PatientPackageDoctor")
+  patientPackageUsages    PatientPackageUsage[]  @relation("PatientPackageUsageCreatedBy")
 
   @@unique([institutionId, identityNo])
 }
@@ -511,6 +515,7 @@ model Patient {
   consents              PatientConsent[]
   waitlistEntries       Waitlist[]
   birthdaySmsLogs       BirthdaySmsLog[]
+  packages              PatientPackage[]
 
   @@unique([institutionId, tcNo])
   @@index([institutionId])
@@ -537,6 +542,7 @@ model Appointment {
   followUps       PatientFollowUp[]
   patient         Patient           @relation(fields: [patientId], references: [id])
   waitlistEntries Waitlist[]
+  packageUsages   PatientPackageUsage[]
 
   @@index([doctorId])
   @@index([patientId])
@@ -725,6 +731,7 @@ model Payment {
   doctor         User?         @relation("PaymentDoctor", fields: [doctorId], references: [id])
   pos            PosDevice?    @relation(fields: [posId], references: [id])
   taksitOdemeler TaksitOdeme[]
+  patientPackage PatientPackage?
 
   @@index([patientId])
   @@index([doctorId])
@@ -918,6 +925,80 @@ model TreatmentStep {
   @@index([planId])
 }
 
+// Kurumun sattığı, yeniden kullanılabilir paket şablonu (ör. "6 Seans
+// Detertraj Paketi"). Satış anında PatientPackage bu şablondan bir kopya
+// alır (name/sessionCount/price snapshot) — tanım sonradan değişse veya
+// pasifleştirilse bile önceden satılmış paketlerin koşulları değişmez.
+model PackageDefinition {
+  id              String           @id @default(cuid())
+  institutionId   String
+  name            String
+  treatmentType   String?
+  sessionCount    Int
+  price           Decimal          @db.Decimal(10, 2)
+  validityDays    Int              @default(365)
+  isActive        Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  institution     Institution      @relation(fields: [institutionId], references: [id])
+  patientPackages PatientPackage[]
+
+  @@index([institutionId])
+}
+
+// Bir hastaya satılmış paket örneği — kalan/kullanılan seans sayısını ve
+// (varsa) bağlı ödeme/taksit planını takip eder. "Otomatik borçlandırma":
+// satış anında ya tek seferlik bir Payment ya da (peşinat tam değilse) bir
+// TaksitPlan otomatik oluşturulur; ikisi de muhasebe ekranında normal bir
+// tahsilat/taksit gibi görünür, ayrı bir "paket geliri" silosu yoktur.
+model PatientPackage {
+  id            String               @id @default(cuid())
+  institutionId String
+  patientId     String
+  definitionId  String?
+  doctorId      String?
+  name          String
+  sessionsTotal Int
+  sessionsUsed  Int                  @default(0)
+  totalPrice    Decimal              @db.Decimal(10, 2)
+  purchasedAt   DateTime             @default(now())
+  expiresAt     DateTime?
+  status        PatientPackageStatus @default(AKTIF)
+  note          String?
+  paymentId     String?              @unique
+  taksitPlanId  String?              @unique
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  institution   Institution          @relation(fields: [institutionId], references: [id])
+  patient       Patient              @relation(fields: [patientId], references: [id])
+  definition    PackageDefinition?   @relation(fields: [definitionId], references: [id])
+  doctor        User?                @relation("PatientPackageDoctor", fields: [doctorId], references: [id])
+  payment       Payment?             @relation(fields: [paymentId], references: [id])
+  taksitPlan    TaksitPlan?          @relation(fields: [taksitPlanId], references: [id])
+  usages        PatientPackageUsage[]
+
+  @@index([institutionId])
+  @@index([patientId])
+  @@index([status])
+}
+
+// Paketten bir seansın "harcandığı" an — mümkünse ilgili randevuya bağlanır,
+// böylece paket kullanımı ile randevu geçmişi arasında iz kaybolmaz.
+model PatientPackageUsage {
+  id               String         @id @default(cuid())
+  patientPackageId String
+  appointmentId    String?
+  usedAt           DateTime       @default(now())
+  note             String?
+  createdById      String?
+  patientPackage   PatientPackage @relation(fields: [patientPackageId], references: [id], onDelete: Cascade)
+  appointment      Appointment?   @relation(fields: [appointmentId], references: [id])
+  createdBy        User?          @relation("PatientPackageUsageCreatedBy", fields: [createdById], references: [id])
+
+  @@index([patientPackageId])
+  @@index([appointmentId])
+}
+
 model LabOrder {
   id        String            @id @default(cuid())
   requestKey String?          @unique
@@ -1049,6 +1130,7 @@ model TaksitPlan {
   taksitler    Taksit[]
   doctor       User             @relation("TaksitPlanDoctor", fields: [doctorId], references: [id])
   patient      Patient          @relation(fields: [patientId], references: [id])
+  patientPackage PatientPackage?
 
   @@index([patientId])
   @@index([doctorId])
@@ -1433,6 +1515,13 @@ enum ClinicTaskStatus {
   ACIK
   BEKLEMEDE
   TAMAMLANDI
+  IPTAL
+}
+
+enum PatientPackageStatus {
+  AKTIF
+  TAMAMLANDI
+  SURESI_DOLDU
   IPTAL
 }
 
