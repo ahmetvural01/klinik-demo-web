@@ -72,6 +72,14 @@ async function isEligibleAppointmentDoctor(doctorId: string, institutionId: stri
   return null;
 }
 
+async function isEligibleClinicUnit(clinicUnitId: string | null | undefined, institutionId: string | null | undefined, role: string) {
+  if (!clinicUnitId) return null;
+  return prisma.clinicUnit.findFirst({
+    where: { id: clinicUnitId, ...(role !== "SUPERADMIN" && institutionId ? { institutionId } : {}), isActive: true },
+    select: { id: true, name: true },
+  });
+}
+
 function appointmentTenantWhere(id: string, role: string, institutionId: string | null | undefined) {
   return {
     id,
@@ -103,7 +111,7 @@ export async function GET(_: NextRequest, props: Params) {
 
   const appointment = await prisma.appointment.findFirst({
     where: appointmentTenantWhere(params.id, auth.user.role, auth.user.institutionId),
-    include: { patient: true, doctor: { select: { id: true, fullName: true } } }
+    include: { patient: true, doctor: { select: { id: true, fullName: true } }, clinicUnit: { select: { id: true, name: true, code: true } } }
   });
 
   if (!appointment) {
@@ -122,7 +130,7 @@ export async function PUT(request: NextRequest, props: Params) {
 
   const existing = await prisma.appointment.findFirst({
     where: appointmentTenantWhere(params.id, auth.user.role, auth.user.institutionId),
-    include: { patient: true, doctor: { select: { id: true, fullName: true } } }
+    include: { patient: true, doctor: { select: { id: true, fullName: true } }, clinicUnit: { select: { id: true, name: true, code: true } } }
   });
 
   if (!existing) {
@@ -139,7 +147,7 @@ export async function PUT(request: NextRequest, props: Params) {
         ...(typeof body.status === "string" ? { status: body.status } : {}),
         ...(typeof body.note === "string" ? { note: body.note } : {}),
       },
-      include: { patient: true, doctor: { select: { id: true, fullName: true } } }
+      include: { patient: true, doctor: { select: { id: true, fullName: true } }, clinicUnit: { select: { id: true, name: true, code: true } } }
     });
 
     try {
@@ -187,6 +195,25 @@ export async function PUT(request: NextRequest, props: Params) {
     return NextResponse.json({ message: "Seçilen personel randevu doktoru olarak kullanılamaz." }, { status: 400 });
   }
 
+  // Eski istemciler tam randevu gövdesini üniteden habersiz gönderebilir.
+  // Alan gövdede hiç yoksa mevcut bağlantıyı koru; yalnızca açıkça null/
+  // değer gönderildiğinde üniteyi kaldır veya değiştir.
+  const hasClinicUnitInput = Object.prototype.hasOwnProperty.call(body, "clinicUnitId");
+  const requestedClinicUnitId = hasClinicUnitInput ? (parsed.data.clinicUnitId || null) : (existing.clinicUnitId || null);
+  let selectedUnit = await isEligibleClinicUnit(requestedClinicUnitId, auth.user.institutionId, auth.user.role);
+  // Ünite sonradan pasife alınmış olsa bile, ona bağlı eski randevunun saat
+  // veya not düzeltmesi engellenmez. Ancak pasif ünite yeni randevuya ya da
+  // başka bir randevuya atanamaz.
+  if (!selectedUnit && requestedClinicUnitId && requestedClinicUnitId === existing.clinicUnitId) {
+    selectedUnit = await prisma.clinicUnit.findFirst({
+      where: { id: requestedClinicUnitId, ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}) },
+      select: { id: true, name: true },
+    });
+  }
+  if (requestedClinicUnitId && !selectedUnit) {
+    return NextResponse.json({ message: "Seçilen klinik ünitesi bulunamadı veya pasif durumda." }, { status: 400 });
+  }
+
   const newStart = new Date(parsed.data.startAt);
   const newEnd   = new Date(parsed.data.endAt);
 
@@ -197,6 +224,7 @@ export async function PUT(request: NextRequest, props: Params) {
   // Çakışma kontrolü — saat/doktor değişiyorsa yeniden kontrol
   const timeChanged   = parsed.data.startAt !== existing.startAt.toISOString() || parsed.data.endAt !== existing.endAt.toISOString();
   const doctorChanged = parsed.data.doctorId !== existing.doctorId;
+  const unitChanged = requestedClinicUnitId !== (existing.clinicUnitId || null);
 
   if (timeChanged && newStart.getTime() <= Date.now()) {
     return NextResponse.json({ message: "Randevu geçmiş bir tarih veya saate taşınamaz." }, { status: 400 });
@@ -219,6 +247,23 @@ export async function PUT(request: NextRequest, props: Params) {
     );
     if (doctorHoursError) {
       return NextResponse.json({ message: doctorHoursError }, { status: 400 });
+    }
+  }
+
+  if (selectedUnit && (timeChanged || unitChanged)) {
+    const unitConflict = await prisma.appointment.findFirst({
+      where: {
+        id: { not: params.id },
+        clinicUnitId: selectedUnit.id,
+        status: { notIn: ["IPTAL", "GELMEDI"] },
+        AND: [{ startAt: { lt: newEnd } }, { endAt: { gt: newStart } }],
+      },
+      select: { id: true, startAt: true, endAt: true, patient: { select: { fullName: true } } },
+    });
+    if (unitConflict) {
+      const cs = unitConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+      const ce = unitConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+      return NextResponse.json({ message: `${selectedUnit.name} ünitesi ${cs}–${ce} saatleri arasında dolu (${unitConflict.patient?.fullName ?? "—"}).`, conflictId: unitConflict.id }, { status: 409 });
     }
   }
 
@@ -249,15 +294,59 @@ export async function PUT(request: NextRequest, props: Params) {
     }
   }
 
-  const appointment = await prisma.appointment.update({
-    where: { id: params.id },
-    data: {
-      ...parsed.data,
-      startAt: newStart,
-      endAt:   newEnd,
-    },
-    include: { patient: true, doctor: { select: { id: true, fullName: true } } },
-  });
+  let appointment;
+  try {
+    // Ön kontroller ile update arasındaki kısa yarış penceresini kapat: aynı
+    // anda iki kullanıcı randevuyu taşıdığında hem doktor hem seçili ünite
+    // tekrar sorgulanır. Böylece ekran boş görünse bile çift atama oluşmaz.
+    appointment = await prisma.$transaction(async (tx) => {
+      if (timeChanged || doctorChanged) {
+        const doctorConflictRecheck = await tx.appointment.findFirst({
+          where: {
+            id: { not: params.id },
+            doctorId: parsed.data.doctorId,
+            status: { notIn: ["IPTAL", "GELMEDI"] },
+            AND: [{ startAt: { lt: newEnd } }, { endAt: { gt: newStart } }],
+          },
+          select: { id: true },
+        });
+        if (doctorConflictRecheck) throw new Error("DOCTOR_CONFLICT_RECHECK");
+      }
+      if (selectedUnit && (timeChanged || unitChanged)) {
+        const unitConflictRecheck = await tx.appointment.findFirst({
+          where: {
+            id: { not: params.id },
+            clinicUnitId: selectedUnit.id,
+            status: { notIn: ["IPTAL", "GELMEDI"] },
+            AND: [{ startAt: { lt: newEnd } }, { endAt: { gt: newStart } }],
+          },
+          select: { id: true },
+        });
+        if (unitConflictRecheck) throw new Error("CLINIC_UNIT_CONFLICT_RECHECK");
+      }
+      return tx.appointment.update({
+        where: { id: params.id },
+        data: {
+          ...parsed.data,
+          clinicUnitId: requestedClinicUnitId,
+          startAt: newStart,
+          endAt: newEnd,
+        },
+        include: { patient: true, doctor: { select: { id: true, fullName: true } }, clinicUnit: { select: { id: true, name: true, code: true } } },
+      });
+    }, { isolationLevel: "Serializable" });
+  } catch (error) {
+    if (error instanceof Error && error.message === "DOCTOR_CONFLICT_RECHECK") {
+      return NextResponse.json({ message: "Bu doktor için bu saat aralığı az önce başka bir kullanıcı tarafından dolduruldu. Lütfen tekrar deneyin." }, { status: 409 });
+    }
+    if (error instanceof Error && error.message === "CLINIC_UNIT_CONFLICT_RECHECK") {
+      return NextResponse.json({ message: "Bu klinik ünitesi bu saat aralığında az önce başka bir randevuya ayrıldı. Lütfen tekrar deneyin." }, { status: 409 });
+    }
+    if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2034") {
+      return NextResponse.json({ message: "Randevu aynı anda başka bir işlemle çakıştı. Lütfen tekrar deneyin." }, { status: 409 });
+    }
+    return NextResponse.json({ message: "Randevu güncellenemedi." }, { status: 503 });
+  }
 
   try {
     await syncAppointmentReminder({
@@ -288,6 +377,7 @@ export async function PUT(request: NextRequest, props: Params) {
   pushDiff("Tür", existing.type, parsed.data.type);
   pushDiff("Not", existing.note, parsed.data.note);
   pushDiff("Doktor", existing.doctorId, parsed.data.doctorId);
+  pushDiff("Ünite", existing.clinicUnit?.name, appointment.clinicUnit?.name);
 
   const detail = [
     `${auth.user.fullName || "Personel"} tarafından ${appointment.patient.fullName} randevusu güncellendi.`,

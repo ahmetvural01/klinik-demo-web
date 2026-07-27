@@ -10,10 +10,10 @@ export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 export type ButtonSize = "sm" | "md";
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
-  primary: "bg-primary text-white hover:bg-primary/90 font-bold disabled:opacity-60",
-  secondary: "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 font-semibold disabled:opacity-60",
-  danger: "bg-red-600 text-white hover:bg-red-700 font-bold disabled:opacity-60",
-  ghost: "text-slate-600 hover:bg-slate-100 font-semibold disabled:opacity-40",
+  primary: "bg-primary text-white shadow-sm shadow-primary/20 hover:bg-primary-strong hover:shadow-md hover:shadow-primary/20 font-bold disabled:opacity-60",
+  secondary: "border border-slate-200 bg-white text-slate-700 shadow-sm shadow-slate-950/[0.025] hover:border-slate-300 hover:bg-slate-50 font-semibold disabled:opacity-60",
+  danger: "bg-red-600 text-white shadow-sm shadow-red-600/20 hover:bg-red-700 font-bold disabled:opacity-60",
+  ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-semibold disabled:opacity-40",
 };
 
 const SIZE_CLASS: Record<ButtonSize, string> = {
@@ -51,7 +51,7 @@ export function Button({
   ) : null;
 
   const classes = [
-    "inline-flex items-center justify-center gap-2 transition",
+    "inline-flex items-center justify-center gap-2 whitespace-nowrap transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2",
     VARIANT_CLASS[variant],
     SIZE_CLASS[size],
     fullWidth ? "w-full" : "",
@@ -86,8 +86,8 @@ export type IconButtonTone = "primary" | "neutral" | "danger";
 
 const ICON_TONE_CLASS: Record<IconButtonTone, string> = {
   primary: "bg-primary/10 text-primary hover:bg-primary hover:text-white",
-  neutral: "bg-slate-100 text-slate-600 hover:bg-slate-200",
-  danger: "bg-red-50 text-red-600 hover:bg-red-100",
+  neutral: "border border-slate-200 bg-white text-slate-600 shadow-sm shadow-slate-950/[0.025] hover:bg-slate-50 hover:text-slate-900",
+  danger: "border border-red-100 bg-red-50 text-red-600 hover:bg-red-100",
 };
 
 const ICON_BUTTON_SIZE_CLASS: Record<"sm" | "md", string> = {
@@ -122,7 +122,7 @@ export function IconButton({
   className = "",
 }: IconButtonProps) {
   const classes = [
-    "inline-flex shrink-0 items-center justify-center rounded-lg transition disabled:cursor-not-allowed disabled:opacity-40",
+    "inline-flex shrink-0 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40",
     ICON_TONE_CLASS[tone],
     ICON_BUTTON_SIZE_CLASS[size],
     className,

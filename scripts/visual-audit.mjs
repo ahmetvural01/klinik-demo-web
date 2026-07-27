@@ -42,16 +42,23 @@ try {
   const login = await authContext.request.post(`${baseUrl}/api/auth/login`, {
     data: {
       institution: process.env.VISUAL_INSTITUTION || "whitedental",
-      identityNo: process.env.VISUAL_IDENTITY || "90000000001",
+      identityNo: process.env.VISUAL_IDENTITY || "10000000001",
       password: process.env.VISUAL_PASSWORD || "10711453",
       rememberMe: false,
     },
   });
 
+  // Yerel veritabanı sıfırken dahi tanıtım ve giriş ekranlarını denetlemek
+  // değerli. Bu durumda korumalı sayfaları atla; tüm görsel denetimi çöpe
+  // atacak şekilde erken hata verme.
+  let authState = null;
+  let authWarning = "";
   if (!login.ok()) {
-    throw new Error(`Görsel test girişi başarısız: ${login.status()} ${await login.text()}`);
+    authWarning = `Görsel test girişi yapılamadı: ${login.status()} ${await login.text()}`;
+    console.warn(authWarning);
+  } else {
+    authState = await authContext.storageState();
   }
-  const authState = await authContext.storageState();
   await authContext.close();
 
   for (const viewport of viewports) {
@@ -109,6 +116,23 @@ try {
       });
     }
     await publicContext.close();
+
+    if (!authState) {
+      report.push({
+        viewport: viewport.name,
+        route: "[korumalı ekranlar]",
+        status: 0,
+        skipped: true,
+        reason: authWarning,
+        horizontalOverflow: false,
+        outside: [],
+        tinyText: 0,
+        smallTargets: 0,
+        consoleErrors: [],
+        failedResponses: [],
+      });
+      continue;
+    }
 
     const context = await browser.newContext({
       viewport: { width: viewport.width, height: viewport.height },

@@ -19,7 +19,12 @@ export async function GET(req: NextRequest) {
   try {
     const institution = await prisma.institution.findFirst({
       where: { name: { equals: kurum, mode: "insensitive" }, isActive: true },
-      select: { id: true, name: true },
+      select: {
+        id: true,
+        name: true,
+        logo: true,
+        settings: { select: { institutionName: true } },
+      },
     });
     if (!institution) return NextResponse.json({ error: "Kurum bulunamadı" }, { status: 404 });
 
@@ -37,7 +42,12 @@ export async function GET(req: NextRequest) {
       .map((s) => ({ id: s.id, fullName: s.fullName }));
 
     const dailySchedules = await getDailySchedules(institution.id);
-    return NextResponse.json({ institutionName: institution.name, doctors, dailySchedules });
+    return NextResponse.json({
+      institutionName: institution.settings?.institutionName?.trim() || institution.name,
+      logoUrl: institution.logo || null,
+      doctors,
+      dailySchedules,
+    });
   } catch (error) {
     console.error("[public booking doctors GET]", error);
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });

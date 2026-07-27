@@ -12,6 +12,7 @@ export default function RandevuAlPage() {
 
   const [loadingDoctors, setLoadingDoctors] = useState(true);
   const [institutionName, setInstitutionName] = useState("");
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [dailySchedules, setDailySchedules] = useState<DaySchedule[]>([]);
   const [notFound, setNotFound] = useState(false);
@@ -61,6 +62,7 @@ export default function RandevuAlPage() {
         if (!r.ok) { setNotFound(true); return; }
         const data = await r.json();
         setInstitutionName(data.institutionName || "");
+        setLogoUrl(typeof data.logoUrl === "string" && data.logoUrl ? data.logoUrl : null);
         setDoctors(Array.isArray(data.doctors) ? data.doctors : []);
         setDailySchedules(Array.isArray(data.dailySchedules) ? data.dailySchedules : []);
       })
@@ -153,7 +155,22 @@ export default function RandevuAlPage() {
   return (
     <main className="min-h-screen bg-slate-50 p-4 py-10">
       <div className="mx-auto max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-        <h1 className="text-lg font-black text-slate-900">{institutionName || "Randevu Talebi"}</h1>
+        <div className="flex items-center gap-3">
+          {logoUrl ? (
+            // Kurum yöneticisi harici bir logo adresi ya da küçük data URL tanımlayabilir.
+            // Bu nedenle Next Image yerine doğrudan img kullanılır; URL API'de sınırlandırılır.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={logoUrl} alt={`${institutionName || "Kurum"} logosu`} className="h-11 w-11 rounded-lg border border-slate-200 bg-white object-contain p-1" />
+          ) : (
+            <div className="flex h-11 w-11 items-center justify-center rounded-lg bg-primary text-sm font-black text-white">
+              {(institutionName || "R").trim().slice(0, 2).toLocaleUpperCase("tr-TR")}
+            </div>
+          )}
+          <div>
+            <h1 className="text-lg font-black text-slate-900">{institutionName || "Randevu Talebi"}</h1>
+            <p className="mt-0.5 text-xs font-medium text-slate-500">Online randevu talebi</p>
+          </div>
+        </div>
         <p className="mt-1 text-sm text-slate-500">Aşağıdaki formu doldurun, klinik ekibimiz sizi arayarak randevunuzu kesinleştirsin.</p>
 
         <div className="mt-5 space-y-3">

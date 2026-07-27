@@ -39,6 +39,29 @@ const ICONS: Record<string, JSX.Element> = {
   hakediş:       I('<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'),
 };
 
+// Her bölüm kendi sakin tonunu taşır; etkin rota tek vurgu rengine döner.
+// Böylece ikonlar yalnızca süs değil, tarama hızını artıran yön işaretleri olur.
+const ICON_TONES: Record<string, string> = {
+  home: "text-amber-500",
+  calendar: "text-sky-600",
+  users: "text-violet-600",
+  clipboard: "text-indigo-600",
+  follow: "text-emerald-600",
+  sms: "text-cyan-600",
+  flask: "text-fuchsia-600",
+  finance: "text-emerald-700",
+  rapor: "text-blue-600",
+  box: "text-orange-600",
+  firma: "text-rose-600",
+  person: "text-slate-600",
+  chart: "text-sky-700",
+  settings: "text-slate-500",
+  profile: "text-violet-600",
+  log: "text-slate-600",
+  support: "text-amber-600",
+  logout: "text-red-500",
+};
+
 const ROLE_LABELS: Record<string, string> = {
   YONETICI:  "Yönetici",
   DOKTOR:    "Doktor",
@@ -165,18 +188,40 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   const searchParams = useSearchParams();
   const router = useRouter();
   const [messageUnread, setMessageUnread] = useState(0);
-  const [collapsed, setCollapsed] = useState(false);
+  const [desktopHovered, setDesktopHovered] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   useEscapeClose(() => setMobileOpen(false), mobileOpen);
   const [previewRole, setPreviewRole] = useState<string | null>(null);
   const [rolePickerOpen, setRolePickerOpen] = useState(false);
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
+  const [brand, setBrand] = useState({ name: "Klinik Paneli", logoUrl: "" });
 
   const isSuperAdmin = user.role === "SUPERADMIN";
 
   useEffect(() => {
-    const saved = localStorage.getItem("sidebar-collapsed");
-    if (saved === "true") setCollapsed(true);
+    let active = true;
+    const loadBrand = async () => {
+      const response = await fetch("/api/settings", { cache: "force-cache" }).catch(() => null);
+      const data = await response?.json().catch(() => null);
+      if (active && response?.ok && data) {
+        setBrand({ name: data.institutionName || "Klinik Paneli", logoUrl: data.logoUrl || "" });
+      }
+    };
+    void loadBrand();
+    window.addEventListener("clinic-brand-change", loadBrand);
+    return () => { active = false; window.removeEventListener("clinic-brand-change", loadBrand); };
   }, []);
+
+  const BrandMark = () => (
+    <div className={`flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg ${brand.logoUrl ? "border border-slate-200 bg-white" : "bg-primary"}`}>
+      {brand.logoUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={brand.logoUrl} alt="Kurum logosu" className="h-full w-full object-contain p-1" />
+      ) : (
+        <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 2C8 2 5 5 5 8c0 2 .5 3.5 1 5l1 4.5C7.5 19 8.5 22 10 22h4c1.5 0 2.5-3 3-4.5l1-4.5c.5-1.5 1-3 1-5 0-3-3-6-7-6z"/></svg>
+      )}
+    </div>
+  );
 
   useEffect(() => {
     if (isSuperAdmin) {
@@ -184,13 +229,6 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
       if (saved) setPreviewRole(saved);
     }
   }, [isSuperAdmin]);
-
-  const toggleCollapsed = () => {
-    setCollapsed(prev => {
-      localStorage.setItem("sidebar-collapsed", String(!prev));
-      return !prev;
-    });
-  };
 
   useEffect(() => {
     const h = () => setMobileOpen((v) => !v);
@@ -232,6 +270,13 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   const effectiveRole = (isSuperAdmin && previewRole) ? previewRole : userRole;
   const navGroups = buildNavGroups(effectiveRole);
   const alerts = usePanelAlerts(effectiveRole);
+
+  useEffect(() => {
+    const activeGroup = navGroups.find((group) => group.items.some((item) => isActive(item.href)));
+    if (activeGroup) setOpenGroups((current) => ({ ...current, [activeGroup.label]: true }));
+  // Active route changes should reveal its group; navGroups changes with role preview.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname, effectiveRole]);
 
   const activePreview = PREVIEW_ROLES.find(r => r.key === previewRole);
 
@@ -281,7 +326,8 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
     return 0;
   };
 
-  const w = collapsed ? "w-[68px]" : "w-[256px]";
+  const collapsed = !desktopHovered && !rolePickerOpen;
+  const w = collapsed ? "w-[72px]" : "w-[264px]";
 
   useEffect(() => {
     setMobileOpen(false);
@@ -318,31 +364,29 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
           }}
         >
           <div className="relative flex h-dvh max-h-dvh">
-            <div className="flex h-dvh max-h-dvh w-[min(86vw,288px)] flex-col overflow-hidden bg-[#0f172a]">
+            <div className="flex h-dvh max-h-dvh w-[min(86vw,288px)] flex-col overflow-hidden border-r border-slate-200 bg-white shadow-2xl">
               <div className="shrink-0 p-3">
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2.5">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-blue-700">
-                    <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 2C8 2 5 5 5 8c0 2 .5 3.5 1 5l1 4.5C7.5 19 8.5 22 10 22h4c1.5 0 2.5-3 3-4.5l1-4.5c.5-1.5 1-3 1-5 0-3-3-6-7-6z"/></svg>
-                  </div>
-                  <p className="text-sm font-black text-white">Klinik Paneli</p>
+                  <BrandMark />
+                  <p className="max-w-[190px] truncate text-sm font-black text-slate-900">{brand.name}</p>
                 </div>
-                <button onClick={() => setMobileOpen(false)} aria-label="Kapat" className="text-slate-300">✕</button>
+                <button onClick={() => setMobileOpen(false)} aria-label="Kapat" className="rounded-lg p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900">✕</button>
               </div>
 
               {userName && (
-                <div className="mb-3 flex items-center gap-3 rounded-xl bg-white/5 px-3 py-2.5">
+                <div className="mb-3 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
                   {user.photoUrl ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={user.photoUrl} alt={userName} className="h-9 w-9 shrink-0 rounded-full object-cover" />
                   ) : (
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-bold text-white">
                       {userName.charAt(0).toUpperCase()}
                     </div>
                   )}
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-white">{userName}</p>
-                    <p className="text-xs font-semibold uppercase text-slate-500">
+                    <p className="truncate text-sm font-semibold text-slate-900">{userName}</p>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                       {activePreview ? activePreview.label : (ROLE_LABELS[userRole] ?? userRole)}
                     </p>
                   </div>
@@ -357,7 +401,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                     className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${
                       previewRole
                         ? "border-violet-400/30 bg-violet-500/15 text-violet-100"
-                        : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-slate-100"
+                        : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-950"
                     }`}
                     aria-expanded={rolePickerOpen}
                   >
@@ -370,8 +414,8 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                     </svg>
                   </button>
                   {rolePickerOpen && (
-                  <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-white/10 bg-[#1e2d45] p-1.5 shadow-xl">
-                    <p className="mb-1.5 px-1 text-xs font-bold uppercase text-slate-400">Önizlenecek rol</p>
+                  <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                    <p className="mb-1.5 px-1 text-xs font-bold uppercase tracking-wide text-slate-500">Önizlenecek rol</p>
                     <div className="flex flex-col gap-0.5">
                       {PREVIEW_ROLES.map(r => (
                         <button
@@ -380,7 +424,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                             handlePreviewRole(previewRole === r.key ? null : r.key);
                           }}
                           className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition ${
-                            previewRole === r.key ? `${r.color} text-white` : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                            previewRole === r.key ? `${r.color} text-white` : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"
                           }`}
                         >
                           <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${r.color}`} />
@@ -394,7 +438,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                             handlePreviewRole(null);
                             setMobileOpen(false);
                           }}
-                          className="mt-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-500 transition hover:bg-white/10 hover:text-slate-300"
+                          className="mt-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
                         >
                           <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -411,14 +455,14 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
 
               <nav className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 pb-3 [-webkit-overflow-scrolling:touch]">
                 {navGroups.map((group) => (
-                  <div key={group.label} className="border-t border-white/5 pt-2">
-                    <p className="mb-1 px-1 text-xs font-bold uppercase tracking-widest text-slate-400">{group.label}</p>
+                  <div key={group.label} className="border-t border-slate-100 pt-2">
+                    <p className="mb-1 px-1 text-xs font-bold uppercase tracking-widest text-slate-500">{group.label}</p>
                     <div className="flex flex-col gap-1">
                       {group.items.map((it) => {
                         const active = isActive(it.href);
                         return (
-                        <Link key={it.href} href={it.href} onClick={() => setMobileOpen(false)} aria-current={active ? "page" : undefined} className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold ${active ? "bg-white text-slate-950" : "text-slate-200 hover:bg-white/10"}`}>
-                          <span className="text-slate-300">{ICONS[it.icon]}</span>
+                        <Link key={it.href} href={it.href} onClick={() => setMobileOpen(false)} aria-current={active ? "page" : undefined} className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold ${active ? "bg-primary/10 text-primary ring-1 ring-primary/15" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"}`}>
+                          <span className={active ? "text-primary" : "text-slate-400"}>{ICONS[it.icon]}</span>
                           <span>{it.label}</span>
                         </Link>
                         );
@@ -428,13 +472,13 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                 ))}
               </nav>
 
-              <div className="shrink-0 border-t border-white/5 p-3">
+              <div className="shrink-0 border-t border-slate-100 p-3">
                 <button
                   onClick={async () => {
                     await fetch("/api/auth/logout", { method: "POST" });
                     window.location.href = "/giris";
                   }}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-400 transition hover:bg-red-500/10 hover:text-red-400"
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-500 transition hover:bg-red-50 hover:text-red-600"
                 >
                   {ICONS.logout}
                   <span>Oturumu Kapat</span>
@@ -444,49 +488,39 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
           </div>
         </div>
       )}
-      <aside className={`hidden h-screen ${w} shrink-0 flex-col bg-[#0f172a] transition-all duration-200 md:flex`}>
-      {/* Logo + toggle */}
+      <div className="relative hidden h-screen w-[72px] shrink-0 md:block">
+      <aside
+        className={`absolute inset-y-0 left-0 z-40 h-screen ${w} flex-col border-r border-slate-200 bg-white shadow-[1px_0_0_rgb(15_23_42/0.08)] transition-[width] duration-200 ease-out md:flex`}
+        onMouseEnter={() => setDesktopHovered(true)}
+        onMouseLeave={() => { setDesktopHovered(false); setRolePickerOpen(false); }}
+        onFocusCapture={() => setDesktopHovered(true)}
+        onBlurCapture={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDesktopHovered(false);
+        }}
+      >
+      {/* Dar ikon şeridi; imleç veya klavye odağıyla çalışma menüsüne açılır. */}
       <div className={`flex items-center ${collapsed ? "justify-center px-0 py-4" : "justify-between px-4 py-4"}`}>
-        {!collapsed && (
-          <div className="flex items-center gap-2.5">
-            <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 shadow-lg shadow-blue-900/40">
-              <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2C8 2 5 5 5 8c0 2 .5 3.5 1 5l1 4.5C7.5 19 8.5 22 10 22h4c1.5 0 2.5-3 3-4.5l1-4.5c.5-1.5 1-3 1-5 0-3-3-6-7-6z"/>
-              </svg>
-            </div>
-            <p className="text-[13px] font-black text-white">Klinik Paneli</p>
-          </div>
-        )}
-        <button
-          onClick={toggleCollapsed}
-          title={collapsed ? "Menüyü Genişlet" : "Menüyü Daralt"}
-          aria-pressed={collapsed}
-          aria-label={collapsed ? "Menüyü Genişlet" : "Menüyü Daralt"}
-          className="flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 hover:bg-white/10 hover:text-slate-300 transition"
-        >
-          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-            {collapsed
-              ? <><path d="M5 12h14"/><path d="m9 6 6 6-6 6"/></>
-              : <><path d="M19 12H5"/><path d="m15 6-6 6 6 6"/></>}
-          </svg>
-        </button>
+        <div className="flex items-center gap-2.5">
+          <BrandMark />
+          {!collapsed && <p className="max-w-[165px] truncate text-[13px] font-black tracking-tight text-slate-900">{brand.name}</p>}
+        </div>
       </div>
 
       {/* Kullanıcı kartı */}
       {userName && (
-        <div className={`mx-2 mb-3 flex items-center rounded-xl bg-white/5 py-2.5 ${collapsed ? "justify-center px-0" : "gap-3 px-3"}`}>
+        <div className={`mx-2 mb-3 flex items-center rounded-xl border border-slate-200 bg-slate-50 py-2.5 ${collapsed ? "justify-center px-0" : "gap-3 px-3"}`}>
           {user.photoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={user.photoUrl} alt={userName} className="h-9 w-9 shrink-0 rounded-full object-cover" />
           ) : (
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-blue-600 text-sm font-bold text-white">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-bold text-white">
               {userName.charAt(0).toUpperCase()}
             </div>
           )}
           {!collapsed && (
             <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-white">{userName}</p>
-              <p className="text-xs font-semibold uppercase text-slate-500">
+              <p className="truncate text-sm font-semibold text-slate-900">{userName}</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                 {activePreview ? activePreview.label : (ROLE_LABELS[userRole] ?? userRole)}
               </p>
             </div>
@@ -505,7 +539,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                 className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${
                   previewRole
                     ? "border-violet-400/30 bg-violet-500/15 text-violet-100"
-                    : "border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:text-slate-100"
+                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-950"
                 }`}
                 aria-expanded={rolePickerOpen}
               >
@@ -520,8 +554,8 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                   </svg>
                 </button>
               {rolePickerOpen && (
-              <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-white/10 bg-[#1e2d45] p-1.5 shadow-xl">
-                  <p className="mb-1.5 px-1 text-xs font-bold uppercase text-slate-400">Önizlenecek rol</p>
+              <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                  <p className="mb-1.5 px-1 text-xs font-bold uppercase tracking-wide text-slate-500">Önizlenecek rol</p>
                   <div className="flex flex-col gap-0.5">
                     {PREVIEW_ROLES.map(r => (
                       <button
@@ -530,7 +564,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                         className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition ${
                           previewRole === r.key
                             ? `${r.color} text-white`
-                            : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                            : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"
                         }`}
                       >
                         <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${r.color}`} />
@@ -543,7 +577,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                     {previewRole && (
                       <button
                         onClick={() => handlePreviewRole(null)}
-                        className="mt-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-500 hover:bg-white/10 hover:text-slate-300 transition"
+                        className="mt-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900 transition"
                       >
                         <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                           <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -561,7 +595,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
               <button
                 onClick={() => setRolePickerOpen(prev => !prev)}
                 className={`flex h-9 w-full items-center justify-center rounded-lg transition ${
-                  previewRole ? "bg-violet-600/30 text-violet-400" : "text-slate-600 hover:bg-white/10 hover:text-slate-400"
+                  previewRole ? "bg-violet-100 text-violet-700" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
                 }`}
                 title="Rol Görünümü"
                 aria-expanded={rolePickerOpen}
@@ -572,8 +606,8 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
               </button>
               {/* Collapsed tooltip ile mini picker */}
               {rolePickerOpen && (
-                <div className="absolute left-full top-0 z-50 ml-2 min-w-[160px] rounded-xl border border-white/10 bg-[#1e2d45] p-1.5 shadow-xl">
-                  <p className="mb-1 px-1 text-xs font-bold uppercase text-slate-400">Önizlenecek rol</p>
+                <div className="absolute left-full top-0 z-50 ml-2 min-w-[160px] rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                  <p className="mb-1 px-1 text-xs font-bold uppercase tracking-wide text-slate-500">Önizlenecek rol</p>
                   {PREVIEW_ROLES.map(r => (
                     <button
                       key={r.key}
@@ -581,7 +615,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                       className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium transition ${
                         previewRole === r.key
                           ? `${r.color} text-white`
-                          : "text-slate-400 hover:bg-white/10 hover:text-slate-200"
+                          : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"
                       }`}
                     >
                       <span className={`h-1.5 w-1.5 rounded-full shrink-0 ${r.color}`} />
@@ -591,7 +625,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                   {previewRole && (
                     <button
                       onClick={() => handlePreviewRole(null)}
-                      className="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-slate-500 hover:bg-white/10 hover:text-slate-300 transition"
+                      className="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-slate-500 hover:bg-slate-50 hover:text-slate-900 transition"
                     >
                       <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
                         <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -611,15 +645,23 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 pb-2">
-        {navGroups.map((group, gi) => (
-          <div key={group.label} className={gi > 0 ? "mt-2 pt-2 border-t border-white/5" : ""}>
+        {navGroups.map((group, gi) => {
+          const groupExpanded = openGroups[group.label] !== false;
+          return (
+          <div key={group.label} className={gi > 0 ? "mt-2 border-t border-slate-100 pt-2" : ""}>
             {!collapsed && (
-              <p className="mb-1 mt-3 px-2 text-xs font-bold uppercase text-slate-500">
-                {group.label}
-              </p>
+              <button
+                type="button"
+                onClick={() => setOpenGroups((current) => ({ ...current, [group.label]: !groupExpanded }))}
+                aria-expanded={groupExpanded}
+                className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
+              >
+                <span>{group.label}</span>
+                <svg className={`h-3.5 w-3.5 transition-transform ${groupExpanded ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9" /></svg>
+              </button>
             )}
             {collapsed && gi > 0 && <div className="my-1" />}
-            {group.items.map((item) => {
+            {(collapsed || groupExpanded) && group.items.map((item) => {
               const active = isActive(item.href);
               const badge = dynamicBadge(item.href) || (item.badge ? parseInt(item.badge) : 0);
               return (
@@ -632,13 +674,13 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                       "relative flex items-center rounded-xl transition-all duration-150 " +
                       (collapsed ? "justify-center px-0 py-3 mx-0" : "gap-3 px-3 py-3 text-sm font-semibold") + " " +
                       (active
-                        ? "bg-white text-slate-950 shadow-md shadow-slate-950/20"
-                        : "text-slate-400 hover:bg-white/8 hover:text-slate-100") +
-                      " focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-blue-400"
+                        ? "bg-primary/10 text-primary ring-1 ring-primary/15"
+                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-950") +
+                      " focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-primary/70"
                     }
                   >
-                    {!collapsed && active && <span className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-blue-500" aria-hidden="true" />}
-                    <span className={active ? "text-blue-700" : "text-slate-500"}>
+                    {!collapsed && active && <span className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-primary" aria-hidden="true" />}
+                    <span className={active ? "text-primary" : (ICON_TONES[item.icon] ?? "text-slate-400")}>
                       {ICONS[item.icon]}
                     </span>
                     {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
@@ -664,18 +706,19 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
               );
             })}
           </div>
-        ))}
+          );
+        })}
       </nav>
 
       {/* Logout */}
-      <div className="border-t border-white/5 p-2">
+      <div className="border-t border-slate-100 p-2">
         <div className="relative group">
           <button
             onClick={async () => {
               await fetch("/api/auth/logout", { method: "POST" });
               window.location.href = "/giris";
             }}
-            className={`flex w-full items-center rounded-xl text-slate-500 transition hover:bg-red-500/10 hover:text-red-400 ${collapsed ? "justify-center py-3 px-0" : "gap-3 px-3 py-3 text-sm font-medium"}`}
+            className={`flex w-full items-center rounded-xl text-slate-500 transition hover:bg-red-50 hover:text-red-600 ${collapsed ? "justify-center py-3 px-0" : "gap-3 px-3 py-3 text-sm font-medium"}`}
           >
             {ICONS.logout}
             {!collapsed && <span>Oturumu Kapat</span>}
@@ -688,6 +731,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
         </div>
       </div>
     </aside>
+    </div>
   </div>
   );
 }

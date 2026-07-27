@@ -84,7 +84,7 @@ export const patientSchema = z.object({
     if (!data.tcNo || !TC_NO_REGEX.test(data.tcNo)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tcNo"], message: TC_NO_MESSAGE });
     }
-    if (!PHONE_REGEX.test(data.phone)) {
+    if (data.phoneCountryCode === "+90" && !PHONE_REGEX.test(data.phone)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["phone"], message: PHONE_MESSAGE });
     }
   } else if (!/^\d{4,15}$/.test(data.phone)) {
@@ -95,6 +95,7 @@ export const patientSchema = z.object({
 export const appointmentSchema = z.object({
   patientId: z.string().min(1),
   doctorId: z.string().min(1),
+  clinicUnitId: z.string().trim().min(1).max(80).nullable().optional(),
   startAt: z.string().datetime(),
   endAt: z.string().datetime(),
   colorCode: z.string().default("#2a9d8f"),

@@ -23,9 +23,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (appointmentId) {
     const appointment = await prisma.appointment.findFirst({
       where: { id: appointmentId, patientId: pkg.patientId },
-      select: { id: true },
+      select: { id: true, status: true },
     });
     if (!appointment) return NextResponse.json({ message: "Randevu bulunamadı" }, { status: 404 });
+    if (appointment.status !== "GELDI") {
+      return NextResponse.json({ message: "Paket seansı yalnızca hasta geldi olarak işaretlenmiş randevuda kullanılabilir." }, { status: 400 });
+    }
+    const existingUsage = await prisma.patientPackageUsage.findFirst({ where: { patientPackageId: id, appointmentId }, select: { id: true } });
+    if (existingUsage) {
+      return NextResponse.json({ message: "Bu randevu için bu paketten zaten seans kullanılmış." }, { status: 409 });
+    }
   }
 
   try {
@@ -53,6 +60,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     await writeAudit(auth.user.id, "PATIENT_PACKAGE_USE", `${pkg.name} paketinden 1 seans kullanıldı (${updated.sessionsUsed}/${updated.sessionsTotal})`);
     return NextResponse.json(updated);
   } catch (error) {
+    if (typeof error === "object" && error && "code" in error && (error as { code?: string }).code === "P2002") {
+      return NextResponse.json({ message: "Bu randevu için bu paketten zaten seans kullanılmış." }, { status: 409 });
+    }
     if (error instanceof Error && error.message === "NO_SESSIONS_LEFT") {
       return NextResponse.json({ message: "Bu paketin kullanılabilir seansı kalmadı" }, { status: 400 });
     }

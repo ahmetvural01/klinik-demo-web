@@ -26,6 +26,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { showToastSafe } from "@/lib/toast-client";
 import { UserCheck } from "lucide-react";
+import { PatientFormModal } from "@/components/patient/PatientFormModal";
 
 type Props = { user: { fullName: string; role: string; photoUrl?: string | null } };
 
@@ -152,6 +153,7 @@ export function Topbar({ user }: Props) {
   const pathname = usePathname();
   const baseTitleRef = useRef<string>("Klinik Yönetim Paneli");
   const [q, setQ] = useState("");
+  const [showQuickPatientCreate, setShowQuickPatientCreate] = useState(false);
   const [searchResults, setSearchResults] = useState<{id: string; fullName: string; tcNo: string; phone: string}[]>([]);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const getEffectiveRole = useCallback(() => sessionStorage.getItem("dev-preview-role") || user.role, [user.role]);
@@ -358,7 +360,8 @@ export function Topbar({ user }: Props) {
   const displayRole = roleLabel[effectiveRole] || user.role;
 
   return (
-    <header className={`flex w-full min-w-0 shrink-0 items-center justify-between border-b border-slate-200 bg-white ${pageConfig.compact ? "min-h-14 gap-2 px-3 py-2 sm:gap-3 sm:px-4" : "min-h-16 gap-2 px-3 py-2 sm:gap-4 sm:px-5"}`}>
+    <>
+    <header className={`flex w-full min-w-0 shrink-0 items-center justify-between border-b border-slate-200/90 bg-white/95 shadow-[0_1px_0_rgb(15_23_42/0.025)] backdrop-blur ${pageConfig.compact ? "min-h-14 gap-2 px-3 py-2 sm:gap-3 sm:px-4" : "min-h-16 gap-2 px-3 py-2 sm:gap-4 sm:px-5"}`}>
       {/* Sol: Sayfa başlığı veya arama */}
       <div className={`flex min-w-0 flex-1 items-center ${pageConfig.compact ? "gap-2" : "gap-4"}`}>
         <button
@@ -369,11 +372,11 @@ export function Topbar({ user }: Props) {
           <Menu className="h-4 w-4" />
         </button>
         {pageConfig.showPageTitle && pageTitle && (
-          <span className="hidden shrink-0 text-base font-bold text-slate-800 lg:block">{pageTitle}</span>
+          <span className="hidden shrink-0 font-display text-[15px] font-bold text-slate-900 lg:block">{pageTitle}</span>
         )}
         {pageConfig.showSearch && <div className="relative flex min-w-0 max-w-sm flex-1">
           <form onSubmit={search} className="min-w-0 w-full">
-            <div ref={searchRef} className="relative flex min-h-11 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 transition focus-within:border-primary focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15">
+            <div ref={searchRef} className="relative flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 transition focus-within:border-primary focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15">
               <Search className="h-4 w-4 shrink-0 text-slate-400" />
               <input
                 value={q}
@@ -398,7 +401,7 @@ export function Topbar({ user }: Props) {
                 </button>
               )}
                 {searchResults.length > 0 && showSearchDropdown && (
-                <div id="search-results" className="absolute top-full left-0 right-0 z-50 mt-2 rounded-xl border border-slate-200 bg-white shadow-xl">
+                <div id="search-results" className="absolute top-full left-0 right-0 z-50 mt-2 rounded-lg border border-slate-200 bg-white shadow-xl">
                   <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2 text-xs font-bold text-slate-500">
                     <span>{searchResults.length} sonuç</span>
                   </div>
@@ -433,7 +436,7 @@ export function Topbar({ user }: Props) {
                 </div>
               )}
               {showSearchDropdown && q.length >= 2 && searchResults.length === 0 && (
-                <div className="absolute top-full left-0 right-0 z-50 mt-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-center text-sm text-slate-500 shadow-lg">
+                <div className="absolute top-full left-0 right-0 z-50 mt-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-center text-sm text-slate-500 shadow-lg">
                   <div className="inline-flex items-center gap-2">
                     <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
                     Hastalar aranıyor…
@@ -450,7 +453,11 @@ export function Topbar({ user }: Props) {
         {/* Hızlı Erişim */}
         {pageConfig.quickActions.length > 0 && (
           <div className="hidden items-center gap-2 xl:flex">
-            {pageConfig.quickActions.map((action) => (
+            {pageConfig.quickActions.map((action) => action.href === "/hasta-ekle" ? (
+              <Button key={action.href + action.label} type="button" onClick={() => setShowQuickPatientCreate(true)} variant="secondary" size="sm" icon={action.icon}>
+                {action.label}
+              </Button>
+            ) : (
               <Button key={action.href + action.label} href={action.href} variant="secondary" size="sm" icon={action.icon}>
                 {action.label}
               </Button>
@@ -471,7 +478,7 @@ export function Topbar({ user }: Props) {
             olmadan tüm klinik personeli bunu hemen görebilsin diye,
             uygulamanın her ekranında görünen topbar'a bağımsız bir gösterge
             olarak eklendi (bkz. Randevu ekranındaki "Geldi" işaretlemesi). */}
-        {pageConfig.showAlerts && canSeeWaiting && <div className="relative" ref={waitingRef}>
+        {pageConfig.showAlerts && canSeeWaiting && <div className="relative hidden sm:block" ref={waitingRef}>
           <button
             onClick={() => setShowWaiting(v => !v)}
             className="relative flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100"
@@ -485,7 +492,7 @@ export function Topbar({ user }: Props) {
             )}
           </button>
           {showWaiting && (
-            <div className="absolute right-0 top-11 z-50 w-72 rounded-2xl border border-slate-200 bg-white shadow-xl">
+            <div className="absolute right-0 top-11 z-50 w-72 rounded-lg border border-slate-200 bg-white shadow-xl">
               <div className="border-b border-slate-100 px-4 py-3">
                 <p className="text-sm font-bold text-slate-800">Bekleme Odası</p>
               </div>
@@ -535,7 +542,7 @@ export function Topbar({ user }: Props) {
           </button>
           {/* Dropdown */}
           {showAlerts && (
-            <div className="absolute right-0 top-11 z-50 w-72 rounded-2xl border border-slate-200 bg-white shadow-xl">
+            <div className="absolute right-0 top-11 z-50 w-72 rounded-lg border border-slate-200 bg-white shadow-xl">
               <div className="border-b border-slate-100 px-4 py-3">
                 <p className="text-sm font-bold text-slate-800">Sistem Uyarıları</p>
               </div>
@@ -631,5 +638,11 @@ export function Topbar({ user }: Props) {
         </div>
       </div>
     </header>
+    <PatientFormModal
+      open={showQuickPatientCreate}
+      onClose={() => setShowQuickPatientCreate(false)}
+      onSaved={(patient) => { setShowQuickPatientCreate(false); router.push(`/hasta-detay?id=${patient.id}`); }}
+    />
+    </>
   );
 }

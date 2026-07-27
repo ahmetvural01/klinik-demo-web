@@ -162,6 +162,14 @@ async function isEligibleAppointmentDoctor(doctorId: string, institutionId?: str
   return null;
 }
 
+async function isEligibleClinicUnit(clinicUnitId: string | null | undefined, institutionId?: string | null) {
+  if (!clinicUnitId) return null;
+  return prisma.clinicUnit.findFirst({
+    where: { id: clinicUnitId, ...(institutionId ? { institutionId } : {}), isActive: true },
+    select: { id: true, name: true },
+  });
+}
+
 function canCreateAppointment(role: string) {
   // ASISTAN ve BANKO zaten "appointments:write" iznine sahip ve mevcut bir
   // randevuyu düzenleyebiliyordu — ama bu ayrı, daha kısıtlı liste yeni
@@ -211,8 +219,10 @@ export const GET = withApiTiming("appointments", async function GET(request: Nex
         smsSurvey: true,
         doctorId: true,
         patientId: true,
+        clinicUnitId: true,
         patient: { select: { id: true, fullName: true, phone: true, tcNo: true, hasContagiousDisease: true, contagiousDiseaseNote: true } },
         doctor: { select: { id: true, fullName: true, role: true } },
+        clinicUnit: { select: { id: true, name: true, code: true } },
       },
       orderBy: { startAt: "asc" },
       take: 500, // Güvenlik limiti
@@ -251,6 +261,11 @@ export async function POST(request: NextRequest) {
   const eligibleDoctor = await isEligibleAppointmentDoctor(parsed.data.doctorId, auth.user.institutionId);
   if (!eligibleDoctor) {
     return NextResponse.json({ message: "Seçilen personel randevu doktoru olarak kullanılamaz." }, { status: 400 });
+  }
+
+  const selectedUnit = await isEligibleClinicUnit(parsed.data.clinicUnitId, auth.user.institutionId);
+  if (parsed.data.clinicUnitId && !selectedUnit) {
+    return NextResponse.json({ message: "Seçilen klinik ünitesi bulunamadı veya pasif durumda." }, { status: 400 });
   }
 
   if (auth.user.institutionId) {
@@ -317,6 +332,25 @@ export async function POST(request: NextRequest) {
     }, { status: 409 });
   }
 
+  if (selectedUnit) {
+    const unitConflict = await prisma.appointment.findFirst({
+      where: {
+        clinicUnitId: selectedUnit.id,
+        status: { notIn: ["IPTAL", "GELMEDI"] },
+        AND: [{ startAt: { lt: endAt } }, { endAt: { gt: startAt } }],
+      },
+      select: { id: true, startAt: true, endAt: true, patient: { select: { fullName: true } } },
+    });
+    if (unitConflict) {
+      const cs = unitConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+      const ce = unitConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+      return NextResponse.json({
+        message: `${selectedUnit.name} ünitesi ${cs}–${ce} saatleri arasında dolu (${unitConflict.patient?.fullName ?? "—"}).`,
+        conflictId: unitConflict.id,
+      }, { status: 409 });
+    }
+  }
+
   // ── Doktor bloke saati kontrolü ─────────────────────────────────────────
   const blockConflict = await findDoctorBlockConflict(parsed.data.doctorId, startAt, endAt);
   if (blockConflict) {
@@ -367,9 +401,21 @@ export async function POST(request: NextRequest) {
         throw new Error("DOCTOR_CONFLICT_RECHECK");
       }
 
+      if (selectedUnit) {
+        const unitConflictRecheck = await tx.appointment.findFirst({
+          where: {
+            clinicUnitId: selectedUnit.id,
+            status: { notIn: ["IPTAL", "GELMEDI"] },
+            AND: [{ startAt: { lt: endAt } }, { endAt: { gt: startAt } }],
+          },
+          select: { id: true },
+        });
+        if (unitConflictRecheck) throw new Error("CLINIC_UNIT_CONFLICT_RECHECK");
+      }
+
       const appt = await tx.appointment.create({
-        data: { ...parsed.data, startAt, endAt },
-        include: { patient: true, doctor: { select: { id: true, fullName: true } } },
+        data: { ...parsed.data, clinicUnitId: selectedUnit?.id || null, startAt, endAt },
+        include: { patient: true, doctor: { select: { id: true, fullName: true } }, clinicUnit: { select: { id: true, name: true, code: true } } },
       });
 
     // Reminder'ı transaction içinde oluştur - bir başarısızsa ikisi de rollback
@@ -403,7 +449,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${appointment.patient.fullName} icin randevu`);
+    await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${appointment.patient.fullName} için randevu${appointment.clinicUnit ? ` · Ünite: ${appointment.clinicUnit.name}` : ""}`);
     return NextResponse.json({
       ...appointment,
       smsStatus: {
@@ -418,6 +464,9 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     if (error instanceof Error && error.message === "DOCTOR_CONFLICT_RECHECK") {
       return NextResponse.json({ message: "Bu doktor için bu saat aralığı az önce başka bir kullanıcı tarafından dolduruldu. Lütfen tekrar deneyin." }, { status: 409 });
+    }
+    if (error instanceof Error && error.message === "CLINIC_UNIT_CONFLICT_RECHECK") {
+      return NextResponse.json({ message: "Bu klinik ünitesi bu saat aralığında az önce başka bir randevuya ayrıldı. Lütfen tekrar deneyin." }, { status: 409 });
     }
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2034") {
       return NextResponse.json({ message: "Bu randevu aynı anda başka bir işlemle çakıştı. Lütfen tekrar deneyin." }, { status: 409 });

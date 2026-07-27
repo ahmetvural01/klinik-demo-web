@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowDown,
   ArrowUp,
@@ -23,6 +23,7 @@ import { confirmDialog } from "@/lib/confirm-client";
 import { useSlashFocus } from "@/lib/use-slash-focus";
 import { ListRowSkeleton, TableRowsSkeleton } from "@/components/ui/ListSkeleton";
 import { cachedGet } from "@/lib/client-cache";
+import { PatientFormModal } from "@/components/patient/PatientFormModal";
 
 type Patient = {
   id: string;
@@ -126,6 +127,7 @@ function patientInitials(name: string) {
 }
 
 function HastaContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const searchInputRef = useRef<HTMLInputElement>(null);
   useSlashFocus(searchInputRef);
@@ -145,10 +147,23 @@ function HastaContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [userRole, setUserRole] = useState(() => readCachedAuthRole());
+  const [showQuickCreate, setShowQuickCreate] = useState(false);
+  const [editPatientId, setEditPatientId] = useState<string | null>(null);
 
   const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
   const canDeletePatients = userRole === "SUPERADMIN" || userRole === "YONETICI";
   const activeFilterCount = [doctorId].filter(Boolean).length;
+
+  useEffect(() => {
+    if (searchParams.get("yeni") === "1") setShowQuickCreate(true);
+  }, [searchParams]);
+
+  const closeQuickCreate = () => {
+    setShowQuickCreate(false);
+    if (searchParams.get("yeni") === "1") {
+      window.history.replaceState(null, "", "/hasta");
+    }
+  };
 
   useEffect(() => {
     cachedGet<unknown>("/api/staff", 60_000).then((d) => {
@@ -318,13 +333,14 @@ function HastaContent() {
                 <span className={`text-base font-black ${item.color}`}>{Number(item.value || 0).toLocaleString("tr-TR")}</span>
               </div>
             ))}
-            <Link
-              href="/hasta-ekle"
+            <button
+              type="button"
+              onClick={() => setShowQuickCreate(true)}
               className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90"
             >
               <UserPlus className="h-4 w-4" />
               Yeni Hasta
-            </Link>
+            </button>
           </div>
         </div>
       </div>
@@ -417,7 +433,7 @@ function HastaContent() {
                   </div>
                   <div className={`mt-4 grid gap-2 ${canDeletePatients ? "grid-cols-3" : "grid-cols-2"}`}>
                     <Link href={`/hasta-detay?id=${patient.id}`} className="rounded-lg bg-primary px-3 py-2 text-center text-sm font-bold text-white">Kart</Link>
-                    <Link href={`/hasta-ekle?id=${patient.id}`} className="rounded-lg border border-slate-200 px-3 py-2 text-center text-sm font-semibold text-slate-700">Düzenle</Link>
+                    <button type="button" onClick={() => setEditPatientId(patient.id)} className="rounded-lg border border-slate-200 px-3 py-2 text-center text-sm font-semibold text-slate-700">Düzenle</button>
                     {canDeletePatients && <button type="button" onClick={() => remove(patient.id)} className="rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-600">Sil</button>}
                   </div>
                 </div>
@@ -506,9 +522,9 @@ function HastaContent() {
                         <Link href={`/hasta-detay?id=${patient.id}`} title="Hasta kartını aç" className="rounded-lg bg-primary/10 p-2 text-primary transition hover:bg-primary hover:text-white">
                           <Eye className="h-4 w-4" />
                         </Link>
-                        <Link href={`/hasta-ekle?id=${patient.id}`} title="Düzenle" className="rounded-lg bg-slate-100 p-2 text-slate-600 transition hover:bg-slate-200">
+                        <button type="button" onClick={() => setEditPatientId(patient.id)} title="Düzenle" className="rounded-lg bg-slate-100 p-2 text-slate-600 transition hover:bg-slate-200">
                           <Pencil className="h-4 w-4" />
-                        </Link>
+                        </button>
                         {canDeletePatients && (
                           <button type="button" onClick={() => remove(patient.id)} title="Sil" className="rounded-lg bg-red-50 p-2 text-red-600 transition hover:bg-red-100">
                             <Trash2 className="h-4 w-4" />
@@ -568,6 +584,14 @@ function HastaContent() {
           </div>
         </div>
       </div>
+      <PatientFormModal open={showQuickCreate} onClose={closeQuickCreate} onSaved={(patient) => router.push(`/hasta-detay?id=${patient.id}`)} />
+      <PatientFormModal
+        open={Boolean(editPatientId)}
+        onClose={() => setEditPatientId(null)}
+        patientId={editPatientId || undefined}
+        hidePhoneField={hidePhone}
+        onSaved={() => void load()}
+      />
     </section>
   );
 }

@@ -148,7 +148,17 @@ export function usePanelAlerts(role: string) {
       if (!cancelled) setAlerts(data);
     };
 
-    void refresh(false);
+    // Rozetler ilk görünümün önceliği değildir. Takvim ve hasta listesi
+    // etkileşime hazır olduktan sonra boşta yüklenir; böylece sayfa geçişi
+    // gereksiz ağ istekleriyle yarışmaz.
+    const startInitialRefresh = () => void refresh(false);
+    let idleId: number | null = null;
+    let initialTimer: ReturnType<typeof setTimeout> | null = null;
+    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+      idleId = (window as Window & { requestIdleCallback: (callback: () => void, options?: { timeout: number }) => number }).requestIdleCallback(startInitialRefresh, { timeout: 1200 });
+    } else {
+      initialTimer = setTimeout(startInitialRefresh, 500);
+    }
 
     const onVisibility = () => {
       if (typeof document !== "undefined" && !document.hidden) void refresh(false);
@@ -164,6 +174,10 @@ export function usePanelAlerts(role: string) {
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("ks:realtime-sync", onRealtime);
       window.clearInterval(timer);
+      if (idleId !== null && "cancelIdleCallback" in window) {
+        (window as Window & { cancelIdleCallback: (id: number) => void }).cancelIdleCallback(idleId);
+      }
+      if (initialTimer) clearTimeout(initialTimer);
     };
   }, [role]);
 

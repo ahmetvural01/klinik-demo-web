@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
 import FiyatPage from "../fiyat/page";
 import PaketlerTab from "./_tabs/PaketlerTab";
+import UnitelerTab from "./_tabs/UnitelerTab";
 
 type PosDevice = { id: string; name: string; isActive: boolean; createdAt: string };
 type TreatmentType = { id: string; value: string; label: string; color: string; order: number; isActive: boolean };
@@ -28,6 +29,7 @@ const TABS = [
   { id: "pos", label: "POS Cihazları" },
   { id: "tedavi", label: "Tedavi Türleri" },
   { id: "paket", label: "Paketler" },
+  { id: "uniteler", label: "Klinik Üniteleri" },
 ] as const;
 
 type SettingsTab = (typeof TABS)[number]["id"];
@@ -51,6 +53,7 @@ export default function AyarPage() {
     closingTime: "23:59",
     appointmentDuration: 15,
     institutionWebsite: "",
+    logoUrl: "",
     lunchStart: "",
     lunchEnd: "",
     dailySchedules: DEFAULT_SCHEDULES as DaySchedule[],
@@ -124,6 +127,7 @@ export default function AyarPage() {
           closingTime:          data.closingTime          || "23:59",
           appointmentDuration:  data.appointmentDuration  || 15,
           institutionWebsite:   data.institutionWebsite   || "",
+          logoUrl:              data.logoUrl              || "",
           lunchStart: data.lunchStart || "",
           lunchEnd: data.lunchEnd || "",
           dailySchedules: (() => {
@@ -178,8 +182,25 @@ export default function AyarPage() {
         return;
       }
       showToast("success", "Ayarlar kaydedildi");
+      window.dispatchEvent(new Event("clinic-brand-change"));
     } catch (e) { console.error(e); showToast("error", "Ayarlar kaydedilemedi. Bağlantınızı kontrol edin."); }
     finally { setSaving(false); }
+  };
+
+  const selectLogoFile = (file?: File) => {
+    if (!file) return;
+    const allowed = ["image/png", "image/jpeg", "image/webp", "image/gif"];
+    if (!allowed.includes(file.type)) {
+      showToast("error", "Logo PNG, JPG, WEBP veya GIF biçiminde olmalıdır.");
+      return;
+    }
+    if (file.size > 400 * 1024) {
+      showToast("error", "Logo dosyası en fazla 400 KB olabilir.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setSettings((current) => ({ ...current, logoUrl: String(reader.result || "") }));
+    reader.readAsDataURL(file);
   };
 
   const addPos = async () => {
@@ -371,6 +392,37 @@ export default function AyarPage() {
                     className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
                 </FormField>
               ))}
+            </div>
+          </div>
+
+          <div className="border-t border-slate-100 pt-5">
+            <h3 className="mb-1 text-base font-black text-slate-900">Kurum Logosu</h3>
+            <p className="mb-3 text-sm text-slate-500">Sol menü, hasta belgeleri ve dışa aktarılan çıktılarda kullanılır.</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+                {settings.logoUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={settings.logoUrl} alt="Kurum logosu" className="h-full w-full object-contain p-1" />
+                ) : (
+                  <span className="text-xs font-bold text-slate-400">Logo</span>
+                )}
+              </div>
+              <div className="min-w-0 flex-1 space-y-2">
+                <input
+                  value={settings.logoUrl}
+                  onChange={(e) => setSettings({ ...settings, logoUrl: e.target.value })}
+                  placeholder="https://... veya dosya seçin"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+                />
+                <div className="flex flex-wrap gap-2">
+                  <label className="inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50">
+                    Dosya Seç
+                    <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="sr-only" onChange={(e) => selectLogoFile(e.target.files?.[0])} />
+                  </label>
+                  {settings.logoUrl && <Button variant="ghost" size="sm" onClick={() => setSettings({ ...settings, logoUrl: "" })}>Logoyu Kaldır</Button>}
+                </div>
+                <p className="text-xs text-slate-500">PNG, JPG, WEBP veya GIF; en fazla 400 KB. Şeffaf PNG önerilir.</p>
+              </div>
             </div>
           </div>
 
@@ -568,6 +620,12 @@ export default function AyarPage() {
       {activeTab === "paket" && (
         <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
           <PaketlerTab />
+        </div>
+      )}
+
+      {activeTab === "uniteler" && (
+        <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
+          <UnitelerTab />
         </div>
       )}
 

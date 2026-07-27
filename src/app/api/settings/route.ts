@@ -17,7 +17,7 @@ const SETTING_LABELS: Record<string, string> = {
   smsDefaultReminder: "SMS Hatırlatma",
   smsDefaultSurvey: "SMS Anket",
   reminderLeadHours: "Hatırlatma Süresi (saat)",
-  logoUrl: "Logo URL",
+  logoUrl: "Kurum Logosu",
   primaryColor: "Ana Renk",
   activePriceList: "Tedavi Fiyat Kaynağı",
 };
@@ -31,6 +31,17 @@ function normalizeSettingsPayload(body: Record<string, unknown>) {
   delete data.institutionId;
   delete data.updatedAt;
   return data;
+}
+
+function validateLogoUrl(value: unknown): string | null {
+  if (value === null || value === undefined || value === "") return null;
+  const logoUrl = String(value).trim();
+  const allowedRemote = /^https:\/\/.+/i.test(logoUrl);
+  const allowedEmbedded = /^data:image\/(png|jpeg|webp|gif);base64,[a-z0-9+/=\s]+$/i.test(logoUrl);
+  if (!allowedRemote && !allowedEmbedded) return null;
+  // Küçük bir kurum logosu için veritabanında gereksiz büyük veri tutulmasın.
+  if (logoUrl.length > 550_000) return null;
+  return logoUrl;
 }
 
 export async function GET() {
@@ -75,12 +86,19 @@ export async function PUT(request: NextRequest) {
     if (!auth.user.institutionId) {
       return NextResponse.json({ message: "Yalnızca klinik kullanıcıları ayarları güncelleyebilir." }, { status: 403 });
     }
+    const institutionId = auth.user.institutionId;
 
     const body = await request.json();
     const data = normalizeSettingsPayload(body && typeof body === "object" ? body : {});
+    const requestedLogo = data.logoUrl;
+    delete data.logoUrl;
+    const logoUrl = validateLogoUrl(requestedLogo);
+    if (requestedLogo && !logoUrl) {
+      return NextResponse.json({ message: "Logo PNG, JPG, WEBP veya GIF biçiminde olmalı; güvenli bir HTTPS bağlantısı ya da 400 KB altı bir dosya kullanın." }, { status: 400 });
+    }
 
     const institution = await prisma.institution.findUnique({
-      where: { id: auth.user.institutionId },
+      where: { id: institutionId },
     });
 
     if (!institution) {
@@ -88,7 +106,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const current = await prisma.setting.findUnique({
-      where: { institutionId: auth.user.institutionId },
+      where: { institutionId },
     });
 
     const duration = Number(data.appointmentDuration ?? current?.appointmentDuration ?? 15);
@@ -123,16 +141,27 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ message: workingHoursError }, { status: 400 });
     }
 
-    const updated = current
-      ? await prisma.setting.update({ where: { institutionId: auth.user.institutionId }, data })
-      : await prisma.setting.create({
-          data: {
-            institutionId: auth.user.institutionId,
-            institutionName: typeof data.institutionName === "string" ? data.institutionName : institution.name,
-            institutionPhone: typeof data.institutionPhone === "string" ? data.institutionPhone : institution.phone,
-            ...data,
-          },
+    const updated = await prisma.$transaction(async (tx) => {
+      // Logo Institution üzerinde tek kaynakta tutulur; onam/PDF ve menü aynı
+      // görseli okur. Boş logo, mevcut logonun bilinçli olarak kaldırılmasıdır.
+      if (requestedLogo !== undefined) {
+        await tx.institution.update({
+          where: { id: institutionId },
+          data: { logo: logoUrl || "" },
         });
+      }
+
+      return current
+        ? tx.setting.update({ where: { institutionId }, data })
+        : tx.setting.create({
+            data: {
+              institutionId,
+              institutionName: typeof data.institutionName === "string" ? data.institutionName : institution.name,
+              institutionPhone: typeof data.institutionPhone === "string" ? data.institutionPhone : institution.phone,
+              ...data,
+            },
+          });
+    });
 
   const beforeParts: string[] = [];
   const afterParts: string[] = [];
@@ -144,6 +173,11 @@ export async function PUT(request: NextRequest) {
       afterParts.push(`${label}: ${newVal}`);
     }
   });
+
+  if (requestedLogo !== undefined && (institution.logo || "") !== (logoUrl || "")) {
+    beforeParts.push(`Kurum Logosu: ${institution.logo ? "Tanımlı" : "Yok"}`);
+    afterParts.push(`Kurum Logosu: ${logoUrl ? "Tanımlı" : "Kaldırıldı"}`);
+  }
 
   const detail = [
     `${auth.user.fullName || "Personel"} tarafından sistem ayarları güncellendi.`,

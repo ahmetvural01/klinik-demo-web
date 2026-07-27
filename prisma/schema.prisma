@@ -65,6 +65,27 @@ model Institution {
   smsTemplates        SmsTemplate[]
   packageDefinitions  PackageDefinition[]
   patientPackages     PatientPackage[]
+  clinicUnits         ClinicUnit[]
+}
+
+// Klinik içindeki fiziksel çalışma alanı (ünit, oda veya koltuk). Randevuya
+// opsiyonel bağlanır; bir ünite seçildiyse aynı zaman aralığında ikinci
+// randevu açılmasına izin verilmez. Böylece çok hekimli kliniklerde koltuk
+// kapasitesi görünmez bir darboğaz olmaktan çıkar.
+model ClinicUnit {
+  id            String        @id @default(cuid())
+  institutionId String
+  name          String
+  code          String?
+  isActive      Boolean       @default(true)
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  appointments  Appointment[]
+
+  @@unique([institutionId, name])
+  @@unique([institutionId, code])
+  @@index([institutionId, isActive])
 }
 
 model DemoRequest {
@@ -527,6 +548,7 @@ model Appointment {
   id              String            @id @default(cuid())
   patientId       String
   doctorId        String
+  clinicUnitId    String?
   startAt         DateTime
   endAt           DateTime
   colorCode       String            @default("#2a9d8f")
@@ -539,6 +561,7 @@ model Appointment {
   updatedAt       DateTime          @updatedAt
   status          String            @default("BEKLIYOR")
   doctor          User              @relation(fields: [doctorId], references: [id])
+  clinicUnit      ClinicUnit?       @relation(fields: [clinicUnitId], references: [id], onDelete: SetNull)
   followUps       PatientFollowUp[]
   patient         Patient           @relation(fields: [patientId], references: [id])
   waitlistEntries Waitlist[]
@@ -548,6 +571,7 @@ model Appointment {
   @@index([patientId])
   @@index([startAt])
   @@index([doctorId, startAt])
+  @@index([clinicUnitId, startAt])
 }
 
 model ClinicTask {
@@ -997,6 +1021,8 @@ model PatientPackageUsage {
 
   @@index([patientPackageId])
   @@index([appointmentId])
+  // Aynı randevu için aynı paketten iki kez seans düşülmesin.
+  @@unique([patientPackageId, appointmentId])
 }
 
 model LabOrder {

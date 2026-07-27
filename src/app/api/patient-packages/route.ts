@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
     orderBy: { purchasedAt: "desc" },
     include: {
       doctor: { select: { id: true, fullName: true } },
-      definition: { select: { id: true, name: true } },
+      definition: { select: { id: true, name: true, treatmentType: true } },
       usages: { orderBy: { usedAt: "desc" }, select: { id: true, usedAt: true, note: true, appointmentId: true } },
     },
   });

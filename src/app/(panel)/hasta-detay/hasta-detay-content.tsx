@@ -4,8 +4,6 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, useRef } from "react";
 import { OdontogramSelector, ToothStatus as TSType, TOOTH_STATUS_LABELS } from "@/components/ToothChart";
-import PhoneInput from "@/components/PhoneInput";
-import { COUNTRY_CODES } from "@/lib/country-codes";
 import { PatientConsentPanel } from "@/components/PatientConsentPanel";
 import { SearchSelect } from "@/components/ui/SearchSelect";
 import { Modal } from "@/components/ui/Modal";
@@ -25,6 +23,7 @@ import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 import { addPdfSection, createPdfDoc, pdfSafeText } from "@/lib/pdf-export";
 import { cachedGet } from "@/lib/client-cache";
 import { PatientPackagesSection } from "./PatientPackagesSection";
+import { PatientFormModal } from "@/components/patient/PatientFormModal";
 
 type PatientDocument = {
   id: string;
@@ -123,7 +122,7 @@ type ClinicTask = {
   createdBy?: { id: string; fullName: string } | null;
   createdAt: string;
 };
-type Tab = "bilgi" | "randevular" | "gorevler" | "tedavi" | "odeme" | "paket" | "recete" | "notlar" | "lab" | "belgeler" | "duzenle";
+type Tab = "bilgi" | "randevular" | "gorevler" | "tedavi" | "odeme" | "paket" | "recete" | "notlar" | "lab" | "belgeler";
 type ToothStatus = TSType;
 type ExportFormat = "pdf" | "excel";
 type PatientExportSection = "profile" | "completedTreatments" | "plannedTreatments" | "payments" | "balance" | "appointments" | "labOrders" | "prescriptions" | "documents" | "notes";
@@ -148,11 +147,10 @@ const TAB_ITEMS: { key: Tab; label: string }[] = [
   { key: "notlar", label: "Notlar" },
   { key: "lab", label: "Laboratuvar" },
   { key: "belgeler", label: "Belgeler & Onam" },
-  { key: "duzenle", label: "Düzenle" },
 ];
 
 const PRIMARY_TAB_ORDER: Tab[] = ["bilgi", "tedavi", "lab", "odeme", "randevular"];
-const MORE_TAB_ORDER: Tab[] = ["paket", "recete", "notlar", "gorevler", "belgeler", "duzenle"];
+const MORE_TAB_ORDER: Tab[] = ["paket", "recete", "notlar", "gorevler", "belgeler"];
 const TAB_SHORT_LABELS: Partial<Record<Tab, string>> = {
   bilgi: "Özet",
   tedavi: "Tedavi",
@@ -164,7 +162,6 @@ const TAB_SHORT_LABELS: Partial<Record<Tab, string>> = {
   notlar: "Notlar",
   gorevler: "Görevler",
   belgeler: "Belgeler",
-  duzenle: "Hasta Bilgileri",
 };
 
 const PATIENT_EXPORT_SECTIONS: { key: PatientExportSection; label: string; description: string }[] = [
@@ -543,17 +540,15 @@ export default function HastaDetayContent() {
     typeof window !== "undefined" ? (sessionStorage.getItem("dev-preview-role") || "") : ""
   );
 
-  // Rol bazlı sekme filtreleme
-  // BANKO: tedavi, recete, lab sekmeleri API tarafından engellendi
-  // DOKTOR: patients:write yetkisi yok — "Düzenle" sekmesi doldurulup kaydedilemez, gösterilmemeli
+  // Rol bazlı sekme filtreleme — BANKO: tedavi, recete, lab sekmeleri API tarafından engellendi
   const visibleTabItems = TAB_ITEMS.filter(t => {
     if (currentUserRole === "BANKO") return !["tedavi", "recete", "lab", "belgeler"].includes(t.key);
-    if (currentUserRole === "DOKTOR") return t.key !== "duzenle";
     return true;
   });
+  // DOKTOR: patients:write yetkisi yok — "Düzenle" butonu gösterilmemeli.
+  const canEditPatient = currentUserRole !== "DOKTOR";
   const [posDevices, setPosDevices] = useState<{ id: string; name: string; isActive: boolean }[]>([]);
-  const [editForm, setEditForm] = useState<Partial<Patient & { birthDate: string }>>({});
-  const [editLoading, setEditLoading] = useState(false);
+  const [showEditModal, setShowEditModal] = useState(false);
   const [noteText, setNoteText] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
   const [clinicTasks, setClinicTasks] = useState<ClinicTask[]>([]);
@@ -788,8 +783,6 @@ export default function HastaDetayContent() {
   const isMoreTabActive = moreTabs.includes(tab);
   const tabLabel = (key: Tab) => TAB_SHORT_LABELS[key] || TAB_ITEMS.find((item) => item.key === key)?.label || key;
 
-  const toBirthDateIso = (value?: string | null) => value ? new Date(value + "T00:00:00.000Z").toISOString() : null;
-
   const updatePatient = async (payload: Record<string, unknown>) => {
     return fetch("/api/patients/" + id, {
       method: "PUT",
@@ -831,21 +824,6 @@ export default function HastaDetayContent() {
       setData(normalizedData);
       setClinicTasks(Array.isArray(taskJson) ? taskJson : []);
       setTreatmentPlans(Array.isArray(planJson?.items) ? planJson.items : []);
-      // Sessiz (gerçek zamanlı) yenilemede duzenle formunu ezmiyoruz — kullanıcı o an
-      // formu dolduruyor olabilir.
-      if (!silent || tab !== "duzenle") {
-        setEditForm({
-          fullName: normalizedData.fullName, tcNo: normalizedData.tcNo, isForeigner: normalizedData.isForeigner || false, phoneCountryCode: normalizedData.phoneCountryCode || "+90", phone: normalizedData.phone, gender: normalizedData.gender,
-          address: normalizedData.address || "", insurance: normalizedData.insurance || "", referrer: normalizedData.referrer || "", profession: normalizedData.profession || "",
-          discountRate: normalizedData.discountRate, notes: normalizedData.notes || "",
-          surgeries: normalizedData.surgeries || "", medications: normalizedData.medications || "",
-          otherDiseases: normalizedData.otherDiseases || "", bloodType: normalizedData.bloodType || "",
-          birthDate: normalizedData.birthDate ? new Date(normalizedData.birthDate).toISOString().slice(0, 10) : "",
-          hasAllergy: normalizedData.hasAllergy, hasHepatitis: normalizedData.hasHepatitis, hasKidney: normalizedData.hasKidney,
-          hasDiabetes: normalizedData.hasDiabetes, hasHeart: normalizedData.hasHeart, hasBloodIssue: normalizedData.hasBloodIssue,
-          hasContagiousDisease: normalizedData.hasContagiousDisease, contagiousDiseaseNote: normalizedData.contagiousDiseaseNote || ""
-        });
-      }
       if (normalizedData.toothChart) {
         try { setToothMap(JSON.parse(normalizedData.toothChart)); } catch { setToothMap({}); }
       } else {
@@ -2051,38 +2029,6 @@ export default function HastaDetayContent() {
     setPayLoading(false);
   };
 
-  const saveEdit = async () => {
-    // PhoneInput artık 10 haneli, 0 önekisiz kanonik formatı üretiyor
-    // (bkz. src/components/PhoneInput.tsx) — bu kontrol hâlâ eski 11 haneli
-    // "0..." formatını zorunlu kılıyordu ve TÜM hastalarda (yabancı olmayan
-    // dahil) kaydetmeyi engelliyordu (bkz. denetim raporu — regresyon).
-    // Yabancı hastalarda telefon farklı formatta olabileceğinden o durumda
-    // bu katı Türkiye kontrolü hiç uygulanmaz.
-    if (!editForm.isForeigner && !/^0?5\d{9}$/.test(String(editForm.phone || ""))) {
-      return showToast("error", "Telefon 10 haneli olmalı ve 5 ile başlamalıdır (ör. 545 404 69 39)");
-    }
-    setEditLoading(true);
-    const res = await updatePatient({ ...editForm, birthDate: toBirthDateIso(editForm.birthDate) });
-    if (res.ok) { showToast("success", "Hasta bilgileri güncellendi"); void load(); } else showToast("error", "Güncelleme başarısız");
-    setEditLoading(false);
-  };
-
-  // "Vazgeç" — formu son kaydedilmiş hasta verisine geri döndürür (kaydetmeden).
-  const cancelEdit = () => {
-    if (!data) return;
-    setEditForm({
-      fullName: data.fullName, tcNo: data.tcNo, isForeigner: data.isForeigner || false, phoneCountryCode: data.phoneCountryCode || "+90", phone: data.phone, gender: data.gender,
-      address: data.address || "", insurance: data.insurance || "", referrer: data.referrer || "", profession: data.profession || "",
-      discountRate: data.discountRate, notes: data.notes || "",
-      surgeries: data.surgeries || "", medications: data.medications || "",
-      otherDiseases: data.otherDiseases || "", bloodType: data.bloodType || "",
-      birthDate: data.birthDate ? new Date(data.birthDate).toISOString().slice(0, 10) : "",
-      hasAllergy: data.hasAllergy, hasHepatitis: data.hasHepatitis, hasKidney: data.hasKidney,
-      hasDiabetes: data.hasDiabetes, hasHeart: data.hasHeart, hasBloodIssue: data.hasBloodIssue,
-      hasContagiousDisease: data.hasContagiousDisease, contagiousDiseaseNote: data.contagiousDiseaseNote || "",
-    });
-  };
-
   const saveNote = async () => {
     if (!noteText.trim()) return;
     setNoteSaving(true);
@@ -2365,8 +2311,8 @@ export default function HastaDetayContent() {
       title: "Sağlık uyarısı var",
       detail: healthFlags.map(([label]) => label).join(", "),
       tone: "border-red-100 bg-red-50 text-red-700",
-      action: canOpenTab("duzenle") ? "Düzenle" : "Kontrol Et",
-      onClick: () => canOpenTab("duzenle") ? selectTab("duzenle") : selectTab("bilgi"),
+      action: canEditPatient ? "Düzenle" : "Kontrol Et",
+      onClick: () => canEditPatient ? setShowEditModal(true) : selectTab("bilgi"),
     }] : []),
     ...(totalDebt > 0 ? [{
       id: "debt",
@@ -2888,6 +2834,15 @@ export default function HastaDetayContent() {
           >
             Dışa Aktar
           </button>
+          {canEditPatient && (
+            <button
+              type="button"
+              onClick={() => setShowEditModal(true)}
+              className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+            >
+              Düzenle
+            </button>
+          )}
           <Link href="/hasta" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">Hasta Listesi</Link>
         </div>
         </div>
@@ -3020,7 +2975,9 @@ export default function HastaDetayContent() {
             <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <h3 className="text-base font-black text-slate-900">Hasta Profili</h3>
-                <button onClick={() => selectTab("duzenle")} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50">Düzenle</button>
+                {canEditPatient && (
+                  <button onClick={() => setShowEditModal(true)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50">Düzenle</button>
+                )}
               </div>
               <dl className="space-y-2 text-sm">
                 {[
@@ -4393,124 +4350,13 @@ export default function HastaDetayContent() {
         </div>
       )}
 
-      {tab === "duzenle" && (
-        <div className="rounded-lg border bg-white p-4">
-          <h3 className="mb-4 font-semibold">Hasta Bilgilerini Düzenle</h3>
-          <div className="grid gap-3 md:grid-cols-2">
-            <FormField label="Ad Soyad">
-              <input value={editForm.fullName||""} onChange={e=>setEditForm({...editForm,fullName:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" />
-            </FormField>
-            <div className="flex items-center md:col-span-2">
-              <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-700">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 accent-primary"
-                  checked={!!editForm.isForeigner}
-                  onChange={e=>setEditForm({...editForm,isForeigner:e.target.checked})}
-                />
-                Yabancı uyruklu (TC vatandaşı değil)
-              </label>
-            </div>
-            <FormField label={editForm.isForeigner ? "Pasaport / Kimlik No" : "TC Kimlik No"}>
-              {!editForm.isForeigner ? (
-                <input value={editForm.tcNo||""} inputMode="numeric" maxLength={11} onChange={e=>setEditForm({...editForm,tcNo:e.target.value.replace(/\D/g,"").slice(0,11)})} className="mt-1 w-full rounded border px-3 py-2 font-mono" />
-              ) : (
-                <input value={editForm.tcNo||""} placeholder="Opsiyonel" onChange={e=>setEditForm({...editForm,tcNo:e.target.value.trim()})} className="mt-1 w-full rounded border px-3 py-2 font-mono" />
-              )}
-            </FormField>
-            {currentUserRole !== "DOKTOR" && currentUserRole !== "ASISTAN" && (
-              !editForm.isForeigner ? (
-                <div><PhoneInput label="Telefon" value={editForm.phone||""} onChange={phone=>setEditForm({...editForm,phone})} /></div>
-              ) : (
-                <FormField label="Telefon">
-                  <div className="mt-1 flex gap-2">
-                    <select
-                      className="w-32 shrink-0 rounded border px-2 py-2 text-sm"
-                      value={editForm.phoneCountryCode||"+90"}
-                      onChange={e=>setEditForm({...editForm,phoneCountryCode:e.target.value})}
-                    >
-                      {COUNTRY_CODES.map((c) => (
-                        <option key={c.code} value={c.code}>{c.label}</option>
-                      ))}
-                    </select>
-                    <input
-                      className="w-full rounded border px-3 py-2 font-mono"
-                      placeholder="Numara"
-                      inputMode="numeric"
-                      value={editForm.phone||""}
-                      onChange={e=>setEditForm({...editForm,phone:e.target.value.replace(/\D/g,"").slice(0,15)})}
-                    />
-                  </div>
-                </FormField>
-              )
-            )}
-            <FormField label="Cinsiyet">
-              <select value={editForm.gender||""} onChange={e=>setEditForm({...editForm,gender:e.target.value})} className="mt-1 w-full rounded border px-3 py-2"><option value="ERKEK">Erkek</option><option value="KADIN">Kadın</option></select>
-            </FormField>
-            <FormField label="Doğum Tarihi">
-              <input type="date" value={(editForm.birthDate as string)||""} onChange={e=>setEditForm({...editForm,birthDate:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" />
-            </FormField>
-            <FormField label="Kan Grubu">
-              <select value={(editForm as any).bloodType||""} onChange={e=>setEditForm({...editForm,...{bloodType:e.target.value}})} className="mt-1 w-full rounded border px-3 py-2"><option value="">Bilinmiyor</option>{["A+","A-","B+","B-","AB+","AB-","0+","0-"].map(g=><option key={g} value={g}>{g}</option>)}</select>
-            </FormField>
-            <FormField label="Anlaşmalı Kurum">
-              <input value={editForm.insurance||""} onChange={e=>setEditForm({...editForm,insurance:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" />
-            </FormField>
-            <FormField label="Referans Eden Kişi">
-              <input value={(editForm as any).referrer||""} onChange={e=>setEditForm({...editForm,...{referrer:e.target.value}})} className="mt-1 w-full rounded border px-3 py-2" />
-            </FormField>
-            <FormField label="Meslek">
-              <input value={(editForm as any).profession||""} onChange={e=>setEditForm({...editForm,...{profession:e.target.value}})} className="mt-1 w-full rounded border px-3 py-2" />
-            </FormField>
-            <FormField label="İndirim Oranı (%)">
-              <input type="number" min={0} max={100} value={editForm.discountRate||0} onChange={e=>setEditForm({...editForm,discountRate:Math.min(100,Math.max(0,parseInt(e.target.value)||0))})} className="mt-1 w-full rounded border px-3 py-2" />
-            </FormField>
-            <div className="md:col-span-2">
-              <FormField label="Adres">
-                <input value={editForm.address||""} onChange={e=>setEditForm({...editForm,address:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" />
-              </FormField>
-            </div>
-            <FormField label="Geçirdiği Ameliyatlar">
-              <input value={editForm.surgeries||""} onChange={e=>setEditForm({...editForm,surgeries:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" />
-            </FormField>
-            <FormField label="Kullandığı İlaçlar">
-              <input value={editForm.medications||""} onChange={e=>setEditForm({...editForm,medications:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" />
-            </FormField>
-            <div className="md:col-span-2">
-              <FormField label="Diğer Hastalıklar">
-                <input value={(editForm as any).otherDiseases||""} onChange={e=>setEditForm({...editForm,...{otherDiseases:e.target.value}})} className="mt-1 w-full rounded border px-3 py-2" />
-              </FormField>
-            </div>
-            <div className="md:col-span-2">
-              <p className="text-xs text-gray-600 mb-2">Sağlık Durumu</p>
-              <div className="flex flex-wrap gap-4">
-                {([["hasAllergy","Alerji"],["hasHeart","Kalp Hastalığı"],["hasDiabetes","Diyabet"],["hasKidney","Böbrek Hastalığı"],["hasHepatitis","Hepatit"],["hasBloodIssue","Kan Sorunu"],["hasContagiousDisease","Bulaşıcı Hastalık"]] as [keyof Patient,string][]).map(([field,label])=>(
-                  <label key={field} className={`flex items-center gap-1 text-sm cursor-pointer ${field === "hasContagiousDisease" ? "font-bold text-red-700" : ""}`}>
-                    <input type="checkbox" checked={!!editForm[field]} onChange={e=>setEditForm({...editForm,[field]:e.target.checked})} />
-                    {label}
-                  </label>
-                ))}
-              </div>
-            </div>
-            {editForm.hasContagiousDisease && (
-              <div className="md:col-span-2">
-                <FormField label="Bulaşıcı Hastalık Detayı">
-                  <input value={editForm.contagiousDiseaseNote||""} onChange={e=>setEditForm({...editForm,contagiousDiseaseNote:e.target.value})} placeholder="Hangi bulaşıcı hastalık? (ör. Hepatit B, Tüberküloz)" className="mt-1 w-full rounded border border-red-200 bg-red-50/50 px-3 py-2" />
-                </FormField>
-              </div>
-            )}
-            <div className="md:col-span-2">
-              <FormField label="Notlar">
-                <textarea value={editForm.notes||""} onChange={e=>setEditForm({...editForm,notes:e.target.value})} rows={2} className="mt-1 w-full rounded border px-3 py-2" />
-              </FormField>
-            </div>
-          </div>
-          <div className="mt-4 flex gap-2">
-            <Button onClick={saveEdit} loading={editLoading}>Kaydet</Button>
-            <Button variant="secondary" onClick={cancelEdit} disabled={editLoading}>Vazgeç</Button>
-          </div>
-        </div>
-      )}
+      <PatientFormModal
+        open={showEditModal}
+        onClose={() => setShowEditModal(false)}
+        patientId={data.id}
+        hidePhoneField={currentUserRole === "DOKTOR" || currentUserRole === "ASISTAN"}
+        onSaved={() => { showToast("success", "Hasta bilgileri güncellendi"); void load(); }}
+      />
 
       <Modal
         open={labCreateModalOpen}
