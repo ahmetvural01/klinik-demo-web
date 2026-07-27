@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { turkeyDateKey, turkeyMonthRangeUtc } from "@/lib/tz";
 
 export async function GET() {
   const auth = await requireAuth("superadmin");
@@ -10,17 +11,23 @@ export async function GET() {
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
   }
 
-  const [totalIncome, totalSmsUsed, activeClinicCount, invoiceStats, smsTransactions] = await Promise.all([
+  const [currentYear, currentMonthNum] = turkeyDateKey().split("-").map(Number);
+  const currentRange = turkeyMonthRangeUtc(currentYear, currentMonthNum);
+  const prevMonthDate = new Date(Date.UTC(currentYear, currentMonthNum - 2, 1));
+  const previousRange = turkeyMonthRangeUtc(prevMonthDate.getUTCFullYear(), prevMonthDate.getUTCMonth() + 1);
+
+  const [totalIncome, totalSmsUsed, activeClinicCount, previousMonthIncome, smsTransactions] = await Promise.all([
     prisma.invoice.aggregate({
       _sum: { amount: true },
-      where: { status: "PAID" },
+      where: { status: "PAID", createdAt: { gte: currentRange.start, lte: currentRange.end } },
     }),
     prisma.smsTransaction.aggregate({
       _sum: { quantity: true },
     }),
     prisma.institution.count({ where: { isActive: true } }),
-    prisma.invoice.findMany({
-      where: { status: "PAID", createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
+    prisma.invoice.aggregate({
+      _sum: { amount: true },
+      where: { status: "PAID", createdAt: { gte: previousRange.start, lte: previousRange.end } },
     }),
     prisma.smsTransaction.findMany({
       include: { institution: true, smsPackage: true },
@@ -28,17 +35,6 @@ export async function GET() {
       take: 100,
     }),
   ]);
-
-  const previousMonthIncome = await prisma.invoice.aggregate({
-    _sum: { amount: true },
-    where: {
-      status: "PAID",
-      createdAt: {
-        gte: new Date(Date.now() - 60 * 24 * 60 * 60 * 1000),
-        lte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-      },
-    },
-  });
 
   const currentMonth = Number(totalIncome._sum.amount || 0);
   const previousMonth = Number(previousMonthIncome._sum.amount || 0);

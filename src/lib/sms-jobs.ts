@@ -4,6 +4,7 @@ import { sendSms } from "@/lib/sms";
 import { writeAudit } from "@/lib/api";
 import { metricIncrement, metricObserve } from "@/lib/metrics";
 import { resolveSmsTemplate } from "@/lib/sms-templates";
+import { maskPatientName, maskPatientPhone } from "@/lib/audit-mask";
 
 const SMS_QUEUE_KEY = process.env.SMS_QUEUE_KEY || "ks:sms:jobs";
 
@@ -136,14 +137,14 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
       if (sendResult.success) {
         sent += 1;
         await prisma.appointment.update({ where: { id: appt.id }, data: updateData });
-        await writeAudit(job.userId, `SMS_${job.smsType}`, `${appt.patient.fullName} (${appt.patient.phone}) - ProviderMsgId: ${sendResult.providerMessageId || "-"}`);
+        await writeAudit(job.userId, `SMS_${job.smsType}`, `${maskPatientName(appt.patient.fullName)} (${maskPatientPhone(appt.patient.phone)}) - ProviderMsgId: ${sendResult.providerMessageId || "-"}`);
       } else {
         failedRecipients.push({
           appointmentId: appt.id,
           phone: appt.patient.phone,
           reason: sendResult.error || sendResult.providerRaw,
         });
-        await writeAudit(job.userId, `SMS_${job.smsType}_FAILED`, `${appt.patient.fullName} (${appt.patient.phone}) - ${sendResult.error || sendResult.providerRaw}`);
+        await writeAudit(job.userId, `SMS_${job.smsType}_FAILED`, `${maskPatientName(appt.patient.fullName)} (${maskPatientPhone(appt.patient.phone)}) - ${sendResult.error || sendResult.providerRaw}`);
       }
     }
   }

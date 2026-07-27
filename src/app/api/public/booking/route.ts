@@ -6,6 +6,7 @@ import { formatZodError, publicBookingSchema } from "@/lib/validators";
 import { getDailySchedules } from "@/lib/working-hours";
 import { checkWorkingDay } from "@/lib/working-hours-core";
 import { turkeyDateKey } from "@/lib/tz";
+import { maskPatientName, maskPatientPhone } from "@/lib/audit-mask";
 
 export async function POST(req: NextRequest) {
   const ip = getClientIpFromHeaders(req.headers);
@@ -65,7 +66,7 @@ export async function POST(req: NextRequest) {
       select: { id: true },
     }))?.id;
     if (auditUserId) {
-      await writeAudit(auditUserId, "PUBLIC_BOOKING_REQUEST_CREATE", `Online randevu talebi: ${fullName} / ${phone} / ${preferredDate.toLocaleString("tr-TR")}`);
+      await writeAudit(auditUserId, "PUBLIC_BOOKING_REQUEST_CREATE", `Online randevu talebi: ${maskPatientName(fullName)} / ${maskPatientPhone(phone)} / ${preferredDate.toLocaleString("tr-TR")}`);
     }
 
     return NextResponse.json({ ok: true, id: request.id }, { status: 201 });
