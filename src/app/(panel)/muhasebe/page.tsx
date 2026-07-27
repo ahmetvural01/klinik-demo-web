@@ -8,11 +8,11 @@ import { ListPager } from "@/components/ui/ListPager";
 import { Modal } from "@/components/ui/Modal";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { HakedisMonthlyPanel } from "@/components/hakedis/HakedisMonthlyPanel";
-import { Button } from "@/components/ui/Button";
+import { Button, IconButton } from "@/components/ui/Button";
 import { stripSystemTags } from "@/lib/format-text";
 import { useRouter, useSearchParams } from "next/navigation";
 import { cachedGet } from "@/lib/client-cache";
-import { Plus } from "lucide-react";
+import { Plus, Pencil, Trash2 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Payment = {
@@ -1864,19 +1864,19 @@ export default function MuhasebePage() {
                     <td className={`px-4 py-3 text-right font-black ${row.tone}`}>{row.sign}{fmt(row.amount)}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex justify-end gap-1">
-                        <button
+                        <IconButton
+                          icon={Pencil}
+                          title="Düzenle"
+                          tone="neutral"
                           onClick={() => row.type === "TAHSILAT" ? startEditPayment(row.source as Payment) : startEditExpense(row.source as Expense)}
-                          className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100"
-                        >
-                          Düzenle
-                        </button>
+                        />
                         {row.deletable && (
-                          <button
+                          <IconButton
+                            icon={Trash2}
+                            title="Sil"
+                            tone="danger"
                             onClick={() => row.type === "TAHSILAT" ? deletePayment(row.rawId) : deleteGider(row.rawId)}
-                            className="rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 hover:text-red-700"
-                          >
-                            Sil
-                          </button>
+                          />
                         )}
                       </div>
                     </td>
