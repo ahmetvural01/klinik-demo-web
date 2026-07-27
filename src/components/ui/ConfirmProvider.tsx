@@ -41,7 +41,7 @@ export const ConfirmProvider: React.FC<{ children: React.ReactNode }> = ({ child
       {children}
       {pending && (
         <div
-          className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/50 px-3 backdrop-blur-[1px]"
+          className="fixed inset-0 z-[350] flex items-center justify-center bg-slate-950/50 px-3 backdrop-blur-[1px]"
           role="alertdialog"
           aria-modal="true"
           aria-labelledby="confirm-dialog-message"

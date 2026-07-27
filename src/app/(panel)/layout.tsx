@@ -23,7 +23,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
   const photoUrl = profile?.photoUrl || null;
 
   return (
-    <div className="panel-body flex h-dvh overflow-hidden bg-slate-100">
+    <div className="panel-body flex h-dvh overflow-hidden bg-[rgb(var(--app-bg))]">
       <PanelRealtimeSync />
       <PanelRouteWarmup />
       <PanelCacheReset />

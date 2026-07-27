@@ -14,9 +14,9 @@ const inFlight: Record<string, Promise<unknown> | undefined> = {};
 // ile çözülür (resolve) — ağ hatası (fetch reddi) dışında asla throw etmez.
 // Çağıran taraf ".catch(...)" ile hata yakalamayı beklememeli; dönen değerin
 // null olabileceğini kontrol etmelidir (örn. `const d = await cachedGet(...); if (!d) ...`).
-export function cachedGet<T = unknown>(url: string, ttlMs: number): Promise<T> {
+export function cachedGet<T = unknown>(url: string, ttlMs: number, options?: { force?: boolean }): Promise<T> {
   const cached = memoryCache[url];
-  if (cached && Date.now() - cached.at < ttlMs) {
+  if (!options?.force && cached && Date.now() - cached.at < ttlMs) {
     return Promise.resolve(cached.data as T);
   }
 

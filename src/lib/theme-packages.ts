@@ -54,8 +54,8 @@ export const THEME_PACKAGES: ThemePackage[] = [
     id: "porselen",
     name: "Porselen Klinik",
     description: "Yumuşak nötr zemin, klinik teal ve dengeli mavi vurgu.",
-    fontSans: "'Segoe UI', ui-sans-serif, system-ui, -apple-system, sans-serif",
-    fontDisplay: "'Segoe UI', ui-sans-serif, system-ui, -apple-system, sans-serif",
+    fontSans: "'Manrope', 'Segoe UI', ui-sans-serif, system-ui, -apple-system, sans-serif",
+    fontDisplay: "'Plus Jakarta Sans', 'Manrope', 'Segoe UI', ui-sans-serif, system-ui, -apple-system, sans-serif",
     vars: {
       bg: "240 244 246", surface: "250 252 252", border: "216 224 228", text: "27 39 45", muted: "94 108 116",
       primary: "14 116 108", primaryStrong: "11 88 82", accent: "37 99 143",
@@ -68,7 +68,8 @@ export const THEME_PACKAGES: ThemePackage[] = [
     id: "klasik",
     name: "Klasik Mavi",
     description: "Bugünkü varsayılan görünüm — güvenilir mavi, nötr gri.",
-    fontSans: "'Segoe UI', ui-sans-serif, system-ui, -apple-system, sans-serif",
+    fontSans: "'Manrope', 'Segoe UI', ui-sans-serif, system-ui, -apple-system, sans-serif",
+    fontDisplay: "'Plus Jakarta Sans', 'Manrope', 'Segoe UI', ui-sans-serif, system-ui, -apple-system, sans-serif",
     vars: {
       bg: "246 248 251", surface: "255 255 255", border: "227 230 237", text: "25 30 41", muted: "105 114 134",
       primary: "37 99 235", primaryStrong: "29 78 216", accent: "15 118 110",
@@ -81,7 +82,8 @@ export const THEME_PACKAGES: ThemePackage[] = [
     id: "zumrut",
     name: "Zümrüt Klinik",
     description: "Ferah zümrüt yeşili, sakin ve klinik hissiyat.",
-    fontSans: "Calibri, 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
+    fontSans: "'Manrope', Calibri, 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
+    fontDisplay: "'Plus Jakarta Sans', 'Manrope', Calibri, 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
     vars: {
       bg: "246 251 249", surface: "255 255 255", border: "228 236 233", text: "26 40 36", muted: "107 133 124",
       primary: "5 150 105", primaryStrong: "4 120 87", accent: "13 148 136",
@@ -94,7 +96,8 @@ export const THEME_PACKAGES: ThemePackage[] = [
     id: "lacivert",
     name: "Lacivert Prestij",
     description: "Derin lacivert, kurumsal ve iddialı.",
-    fontSans: "'Trebuchet MS', 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
+    fontSans: "'Manrope', 'Trebuchet MS', 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
+    fontDisplay: "'Plus Jakarta Sans', 'Manrope', 'Trebuchet MS', 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
     vars: {
       bg: "246 248 251", surface: "255 255 255", border: "227 231 237", text: "24 31 42", muted: "104 116 136",
       primary: "30 64 175", primaryStrong: "23 51 141", accent: "3 105 161",
@@ -107,7 +110,8 @@ export const THEME_PACKAGES: ThemePackage[] = [
     id: "mercan",
     name: "Mercan Sıcak",
     description: "Sıcak mercan-turuncu, samimi ve enerjik.",
-    fontSans: "Tahoma, 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
+    fontSans: "'Manrope', Tahoma, 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
+    fontDisplay: "'Plus Jakarta Sans', 'Manrope', Tahoma, 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
     vars: {
       bg: "253 249 247", surface: "255 255 255", border: "236 231 228", text: "40 31 26", muted: "132 117 108",
       primary: "227 93 58", primaryStrong: "194 65 12", accent: "194 65 12",
@@ -120,7 +124,8 @@ export const THEME_PACKAGES: ThemePackage[] = [
     id: "mor",
     name: "Mor Modern",
     description: "Canlı mor-eflatun, yaratıcı ve modern.",
-    fontSans: "Verdana, 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
+    fontSans: "'Manrope', Verdana, 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
+    fontDisplay: "'Plus Jakarta Sans', 'Manrope', Verdana, 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
     vars: {
       bg: "250 249 252", surface: "255 255 255", border: "231 228 236", text: "31 26 40", muted: "116 107 133",
       primary: "124 58 237", primaryStrong: "109 40 217", accent: "162 28 175",
@@ -133,7 +138,8 @@ export const THEME_PACKAGES: ThemePackage[] = [
     id: "antrasit",
     name: "Kurumsal Klinik",
     description: "Düşük parlamalı soğuk nötrler, klinik teal ve kurumsal mavi.",
-    fontSans: "'Segoe UI', Corbel, ui-sans-serif, system-ui, sans-serif",
+    fontSans: "'Manrope', 'Segoe UI', Corbel, ui-sans-serif, system-ui, sans-serif",
+    fontDisplay: "'Plus Jakarta Sans', 'Manrope', 'Segoe UI', Corbel, ui-sans-serif, system-ui, sans-serif",
     vars: {
       bg: "240 244 246", surface: "250 252 252", border: "216 224 228", text: "27 39 45", muted: "94 108 116",
       primary: "14 116 108", primaryStrong: "11 88 82", accent: "37 99 143",
@@ -146,7 +152,8 @@ export const THEME_PACKAGES: ThemePackage[] = [
     id: "bordo",
     name: "Bordo Zarafet",
     description: "Zarif bordo, sıcak nötrler — butik klinik hissi.",
-    fontSans: "'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif",
+    fontSans: "'Manrope', 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif",
+    fontDisplay: "'Plus Jakarta Sans', 'Manrope', 'Franklin Gothic Medium', 'Arial Narrow', Arial, sans-serif",
     vars: {
       bg: "252 248 249", surface: "255 255 255", border: "235 229 230", text: "39 28 29", muted: "130 110 113",
       primary: "159 18 57", primaryStrong: "136 19 55", accent: "190 18 60",
@@ -159,7 +166,8 @@ export const THEME_PACKAGES: ThemePackage[] = [
     id: "okyanus",
     name: "Okyanus",
     description: "Ferah okyanus mavisi-camgöbeği, dinlendirici.",
-    fontSans: "'Century Gothic', 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
+    fontSans: "'Manrope', 'Century Gothic', 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
+    fontDisplay: "'Plus Jakarta Sans', 'Manrope', 'Century Gothic', 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
     vars: {
       bg: "247 251 252", surface: "255 255 255", border: "228 235 236", text: "26 38 41", muted: "106 128 134",
       primary: "8 145 178", primaryStrong: "14 116 144", accent: "14 116 144",
@@ -172,7 +180,8 @@ export const THEME_PACKAGES: ThemePackage[] = [
     id: "hardal",
     name: "Hardal & Toprak",
     description: "Toprak tonları, hardal vurgu — sıcak ve özgün.",
-    fontSans: "Corbel, 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
+    fontSans: "'Manrope', Corbel, 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
+    fontDisplay: "'Plus Jakarta Sans', 'Manrope', Corbel, 'Segoe UI', ui-sans-serif, system-ui, sans-serif",
     vars: {
       bg: "251 250 248", surface: "255 255 255", border: "235 233 230", text: "38 34 29", muted: "128 122 112",
       primary: "180 83 9", primaryStrong: "146 64 14", accent: "146 64 14",
@@ -185,7 +194,8 @@ export const THEME_PACKAGES: ThemePackage[] = [
     id: "gece",
     name: "Gece Lacivert",
     description: "En zengin ve doygun palet — koyu lacivert-indigo vurgu.",
-    fontSans: "'Segoe UI', ui-sans-serif, system-ui, -apple-system, sans-serif",
+    fontSans: "'Manrope', 'Segoe UI', ui-sans-serif, system-ui, -apple-system, sans-serif",
+    fontDisplay: "'Plus Jakarta Sans', 'Manrope', 'Segoe UI', ui-sans-serif, system-ui, -apple-system, sans-serif",
     vars: {
       bg: "246 247 251", surface: "255 255 255", border: "227 229 237", text: "24 28 42", muted: "103 110 136",
       primary: "67 56 202", primaryStrong: "55 48 163", accent: "99 102 241",

@@ -129,6 +129,8 @@ export const GET = withApiTiming("patients-detail", async function GET(_: NextRe
       id: true,
       institutionId: true,
       tcNo: true,
+      isForeigner: true,
+      phoneCountryCode: true,
       fullName: true,
       phone: true,
       profession: true,

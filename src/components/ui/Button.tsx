@@ -10,15 +10,15 @@ export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 export type ButtonSize = "sm" | "md";
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
-  primary: "bg-primary text-white shadow-sm shadow-primary/20 hover:bg-primary-strong hover:shadow-md hover:shadow-primary/20 font-bold disabled:opacity-60",
-  secondary: "border border-slate-200 bg-white text-slate-700 shadow-sm shadow-slate-950/[0.025] hover:border-slate-300 hover:bg-slate-50 font-semibold disabled:opacity-60",
-  danger: "bg-red-600 text-white shadow-sm shadow-red-600/20 hover:bg-red-700 font-bold disabled:opacity-60",
+  primary: "border border-transparent bg-gradient-to-r from-primary via-primary to-primary-strong text-white shadow-[0_8px_24px_rgba(13,125,111,0.18)] hover:translate-y-[-1px] hover:shadow-[0_12px_28px_rgba(13,125,111,0.22)] font-bold disabled:opacity-60",
+  secondary: "border border-primary/15 bg-primary/[0.035] text-slate-700 shadow-[0_6px_16px_rgba(15,23,42,0.04)] hover:border-primary/25 hover:bg-primary/[0.06] hover:text-slate-900 font-semibold disabled:opacity-60",
+  danger: "border border-transparent bg-gradient-to-r from-red-600 to-red-500 text-white shadow-[0_8px_24px_rgba(220,38,38,0.18)] hover:translate-y-[-1px] hover:shadow-[0_12px_28px_rgba(220,38,38,0.22)] font-bold disabled:opacity-60",
   ghost: "text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-semibold disabled:opacity-40",
 };
 
 const SIZE_CLASS: Record<ButtonSize, string> = {
-  md: "h-10 px-4 text-sm rounded-lg",
-  sm: "h-9 px-3 text-xs rounded-lg",
+  md: "h-10 px-4 text-sm rounded-xl",
+  sm: "h-9 px-3 text-xs rounded-xl",
 };
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -51,7 +51,7 @@ export function Button({
   ) : null;
 
   const classes = [
-    "inline-flex items-center justify-center gap-2 whitespace-nowrap transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2",
+    "inline-flex items-center justify-center gap-2 whitespace-nowrap transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 active:translate-y-0",
     VARIANT_CLASS[variant],
     SIZE_CLASS[size],
     fullWidth ? "w-full" : "",
@@ -85,9 +85,9 @@ export function Button({
 export type IconButtonTone = "primary" | "neutral" | "danger";
 
 const ICON_TONE_CLASS: Record<IconButtonTone, string> = {
-  primary: "bg-primary/10 text-primary hover:bg-primary hover:text-white",
-  neutral: "border border-slate-200 bg-white text-slate-600 shadow-sm shadow-slate-950/[0.025] hover:bg-slate-50 hover:text-slate-900",
-  danger: "border border-red-100 bg-red-50 text-red-600 hover:bg-red-100",
+  primary: "border border-primary/15 bg-primary/10 text-primary hover:bg-primary hover:text-white hover:shadow-[0_10px_22px_rgba(13,125,111,0.16)]",
+  neutral: "border border-primary/12 bg-primary/[0.03] text-slate-600 shadow-[0_6px_16px_rgba(15,23,42,0.04)] hover:bg-primary/[0.06] hover:text-slate-900",
+  danger: "border border-red-100 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700",
 };
 
 const ICON_BUTTON_SIZE_CLASS: Record<"sm" | "md", string> = {
@@ -122,7 +122,7 @@ export function IconButton({
   className = "",
 }: IconButtonProps) {
   const classes = [
-    "inline-flex shrink-0 items-center justify-center rounded-lg transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40",
+    "inline-flex shrink-0 items-center justify-center rounded-xl transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40",
     ICON_TONE_CLASS[tone],
     ICON_BUTTON_SIZE_CLASS[size],
     className,

@@ -49,15 +49,6 @@ type Appointment = {
 type Staff = { id: string; fullName: string; role: string; profile?: { workStart?: string | null; workEnd?: string | null; hideAsDoctor?: boolean } | null };
 type Patient = { id: string; fullName: string; tcNo?: string; phone?: string };
 type ClinicUnit = { id: string; name: string; code?: string | null; isActive: boolean };
-type PatientPackage = {
-  id: string;
-  name: string;
-  sessionsTotal: number;
-  sessionsUsed: number;
-  effectiveStatus: string;
-  definition?: { treatmentType?: string | null } | null;
-  usages?: { appointmentId?: string | null }[];
-};
 type UpcomingAppointment = {
   id: string;
   startAt: string;
@@ -223,9 +214,6 @@ export default function RandevuPage() {
   const [smsReminder, setSmsReminder] = useState(false);
   const [smsSurvey, setSmsSurvey] = useState(false);
   const [selectedAppt, setSelectedAppt] = useState<Appointment | null>(null);
-  const [appointmentPackages, setAppointmentPackages] = useState<PatientPackage[]>([]);
-  const [appointmentPackagesLoading, setAppointmentPackagesLoading] = useState(false);
-  const [packageUsingId, setPackageUsingId] = useState("");
   const [conflictWarning, setConflictWarning] = useState<string | null>(null);
   const [conflictSuggestions, setConflictSuggestions] = useState<string[]>([]);
   const [followUpStatus, setFollowUpStatus] = useState<FollowUpKey>("YOK");
@@ -956,48 +944,6 @@ export default function RandevuPage() {
   }, [selectedAppt]);
 
   useEffect(() => { setEditMode(false); setError(null); }, [selectedAppt?.id]);
-
-  // Paket satışı hasta kartında yönetilir; randevu sadece "geldi" aşamasında
-  // doğru paketten tek seans düşmek için bağlam sağlar.
-  useEffect(() => {
-    const patientId = selectedAppt?.patient?.id;
-    if (!patientId) { setAppointmentPackages([]); return; }
-    let cancelled = false;
-    setAppointmentPackagesLoading(true);
-    fetch(`/api/patient-packages?patientId=${encodeURIComponent(patientId)}`, { cache: "no-store" })
-      .then((response) => response.ok ? response.json() : [])
-      .then((items) => { if (!cancelled) setAppointmentPackages(Array.isArray(items) ? items : []); })
-      .catch(() => { if (!cancelled) setAppointmentPackages([]); })
-      .finally(() => { if (!cancelled) setAppointmentPackagesLoading(false); });
-    return () => { cancelled = true; };
-  }, [selectedAppt?.id, selectedAppt?.patient?.id]);
-
-  const consumeAppointmentPackage = async (pkg: PatientPackage) => {
-    if (!selectedAppt) return;
-    const remaining = pkg.sessionsTotal - pkg.sessionsUsed;
-    if (remaining <= 0) return;
-    if (!(await confirmDialog({
-      title: "Paket seansı kullanılsın mı?",
-      message: `${pkg.name} paketinden bu randevu için 1 seans düşülecek. Kalan seans: ${remaining - 1}.`,
-      confirmText: "Seansı Kullan",
-    }))) return;
-    setPackageUsingId(pkg.id);
-    const response = await fetch(`/api/patient-packages/${pkg.id}/use`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ appointmentId: selectedAppt.id, note: `Randevu: ${new Date(selectedAppt.startAt).toLocaleString("tr-TR")}` }),
-    }).catch(() => null);
-    const data = await response?.json().catch(() => null);
-    if (!response?.ok) {
-      showToastSafe({ type: "error", message: data?.message || "Paket seansı kullanılamadı." });
-    } else {
-      showToastSafe({ type: "success", message: `${pkg.name} paketinden 1 seans kullanıldı.` });
-      setAppointmentPackages((items) => items.map((item) => item.id === pkg.id
-        ? { ...item, sessionsUsed: Number(data.sessionsUsed || item.sessionsUsed + 1), usages: [...(item.usages || []), { appointmentId: selectedAppt.id }] }
-        : item));
-    }
-    setPackageUsingId("");
-  };
 
   useEffect(() => {
     if (!newDoctorId) return;
@@ -1948,10 +1894,10 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
 
   return (
     <section className="randevu-page space-y-2">
-      <div className="randevu-toolbar sticky top-0 z-20 flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-2 shadow-sm">
-        <button onClick={() => nav(-1)} aria-label="Önceki tarih aralığı" className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-lg leading-none hover:bg-slate-50">‹</button>
-        <span className="max-w-full truncate rounded-md border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-sm font-bold text-slate-800">{navLabel()}</span>
-        <button onClick={() => nav(1)} aria-label="Sonraki tarih aralığı" className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-200 text-lg leading-none hover:bg-slate-50">›</button>
+      <div className="randevu-toolbar sticky top-0 z-20 flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] px-2 py-2 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+        <button onClick={() => nav(-1)} aria-label="Önceki tarih aralığı" className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 text-lg leading-none hover:bg-primary/[0.05]">‹</button>
+        <span className="max-w-full truncate rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-bold text-slate-800 shadow-[0_4px_14px_rgba(15,23,42,0.04)]">{navLabel()}</span>
+        <button onClick={() => nav(1)} aria-label="Sonraki tarih aralığı" className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 text-lg leading-none hover:bg-primary/[0.05]">›</button>
 
         <div className="mx-1 hidden h-6 w-px bg-slate-200 sm:block" />
 
@@ -1959,13 +1905,13 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
           <button
             key={mode}
             onClick={() => setView(mode)}
-            className={"h-8 rounded-md px-2.5 text-sm font-semibold transition-colors " + (view === mode ? "bg-primary text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200")}
+            className={"h-8 rounded-xl px-2.5 text-sm font-semibold transition-colors " + (view === mode ? "bg-primary text-white shadow-sm shadow-primary/20" : "bg-slate-100 text-slate-700 hover:bg-primary/[0.08]")}
           >
             {mode === "GUN" ? "Gün" : mode === "HAFTA" ? "Hafta" : mode === "AY" ? "Ay" : "Ajanda"}
           </button>
         ))}
 
-        <select className="h-8 min-w-[170px] rounded-md border border-slate-200 px-2 text-sm focus:border-primary focus:outline-none" value={doctorId} onChange={e => setDoctorId(e.target.value)}>
+        <select className="h-8 min-w-[170px] rounded-xl border border-slate-200 px-2 text-sm focus:border-primary focus:outline-none" value={doctorId} onChange={e => setDoctorId(e.target.value)}>
           <option value="">Tüm Doktorlar</option>
           {staff.map(s => <option key={s.id} value={s.id}>{s.fullName}</option>)}
         </select>
@@ -1979,27 +1925,27 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
           </span>
         )}
 
-        <button onClick={() => setShowForm(true)} disabled={!canCreateAppointments} className="h-8 rounded-md bg-primary px-3 text-sm font-semibold text-white shadow-sm shadow-primary/20 disabled:cursor-not-allowed disabled:opacity-50">Yeni Randevu</button>
+        <button onClick={() => setShowForm(true)} disabled={!canCreateAppointments} className="h-8 rounded-xl bg-primary px-3 text-sm font-semibold text-white shadow-sm shadow-primary/20 disabled:cursor-not-allowed disabled:opacity-50">Yeni Randevu</button>
         {canCreateAppointments && (
-          <button onClick={() => { setBlockSubmitError(null); setShowBlockModal(true); }} className="h-8 rounded-md border border-orange-300 bg-orange-50 px-3 text-sm font-semibold text-orange-700 hover:bg-orange-100">Zamanı Kapat</button>
+          <button onClick={() => { setBlockSubmitError(null); setShowBlockModal(true); }} className="h-8 rounded-xl border border-orange-300 bg-orange-50 px-3 text-sm font-semibold text-orange-700 hover:bg-orange-100">Zamanı Kapat</button>
         )}
-        <button onClick={() => setShowWaitlistModal(true)} className="relative h-8 rounded-md border border-purple-300 bg-purple-50 px-3 text-sm font-semibold text-purple-700 hover:bg-purple-100">
+        <button onClick={() => setShowWaitlistModal(true)} className="relative h-8 rounded-xl border border-purple-300 bg-purple-50 px-3 text-sm font-semibold text-purple-700 hover:bg-purple-100">
           Bekleme Listesi
           {activeWaitlist.length > 0 && (
             <span className="ml-1.5 rounded-full bg-purple-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{activeWaitlist.length}</span>
           )}
         </button>
-        <button onClick={() => setShowBookingRequestsModal(true)} className="relative h-8 rounded-md border border-cyan-300 bg-cyan-50 px-3 text-sm font-semibold text-cyan-700 hover:bg-cyan-100">
+        <button onClick={() => setShowBookingRequestsModal(true)} className="relative h-8 rounded-xl border border-cyan-300 bg-cyan-50 px-3 text-sm font-semibold text-cyan-700 hover:bg-cyan-100">
           Online Randevu Talepleri
           {bookingRequests.length > 0 && (
             <span className="ml-1.5 rounded-full bg-cyan-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{bookingRequests.length}</span>
           )}
         </button>
         <details className="relative">
-          <summary className="flex h-8 cursor-pointer list-none items-center rounded-md border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+          <summary className="flex h-8 cursor-pointer list-none items-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-primary/[0.04]">
             Dışa Aktar
           </summary>
-          <div className="absolute right-0 top-full z-20 mt-1 w-40 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
+          <div className="absolute right-0 top-full z-20 mt-2 w-40 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_18px_36px_rgba(15,23,42,0.12)]">
             <button
               onClick={(event) => {
                 printReport();
@@ -2803,16 +2749,6 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
           const parsed = parseAppointmentNote(selectedAppt.note);
           const meta = getFollowUpMeta(parsed.followUp);
           const treatmentMeta = getTreatmentMeta(parsed.treatment);
-          const displayPackages = appointmentPackages
-            .filter((pkg) => {
-              const usedForThisAppointment = (pkg.usages || []).some((usage) => usage.appointmentId === selectedAppt.id);
-              return usedForThisAppointment || (pkg.effectiveStatus === "AKTIF" && pkg.sessionsUsed < pkg.sessionsTotal);
-            })
-            .sort((a, b) => {
-              const aMatches = a.definition?.treatmentType?.toLocaleLowerCase("tr-TR") === treatmentMeta.label.toLocaleLowerCase("tr-TR") ? 1 : 0;
-              const bMatches = b.definition?.treatmentType?.toLocaleLowerCase("tr-TR") === treatmentMeta.label.toLocaleLowerCase("tr-TR") ? 1 : 0;
-              return bMatches - aMatches;
-            });
           return (
         <Modal
           open={Boolean(selectedAppt)}
@@ -2950,43 +2886,6 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                     })}
                   </div>
                 </div>
-                {selectedAppt.status === "GELDI" && (
-                  <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                    <div className="mb-2 flex items-center justify-between gap-2">
-                      <p className="text-xs font-semibold text-slate-700">Paket Kullanımı</p>
-                      <span className="text-[11px] text-slate-500">Yalnızca yapılan seansı kaydedin</span>
-                    </div>
-                    {appointmentPackagesLoading ? (
-                      <p className="py-2 text-xs text-slate-500">Paketler yükleniyor…</p>
-                    ) : displayPackages.length === 0 ? (
-                      <p className="py-2 text-xs text-slate-500">Bu hasta için kullanılabilir paket seansı yok.</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {displayPackages.map((pkg) => {
-                          const usedForThisAppointment = (pkg.usages || []).some((usage) => usage.appointmentId === selectedAppt.id);
-                          const isMatchingTreatment = pkg.definition?.treatmentType?.toLocaleLowerCase("tr-TR") === treatmentMeta.label.toLocaleLowerCase("tr-TR");
-                          return (
-                            <div key={pkg.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2">
-                              <div className="min-w-0">
-                                <p className="truncate text-xs font-bold text-slate-800">{pkg.name}{isMatchingTreatment ? " · Bu randevuyla uyumlu" : ""}</p>
-                                <p className="text-[11px] text-slate-500">{usedForThisAppointment ? "Bu randevu için seans işlendi" : `${pkg.sessionsTotal - pkg.sessionsUsed} seans kaldı`}</p>
-                              </div>
-                              <Button
-                                size="sm"
-                                variant={usedForThisAppointment ? "secondary" : "primary"}
-                                disabled={usedForThisAppointment || packageUsingId === pkg.id}
-                                loading={packageUsingId === pkg.id}
-                                onClick={() => void consumeAppointmentPackage(pkg)}
-                              >
-                                {usedForThisAppointment ? "Bu Randevuda Kullanıldı" : "Seansı Kullan"}
-                              </Button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                )}
                 <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="mb-2 text-xs font-semibold text-slate-600">Takip Notu</p>
                   <select value={followUpStatus} onChange={(e) => setFollowUpStatus(e.target.value as FollowUpKey)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">

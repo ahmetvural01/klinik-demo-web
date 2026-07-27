@@ -80,7 +80,7 @@ jobs:
         run: npm run prisma:seed
 
       - name: Start app
-        run: nohup npm run dev > app.log 2>&1 &
+        run: nohup npm run dev >/dev/null 2>&1 &
 
       - name: Wait app
         run: npx wait-on http://localhost:3000/api/system/health
@@ -91,6 +91,3 @@ jobs:
       - name: Integration
         run: INTEGRATION_BASE_URL=http://localhost:3000 npm run test:integration
 
-      - name: Dump app log on failure
-        if: failure()
-        run: cat app.log || true

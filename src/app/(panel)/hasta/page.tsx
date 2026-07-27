@@ -35,8 +35,6 @@ type Patient = {
   birthDate?: string | null;
   insurance?: string | null;
   discountRate?: number | null;
-  address?: string | null;
-  bloodType?: string | null;
   hasAllergy?: boolean;
   hasHepatitis?: boolean;
   hasKidney?: boolean;
@@ -45,9 +43,7 @@ type Patient = {
   hasBloodIssue?: boolean;
   hasContagiousDisease?: boolean;
   contagiousDiseaseNote?: string | null;
-  surgeries?: string | null;
-  medications?: string | null;
-  otherDiseases?: string | null;
+  hasMedicalRisk?: boolean;
   createdAt?: string;
   updatedAt?: string;
 };
@@ -103,17 +99,7 @@ function calculateAge(value?: string | null) {
 }
 
 function hasMedicalRisk(patient: Patient) {
-  return Boolean(
-    patient.hasAllergy ||
-      patient.hasHepatitis ||
-      patient.hasKidney ||
-      patient.hasDiabetes ||
-      patient.hasHeart ||
-      patient.hasBloodIssue ||
-      patient.surgeries ||
-      patient.medications ||
-      patient.otherDiseases,
-  );
+  return Boolean(patient.hasMedicalRisk);
 }
 
 function patientInitials(name: string) {
@@ -208,7 +194,7 @@ function HastaContent() {
     return () => window.removeEventListener("preview-role-change", onPreview);
   }, []);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (force = false) => {
     setLoading(true);
     setError(null);
     const params = new URLSearchParams({
@@ -221,22 +207,17 @@ function HastaContent() {
     if (doctorId) params.set("doctorId", doctorId);
 
     try {
-      const res = await fetch(`/api/patients?${params.toString()}`, { cache: "no-store" });
-      const json = (await res.json().catch(() => ({}))) as PatientResponse;
-      if (!res.ok) {
-        if (res.status === 401) {
-          window.location.href = "/giris";
-          return;
-        }
-        throw new Error(json.message || "Hasta listesi yüklenemedi");
-      }
+      const url = `/api/patients?${params.toString()}`;
+      const json = await cachedGet<PatientResponse | null>(url, 15_000, { force });
+      if (!json) throw new Error("Hasta listesi yüklenemedi");
       setPatients(Array.isArray(json.patients) ? json.patients : []);
       setTotal(Number(json.total || 0));
       setPageCount(Math.max(1, Number(json.pageCount || 1)));
       setSummary(json.summary);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Hasta listesi yüklenemedi");
-      setPatients([]);
+      // Bir filtre yenilenirken mevcut tabloyu boşaltmak, ekranda gereksiz
+      // zıplama yaratır. Son geçerli sonuç kullanıcıda kalır.
     } finally {
       setLoading(false);
     }
@@ -250,7 +231,7 @@ function HastaContent() {
     let timer: ReturnType<typeof setTimeout> | null = null;
     const onRealtime = () => {
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => void load(), 300);
+      timer = setTimeout(() => void load(true), 300);
     };
     window.addEventListener("ks:realtime-sync", onRealtime);
     return () => {
@@ -277,7 +258,7 @@ function HastaContent() {
       setError("Silme işlemi başarısız");
       return;
     }
-    void load();
+    void load(true);
   };
 
   const toggleSort = (key: SortKey) => {
@@ -345,7 +326,7 @@ function HastaContent() {
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] p-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
         <div className="grid gap-2 xl:grid-cols-[1fr_auto] xl:items-center">
           <div className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_160px]">
             <label className="relative block">
@@ -356,7 +337,7 @@ function HastaContent() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Ad, TC, telefon, kurum/sigorta veya referans kişi ile ara... ( / )"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/20"
+                className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/20"
               />
             </label>
             <select
@@ -366,7 +347,7 @@ function HastaContent() {
                 setPage(1);
               }}
               aria-label="Doktor filtresi"
-              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="h-10 rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
             >
               <option value="">Tüm doktorlar</option>
               {doctors.map((d) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
@@ -374,7 +355,7 @@ function HastaContent() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm text-slate-500">
+            <div className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 px-3 text-sm text-slate-500">
               <Filter className="h-4 w-4" />
               {activeFilterCount} filtre
             </div>
@@ -382,7 +363,7 @@ function HastaContent() {
               <button
                 type="button"
                 onClick={resetFilters}
-                className="inline-flex h-10 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+                className="inline-flex h-10 items-center gap-1 rounded-2xl border border-slate-200 px-3 text-sm font-semibold text-slate-600 hover:bg-primary/[0.04]"
               >
                 <X className="h-4 w-4" />
                 Temizle
@@ -394,7 +375,7 @@ function HastaContent() {
 
       {error && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</p>}
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" aria-busy={loading}>
+      <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] shadow-[0_10px_24px_rgba(15,23,42,0.04)]" aria-busy={loading}>
         <div className="divide-y divide-slate-100 md:hidden">
           {loading && patients.length === 0 ? (
             <ListRowSkeleton rows={6} />
@@ -590,7 +571,7 @@ function HastaContent() {
         onClose={() => setEditPatientId(null)}
         patientId={editPatientId || undefined}
         hidePhoneField={hidePhone}
-        onSaved={() => void load()}
+        onSaved={() => void load(true)}
       />
     </section>
   );

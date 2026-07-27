@@ -80,6 +80,13 @@ type PatientFormModalProps = {
   onSaved?: (patient: { id: string; fullName: string }) => void;
 };
 
+const FORM_SECTIONS: Array<{ key: string; label: string }> = [
+  { key: "kimlik", label: "Kimlik" },
+  { key: "iletisim", label: "İletişim" },
+  { key: "anamnez", label: "Medikal" },
+  { key: "not", label: "Notlar" },
+];
+
 export function PatientFormModal({ open, onClose, patientId, hidePhoneField = false, onSaved }: PatientFormModalProps) {
   const isEdit = Boolean(patientId);
   const [form, setForm] = useState<PatientFormState>(INITIAL_FORM);
@@ -229,7 +236,13 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
       )}
     >
       {loading ? (
-        <div className="flex h-56 items-center justify-center text-sm font-semibold text-slate-500">Hasta bilgileri yükleniyor…</div>
+        <div className="space-y-4" aria-busy="true" aria-label="Hasta bilgileri hazırlanıyor">
+          <div className="h-10 rounded-2xl bg-[linear-gradient(90deg,rgba(241,245,249,0.8)_0%,rgba(226,232,240,0.95)_50%,rgba(241,245,249,0.8)_100%)] bg-[length:200%_100%] animate-pulse" />
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="h-20 rounded-2xl bg-[linear-gradient(90deg,rgba(241,245,249,0.8)_0%,rgba(226,232,240,0.95)_50%,rgba(241,245,249,0.8)_100%)] bg-[length:200%_100%] animate-pulse" />
+            <div className="h-20 rounded-2xl bg-[linear-gradient(90deg,rgba(241,245,249,0.8)_0%,rgba(226,232,240,0.95)_50%,rgba(241,245,249,0.8)_100%)] bg-[length:200%_100%] animate-pulse" />
+          </div>
+        </div>
       ) : (
         <div className="space-y-4">
           {!isEdit && duplicates.length > 0 && (
@@ -241,7 +254,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
                   <p className="mt-1 text-amber-800">Yeni kayıt açmadan önce aynı hastanın daha önce eklenip eklenmediğini kontrol edin.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {duplicates.map((p) => (
-                      <span key={p.id} className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-bold text-amber-900">
+                      <span key={p.id} className="rounded-2xl border border-amber-200 bg-white px-3 py-2 text-xs font-bold text-amber-900">
                         {p.fullName} {p.tcNo ? `· ${p.tcNo}` : ""} {p.phone ? `· ${p.phone}` : ""}
                       </span>
                     ))}
@@ -252,7 +265,24 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
           )}
           <FormErrorBanner message={error} />
 
-          <FormSection icon={UserRound} title="Kimlik Bilgileri" description="Hasta dosyasının temel ve zorunlu alanları.">
+          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-3">
+            <div className="flex flex-wrap gap-2" aria-label="Hasta kayıt bölümleri">
+              {FORM_SECTIONS.map((section) => (
+                <button
+                  key={section.key}
+                  type="button"
+                  onClick={() => document.getElementById(`patient-form-${section.key}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                  className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-primary/30 hover:text-primary"
+                >
+                  {section.label}
+                </button>
+              ))}
+            </div>
+            <p className="mt-3 text-xs text-slate-500">Tüm alanlar tek akışta açık. Yukarıdaki kısayollar sadece ilgili bölüme hızlı geçiş içindir.</p>
+          </div>
+
+          <div id="patient-form-kimlik">
+            <FormSection icon={UserRound} title="Kimlik Bilgileri" description="Hasta dosyasının temel ve zorunlu alanları.">
             <div className="grid gap-4 md:grid-cols-2">
               <div className="flex items-center md:col-span-2">
                 <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-700">
@@ -262,7 +292,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
               </div>
               <FormField label={form.isForeigner ? "Pasaport / Kimlik No" : "TC Kimlik No"} required={!form.isForeigner} error={fieldErrors.tcNo}>
                 <input
-                  className={`h-10 w-full rounded-lg border px-3 text-sm font-mono outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.tcNo))}`}
+                  className={`h-10 w-full rounded-2xl border px-3 text-sm font-mono outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.tcNo))}`}
                   placeholder={form.isForeigner ? "Opsiyonel" : "11 haneli TC No"}
                   inputMode={form.isForeigner ? "text" : "numeric"}
                   maxLength={form.isForeigner ? undefined : 11}
@@ -271,58 +301,62 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
                 />
               </FormField>
               <FormField label="Ad Soyad" required error={fieldErrors.fullName}>
-                <input className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.fullName))}`} placeholder="Ad Soyad" value={form.fullName} onChange={(e) => setField("fullName", e.target.value)} />
+                <input className={`h-10 w-full rounded-2xl border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.fullName))}`} placeholder="Ad Soyad" value={form.fullName} onChange={(e) => setField("fullName", e.target.value)} />
               </FormField>
               <FormField label="Cinsiyet" required error={fieldErrors.gender}>
-                <select className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.gender))}`} value={form.gender} onChange={(e) => setField("gender", e.target.value)}>
+                <select className={`h-10 w-full rounded-2xl border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.gender))}`} value={form.gender} onChange={(e) => setField("gender", e.target.value)}>
                   <option value="">Seçiniz</option>
                   <option value="ERKEK">Erkek</option>
                   <option value="KADIN">Kadın</option>
                 </select>
               </FormField>
               <FormField label="Doğum Tarihi" error={fieldErrors.birthDate}>
-                <input type="date" className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.birthDate))}`} value={form.birthDate} onChange={(e) => setField("birthDate", e.target.value)} />
+                <input type="date" className={`h-10 w-full rounded-2xl border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.birthDate))}`} value={form.birthDate} onChange={(e) => setField("birthDate", e.target.value)} />
               </FormField>
             </div>
-          </FormSection>
+            </FormSection>
+          </div>
 
-          <FormSection icon={WalletCards} title="İletişim ve Kurum Bilgileri" description="Banko, randevu ve finans süreçlerinde kullanılan alanlar.">
+          <div id="patient-form-iletisim">
+            <FormSection icon={WalletCards} title="İletişim ve Kurum Bilgileri" description="Banko, randevu ve finans süreçlerinde kullanılan alanlar.">
             <div className="grid gap-4 md:grid-cols-2">
               {!hidePhoneField && (
                 <FormField label="Telefon" required error={fieldErrors.phone}>
-                  <div className={`flex overflow-visible rounded-lg border bg-white transition focus-within:ring-2 ${inputErrorClass(Boolean(fieldErrors.phone))}`}>
+                  <div className={`flex overflow-visible rounded-2xl border bg-white transition focus-within:ring-2 ${inputErrorClass(Boolean(fieldErrors.phone))}`}>
                     <PhoneCountrySelect value={form.phoneCountryCode} onChange={(value) => setField("phoneCountryCode", value)} className="w-[132px] shrink-0" />
                     <input className="h-10 min-w-0 flex-1 border-0 bg-transparent px-3 text-sm font-mono outline-none" placeholder="Telefon numarası" inputMode="numeric" value={form.phone} onChange={(e) => setField("phone", e.target.value.replace(/\D/g, "").slice(0, 15))} />
                   </div>
                 </FormField>
               )}
               <FormField label="Anlaşmalı Kurum">
-                <input className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Kurum adı" value={form.insurance} onChange={(e) => setField("insurance", e.target.value)} />
+                <input className="h-10 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Kurum adı" value={form.insurance} onChange={(e) => setField("insurance", e.target.value)} />
               </FormField>
               <FormField label="Referans Eden Kişi">
-                <input className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Örn. Mehmet Yılmaz" value={form.referrer} onChange={(e) => setField("referrer", e.target.value)} />
+                <input className="h-10 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Örn. Mehmet Yılmaz" value={form.referrer} onChange={(e) => setField("referrer", e.target.value)} />
               </FormField>
               <FormField label="Meslek">
-                <input className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Örn. Öğretmen, mühendis" value={form.profession} onChange={(e) => setField("profession", e.target.value)} />
+                <input className="h-10 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Örn. Öğretmen, mühendis" value={form.profession} onChange={(e) => setField("profession", e.target.value)} />
               </FormField>
               <FormField label="İndirim Oranı (%)">
-                <input type="number" min={0} max={100} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" value={form.discountRate} onChange={(e) => setField("discountRate", Math.min(100, Math.max(0, Number(e.target.value || 0))))} />
+                <input type="number" min={0} max={100} className="h-10 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" value={form.discountRate} onChange={(e) => setField("discountRate", Math.min(100, Math.max(0, Number(e.target.value || 0))))} />
               </FormField>
               <FormField label="Adres">
-                <textarea rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Adres" value={form.address} onChange={(e) => setField("address", e.target.value)} />
+                <textarea rows={2} className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Adres" value={form.address} onChange={(e) => setField("address", e.target.value)} />
               </FormField>
             </div>
-          </FormSection>
+            </FormSection>
+          </div>
 
-          <FormSection icon={ShieldAlert} title="Medikal Anamnez" description="Tedavi ve reçete öncesi görülecek klinik risk bilgileri.">
+          <div id="patient-form-anamnez">
+            <FormSection icon={ShieldAlert} title="Medikal Anamnez" description="Tedavi ve reçete öncesi görülecek klinik risk bilgileri.">
             <div className="grid gap-4 md:grid-cols-2">
               <FormField label="Kan Grubu">
-                <select className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" value={form.bloodType} onChange={(e) => setField("bloodType", e.target.value)}>
+                <select className="h-10 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" value={form.bloodType} onChange={(e) => setField("bloodType", e.target.value)}>
                   <option value="">Bilinmiyor</option>
                   {["A+", "A-", "B+", "B-", "AB+", "AB-", "0+", "0-"].map((bt) => <option key={bt} value={bt}>{bt}</option>)}
                 </select>
               </FormField>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
                 <div className="flex gap-2">
                   <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                   <p>İşaretlenen riskler hasta kartında uyarı olarak gösterilir.</p>
@@ -332,7 +366,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
                 <p className="mb-2 text-sm font-bold text-slate-700">Sağlık Durumu</p>
                 <div className="grid gap-2 md:grid-cols-2">
                   {HEALTH_FLAGS.map(([field, label, description]) => (
-                    <label key={field} className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3 transition ${form[field] ? "border-red-200 bg-red-50" : "border-slate-200 hover:bg-slate-50"}`}>
+                    <label key={field} className={`flex cursor-pointer items-start gap-3 rounded-2xl border px-3 py-3 transition ${form[field] ? "border-red-200 bg-red-50" : "border-slate-200 hover:bg-slate-50"}`}>
                       <input type="checkbox" className="mt-1 accent-primary" checked={Boolean(form[field])} onChange={(e) => setField(field, e.target.checked)} />
                       <span>
                         <span className="block text-sm font-bold text-slate-800">{label}</span>
@@ -344,24 +378,27 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
               </div>
               {form.hasContagiousDisease && (
                 <FormField label="Bulaşıcı Hastalık Detayı">
-                  <textarea rows={2} className="w-full rounded-lg border border-red-200 bg-red-50/50 px-3 py-2 text-sm outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-200" placeholder="Hangi bulaşıcı hastalık? (ör. Hepatit B, Tüberküloz)" value={form.contagiousDiseaseNote} onChange={(e) => setField("contagiousDiseaseNote", e.target.value)} />
+                  <textarea rows={2} className="w-full rounded-2xl border border-red-200 bg-red-50/50 px-3 py-2 text-sm outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-200" placeholder="Hangi bulaşıcı hastalık? (ör. Hepatit B, Tüberküloz)" value={form.contagiousDiseaseNote} onChange={(e) => setField("contagiousDiseaseNote", e.target.value)} />
                 </FormField>
               )}
               <FormField label="Geçirdiği Ameliyatlar">
-                <textarea rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Varsa operasyon öyküsü" value={form.surgeries} onChange={(e) => setField("surgeries", e.target.value)} />
+                <textarea rows={2} className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Varsa operasyon öyküsü" value={form.surgeries} onChange={(e) => setField("surgeries", e.target.value)} />
               </FormField>
               <FormField label="Kullandığı İlaçlar">
-                <textarea rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Düzenli ilaçlar" value={form.medications} onChange={(e) => setField("medications", e.target.value)} />
+                <textarea rows={2} className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Düzenli ilaçlar" value={form.medications} onChange={(e) => setField("medications", e.target.value)} />
               </FormField>
               <FormField label="Diğer Hastalıklar / Klinik Not">
-                <textarea rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Ek hastalık veya tedavi öncesi bilinmesi gerekenler" value={form.otherDiseases} onChange={(e) => setField("otherDiseases", e.target.value)} />
+                <textarea rows={2} className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Ek hastalık veya tedavi öncesi bilinmesi gerekenler" value={form.otherDiseases} onChange={(e) => setField("otherDiseases", e.target.value)} />
               </FormField>
             </div>
-          </FormSection>
+            </FormSection>
+          </div>
 
-          <FormSection icon={FileText} title="Hasta Notu" description="Banko ve klinik ekip tarafından görülecek genel notlar.">
-            <textarea rows={3} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Hasta notu" value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
-          </FormSection>
+          <div id="patient-form-not">
+            <FormSection icon={FileText} title="Hasta Notu" description="Banko ve klinik ekip tarafından görülecek genel notlar.">
+            <textarea rows={3} className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Hasta notu" value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
+            </FormSection>
+          </div>
 
           {medicalRiskCount > 0 && (
             <p className="text-xs font-bold text-red-700">{medicalRiskCount} medikal uyarı işaretli</p>

@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, openSync } from "node:fs";
+import { existsSync } from "node:fs";
 import net from "node:net";
 import { dirname, resolve } from "node:path";
 import { PrismaClient } from "@prisma/client";
@@ -100,17 +100,13 @@ async function main() {
   }
 
   log(`PostgreSQL baslatiliyor: ${dataDir}`);
-  const logFile = resolve(ROOT, "postgres-direct.out.log");
-  const errFile = resolve(ROOT, "postgres-direct.err.log");
 
   if (process.platform === "win32") {
     const script = [
       "$ErrorActionPreference = 'Stop'",
       `$exe = ${JSON.stringify(exe)}`,
       `$data = ${JSON.stringify(dataDir)}`,
-      `$out = ${JSON.stringify(logFile)}`,
-      `$err = ${JSON.stringify(errFile)}`,
-      "Start-Process -FilePath $exe -ArgumentList @('-D', $data) -WorkingDirectory (Split-Path -Parent $exe) -RedirectStandardOutput $out -RedirectStandardError $err -WindowStyle Hidden",
+      "Start-Process -FilePath $exe -ArgumentList @('-D', $data) -WorkingDirectory (Split-Path -Parent $exe) -WindowStyle Hidden -NoNewWindow:$false",
     ].join("; ");
 
     const result = spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], {
@@ -124,12 +120,10 @@ async function main() {
       throw new Error(`PostgreSQL gizli baslatilamadi: ${result.stderr || `code=${result.status}`}`);
     }
   } else {
-    const err = openSync(errFile, "a");
-    const out = openSync(logFile, "a");
     const child = spawn(exe, ["-D", dataDir], {
       cwd: dirname(exe),
       detached: true,
-      stdio: ["ignore", out, err],
+      stdio: "ignore",
       windowsHide: true,
     });
 
@@ -137,7 +131,7 @@ async function main() {
   }
 
   if (!(await waitForPostgres())) {
-    throw new Error(`PostgreSQL baslatilamadi. Log: ${resolve(ROOT, "postgres-direct.err.log")}`);
+    throw new Error("PostgreSQL baslatilamadi. Ayrintili cikis stdout/stderr uzerinden gorunur.");
   }
 
   if (!(await waitForDatabaseReady())) {

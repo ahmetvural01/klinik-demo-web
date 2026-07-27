@@ -74,7 +74,7 @@ export function PanelRealtimeSync() {
   if (!showDisconnected) return null;
 
   return (
-    <div className="fixed bottom-4 left-1/2 z-[300] -translate-x-1/2 rounded-full border border-amber-200 bg-amber-50 px-3.5 py-2 text-xs font-semibold text-amber-800 shadow-lg">
+    <div className="fixed bottom-4 left-1/2 z-[240] -translate-x-1/2 rounded-full border border-amber-200 bg-amber-50 px-3.5 py-2 text-xs font-semibold text-amber-800 shadow-lg">
       <span className="mr-1.5 inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500 align-middle" />
       Bağlantı kesildi, yeniden bağlanılıyor…
     </div>

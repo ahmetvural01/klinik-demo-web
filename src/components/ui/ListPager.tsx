@@ -27,7 +27,7 @@ export function ListPager({
   const endRow = Math.min(total, page * pageSize);
 
   return (
-    <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+    <div className="flex flex-col gap-3 border-t border-slate-100/80 bg-slate-50/80 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
       <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
         <span>{startRow}-{endRow} / {total.toLocaleString("tr-TR")} kayıt</span>
         <span>Sayfa {page} / {Math.max(1, pageCount)}</span>
@@ -37,7 +37,7 @@ export function ListPager({
             <select
               value={pageSize}
               onChange={(event) => onPageSizeChange(Number(event.target.value))}
-              className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs outline-none"
+              className="rounded-xl border border-slate-200 bg-white px-2 py-1 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
             >
               {pageSizeOptions.map((size) => (
                 <option key={size} value={size}>{size}</option>
@@ -51,7 +51,7 @@ export function ListPager({
           type="button"
           disabled={page <= 1 || loading}
           onClick={() => onPageChange(Math.max(1, page - 1))}
-          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+          className="inline-flex items-center gap-1 rounded-xl border border-primary/15 bg-primary/[0.04] px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-primary/25 hover:bg-primary/[0.08] disabled:opacity-40"
         >
           <ChevronLeft className="h-4 w-4" />
           Önceki
@@ -60,7 +60,7 @@ export function ListPager({
           type="button"
           disabled={page >= pageCount || loading}
           onClick={() => onPageChange(Math.min(pageCount, page + 1))}
-          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+          className="inline-flex items-center gap-1 rounded-xl border border-primary/15 bg-primary/[0.04] px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-primary/25 hover:bg-primary/[0.08] disabled:opacity-40"
         >
           Sonraki
           <ChevronRight className="h-4 w-4" />

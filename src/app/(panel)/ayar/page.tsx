@@ -6,7 +6,6 @@ import { showToastSafe } from "@/lib/toast-client";
 import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
 import FiyatPage from "../fiyat/page";
-import PaketlerTab from "./_tabs/PaketlerTab";
 import UnitelerTab from "./_tabs/UnitelerTab";
 
 type PosDevice = { id: string; name: string; isActive: boolean; createdAt: string };
@@ -28,7 +27,6 @@ const TABS = [
   { id: "fiyat", label: "Fiyat Listesi" },
   { id: "pos", label: "POS Cihazları" },
   { id: "tedavi", label: "Tedavi Türleri" },
-  { id: "paket", label: "Paketler" },
   { id: "uniteler", label: "Klinik Üniteleri" },
 ] as const;
 
@@ -614,12 +612,6 @@ export default function AyarPage() {
       {activeTab === "fiyat" && (
         <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
           <FiyatPage />
-        </div>
-      )}
-
-      {activeTab === "paket" && (
-        <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
-          <PaketlerTab />
         </div>
       )}
 

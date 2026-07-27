@@ -41,17 +41,17 @@ export function ProfessionalDataTable<TData>({
   const rows = table.getRowModel().rows;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+    <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] shadow-[0_10px_26px_rgba(15,23,42,0.04)]">
       <div className="overflow-x-auto">
         <table className="min-w-[760px] w-full text-sm">
           <thead className="sticky top-0 z-10">
             {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id} className="bg-slate-50 text-left">
+              <tr key={headerGroup.id} className="bg-slate-50/90 text-left">
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
                     className={`whitespace-nowrap px-3 py-2.5 text-xs font-bold uppercase tracking-normal text-slate-500 sm:px-4 ${
-                      header.column.id === "actions" ? "sticky right-0 z-10 bg-slate-50 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)]" : ""
+                      header.column.id === "actions" ? "sticky right-0 z-10 bg-slate-50/95 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.08)]" : ""
                     }`}
                   >
                     {header.isPlaceholder ? null : (
@@ -74,7 +74,7 @@ export function ProfessionalDataTable<TData>({
               </tr>
             ))}
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-slate-100/90">
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={table.getAllLeafColumns().length} className="py-12 text-center text-sm text-slate-400">
@@ -83,12 +83,12 @@ export function ProfessionalDataTable<TData>({
               </tr>
             ) : (
               rows.map((row) => (
-                <tr key={row.id} className="group transition hover:bg-slate-50">
+                <tr key={row.id} className="group transition hover:bg-slate-50/80">
                   {row.getVisibleCells().map((cell) => (
                     <td
                       key={cell.id}
                       className={`px-3 py-2.5 sm:px-4 ${
-                        cell.column.id === "actions" ? "sticky right-0 z-10 bg-white shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.1)] group-hover:bg-slate-50" : ""
+                        cell.column.id === "actions" ? "sticky right-0 z-10 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.08)] group-hover:bg-slate-50/80" : ""
                       }`}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -102,7 +102,7 @@ export function ProfessionalDataTable<TData>({
       </div>
 
       {data.length > pageSize && (
-        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600 sm:px-4">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/80 bg-slate-50/80 px-3 py-2 text-xs text-slate-600 sm:px-4">
           <span>
             {table.getState().pagination.pageIndex + 1} / {table.getPageCount()} sayfa · {data.length} kayıt
           </span>
@@ -111,7 +111,7 @@ export function ProfessionalDataTable<TData>({
               type="button"
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-xl border border-primary/15 bg-primary/[0.04] px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-primary/25 hover:bg-primary/[0.08] disabled:opacity-40"
             >
               <ChevronLeft className="h-4 w-4" />
               Önceki
@@ -120,7 +120,7 @@ export function ProfessionalDataTable<TData>({
               type="button"
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-xl border border-primary/15 bg-primary/[0.04] px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-primary/25 hover:bg-primary/[0.08] disabled:opacity-40"
             >
               Sonraki
               <ChevronRight className="h-4 w-4" />

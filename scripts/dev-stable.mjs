@@ -127,5 +127,13 @@ function run() {
   });
 }
 
-print(`Stabil mod basladi. Port: ${PORT}`);
-run();
+async function start() {
+  // Önceki geliştirme oturumu beklenmedik biçimde kapanmışsa yarım kalmış
+  // derleme çıktısını yeniden kullanma. Bu yalnızca dev başlangıcında çalışır;
+  // üretim derlemesi `.next-dev`e dokunmaz.
+  await cleanupNextDist();
+  print(`Stabil mod basladi. Port: ${PORT}`);
+  run();
+}
+
+void start();

@@ -22,7 +22,6 @@ import { confirmDialog } from "@/lib/confirm-client";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 import { addPdfSection, createPdfDoc, pdfSafeText } from "@/lib/pdf-export";
 import { cachedGet } from "@/lib/client-cache";
-import { PatientPackagesSection } from "./PatientPackagesSection";
 import { PatientFormModal } from "@/components/patient/PatientFormModal";
 
 type PatientDocument = {
@@ -122,7 +121,7 @@ type ClinicTask = {
   createdBy?: { id: string; fullName: string } | null;
   createdAt: string;
 };
-type Tab = "bilgi" | "randevular" | "gorevler" | "tedavi" | "odeme" | "paket" | "recete" | "notlar" | "lab" | "belgeler";
+type Tab = "bilgi" | "randevular" | "gorevler" | "tedavi" | "odeme" | "recete" | "notlar" | "lab" | "belgeler";
 type ToothStatus = TSType;
 type ExportFormat = "pdf" | "excel";
 type PatientExportSection = "profile" | "completedTreatments" | "plannedTreatments" | "payments" | "balance" | "appointments" | "labOrders" | "prescriptions" | "documents" | "notes";
@@ -142,7 +141,6 @@ const TAB_ITEMS: { key: Tab; label: string }[] = [
   { key: "gorevler", label: "Bu Hastanın Görevleri" },
   { key: "tedavi", label: "Tedavi" },
   { key: "odeme", label: "Finans" },
-  { key: "paket", label: "Paketler" },
   { key: "recete", label: "Reçete" },
   { key: "notlar", label: "Notlar" },
   { key: "lab", label: "Laboratuvar" },
@@ -150,14 +148,13 @@ const TAB_ITEMS: { key: Tab; label: string }[] = [
 ];
 
 const PRIMARY_TAB_ORDER: Tab[] = ["bilgi", "tedavi", "lab", "odeme", "randevular"];
-const MORE_TAB_ORDER: Tab[] = ["paket", "recete", "notlar", "gorevler", "belgeler"];
+const MORE_TAB_ORDER: Tab[] = ["recete", "notlar", "gorevler", "belgeler"];
 const TAB_SHORT_LABELS: Partial<Record<Tab, string>> = {
   bilgi: "Özet",
   tedavi: "Tedavi",
   lab: "Laboratuvar",
   odeme: "Finans",
   randevular: "Randevular",
-  paket: "Paketler",
   recete: "Reçete",
   notlar: "Notlar",
   gorevler: "Görevler",
@@ -2734,7 +2731,7 @@ export default function HastaDetayContent() {
     <section className="space-y-4">
       {/* Toast */}
       {toast && (
-        <div className={`fixed right-5 top-5 z-[100] flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${
+        <div className={`fixed right-5 top-5 z-[320] flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${
           toast.type === "success" ? "bg-emerald-500" : "bg-red-500"
         }`}>
           {toast.text}
@@ -3027,7 +3024,7 @@ export default function HastaDetayContent() {
       )}
 
       {tab === "randevular" && (
-        <div className="rounded-lg border bg-white overflow-hidden">
+        <div className="panel-surface overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b text-xs uppercase text-gray-500">
               <tr><th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Doktor</th><th className="px-3 py-2 text-left">Tip</th><th className="px-3 py-2 text-left">Durum</th></tr>
@@ -3219,30 +3216,30 @@ export default function HastaDetayContent() {
             </div>
           )}
           {currentUserRole === "ASISTAN" ? (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
             Yeni muayene/tedavi eklemek için doktor yetkisi gereklidir. Mevcut kayıtları aşağıdaki listede görüntüleyebilirsiniz.
           </div>
           ) : (
-          <div className="rounded-xl border bg-white p-4 shadow-sm">
+          <div className="panel-surface p-4">
             <h3 className="text-lg font-bold text-slate-900">Muayene/Tedavi Oluştur</h3>
             <p className="mb-4 mt-1 text-sm text-slate-500">Doktor ve tedavi seçin. Diş şemasından tıkladığınız dişler otomatik olarak muayene listesine aktarılır.</p>
 
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2">
               <div className="text-xs text-slate-600">
                 Fiyat kaynağı: <span className="font-semibold text-slate-900">{activePriceList === "custom" ? "Özel fiyat listesi" : "TDB 2026 tarifesi"}</span>
               </div>
-              <div className="flex rounded-lg border border-slate-200 bg-white p-1">
+              <div className="panel-tabbar rounded-2xl border-slate-200 bg-white p-1">
                 <button
                   type="button"
                   onClick={() => void saveActivePriceList("standard")}
-                  className={`rounded-md px-3 py-1.5 text-xs font-bold transition ${activePriceList === "standard" ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}
+                  className={`panel-tab px-3 py-1.5 text-xs ${activePriceList === "standard" ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}
                 >
                   TDB 2026
                 </button>
                 <button
                   type="button"
                   onClick={() => void saveActivePriceList("custom")}
-                  className={`rounded-md px-3 py-1.5 text-xs font-bold transition ${activePriceList === "custom" ? "bg-orange-500 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}
+                  className={`panel-tab px-3 py-1.5 text-xs ${activePriceList === "custom" ? "bg-orange-500 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"}`}
                 >
                   Özel Liste
                 </button>
@@ -3250,18 +3247,18 @@ export default function HastaDetayContent() {
             </div>
 
             <div className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-              <div className="flex items-center overflow-hidden rounded-lg border">
+              <div className="flex items-center overflow-hidden rounded-2xl border border-slate-200 bg-white">
                 <span className="shrink-0 bg-primary px-3 py-2 text-sm font-semibold text-white">Hasta</span>
                 <input value={data?.fullName || ""} readOnly className="flex-1 border-none px-3 py-2 text-sm outline-none" />
               </div>
-              <div className="flex items-center overflow-hidden rounded-lg border">
+              <div className="flex items-center overflow-hidden rounded-2xl border border-slate-200 bg-white">
                 <span className="shrink-0 bg-primary px-3 py-2 text-sm font-semibold text-white">Doktor</span>
                 <select className="flex-1 border-none px-3 py-2 text-sm outline-none" value={treatDoctorId} onChange={e => setTreatDoctorId(e.target.value)}>
                   <option value="">Doktor seçin...</option>
                   {doctorOptions.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
                 </select>
               </div>
-              <div className="relative flex items-center overflow-visible rounded-lg border">
+              <div className="relative flex items-center overflow-visible rounded-2xl border border-slate-200 bg-white">
                 <span className="shrink-0 bg-primary px-3 py-2 text-sm font-semibold text-white">Tedavi</span>
                 <input
                   value={treatmentQuery}
@@ -3283,7 +3280,7 @@ export default function HastaDetayContent() {
                   className="min-w-0 flex-1 border-none px-3 py-2 text-sm outline-none"
                 />
                 {treatmentDropdownOpen && (
-                  <div className="absolute left-16 right-0 top-full z-50 mt-1 max-h-80 overflow-auto rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+                  <div className="absolute left-16 right-0 top-full z-50 mt-2 max-h-80 overflow-auto rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] py-1 shadow-[0_18px_36px_rgba(15,23,42,0.12)]">
                     {filteredTreatmentPool.length === 0 ? (
                       <div className="px-3 py-3 text-sm text-slate-400">Tedavi bulunamadı</div>
                     ) : (
@@ -3313,12 +3310,12 @@ export default function HastaDetayContent() {
               </div>
             </div>
 
-            <div className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="mb-4 panel-surface p-4">
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex gap-1">
                   {(["adult","child"] as const).map(k => (
                     <button key={k} type="button" onClick={() => { setTreatToothType(k); setTreatSelectedTeeth([]); }}
-                      className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${treatToothType===k ? "bg-primary text-white" : "bg-white text-slate-600 border hover:bg-slate-100"}`}>
+                      className={`rounded-xl px-3 py-1.5 text-xs font-semibold transition ${treatToothType===k ? "bg-primary text-white" : "bg-white text-slate-600 border hover:bg-primary/[0.04]"}`}>
                       {k === "adult" ? "Yetişkin Dişleri" : "Çocuk Dişleri"}
                     </button>
                   ))}
@@ -3326,7 +3323,7 @@ export default function HastaDetayContent() {
                 {treatSelectedTeeth.length > 0 && <button className="text-xs text-slate-500 hover:text-red-600" onClick={() => setTreatSelectedTeeth([])}>Seçimi Temizle</button>}
               </div>
 
-              <div className="mb-3 flex flex-wrap gap-2 rounded-xl border border-slate-100 bg-slate-50 p-2">
+              <div className="mb-3 flex flex-wrap gap-2 rounded-2xl border border-slate-100 bg-slate-50/80 p-2">
                 {[
                   {
                     label: "Üst Çene",
@@ -3348,7 +3345,7 @@ export default function HastaDetayContent() {
                     type="button"
                     onClick={() => { void addTeethToExaminationList(group.teeth, group.label); }}
                     disabled={treatmentSaving}
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-700 transition hover:bg-primary/[0.04] disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {group.label}
                   </button>
@@ -4116,10 +4113,6 @@ export default function HastaDetayContent() {
         </div>
       )}
 
-      {tab === "paket" && (
-        <PatientPackagesSection patientId={data.id} doctorOptions={doctorOptions} />
-      )}
-
       {tab === "notlar" && (
 
         <div className="rounded-lg border bg-white p-4 space-y-4">
@@ -4515,7 +4508,7 @@ export default function HastaDetayContent() {
       </Modal>
 
       {labDetailAction && labOrderDetail && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onClick={closeLabDetailAction}>
+        <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onClick={closeLabDetailAction}>
           <div
             className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white shadow-2xl ring-1 ring-black/5"
             onClick={(e) => e.stopPropagation()}

@@ -3,64 +3,99 @@
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import {
+  BadgeDollarSign,
+  Building2,
+  CalendarDays,
+  ChartColumnIncreasing,
+  ClipboardList,
+  FileClock,
+  FileBarChart2,
+  FileText,
+  FlaskConical,
+  LifeBuoy,
+  LogOut,
+  MessagesSquare,
+  Package2,
+  HandCoins,
+  ReceiptText,
+  Landmark,
+  Home,
+  Settings2,
+  ShieldCheck,
+  UserRound,
+  UsersRound,
+  UserCheck,
+  WalletCards,
+} from "lucide-react";
 import { usePanelAlerts } from "@/components/layout/use-panel-alerts";
 import { useEscapeClose } from "@/lib/use-modal-dismiss";
 
-const I = (d: string, extra?: string) => (
-  <svg aria-hidden="true" className={`h-[18px] w-[18px] shrink-0 ${extra ?? ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" dangerouslySetInnerHTML={{ __html: d }} />
-);
-
 const ICONS: Record<string, JSX.Element> = {
-  home:          I('<path d="M3 9.75L12 3l9 6.75V21a1 1 0 01-1 1H4a1 1 0 01-1-1V9.75z"/><path d="M9 22V12h6v10"/>'),
-  calendar:      I('<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>'),
-  users:         I('<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>'),
-  tooth:         I('<path d="M12 2C8 2 5 5 5 8c0 2 .5 3.5 1 5l1 4.5C7.5 19 8.5 22 10 22h4c1.5 0 2.5-3 3-4.5l1-4.5c.5-1.5 1-3 1-5 0-3-3-6-7-6z"/>'),
-  clipboard:     I('<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/>'),
-  flask:         I('<path d="M9 3h6M10 3v6L6 17a2 2 0 001.89 2.7h8.22A2 2 0 0018 17l-4-8V3"/>'),
-  finance:       I('<path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/>'),
-  register:      I('<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2M12 12v3M8 12h8"/>'),
-  chart:         I('<path d="M18 20V10M12 20V4M6 20v-6"/>'),
-  person:        I('<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>'),
-  price:         I('<path d="M20.59 13.41l-7.17 7.17a2 2 0 01-2.83 0L2 12V2h10l8.59 8.59a2 2 0 010 2.82z"/><circle cx="7" cy="7" r="1.5"/>'),
-  box:           I('<path d="M21 8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"/>'),
-  sms:           I('<path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>'),
-  settings:      I('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z"/>'),
-  log:           I('<path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>'),
-  profile:       I('<path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/>'),
-  support:       I('<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
-  follow:        I('<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>'),
-  logout:        I('<path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>'),
-  taksit:        I('<rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 14h2M10 14h2"/>'),
-  gider:         I('<path d="M12 2v20M17 5H9.5a3.5 3.5 0 000 7h5a3.5 3.5 0 010 7H6"/><line x1="4" y1="22" x2="20" y2="2" strokeWidth="1.5"/>'),
-  firma:         I('<path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>'),
-  recete:        I('<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h2m2 0h2M9 16h6"/><path d="M13 12v4"/>'),
-  kasa:          I('<rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v2M12 12v3M8 12h8"/>'),
-  rapor:         I('<path d="M18 20V10M12 20V4M6 20v-6"/>'),
-  hakediş:       I('<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'),
+  home: <Home className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  calendar: <CalendarDays className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  users: <UsersRound className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  clipboard: <ClipboardList className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  flask: <FlaskConical className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  finance: <Landmark className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  chart: <ChartColumnIncreasing className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  box: <Package2 className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  person: <UserRound className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  sms: <MessagesSquare className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  settings: <Settings2 className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  profile: <UserRound className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  support: <LifeBuoy className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  follow: <UserCheck className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  logout: <LogOut className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  taksit: <BadgeDollarSign className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  gider: <ReceiptText className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  firma: <Building2 className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  recete: <FileText className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  kasa: <WalletCards className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  rapor: <FileBarChart2 className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  hakediş: <HandCoins className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+  log: <FileClock className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
 };
 
 // Her bölüm kendi sakin tonunu taşır; etkin rota tek vurgu rengine döner.
 // Böylece ikonlar yalnızca süs değil, tarama hızını artıran yön işaretleri olur.
 const ICON_TONES: Record<string, string> = {
-  home: "text-amber-500",
-  calendar: "text-sky-600",
-  users: "text-violet-600",
-  clipboard: "text-indigo-600",
-  follow: "text-emerald-600",
-  sms: "text-cyan-600",
-  flask: "text-fuchsia-600",
+  home: "text-cyan-700",
+  calendar: "text-sky-700",
+  users: "text-indigo-700",
+  clipboard: "text-slate-700",
+  follow: "text-emerald-700",
+  sms: "text-teal-700",
+  flask: "text-violet-700",
   finance: "text-emerald-700",
-  rapor: "text-blue-600",
-  box: "text-orange-600",
-  firma: "text-rose-600",
-  person: "text-slate-600",
-  chart: "text-sky-700",
-  settings: "text-slate-500",
-  profile: "text-violet-600",
-  log: "text-slate-600",
-  support: "text-amber-600",
-  logout: "text-red-500",
+  rapor: "text-blue-700",
+  box: "text-slate-700",
+  firma: "text-amber-700",
+  person: "text-slate-700",
+  chart: "text-sky-800",
+  settings: "text-slate-600",
+  profile: "text-indigo-700",
+  log: "text-slate-700",
+  support: "text-cyan-700",
+  logout: "text-rose-600",
 };
+
+const NAV_ICON_BASE =
+  "flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[1rem] border border-slate-200/70 bg-gradient-to-br from-white to-slate-50 text-slate-500 shadow-[0_6px_16px_rgba(15,23,42,0.06)] ring-1 ring-slate-100 transition-all duration-150 group-hover:-translate-y-[1px] group-hover:shadow-[0_8px_18px_rgba(15,23,42,0.08)]";
+
+const NAV_ICON_ACTIVE =
+  "flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[1rem] border border-primary/25 bg-gradient-to-br from-primary/15 via-primary/10 to-primary/5 text-primary shadow-[0_10px_24px_rgba(13,125,111,0.16)] ring-1 ring-primary/10";
+
+const NAV_LABEL_BASE =
+  "min-w-0 overflow-hidden whitespace-nowrap text-left tracking-[-0.01em] transition-all duration-150 ease-out";
+
+const NAV_LABEL_OPEN = "max-w-[180px] opacity-100 translate-x-0";
+
+const NAV_LABEL_CLOSED = "max-w-0 opacity-0 -translate-x-1";
+
+const NAV_ITEM_OPEN = "grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-x-3";
+
+const NAV_ITEM_CLOSED = "grid grid-cols-[40px] justify-items-center";
 
 const ROLE_LABELS: Record<string, string> = {
   YONETICI:  "Yönetici",
@@ -193,7 +228,6 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   useEscapeClose(() => setMobileOpen(false), mobileOpen);
   const [previewRole, setPreviewRole] = useState<string | null>(null);
   const [rolePickerOpen, setRolePickerOpen] = useState(false);
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
   const [brand, setBrand] = useState({ name: "Klinik Paneli", logoUrl: "" });
 
   const isSuperAdmin = user.role === "SUPERADMIN";
@@ -271,25 +305,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   const navGroups = buildNavGroups(effectiveRole);
   const alerts = usePanelAlerts(effectiveRole);
 
-  useEffect(() => {
-    const activeGroup = navGroups.find((group) => group.items.some((item) => isActive(item.href)));
-    if (activeGroup) setOpenGroups((current) => ({ ...current, [activeGroup.label]: true }));
-  // Active route changes should reveal its group; navGroups changes with role preview.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pathname, effectiveRole]);
-
   const activePreview = PREVIEW_ROLES.find(r => r.key === previewRole);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const seen = new Set<string>();
-    const targets = buildNavGroups(effectiveRole).flatMap((group) => group.items.map((item) => item.href));
-    targets.forEach((href) => {
-      if (seen.has(href)) return;
-      seen.add(href);
-      Promise.resolve(router.prefetch(href)).catch(() => {});
-    });
-  }, [effectiveRole, router]);
 
   useEffect(() => {
     const syncUnread = () => {
@@ -332,27 +348,6 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   useEffect(() => {
     setMobileOpen(false);
   }, [pathname]);
-
-  useEffect(() => {
-    const coreRoutes = ["/anasayfa", "/randevu", "/hasta", "/hasta-takip", "/gorevler"];
-    const prefetchAll = () => {
-      coreRoutes.forEach((href) => {
-        if (href !== pathname) router.prefetch(href);
-      });
-    };
-
-    if (typeof window !== "undefined" && "requestIdleCallback" in window) {
-      const id = (window as Window & { requestIdleCallback: (cb: () => void) => number }).requestIdleCallback(prefetchAll);
-      return () => {
-        if ("cancelIdleCallback" in window) {
-          (window as Window & { cancelIdleCallback: (n: number) => void }).cancelIdleCallback(id);
-        }
-      };
-    }
-
-    const timer = setTimeout(prefetchAll, 400);
-    return () => clearTimeout(timer);
-  }, [pathname, router]);
 
   return (
     <div>
@@ -456,14 +451,14 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
               <nav className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 pb-3 [-webkit-overflow-scrolling:touch]">
                 {navGroups.map((group) => (
                   <div key={group.label} className="border-t border-slate-100 pt-2">
-                    <p className="mb-1 px-1 text-xs font-bold uppercase tracking-widest text-slate-500">{group.label}</p>
+                    <p className="mb-1 px-1 text-xs font-extrabold uppercase tracking-[0.16em] text-slate-500">{group.label}</p>
                     <div className="flex flex-col gap-1">
                       {group.items.map((it) => {
                         const active = isActive(it.href);
                         return (
-                        <Link key={it.href} href={it.href} onClick={() => setMobileOpen(false)} aria-current={active ? "page" : undefined} className={`flex items-center gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold ${active ? "bg-primary/10 text-primary ring-1 ring-primary/15" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"}`}>
-                          <span className={active ? "text-primary" : "text-slate-400"}>{ICONS[it.icon]}</span>
-                          <span>{it.label}</span>
+                        <Link key={it.href} href={it.href} onClick={() => setMobileOpen(false)} aria-current={active ? "page" : undefined} className={`grid h-11 grid-cols-[40px_minmax(0,1fr)] items-center gap-x-3 rounded-xl px-3 text-sm font-bold transition ${active ? "bg-gradient-to-r from-primary/14 via-primary/10 to-transparent text-primary ring-1 ring-primary/15" : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"}`}>
+                          <span className={active ? NAV_ICON_ACTIVE : NAV_ICON_BASE}>{ICONS[it.icon]}</span>
+                          <span className="truncate">{it.label}</span>
                         </Link>
                         );
                       })}
@@ -499,8 +494,8 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
         }}
       >
       {/* Dar ikon şeridi; imleç veya klavye odağıyla çalışma menüsüne açılır. */}
-      <div className={`flex items-center ${collapsed ? "justify-center px-0 py-4" : "justify-between px-4 py-4"}`}>
-        <div className="flex items-center gap-2.5">
+      <div className="flex h-16 items-center pl-5">
+        <div className="flex items-center gap-3">
           <BrandMark />
           {!collapsed && <p className="max-w-[165px] truncate text-[13px] font-black tracking-tight text-slate-900">{brand.name}</p>}
         </div>
@@ -508,7 +503,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
 
       {/* Kullanıcı kartı */}
       {userName && (
-        <div className={`mx-2 mb-3 flex items-center rounded-xl border border-slate-200 bg-slate-50 py-2.5 ${collapsed ? "justify-center px-0" : "gap-3 px-3"}`}>
+        <div className={`mx-2 mb-3 flex h-14 items-center rounded-xl border border-slate-200 bg-slate-50 ${collapsed ? "justify-center px-0" : "gap-3 pl-[10px] pr-3"}`}>
           {user.photoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={user.photoUrl} alt={userName} className="h-9 w-9 shrink-0 rounded-full object-cover" />
@@ -530,7 +525,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
 
       {/* ── Rol Görünümü (sadece SUPERADMIN) ─────────────────────────────── */}
       {isSuperAdmin && (
-        <div className="relative mx-2 mb-2 shrink-0" data-role-preview-root>
+        <div className="relative mx-2 mb-2 h-[42px] shrink-0" data-role-preview-root>
           {!collapsed ? (
             <>
               <button
@@ -594,7 +589,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
             <div className="relative group">
               <button
                 onClick={() => setRolePickerOpen(prev => !prev)}
-                className={`flex h-9 w-full items-center justify-center rounded-lg transition ${
+                className={`flex h-[42px] w-full items-center justify-center rounded-lg transition ${
                   previewRole ? "bg-violet-100 text-violet-700" : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
                 }`}
                 title="Rol Görünümü"
@@ -646,44 +641,39 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 pb-2">
         {navGroups.map((group, gi) => {
-          const groupExpanded = openGroups[group.label] !== false;
           return (
           <div key={group.label} className={gi > 0 ? "mt-2 border-t border-slate-100 pt-2" : ""}>
-            {!collapsed && (
-              <button
-                type="button"
-                onClick={() => setOpenGroups((current) => ({ ...current, [group.label]: !groupExpanded }))}
-                aria-expanded={groupExpanded}
-                className="flex w-full items-center justify-between rounded-lg px-2 py-1.5 text-left text-[11px] font-bold uppercase tracking-[0.12em] text-slate-400 transition hover:bg-slate-50 hover:text-slate-700"
-              >
-                <span>{group.label}</span>
-                <svg className={`h-3.5 w-3.5 transition-transform ${groupExpanded ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9" /></svg>
-              </button>
-            )}
-            {collapsed && gi > 0 && <div className="my-1" />}
-            {(collapsed || groupExpanded) && group.items.map((item) => {
+            <div className={`flex h-7 items-center pl-[19px] text-[11px] font-extrabold uppercase tracking-[0.16em] text-slate-400 transition-opacity ${collapsed ? "pointer-events-none opacity-0" : "opacity-100"}`} aria-hidden={collapsed}>
+              {group.label}
+            </div>
+            {group.items.map((item) => {
               const active = isActive(item.href);
               const badge = dynamicBadge(item.href) || (item.badge ? parseInt(item.badge) : 0);
               return (
                 <div key={item.href} className="relative group">
                   <Link
                     href={item.href}
+                    prefetch={false}
                     onMouseEnter={() => router.prefetch(item.href)}
                     aria-current={active ? "page" : undefined}
                     className={
-                      "relative flex items-center rounded-xl transition-all duration-150 " +
-                      (collapsed ? "justify-center px-0 py-3 mx-0" : "gap-3 px-3 py-3 text-sm font-semibold") + " " +
+                      "relative h-12 rounded-2xl px-3 text-sm font-bold transition-all duration-150 " +
+                      (collapsed ? NAV_ITEM_CLOSED : NAV_ITEM_OPEN) + " " +
                       (active
-                        ? "bg-primary/10 text-primary ring-1 ring-primary/15"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-950") +
+                        ? "bg-gradient-to-r from-primary/14 via-primary/10 to-transparent text-primary ring-1 ring-primary/15"
+                        : "text-slate-700 hover:bg-slate-50 hover:text-slate-950") +
                       " focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-primary/70"
                     }
                   >
-                    {!collapsed && active && <span className="absolute left-0 top-2 bottom-2 w-1 rounded-r-full bg-primary" aria-hidden="true" />}
-                    <span className={active ? "text-primary" : (ICON_TONES[item.icon] ?? "text-slate-400")}>
+                    {active && <span className="absolute left-0 top-2 bottom-2 w-1.5 rounded-r-full bg-gradient-to-b from-primary to-primary/60" aria-hidden="true" />}
+                    <span className={active ? NAV_ICON_ACTIVE : `${NAV_ICON_BASE} ${ICON_TONES[item.icon] ?? "text-slate-500"}`}>
                       {ICONS[item.icon]}
                     </span>
-                    {!collapsed && <span className="flex-1 truncate">{item.label}</span>}
+                    {!collapsed && (
+                      <span className={`${NAV_LABEL_BASE} ${NAV_LABEL_OPEN} font-bold`}>
+                        {item.label}
+                      </span>
+                    )}
                     {!collapsed && badge > 0 && (
                       <span className="rounded-full bg-red-500 px-2 py-1 text-xs font-bold text-white leading-none">
                         {badge > 99 ? "99+" : badge}
@@ -718,10 +708,10 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
               await fetch("/api/auth/logout", { method: "POST" });
               window.location.href = "/giris";
             }}
-            className={`flex w-full items-center rounded-xl text-slate-500 transition hover:bg-red-50 hover:text-red-600 ${collapsed ? "justify-center py-3 px-0" : "gap-3 px-3 py-3 text-sm font-medium"}`}
+            className={`grid h-12 w-full rounded-2xl px-3 text-slate-500 transition hover:bg-red-50 hover:text-red-600 ${collapsed ? "grid-cols-[40px] justify-items-center" : "grid-cols-[40px_minmax(0,1fr)] gap-x-3 text-sm font-bold"}`}
           >
-            {ICONS.logout}
-            {!collapsed && <span>Oturumu Kapat</span>}
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-red-100 bg-red-50 text-red-500 transition-colors group-hover:border-red-200 group-hover:bg-red-100">{ICONS.logout}</span>
+            {!collapsed && <span className={`${NAV_LABEL_BASE} ${NAV_LABEL_OPEN} text-left`}>Oturumu Kapat</span>}
           </button>
           {collapsed && (
             <div className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1 text-[12px] font-medium text-slate-100 opacity-0 shadow-lg transition-opacity group-hover:opacity-100">

@@ -721,7 +721,7 @@ export function usePurchaseModals({
 
       {/* Modal: Siparişi Teslim Al */}
       {showReceivePurchase && receivingPurchase && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-4" {...backdropClose(() => setShowReceivePurchase(false))}>
+        <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/45 p-4" {...backdropClose(() => setShowReceivePurchase(false))}>
           <div className="w-full max-w-xl space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
             <div>
               <h3 className="text-xl font-black text-slate-900">Siparişi Teslim Al</h3>

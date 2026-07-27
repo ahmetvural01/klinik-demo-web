@@ -75,8 +75,6 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
           birthDate: true,
           insurance: true,
           discountRate: true,
-          address: true,
-          bloodType: true,
           hasAllergy: true,
           hasHepatitis: true,
           hasKidney: true,
@@ -103,7 +101,16 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
     ]);
 
     const hidePhone = shouldHidePatientPhone(auth.user.role);
-    const masked = hidePhone ? patients.map((p) => ({ ...p, phone: "***" })) : patients;
+    // Liste ekranı, uzun anamnez metinlerini taşımaz. Satırda gerekli olan tek
+    // bilgi medikal uyarının varlığıdır; detay metinleri hasta kartından açılır.
+    const listed = patients.map(({ surgeries, medications, otherDiseases, ...patient }) => ({
+      ...patient,
+      hasMedicalRisk: Boolean(
+        patient.hasAllergy || patient.hasHepatitis || patient.hasKidney || patient.hasDiabetes ||
+        patient.hasHeart || patient.hasBloodIssue || surgeries || medications || otherDiseases,
+      ),
+    }));
+    const masked = hidePhone ? listed.map((p) => ({ ...p, phone: "***" })) : listed;
 
     return NextResponse.json({
       patients: masked,

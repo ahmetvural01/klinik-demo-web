@@ -4,6 +4,7 @@
 
 import { useRouter, usePathname } from "next/navigation";
 import { useState, useEffect, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
   Menu,
   Search,
@@ -103,6 +104,10 @@ function getTopbarConfig(pathname: string): TopbarPageConfig {
     return { ...base, quickActions: [{ href: "/gorevler", label: "Görev Merkezi", icon: ClipboardList }] };
   }
 
+  if (pathname.startsWith("/hasta")) {
+    return { ...base, quickActions: [{ href: "/randevu", label: "Randevu Oluştur", icon: CalendarPlus }] };
+  }
+
   if (pathname.startsWith("/randevu")) {
     return { ...base, quickActions: [{ href: "/hasta-ekle", label: "Yeni Hasta", icon: UserPlus }] };
   }
@@ -197,6 +202,8 @@ export function Topbar({ user }: Props) {
 
   const [showAlerts, setShowAlerts] = useState(false);
   const [showWaiting, setShowWaiting] = useState(false);
+  const [waitingPopoverPos, setWaitingPopoverPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  const [alertPopoverPos, setAlertPopoverPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const [messageUnread, setMessageUnread] = useState(0);
   const [currentUserId, setCurrentUserId] = useState("");
   const alertRef = useRef<HTMLDivElement>(null);
@@ -272,6 +279,47 @@ export function Topbar({ user }: Props) {
     const base = baseTitleRef.current || "Klinik Yönetim Paneli";
     document.title = messageUnread > 0 ? `(${messageUnread}) ${base}` : base;
   }, [messageUnread]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const updateWaitingPopover = () => {
+      const rect = waitingRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = 288;
+      setWaitingPopoverPos({
+        top: Math.round(rect.bottom + 10),
+        left: Math.round(Math.min(rect.right - width, window.innerWidth - width - 16)),
+        width,
+      });
+    };
+
+    const updateAlertPopover = () => {
+      const rect = alertRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const width = 288;
+      setAlertPopoverPos({
+        top: Math.round(rect.bottom + 10),
+        left: Math.round(Math.min(rect.right - width, window.innerWidth - width - 16)),
+        width,
+      });
+    };
+
+    if (showWaiting) updateWaitingPopover();
+    if (showAlerts) updateAlertPopover();
+
+    const handleReflow = () => {
+      if (showWaiting) updateWaitingPopover();
+      if (showAlerts) updateAlertPopover();
+    };
+
+    window.addEventListener("resize", handleReflow);
+    window.addEventListener("scroll", handleReflow, true);
+    return () => {
+      window.removeEventListener("resize", handleReflow);
+      window.removeEventListener("scroll", handleReflow, true);
+    };
+  }, [showWaiting, showAlerts]);
 
   // Banko bir hastayı "Geldi" işaretlediğinde, diğer katlarda/odalarda
   // çalışan doktor/asistanlar sayfayı yenilemeden fark edebilsin diye,
@@ -361,13 +409,13 @@ export function Topbar({ user }: Props) {
 
   return (
     <>
-    <header className={`flex w-full min-w-0 shrink-0 items-center justify-between border-b border-slate-200/90 bg-white/95 shadow-[0_1px_0_rgb(15_23_42/0.025)] backdrop-blur ${pageConfig.compact ? "min-h-14 gap-2 px-3 py-2 sm:gap-3 sm:px-4" : "min-h-16 gap-2 px-3 py-2 sm:gap-4 sm:px-5"}`}>
+    <header className={`relative z-[160] isolate flex w-full min-w-0 shrink-0 items-center justify-between border-b border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96)_0%,rgba(249,252,251,0.94)_100%)] shadow-[0_1px_0_rgb(15_23_42/0.025),0_8px_28px_rgba(15,23,42,0.03)] backdrop-blur ${pageConfig.compact ? "min-h-14 gap-2 px-3 py-2 sm:gap-3 sm:px-4" : "min-h-16 gap-2 px-3 py-2 sm:gap-4 sm:px-5"}`}>
       {/* Sol: Sayfa başlığı veya arama */}
       <div className={`flex min-w-0 flex-1 items-center ${pageConfig.compact ? "gap-2" : "gap-4"}`}>
         <button
           onClick={() => window.dispatchEvent(new Event("toggle-mobile-sidebar"))}
           aria-label="Menüyü aç"
-          className="mr-2 inline-flex h-8 w-8 items-center justify-center rounded-md text-slate-600 hover:bg-slate-100 md:hidden"
+          className="mr-2 inline-flex h-9 w-9 items-center justify-center rounded-xl text-slate-600 hover:bg-slate-100 md:hidden"
         >
           <Menu className="h-4 w-4" />
         </button>
@@ -376,7 +424,7 @@ export function Topbar({ user }: Props) {
         )}
         {pageConfig.showSearch && <div className="relative flex min-w-0 max-w-sm flex-1">
           <form onSubmit={search} className="min-w-0 w-full">
-            <div ref={searchRef} className="relative flex min-h-11 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 transition focus-within:border-primary focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15">
+            <div ref={searchRef} className="relative flex min-h-11 items-center gap-2 rounded-2xl border border-slate-200/80 bg-white/85 px-3 py-2.5 shadow-[0_8px_20px_rgba(15,23,42,0.04)] transition focus-within:border-primary/30 focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15">
               <Search className="h-4 w-4 shrink-0 text-slate-400" />
               <input
                 value={q}
@@ -389,20 +437,20 @@ export function Topbar({ user }: Props) {
                 aria-label="Hasta ara - ad, TC no veya telefon ile"
                 aria-expanded={showSearchDropdown}
                 aria-autocomplete="list"
-                className="flex-1 border-none bg-transparent text-sm font-medium text-slate-700 outline-none placeholder-slate-400"
+                className="flex-1 border-none bg-transparent text-sm font-semibold text-slate-700 outline-none placeholder-slate-400"
               />
               {q && (
                 <button
                   type="button"
                   onClick={() => { setQ(""); setSearchResults([]); setShowSearchDropdown(false); }}
-                  className="text-slate-400 hover:text-slate-600"
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
               )}
                 {searchResults.length > 0 && showSearchDropdown && (
-                <div id="search-results" className="absolute top-full left-0 right-0 z-50 mt-2 rounded-lg border border-slate-200 bg-white shadow-xl">
-                  <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2 text-xs font-bold text-slate-500">
+                <div id="search-results" className="absolute top-full left-0 right-0 z-[220] mt-2 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_36px_rgba(15,23,42,0.12)]">
+                  <div className="flex items-center justify-between border-b border-slate-100/80 px-4 py-2 text-xs font-bold text-slate-500">
                     <span>{searchResults.length} sonuç</span>
                   </div>
                   {searchResults.map((p, idx) => (
@@ -436,7 +484,7 @@ export function Topbar({ user }: Props) {
                 </div>
               )}
               {showSearchDropdown && q.length >= 2 && searchResults.length === 0 && (
-                <div className="absolute top-full left-0 right-0 z-50 mt-2 rounded-lg border border-slate-200 bg-white px-4 py-3 text-center text-sm text-slate-500 shadow-lg">
+                <div className="absolute top-full left-0 right-0 z-[220] mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-center text-sm text-slate-500 shadow-[0_18px_36px_rgba(15,23,42,0.10)]">
                   <div className="inline-flex items-center gap-2">
                     <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
                     Hastalar aranıyor…
@@ -481,7 +529,7 @@ export function Topbar({ user }: Props) {
         {pageConfig.showAlerts && canSeeWaiting && <div className="relative hidden sm:block" ref={waitingRef}>
           <button
             onClick={() => setShowWaiting(v => !v)}
-            className="relative flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100"
+            className="relative flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
             title="Bekleyen hastalar"
           >
             <UserCheck className="h-4 w-4" />
@@ -491,8 +539,11 @@ export function Topbar({ user }: Props) {
               </span>
             )}
           </button>
-          {showWaiting && (
-            <div className="absolute right-0 top-11 z-50 w-72 rounded-lg border border-slate-200 bg-white shadow-xl">
+          {showWaiting && waitingPopoverPos && typeof document !== "undefined" && createPortal(
+            <div
+              className="z-[260] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_36px_rgba(15,23,42,0.12)]"
+              style={{ position: "fixed", top: waitingPopoverPos.top, left: waitingPopoverPos.left, width: waitingPopoverPos.width }}
+            >
               <div className="border-b border-slate-100 px-4 py-3">
                 <p className="text-sm font-bold text-slate-800">Bekleme Odası</p>
               </div>
@@ -522,7 +573,8 @@ export function Topbar({ user }: Props) {
                   <p className="text-sm text-slate-400">Şu an bekleyen hasta yok</p>
                 </div>
               )}
-            </div>
+            </div>,
+            document.body
           )}
         </div>}
 
@@ -530,7 +582,7 @@ export function Topbar({ user }: Props) {
         {pageConfig.showAlerts && <div className="relative" ref={alertRef}>
           <button
             onClick={() => setShowAlerts(v => !v)}
-            className="relative flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100"
+            className="relative flex h-9 w-9 items-center justify-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
             title="Uyarılar"
           >
             <Bell className="h-4 w-4" />
@@ -541,8 +593,11 @@ export function Topbar({ user }: Props) {
             )}
           </button>
           {/* Dropdown */}
-          {showAlerts && (
-            <div className="absolute right-0 top-11 z-50 w-72 rounded-lg border border-slate-200 bg-white shadow-xl">
+          {showAlerts && alertPopoverPos && typeof document !== "undefined" && createPortal(
+            <div
+              className="z-[260] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_36px_rgba(15,23,42,0.12)]"
+              style={{ position: "fixed", top: alertPopoverPos.top, left: alertPopoverPos.left, width: alertPopoverPos.width }}
+            >
               <div className="border-b border-slate-100 px-4 py-3">
                 <p className="text-sm font-bold text-slate-800">Sistem Uyarıları</p>
               </div>
@@ -616,14 +671,15 @@ export function Topbar({ user }: Props) {
                   <p className="text-xs text-slate-400">Tüm sistemler normal çalışıyor</p>
                 </div>
               )}
-            </div>
+            </div>,
+            document.body
           )}
         </div>}
 
         {/* Kullanıcı */}
         <div className="flex items-center gap-2.5 border-l border-slate-100 pl-2 sm:pl-3">
           <div className="hidden text-right lg:block">
-            <p className="text-sm font-semibold leading-tight text-slate-800">{displayName}</p>
+            <p className="text-sm font-bold leading-tight text-slate-800">{displayName}</p>
             <Badge tone="info" size="sm">{displayRole}</Badge>
           </div>
           <a href="/profil" className="relative block h-9 w-9 shrink-0 overflow-hidden rounded-full ring-2 ring-primary/20 transition hover:ring-primary/50" title="Profilim">

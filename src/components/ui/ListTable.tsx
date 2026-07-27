@@ -47,11 +47,11 @@ export function ListTable<T>({
   const tableMinWidth = columns.length >= 6 ? "min-w-[820px]" : columns.length >= 4 ? "min-w-[680px]" : "";
 
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
+    <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] shadow-[0_10px_26px_rgba(15,23,42,0.04)]">
       <div className="overflow-x-auto">
         <table className={`${tableMinWidth} w-full`}>
           <thead>
-            <tr className="border-b border-slate-100 bg-slate-50">
+            <tr className="border-b border-slate-100/80 bg-slate-50/90">
               {columns.map((col) => (
                 <th
                   key={col.key}
@@ -59,7 +59,7 @@ export function ListTable<T>({
                     "whitespace-nowrap px-3 py-2.5 sm:px-4",
                     ALIGN_CLASS[col.align || "left"],
                     hasStickyActions && (col.key === "islem" || col.key === "actions")
-                      ? "sticky right-0 z-10 bg-slate-50 shadow-[-5px_0_8px_-8px_rgb(15_23_42/0.45)]"
+                      ? "sticky right-0 z-10 bg-slate-50/95 shadow-[-5px_0_8px_-8px_rgb(15_23_42/0.35)]"
                       : "",
                     col.headerClassName || "",
                   ].filter(Boolean).join(" ")}
@@ -69,7 +69,7 @@ export function ListTable<T>({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-slate-100/90">
             {loading && rows.length === 0 ? (
               <TableRowsSkeleton rows={skeletonRows} columns={columns.length} />
             ) : rows.length === 0 ? (
@@ -92,7 +92,7 @@ export function ListTable<T>({
                         "px-3 py-2.5 sm:px-4",
                         ALIGN_CLASS[col.align || "left"],
                         hasStickyActions && (col.key === "islem" || col.key === "actions")
-                          ? "sticky right-0 z-10 bg-white shadow-[-5px_0_8px_-8px_rgb(15_23_42/0.45)] group-hover:bg-slate-50"
+                          ? "sticky right-0 z-10 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] shadow-[-5px_0_8px_-8px_rgb(15_23_42/0.35)] group-hover:bg-slate-50/80"
                           : "",
                         col.cellClassName || "",
                       ].filter(Boolean).join(" ")}
