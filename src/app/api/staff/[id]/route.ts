@@ -5,6 +5,7 @@ import { validateWorkHoursRange, parseTimeToMinutes } from "@/lib/working-hours-
 import { turkeyTimeKey } from "@/lib/tz";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { checkStaffLimit } from "@/lib/staff-limits";
+import { TC_NO_REGEX, TC_NO_MESSAGE } from "@/lib/validators";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -89,6 +90,11 @@ export async function PUT(request: NextRequest, props: Params) {
   if (body.role === "YONETICI" && existing.role !== "YONETICI" && auth.user.role !== "SUPERADMIN" && auth.user.role !== "YONETICI") {
     return NextResponse.json({ message: "Bu rol için yetkiniz yok" }, { status: 403 });
   }
+
+  if (body.identityNo !== undefined && !TC_NO_REGEX.test(String(body.identityNo))) {
+    return NextResponse.json({ message: TC_NO_MESSAGE }, { status: 400 });
+  }
+
   const workStart = body.workStart !== undefined ? body.workStart : (existing.profile?.workStart || "08:30");
   const workEnd = body.workEnd !== undefined ? body.workEnd : (existing.profile?.workEnd || "18:00");
   const workHoursError = validateWorkHoursRange(workStart, workEnd, "Personel çalışma saatleri");

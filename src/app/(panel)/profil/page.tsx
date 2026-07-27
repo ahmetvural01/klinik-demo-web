@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { confirmDialog } from "@/lib/confirm-client";
 import { downscaleImageToDataUrl } from "@/lib/image-upload";
 import { invalidateCachedGet } from "@/lib/client-cache";
@@ -15,6 +16,8 @@ const roleLabel: Record<string, string> = {
 };
 
 export default function ProfilPage() {
+  const searchParams = useSearchParams();
+  const forcePasswordChange = searchParams.get("forcePasswordChange") === "1";
   const [profile, setProfile] = useState({ fullName: "", role: "", workStart: "08:00", workEnd: "17:00", showAsDoctor: false, photoUrl: "" });
   const [password, setPassword] = useState({ old: "", new: "", confirm: "" });
   const [loading, setLoading] = useState(true);
@@ -213,6 +216,12 @@ export default function ProfilPage() {
         <h1 className="text-lg font-black text-slate-900">Profilim</h1>
         <p className="mt-0.5 text-sm text-slate-500">Hesap ayarları ve güvenlik</p>
       </div>
+
+      {forcePasswordChange && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 shadow-sm">
+          Hesabınız TC kimlik numaranızla oluşturuldu — devam etmeden önce lütfen aşağıdan kendi şifrenizi belirleyin.
+        </div>
+      )}
 
       {/* Kullanıcı kartı */}
       <div className="rounded-2xl bg-white p-6 shadow-sm border border-slate-100">

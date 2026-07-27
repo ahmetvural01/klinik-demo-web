@@ -41,7 +41,10 @@ export function ClinicLoginForm() {
       return;
     }
 
-    window.location.href = "/anasayfa";
+    // Yeni personel hesapları şifre sorulmadan TC kimlik no ile oluşturulur —
+    // ilk girişte doğrudan şifre değiştirme adımına yönlendirilir (bkz.
+    // kullanıcı geri bildirimi — akıcı personel ekleme süreci).
+    window.location.href = payload.mustChangePassword ? "/profil?forcePasswordChange=1" : "/anasayfa";
   };
 
   const onSubmit2FA = async (event: FormEvent) => {

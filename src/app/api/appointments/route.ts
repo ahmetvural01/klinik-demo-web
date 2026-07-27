@@ -145,7 +145,11 @@ async function isEligibleAppointmentDoctor(doctorId: string, institutionId?: str
 }
 
 function canCreateAppointment(role: string) {
-  return ["DOKTOR", "YONETICI", "ADMIN", "SUPERADMIN"].includes(role);
+  // ASISTAN ve BANKO zaten "appointments:write" iznine sahip ve mevcut bir
+  // randevuyu düzenleyebiliyordu — ama bu ayrı, daha kısıtlı liste yeni
+  // randevu OLUŞTURMAYI engelliyordu. Ön büroda randevu almak tam olarak bu
+  // rollerin işi olduğundan bu, izin modeliyle çelişen bir hataydı.
+  return ["DOKTOR", "YONETICI", "ASISTAN", "BANKO", "ADMIN", "SUPERADMIN"].includes(role);
 }
 
 export const GET = withApiTiming("appointments", async function GET(request: NextRequest) {

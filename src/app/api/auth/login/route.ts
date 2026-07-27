@@ -222,7 +222,8 @@ export async function POST(request: NextRequest) {
       id: user.id,
       fullName: user.fullName,
       role: user.role,
-      institutionId: user.institutionId
+      institutionId: user.institutionId,
+      mustChangePassword: user.mustChangePassword,
     });
   } catch (error) {
     console.error("[auth/login]", error);

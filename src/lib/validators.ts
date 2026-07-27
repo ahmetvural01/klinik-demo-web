@@ -19,6 +19,21 @@ const optionalNullableDateString = z.preprocess(
   z.string().refine((value) => !Number.isNaN(new Date(value).getTime()), "Geçerli bir tarih girin").nullable(),
 );
 
+// TC kimlik no her yerde tam olarak 11 RAKAM olmalı — önceden bazı şemalar
+// yalnızca uzunluğu (min/max 11) kontrol ediyordu, harflerden oluşan bir
+// dizi bile geçebiliyordu (bkz. kullanıcı geri bildirimi).
+export const TC_NO_REGEX = /^\d{11}$/;
+export const TC_NO_MESSAGE = "TC kimlik numarası 11 haneli rakamdan oluşmalıdır";
+
+// Telefon: Türkiye'de +90 alan kodu sabit olduğundan kullanıcıdan yazması
+// istenmiyor — kanonik format 10 haneli, 5 ile başlayan cep telefonu
+// (ör. 5454046939). Mevcut kayıtlarda hâlâ eski "0" önekli 11 haneli format
+// bulunabileceğinden (geriye dönük uyumluluk) her iki biçim de kabul edilir;
+// gönderim (SMS) tarafında zaten src/lib/sms.ts normalizePhone() ikisini de
+// +90'a çeviriyor.
+export const PHONE_REGEX = /^(0?5\d{9})$/;
+export const PHONE_MESSAGE = "Telefon numarası 5XX XXX XX XX formatında (10 haneli, 5 ile başlayan) olmalıdır";
+
 export function formatZodError(error: z.ZodError) {
   return error.issues.map((issue) => {
     const path = issue.path.length ? issue.path.join(".") : "veri";
@@ -33,9 +48,9 @@ export const loginSchema = z.object({
 });
 
 export const patientSchema = z.object({
-  tcNo: z.string().min(11).max(11),
+  tcNo: z.string().regex(TC_NO_REGEX, TC_NO_MESSAGE),
   fullName: z.string().min(3),
-  phone: z.string().regex(/^0\d{10}$/, "Telefon 11 haneli olmalı ve 0 ile başlamalı"),
+  phone: z.string().regex(PHONE_REGEX, PHONE_MESSAGE),
   address: z.string().optional(),
   profession: z.string().trim().max(120).optional(),
   gender: z.string().min(1),
@@ -304,8 +319,8 @@ export const clinicTaskCreateSchema = z.object({
 export const publicBookingSchema = z.object({
   kurum: z.string().trim().min(1, "Kurum belirtilmedi"),
   fullName: z.string().trim().min(3, "Ad soyad zorunlu"),
-  phone: z.string().trim().regex(/^0\d{10}$/, "Telefon 11 haneli olmalı ve 0 ile başlamalı"),
-  tcNo: z.preprocess(emptyToNull, z.string().regex(/^\d{11}$/, "TC kimlik 11 haneli olmalı").nullable()),
+  phone: z.string().trim().regex(PHONE_REGEX, PHONE_MESSAGE),
+  tcNo: z.preprocess(emptyToNull, z.string().regex(TC_NO_REGEX, TC_NO_MESSAGE).nullable()),
   doctorId: z.preprocess(emptyToNull, z.string().nullable()),
   preferredFrom: z.string().refine((value) => !Number.isNaN(new Date(value).getTime()), "Geçersiz tarih"),
   note: z.preprocess(emptyToNull, z.string().trim().max(500).nullable()),

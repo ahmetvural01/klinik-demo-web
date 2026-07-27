@@ -139,7 +139,7 @@ type WaitlistEntry = {
   createdAt: string;
 };
 
-const APPOINTMENT_CREATOR_ROLES = new Set(["DOKTOR", "YONETICI", "ADMIN", "SUPERADMIN"]);
+const APPOINTMENT_CREATOR_ROLES = new Set(["DOKTOR", "YONETICI", "ASISTAN", "BANKO", "ADMIN", "SUPERADMIN"]);
 
 type RandevuCache = {
   appointments?: Appointment[];
@@ -1683,6 +1683,81 @@ export default function RandevuPage() {
     printWindow.focus();
   };
 
+  // Odalara asılmak üzere basit bir günlük çizelge: doktor başlığı, altında
+  // saat + hasta adı + tedavi detayı. Muhasebe/istatistik amaçlı ayrıntılı
+  // yazdırma (printReport) ile karıştırılmasın diye ayrı, kasıtlı olarak
+  // minimal bir çıktı.
+  const printRoomSchedule = () => {
+    if (view !== "GUN") {
+      setError("Oda listesi yalnızca Gün görünümünde kullanılabilir.");
+      return;
+    }
+    const esc = (v: string) =>
+      v.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+
+    const activeRows = reportRows.filter((r) => r.durum !== STATUS_LABELS.IPTAL && r.durum !== STATUS_LABELS.GELMEDI);
+
+    const byDoctor = new Map<string, typeof reportRows>();
+    activeRows.forEach((r) => {
+      const list = byDoctor.get(r.doktor) || [];
+      list.push(r);
+      byDoctor.set(r.doktor, list);
+    });
+
+    const dateLabel = `${date.getDate()} ${TR_MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+    const sections = Array.from(byDoctor.entries()).map(([doktor, rows]) => `
+      <div class="doctor-section">
+        <div class="doctor-name">${esc(doktor)}</div>
+        <div class="doctor-date">${esc(dateLabel)}</div>
+        <table class="room-table">
+          <tbody>
+            ${rows.map((r) => `
+              <tr>
+                <td class="saat">${esc(r.saat)}</td>
+                <td class="hasta">${esc(r.hasta)}</td>
+                <td class="tedavi">${esc(r.tedavi)}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+    `).join("");
+
+    const printWindow = window.open("", "_blank", "width=900,height=1000");
+    if (!printWindow) {
+      setError("Yazdırma penceresi açılamadı. Tarayıcı popup iznini kontrol edin.");
+      return;
+    }
+
+    printWindow.document.write(`<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <title>Oda Listesi - ${esc(dateLabel)}</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; color: #0F172A; }
+    .doctor-section { padding: 14mm 12mm; page-break-after: always; }
+    .doctor-section:last-child { page-break-after: auto; }
+    .doctor-name { font-size: 26px; font-weight: 800; }
+    .doctor-date { font-size: 13px; color: #475569; margin-top: 2px; margin-bottom: 14px; }
+    .room-table { width: 100%; border-collapse: collapse; }
+    .room-table td { border-bottom: 1px solid #CBD5E1; padding: 10px 6px; font-size: 15px; vertical-align: top; }
+    .room-table .saat { font-weight: 700; white-space: nowrap; width: 70px; }
+    .room-table .hasta { font-weight: 600; }
+    .room-table .tedavi { color: #475569; text-align: right; white-space: nowrap; }
+    @media print { .doctor-section { page-break-after: always; } }
+  </style>
+</head>
+<body>
+${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
+<script>window.onload = function() { window.print(); }<\/script>
+</body>
+</html>`);
+    printWindow.document.close();
+    printWindow.focus();
+  };
+
   const filteredAgendaAppointments = useMemo(() => {
     if (agendaStatusFilter === "ALL") return appointments.filter(a => a.status !== "IPTAL");
     return appointments.filter(a => a.status === agendaStatusFilter);
@@ -1869,6 +1944,17 @@ export default function RandevuPage() {
               title={!canExportOrPrint ? "Sadece Gün veya Hafta görünümünde kullanılabilir" : "Excel olarak dışa aktar"}
             >
               Excel
+            </button>
+            <button
+              onClick={(event) => {
+                printRoomSchedule();
+                event.currentTarget.closest("details")?.removeAttribute("open");
+              }}
+              disabled={view !== "GUN"}
+              className="block w-full px-3 py-2 text-left text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+              title={view !== "GUN" ? "Sadece Gün görünümünde kullanılabilir" : "Odalara asılacak sade liste (doktor + saat + hasta + tedavi)"}
+            >
+              Oda Listesi
             </button>
           </div>
         </details>

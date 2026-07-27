@@ -175,8 +175,10 @@ export default function BulkSendTab() {
         />
       ),
     },
+    // Telefon numarası burada gösterilmiyor — bu ekranın amacı SMS için hasta
+    // seçmek, numarayı doğrulamak değil; kaldırılması aynı tabloya daha fazla
+    // isim sığmasını sağlıyor (bkz. kullanıcı geri bildirimi).
     { key: "fullName", header: "Ad Soyad", render: (p) => <span className="font-bold text-slate-900">{p.fullName}</span> },
-    { key: "phone", header: "Telefon", render: (p) => <span className="font-mono text-slate-600">{p.phone || "—"}</span> },
   ];
 
   return (

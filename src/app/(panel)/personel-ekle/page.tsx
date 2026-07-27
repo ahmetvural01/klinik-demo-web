@@ -195,9 +195,17 @@ function PersonelEkleContent() {
               <option value="MUHASEBE">Muhasebe</option>
             </select>
           </FormField>
-          <FormField label={isEdit ? "Yeni Şifre (boş bırakılabilir)" : "Şifre"} required={!isEdit}>
-            <input className={inputCls()} placeholder={isEdit ? "Değiştirmek için yazın" : "Şifre belirleyin"} type="password" value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
-          </FormField>
+          {isEdit ? (
+            <FormField label="Yeni Şifre (boş bırakılabilir)">
+              <input className={inputCls()} placeholder="Değiştirmek için yazın" type="password" value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
+            </FormField>
+          ) : (
+            <div className="flex items-end">
+              <p className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2.5 text-xs text-primary-strong">
+                İlk şifre otomatik olarak TC kimlik numarası olacak. Personel giriş yaptıktan sonra kendi şifresini belirlemesi istenecek.
+              </p>
+            </div>
+          )}
           {form.role === "YONETICI" && (
             <div className="flex items-center md:col-span-2">
               <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-700">

@@ -2789,7 +2789,7 @@ export default function HastaDetayContent() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="truncate text-lg font-black text-slate-900">{data.fullName}</h2>
+              <h2 className="min-w-0 max-w-full flex-1 truncate text-lg font-black text-slate-900" title={data.fullName}>{data.fullName}</h2>
               {data.hasContagiousDisease && (
                 <span className="rounded-full border border-red-300 bg-red-600 px-2 py-0.5 text-[11px] font-black text-white" title={data.contagiousDiseaseNote || "Bulaşıcı hastalık"}>
                   ⚠ Bulaşıcı Hastalık

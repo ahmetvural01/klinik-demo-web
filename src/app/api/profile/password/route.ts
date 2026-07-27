@@ -29,7 +29,7 @@ export async function PUT(request: NextRequest) {
   }
 
   const passwordHash = await bcrypt.hash(newPassword, 10);
-  await prisma.user.update({ where: { id: auth.user.id }, data: { passwordHash } });
+  await prisma.user.update({ where: { id: auth.user.id }, data: { passwordHash, mustChangePassword: false } });
   await writeAudit(auth.user.id, "PASSWORD_CHANGE", "Şifre değiştirildi");
 
   return NextResponse.json({ ok: true });

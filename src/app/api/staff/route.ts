@@ -5,6 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { validateWorkHoursRange } from "@/lib/working-hours-core";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { checkStaffLimit } from "@/lib/staff-limits";
+import { TC_NO_REGEX, TC_NO_MESSAGE } from "@/lib/validators";
 
 export async function GET(request: NextRequest) {
   try {
@@ -59,6 +60,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Bu rol oluşturulamaz." }, { status: 403 });
   }
 
+  // Kimlik no daha önce hiç doğrulanmıyordu — 11 haneden farklı ya da harf
+  // içeren bir değer sessizce kaydediliyordu (bkz. denetim raporu).
+  if (typeof body.identityNo !== "string" || !TC_NO_REGEX.test(body.identityNo)) {
+    return NextResponse.json({ message: TC_NO_MESSAGE }, { status: 400 });
+  }
+
   // bkz. src/app/api/staff/[id]/route.ts PUT — YONETICI (tüm yetkiler) rolü
   // sadece zaten YONETICI/SUPERADMIN olan bir aktör tarafından atanabilir.
   if (body.role === "YONETICI" && auth.user.role !== "SUPERADMIN" && auth.user.role !== "YONETICI") {
@@ -83,7 +90,11 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const passwordHash = await bcrypt.hash(body.password || "12345678", 10);
+  // Personel eklerken şifre sorulmadan, sistem akıcı olsun diye varsayılan
+  // şifre TC kimlik no olur — kullanıcı ilk girişte doğrudan şifre değiştirme
+  // adımına yönlendirilir (bkz. kullanıcı geri bildirimi).
+  const usingDefaultPassword = !body.password;
+  const passwordHash = await bcrypt.hash(body.password || body.identityNo, 10);
 
   let created;
   try {
@@ -101,6 +112,7 @@ export async function POST(request: NextRequest) {
         fullName: body.fullName,
         role: (body.role || "ASISTAN") as Role,
         passwordHash,
+        mustChangePassword: usingDefaultPassword,
         profile: {
           create: {
             workStart,

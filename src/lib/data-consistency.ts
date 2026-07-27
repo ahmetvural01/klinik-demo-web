@@ -3,6 +3,8 @@ import { LAB_SOURCE_PREFIX } from "@/lib/lab-firma-integration";
 
 export type ConsistencySeverity = "critical" | "warning" | "info";
 
+export type ConsistencyRecordRef = { label: string; href: string };
+
 export type ConsistencyIssue = {
   id: string;
   severity: ConsistencySeverity;
@@ -12,6 +14,11 @@ export type ConsistencyIssue = {
   count: number;
   action: string;
   href?: string;
+  // Uyarıya sebep olan KAYITLARIN kendisi — verilmişse sistem-izleme ekranı
+  // yalnızca ilgili genel sayfaya değil, doğrudan o kayda (ör. ?orderId=...)
+  // yönlendiren tekil bağlantılar listeler (bkz. kullanıcı geri bildirimi:
+  // "uyarıya sebep olan kayda yönlendirmeli").
+  records?: ConsistencyRecordRef[];
 };
 
 export type ConsistencyPayload = {
@@ -64,6 +71,10 @@ async function countPurchaseTotalMismatches(institutionId?: string | null) {
       ...(institutionId ? { institutionId } : {}),
     },
     select: {
+      id: true,
+      createdAt: true,
+      firmaId: true,
+      firma: { select: { name: true } },
       items: { select: { lineTotal: true } },
       firmaIslem: { select: { tutar: true, status: true } },
     },
@@ -71,14 +82,21 @@ async function countPurchaseTotalMismatches(institutionId?: string | null) {
     take: 1000,
   });
 
-  return purchases.filter((purchase) => {
+  const mismatched = purchases.filter((purchase) => {
     const itemTotal = Math.round(
       purchase.items.reduce((sum, item) => sum + Number(item.lineTotal || 0), 0) * 100,
     ) / 100;
     return !purchase.firmaIslem
       || purchase.firmaIslem.status !== "AKTIF"
       || Math.abs(itemTotal - Number(purchase.firmaIslem.tutar || 0)) > 0.009;
-  }).length;
+  });
+
+  const records: ConsistencyRecordRef[] = mismatched.slice(0, 20).map((purchase) => ({
+    label: `${purchase.firma?.name || "Bilinmeyen firma"} — ${new Date(purchase.createdAt).toLocaleDateString("tr-TR")}`,
+    href: purchase.firmaId ? `/firma-detay?id=${purchase.firmaId}` : "/firma",
+  }));
+
+  return { count: mismatched.length, records };
 }
 
 async function countLabInvoiceTotalMismatches(institutionId?: string | null) {
@@ -212,12 +230,16 @@ async function countUnlinkedLabInvoices(institutionId?: string | null) {
         firmaId: { not: null },
       },
     },
-    select: { id: true },
+    select: {
+      id: true,
+      labOrderId: true,
+      labOrder: { select: { labType: true, patient: { select: { fullName: true } } } },
+    },
     orderBy: { createdAt: "desc" },
     take: 250,
   });
 
-  if (invoices.length === 0) return 0;
+  if (invoices.length === 0) return { count: 0, records: [] as ConsistencyRecordRef[] };
 
   // 250 ayrı sorgu yerine (N+1) TEK bir sorgu ile bu tip token'ları içeren tüm
   // aktif firma hareketlerini çekip eşleşmeyi bellekte yapıyoruz.
@@ -241,7 +263,13 @@ async function countUnlinkedLabInvoices(institutionId?: string | null) {
       .filter((id: string | null): id is string => Boolean(id)),
   );
 
-  return invoices.filter((invoice: { id: string }) => !linkedInvoiceIds.has(invoice.id)).length;
+  const unlinked = invoices.filter((invoice) => !linkedInvoiceIds.has(invoice.id));
+  const records: ConsistencyRecordRef[] = unlinked.slice(0, 20).map((invoice) => ({
+    label: `${invoice.labOrder.patient?.fullName || "Bilinmeyen hasta"} — ${invoice.labOrder.labType}`,
+    href: `/lab?orderId=${invoice.labOrderId}`,
+  }));
+
+  return { count: unlinked.length, records };
 }
 
 export async function buildDataConsistencyReport(institutionId?: string | null): Promise<ConsistencyPayload> {
@@ -260,8 +288,8 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
     taksitPaidMismatch,
     taksitOpenMismatch,
     openLabWithoutTrip,
-    labInvoiceNoFirmaMovement,
-    purchaseTotalMismatch,
+    labInvoiceNoFirmaMovementResult,
+    purchaseTotalMismatchResult,
     labInvoiceTotalMismatch,
     overpaidFirms,
     firmaPaymentAllocationMismatch,
@@ -397,6 +425,9 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
       take: 2000,
     }),
   ]);
+
+  const labInvoiceNoFirmaMovement = labInvoiceNoFirmaMovementResult.count;
+  const purchaseTotalMismatch = purchaseTotalMismatchResult.count;
 
   const paymentFingerprints = new Map<string, number>();
   recentPayments.forEach((payment) => {
@@ -536,6 +567,7 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
     count: labInvoiceNoFirmaMovement,
     action: "Fatura kaydını açıp firma hareketini yeniden oluşturun.",
     href: "/lab",
+    records: labInvoiceNoFirmaMovementResult.records,
   });
 
   addIssue(issues, {
@@ -558,6 +590,7 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
     count: purchaseTotalMismatch,
     action: "Satın alma kaydını açıp satırları ve bağlı firma hareketini doğrulayın.",
     href: "/firma",
+    records: purchaseTotalMismatchResult.records,
   });
 
   addIssue(issues, {

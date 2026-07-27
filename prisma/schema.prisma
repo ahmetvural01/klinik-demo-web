@@ -319,6 +319,11 @@ model User {
   fullName                String
   email                   String?                @unique
   passwordHash            String
+  // Yeni personel eklendiğinde şifre sorulmadan varsayılan olarak TC kimlik
+  // no atanır; bu bayrak true iken kullanıcı giriş yaptıktan sonra doğrudan
+  // profil/şifre değiştirme adımına yönlendirilir (bkz. kullanıcı geri
+  // bildirimi — akıcı personel ekleme süreci).
+  mustChangePassword      Boolean                @default(false)
   role                    Role                   @default(DOKTOR)
   isActive                Boolean                @default(true)
   createdAt               DateTime               @default(now())

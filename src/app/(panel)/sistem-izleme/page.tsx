@@ -167,11 +167,26 @@ export default function SistemIzlemePage() {
                   <span className="text-xs font-bold">{issue.count} kayıt</span>
                 </div>
                 <p className="text-xs">{issue.detail}</p>
-                {issue.href && (
+                {issue.records && issue.records.length > 0 ? (
+                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                    {issue.records.map((record, idx) => (
+                      <Link
+                        key={`${issue.id}-${idx}`}
+                        href={record.href}
+                        className="rounded-full border border-current/20 bg-white/60 px-2 py-0.5 text-xs font-semibold underline underline-offset-2"
+                      >
+                        {record.label} →
+                      </Link>
+                    ))}
+                    {issue.count > issue.records.length && (
+                      <span className="px-1 py-0.5 text-xs opacity-70">+{issue.count - issue.records.length} diğer kayıt</span>
+                    )}
+                  </div>
+                ) : issue.href ? (
                   <Link href={issue.href} className="mt-1 inline-block text-xs font-bold underline underline-offset-2">
                     İncele →
                   </Link>
-                )}
+                ) : null}
               </div>
             ))
           ) : consistencyError ? (
