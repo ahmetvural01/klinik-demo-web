@@ -62,13 +62,13 @@ export async function POST(request: NextRequest) {
   // O kliniğin bir YONETICI kullanıcısını bul (token için kimlik gerekiyor)
   const yonetici = await prisma.user.findFirst({
     where: { institutionId, role: "YONETICI", isActive: true },
-    select: { id: true, fullName: true, role: true },
+    select: { id: true, fullName: true, role: true, tokenVersion: true },
   });
 
   // YONETICI yoksa DOKTOR al
   const targetUser = yonetici ?? await prisma.user.findFirst({
     where: { institutionId, isActive: true },
-    select: { id: true, fullName: true, role: true },
+    select: { id: true, fullName: true, role: true, tokenVersion: true },
   });
 
   if (!targetUser) {
@@ -82,6 +82,7 @@ export async function POST(request: NextRequest) {
     institutionId,
     fullName: `${targetUser.fullName} [SA]`,
     ghost: true,
+    tokenVersion: targetUser.tokenVersion,
   });
 
   await setAuthCookie(token);

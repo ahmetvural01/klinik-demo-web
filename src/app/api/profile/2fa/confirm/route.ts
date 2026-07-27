@@ -2,10 +2,20 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { generateBackupCodes, verifyTwoFactorToken } from "@/lib/two-factor";
+import { checkRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
   if (auth.error) return auth.error;
+
+  // login/verify-2fa ve disable-2fa uç noktalarının aksine burada hiç oran
+  // sınırı yoktu — TOTP secret'ının 6 haneli kodunu deneme yanılma ile
+  // tahmin etmeye çalışan bir saldırıya karşı tutarlılık için eklendi
+  // (bkz. denetim raporu).
+  const rate = checkRateLimit(`2fa-confirm:${auth.user.id}`, 8, 60_000);
+  if (!rate.ok) {
+    return NextResponse.json({ error: "Çok fazla deneme yapıldı. Lütfen biraz sonra tekrar deneyin." }, { status: 429 });
+  }
 
   const body = await req.json().catch(() => ({}));
   const code = String(body?.code || "").trim();

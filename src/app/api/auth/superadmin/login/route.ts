@@ -109,6 +109,7 @@ export async function POST(request: NextRequest) {
     institutionId: null,
     fullName: user.fullName,
     superadminModules: modules,
+    tokenVersion: user.tokenVersion,
   });
   await setAuthCookie(token);
   await writeAudit(user.id, "LOGIN", "Superadmin sisteme giris yapti");

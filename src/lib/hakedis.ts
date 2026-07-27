@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { stripSystemTags } from "@/lib/format-text";
+import { turkeyMonthRangeUtc, turkeyDateKey } from "@/lib/tz";
 import type { Prisma } from "@prisma/client";
 
 export type DoctorRates = { kkYuzde: number; genelYuzde: number; maasYuzde: number };
@@ -49,10 +50,14 @@ export async function findEligibleDoctor(params: { doctorId: string; institution
   return eligible ? user : null;
 }
 
+// Önceden doğrudan Date.UTC ay sınırları kullanıyordu — Türkiye saatiyle
+// 00:00-02:59 arasındaki bir işlem (ör. ayın ilk günü gece yarısından hemen
+// sonra girilen bir ödeme/muayene) yanlış aya sayılıyordu; bu, o ay daha
+// sonra hakediş ödemesiyle "kapatıldığında" fark edilmeden kilitli bir
+// döneme hapsolabiliyordu (bkz. denetim raporu). Artık src/lib/tz.ts'deki
+// Türkiye-yerel ay aralığı kullanılıyor.
 export function monthRangeUtc(year: number, month: number) {
-  const start = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0));
-  const end = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
-  return { start, end };
+  return turkeyMonthRangeUtc(year, month);
 }
 
 function monthKey(year: number, month: number) {
@@ -118,8 +123,12 @@ export async function computeDoctorMonthlyHakedis(params: {
 
   const buckets = new Map<string, { year: number; month: number; ciro: number; kk: number; labCost: number }>();
   const ensure = (d: Date) => {
-    const year = d.getUTCFullYear();
-    const month = d.getUTCMonth() + 1;
+    // getUTCFullYear()/getUTCMonth() yerine Türkiye takvim tarihi kullanılır
+    // — aksi halde 00:00-02:59 Türkiye saatindeki bir kayıt bir önceki UTC
+    // gününe (dolayısıyla bazen bir önceki aya) sayılırdı.
+    const [yearStr, monthStr] = turkeyDateKey(d).split("-");
+    const year = Number(yearStr);
+    const month = Number(monthStr);
     const key = monthKey(year, month);
     let bucket = buckets.get(key);
     if (!bucket) {
@@ -235,14 +244,16 @@ export async function computeDoctorMonthlyOdenen(params: {
   };
 
   for (const row of expenseRows) {
-    const d = new Date(row.tarih);
-    const year = row.periodYear ?? d.getUTCFullYear();
-    const month = row.periodMonth ?? d.getUTCMonth() + 1;
-    add(year, month, Number(row.tutar));
+    if (row.periodYear != null && row.periodMonth != null) {
+      add(row.periodYear, row.periodMonth, Number(row.tutar));
+    } else {
+      const [yearStr, monthStr] = turkeyDateKey(new Date(row.tarih)).split("-");
+      add(Number(yearStr), Number(monthStr), Number(row.tutar));
+    }
   }
   for (const p of legacyPayments) {
-    const d = new Date(p.createdAt);
-    add(d.getUTCFullYear(), d.getUTCMonth() + 1, Number(p.amount));
+    const [yearStr, monthStr] = turkeyDateKey(new Date(p.createdAt)).split("-");
+    add(Number(yearStr), Number(monthStr), Number(p.amount));
   }
 
   return buckets;

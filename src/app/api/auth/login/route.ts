@@ -108,6 +108,7 @@ export async function POST(request: NextRequest) {
         role: saUser.role,
         institutionId: null,
         fullName: saUser.fullName,
+        tokenVersion: saUser.tokenVersion,
       });
 
       await setAuthCookie(token);
@@ -179,6 +180,7 @@ export async function POST(request: NextRequest) {
         role: saUser.role,
         institutionId: institution.id,
         fullName: saUser.fullName,
+        tokenVersion: saUser.tokenVersion,
       });
 
       await setAuthCookie(token);
@@ -211,6 +213,7 @@ export async function POST(request: NextRequest) {
       role: user.role,
       institutionId: user.institutionId,
       fullName: user.fullName,
+      tokenVersion: user.tokenVersion,
     });
 
     await setAuthCookie(token);

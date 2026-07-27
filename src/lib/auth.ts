@@ -21,6 +21,8 @@ export type AuthPayload = {
   superadminModules?: string[];
   /** Superadmin gizli giriş — log kaydı atılmaz */
   ghost?: boolean;
+  /** Sunucu taraflı oturum iptali için — bkz. requireAuth() ve User.tokenVersion */
+  tokenVersion?: number;
 };
 
 export function getVisibleRole(role: string) {
@@ -89,6 +91,9 @@ export async function getCurrentUser() {
     if (!user || !user.isActive) {
       return null;
     }
+    if (payload.tokenVersion !== undefined && payload.tokenVersion !== user.tokenVersion) {
+      return null;
+    }
 
     return user;
   } catch {
@@ -100,7 +105,7 @@ export async function getCurrentUser() {
  * JWT token'dan DB sorgusu yapmadan kullanıcı bilgilerini çöz.
  * requireAuth için yeterli: id, role, institutionId.
  */
-export async function decodeTokenUser(): Promise<{ id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean } | null> {
+export async function decodeTokenUser(): Promise<{ id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean; tokenVersion?: number } | null> {
   const token = await readAuthToken();
   if (!token) return null;
   try {
@@ -110,7 +115,7 @@ export async function decodeTokenUser(): Promise<{ id: string; role: string; ins
   }
 }
 
-export function decodeTokenUserFromToken(token: string): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean } | null {
+export function decodeTokenUserFromToken(token: string): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean; tokenVersion?: number } | null {
   try {
     const payload = verifyToken(token);
     return {
@@ -120,6 +125,7 @@ export function decodeTokenUserFromToken(token: string): { id: string; role: str
       fullName: payload.fullName || "",
       superadminModules: payload.superadminModules,
       ghost: payload.ghost ?? false,
+      tokenVersion: payload.tokenVersion,
     };
   } catch {
     return null;

@@ -362,6 +362,12 @@ model User {
   // profil/şifre değiştirme adımına yönlendirilir (bkz. kullanıcı geri
   // bildirimi — akıcı personel ekleme süreci).
   mustChangePassword      Boolean                @default(false)
+  // Sunucu taraflı oturum iptali için: şifre değiştiğinde veya kullanıcı
+  // "diğer tüm cihazlardan çıkış yap" dediğinde bu sayı artırılır. JWT'ye
+  // gömülen tokenVersion bu değerle eşleşmezse token geçersiz sayılır —
+  // önceden logout yalnızca çerezi temizliyordu, çalınmış/eski bir token
+  // doğal 7 günlük süresi dolana kadar geçerliliğini koruyordu.
+  tokenVersion            Int                    @default(0)
   role                    Role                   @default(DOKTOR)
   isActive                Boolean                @default(true)
   createdAt               DateTime               @default(now())
@@ -403,6 +409,10 @@ model User {
   twoFactorSecret         String?
   twoFactorEnabled        Boolean                @default(false)
   twoFactorBackupCodes    String?
+  // Kabul edilen son TOTP zaman adımı — aynı 6 haneli kodun (ör. ele
+  // geçirilmiş/gözetlenmiş bir kod) kısa süre içinde tekrar gönderilerek
+  // yeniden kullanılmasını engeller (bkz. denetim raporu).
+  twoFactorLastStep       Int?
   rateHistory             DoctorRateHistory[]    @relation("DoctorRateHistoryDoctor")
 
   @@unique([institutionId, identityNo])

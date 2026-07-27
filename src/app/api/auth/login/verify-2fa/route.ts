@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { setAuthCookie, signToken, verifyPendingTwoFactorToken } from "@/lib/auth";
 import { writeAudit } from "@/lib/api";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
-import { verifyTwoFactorToken, verifyBackupCode, removeUsedBackupCode } from "@/lib/two-factor";
+import { verifyTwoFactorToken, verifyBackupCode, removeUsedBackupCode, currentTotpStep } from "@/lib/two-factor";
 
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
@@ -31,6 +31,15 @@ export async function POST(req: NextRequest) {
 
   let valid = verifyTwoFactorToken(code, user.twoFactorSecret);
   let usedBackupCode = false;
+  const step = currentTotpStep();
+
+  // Aynı TOTP kodu (ör. gözetlenmiş/ekran paylaşımıyla ele geçirilmiş) kısa
+  // süre içinde tekrar gönderilirse reddedilir — yedek kodlar zaten tek
+  // kullanımlık olduğundan (kullanıldıktan sonra silinir) bu kontrol yalnızca
+  // asıl TOTP kodu için gerekir (bkz. denetim raporu).
+  if (valid && user.twoFactorLastStep === step) {
+    valid = false;
+  }
 
   if (!valid && user.twoFactorBackupCodes) {
     const hashedCodes = JSON.parse(user.twoFactorBackupCodes) as string[];
@@ -46,11 +55,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Kod hatalı" }, { status: 401 });
   }
 
+  if (!usedBackupCode) {
+    await prisma.user.update({ where: { id: user.id }, data: { twoFactorLastStep: step } });
+  }
+
   const token = signToken({
     userId: user.id,
     role: user.role,
     institutionId: user.institutionId,
     fullName: user.fullName,
+    tokenVersion: user.tokenVersion,
   });
 
   await setAuthCookie(token);

@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { setAuthCookie, signToken, verifyPendingTwoFactorToken } from "@/lib/auth";
 import { writeAudit } from "@/lib/api";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
-import { verifyTwoFactorToken, verifyBackupCode, removeUsedBackupCode } from "@/lib/two-factor";
+import { verifyTwoFactorToken, verifyBackupCode, removeUsedBackupCode, currentTotpStep } from "@/lib/two-factor";
 import { DEFAULT_SUPERADMIN_MODULES, normalizeModules } from "@/lib/superadmin-modules";
 
 // Genel /api/auth/login/verify-2fa uç noktasından AYRI: süperadmin token'ı
@@ -39,6 +39,13 @@ export async function POST(req: NextRequest) {
 
   let valid = verifyTwoFactorToken(code, user.twoFactorSecret);
   let usedBackupCode = false;
+  const step = currentTotpStep();
+
+  // bkz. src/app/api/auth/login/verify-2fa/route.ts — aynı tekrar kullanım
+  // (replay) koruması, süperadmin girişi için de uygulanıyor.
+  if (valid && user.twoFactorLastStep === step) {
+    valid = false;
+  }
 
   if (!valid && user.twoFactorBackupCodes) {
     const hashedCodes = JSON.parse(user.twoFactorBackupCodes) as string[];
@@ -54,6 +61,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Kod hatalı" }, { status: 401 });
   }
 
+  if (!usedBackupCode) {
+    await prisma.user.update({ where: { id: user.id }, data: { twoFactorLastStep: step } });
+  }
+
   const modules = user.superadminPermission
     ? normalizeModules(user.superadminPermission.modules)
     : DEFAULT_SUPERADMIN_MODULES;
@@ -64,6 +75,7 @@ export async function POST(req: NextRequest) {
     institutionId: null,
     fullName: user.fullName,
     superadminModules: modules,
+    tokenVersion: user.tokenVersion,
   });
 
   await setAuthCookie(token);

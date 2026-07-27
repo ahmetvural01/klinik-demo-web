@@ -51,17 +51,28 @@ const INST_CACHE_TTL_MS = 60_000; // 60 saniye
 // raporu). Institution cache'iyle aynı desende, kısa TTL'li bir kontrol
 // eklenerek pasifleştirme birkaç dakika içinde etkili hale getiriliyor —
 // her istekte DB'ye gitmeden.
-const _userActiveCache = new Map<string, { isActive: boolean; expiresAt: number }>();
+const _userActiveCache = new Map<string, { isActive: boolean; tokenVersion: number; expiresAt: number }>();
 const USER_ACTIVE_CACHE_TTL_MS = 60_000;
 
-async function isUserStillActive(userId: string): Promise<boolean> {
+async function getUserSessionState(userId: string): Promise<{ isActive: boolean; tokenVersion: number }> {
   const cached = _userActiveCache.get(userId);
-  if (cached && cached.expiresAt > Date.now()) return cached.isActive;
+  if (cached && cached.expiresAt > Date.now()) return cached;
 
-  const row = await prisma.user.findUnique({ where: { id: userId }, select: { isActive: true } });
-  const isActive = row?.isActive ?? false;
-  _userActiveCache.set(userId, { isActive, expiresAt: Date.now() + USER_ACTIVE_CACHE_TTL_MS });
-  return isActive;
+  const row = await prisma.user.findUnique({ where: { id: userId }, select: { isActive: true, tokenVersion: true } });
+  const state = { isActive: row?.isActive ?? false, tokenVersion: row?.tokenVersion ?? 0 };
+  _userActiveCache.set(userId, { ...state, expiresAt: Date.now() + USER_ACTIVE_CACHE_TTL_MS });
+  return state;
+}
+
+/**
+ * Şifre değiştirme gibi tokenVersion'ı artıran işlemlerden hemen sonra
+ * çağrılır — aksi halde bu kullanıcı için 60 saniyelik cache'te duran ESKİ
+ * tokenVersion, aynı istekte hemen ardından imzalanan YENİ (artırılmış)
+ * token ile eşleşmeyip kullanıcıyı anında "oturum sona erdi" hatasıyla
+ * kendi işlemiyle dışarı atardı.
+ */
+export function invalidateUserSessionCache(userId: string) {
+  _userActiveCache.delete(userId);
 }
 
 export function getRealtimeInstitutionVersion(institutionId?: string | null) {
@@ -123,8 +134,15 @@ export async function requireAuth(permission?: string) {
     return { error: NextResponse.json({ message: "Oturum gerekli" }, { status: 401 }) };
   }
 
-  if (!(await isUserStillActive(user.id))) {
+  const sessionState = await getUserSessionState(user.id);
+  if (!sessionState.isActive) {
     return { error: NextResponse.json({ message: "Hesabınız pasifleştirilmiş. Lütfen yöneticinizle iletişime geçin." }, { status: 401 }) };
+  }
+  // Şifre değiştirildiğinde veya "diğer tüm cihazlardan çıkış yap"
+  // kullanıldığında tokenVersion artırılır — eldeki eski token artık
+  // reddedilir (bkz. src/lib/auth.ts AuthPayload.tokenVersion).
+  if (user.tokenVersion !== undefined && user.tokenVersion !== sessionState.tokenVersion) {
+    return { error: NextResponse.json({ message: "Oturumunuz sona erdi. Lütfen yeniden giriş yapın." }, { status: 401 }) };
   }
 
   if (permission === "superadmin" && user.role !== "SUPERADMIN") {

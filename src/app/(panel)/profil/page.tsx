@@ -192,6 +192,18 @@ export default function ProfilPage() {
     finally { setSaving(false); }
   };
 
+  const logoutAllDevices = async () => {
+    if (!(await confirmDialog({
+      message: "Bu cihaz dışındaki tüm oturumlar (ör. unutulmuş bir tarayıcı sekmesi veya başka bir cihaz) sonlandırılsın mı?",
+      confirmText: "Diğer Oturumları Kapat",
+    }))) return;
+    try {
+      const res = await fetch("/api/profile/logout-all", { method: "POST" });
+      if (res.ok) showToast("success", "Diğer tüm cihazlardaki oturumlar sonlandırıldı");
+      else showToast("error", "İşlem başarısız oldu");
+    } catch { showToast("error", "Bağlantı hatası"); }
+  };
+
   const initials = profile.fullName
     ? profile.fullName.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase()
     : "?";
@@ -324,6 +336,18 @@ export default function ProfilPage() {
               Şifre Değiştir
             </Button>
           </div>
+        </div>
+
+        {/* Diğer Cihazlardan Çıkış */}
+        <div className="rounded-2xl bg-white p-6 shadow-sm border border-slate-100 space-y-3">
+          <h3 className="text-sm font-bold text-slate-800">Diğer Oturumlar</h3>
+          <p className="text-xs text-slate-500">
+            Başka bir cihazda veya tarayıcıda açık unutulmuş bir oturumunuz mu var? Bu cihazı etkilemeden
+            diğer tüm oturumları hemen sonlandırabilirsiniz.
+          </p>
+          <Button variant="secondary" fullWidth onClick={() => void logoutAllDevices()}>
+            Diğer Tüm Cihazlardan Çıkış Yap
+          </Button>
         </div>
       </div>
 

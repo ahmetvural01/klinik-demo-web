@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, withApiTiming } from "@/lib/api";
 import { computeDoctorMonthlyHakedis, computeDoctorMonthlyOdenen, findEligibleDoctor, monthRangeUtc } from "@/lib/hakedis";
+import { turkeyDateKey } from "@/lib/tz";
 
 // GET /api/hakedis?doctorId=X&months=12
 // Seçili doktor için son N ayın hakediş/ödenen/kalan dökümünü döner.
@@ -33,9 +34,9 @@ export const GET = withApiTiming("hakedis", async function GET(req: NextRequest)
     maasYuzde: Number(doctor.maasYuzde ?? 40),
   };
 
-  const now = new Date();
-  const currentYear = now.getUTCFullYear();
-  const currentMonth = now.getUTCMonth() + 1;
+  const [currentYearStr, currentMonthStr] = turkeyDateKey().split("-");
+  const currentYear = Number(currentYearStr);
+  const currentMonth = Number(currentMonthStr);
   // "months" ay önceki ayın başından bu ayın sonuna kadar olan aralık.
   const startMonthIndex = currentYear * 12 + (currentMonth - 1) - (months - 1);
   const rangeStartYear = Math.floor(startMonthIndex / 12);

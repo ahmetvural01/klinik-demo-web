@@ -47,6 +47,21 @@ export function turkeyLocalDateTimeToUtc(dateKey: string, timeKey: string): Date
 }
 
 /**
+ * Bir Türkiye takvim ayının [1. gün 00:00, son gün 23:59:59.999] Türkiye
+ * yerel saat aralığını UTC Date olarak döner. Hakediş hesaplamaları (bkz.
+ * src/lib/hakedis.ts) önceden bunun yerine `Date.UTC(year, month-1, 1)` gibi
+ * doğrudan UTC ay sınırları kullanıyordu — Türkiye saatiyle 00:00-02:59
+ * arasındaki bir işlem (ör. ayın ilk günü gece yarısından hemen sonra
+ * girilen bir ödeme) yanlış aya (bir önceki aya) sayılıyordu.
+ */
+export function turkeyMonthRangeUtc(year: number, month: number): { start: Date; end: Date } {
+  const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const startKey = `${year}-${String(month).padStart(2, "0")}-01`;
+  const endKey = `${year}-${String(month).padStart(2, "0")}-${String(daysInMonth).padStart(2, "0")}`;
+  return { start: turkeyDayRangeUtc(startKey).start, end: turkeyDayRangeUtc(endKey).end };
+}
+
+/**
  * Bir anın Türkiye takviminde "N gün önce"sinin gün başlangıcını (Türkiye
  * yerel 00:00, UTC Date olarak) döner. Randevu hatırlatmaları için kullanılır
  * — `date.setDate(date.getDate() - 1)` gibi yerel/sunucu saat dilimine bağlı

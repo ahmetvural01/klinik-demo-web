@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming } from "@/lib/api";
 import { computeDoctorMonthlyHakedis, computeDoctorMonthlyOdenen, effectiveDoctorWhere, monthRangeUtc } from "@/lib/hakedis";
+import { turkeyDateKey } from "@/lib/tz";
 
 // GET /api/hakedis/ozet
 // Kurumdaki tüm uygun doktorlar için içinde bulunulan ayın hakedilen/ödenen/kalan
@@ -36,9 +37,12 @@ export const GET = withApiTiming("hakedis-ozet", async function GET(_req: NextRe
   });
   const doctors = [...activeDoctors, ...inactiveDoctors];
 
-  const now = new Date();
-  const year = now.getUTCFullYear();
-  const month = now.getUTCMonth() + 1;
+  // getUTCFullYear()/getUTCMonth() yerine Türkiye takvim tarihi kullanılır —
+  // aksi halde ayın ilk günü 00:00-02:59 Türkiye saatinde bu ekran hâlâ bir
+  // önceki ayı "içinde bulunulan ay" sayardı (bkz. denetim raporu).
+  const [yearStr, monthStr] = turkeyDateKey().split("-");
+  const year = Number(yearStr);
+  const month = Number(monthStr);
   const { start, end } = monthRangeUtc(year, month);
 
   const inactiveIds = new Set(inactiveDoctors.map((d) => d.id));

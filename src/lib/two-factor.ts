@@ -26,6 +26,16 @@ export function verifyTwoFactorToken(token: string, secret: string) {
   }
 }
 
+// otplib varsayılan TOTP adım süresi 30 saniyedir. Doğrulama başarılı
+// olduktan sonra bu anki adım numarası User.twoFactorLastStep'e kaydedilir;
+// bir sonraki doğrulamada aynı adım numarasıysa kod zaten kullanılmış
+// demektir (replay) — bkz. denetim raporu.
+const TOTP_STEP_SECONDS = 30;
+
+export function currentTotpStep(): number {
+  return Math.floor(Date.now() / 1000 / TOTP_STEP_SECONDS);
+}
+
 function hashBackupCode(code: string) {
   return createHash("sha256").update(code).digest("hex");
 }
