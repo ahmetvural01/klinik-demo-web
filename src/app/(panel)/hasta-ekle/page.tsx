@@ -21,6 +21,8 @@ import { FormField, FormSection, FormErrorBanner, inputErrorClass } from "@/comp
 
 type PatientFormState = {
   tcNo: string;
+  isForeigner: boolean;
+  phoneCountryCode: string;
   fullName: string;
   phone: string;
   profession: string;
@@ -62,8 +64,23 @@ type HealthFlagKey =
   | "hasBloodIssue"
   | "hasContagiousDisease";
 
+const COUNTRY_CODES = [
+  { code: "+90", label: "🇹🇷 +90 Türkiye" },
+  { code: "+49", label: "🇩🇪 +49 Almanya" },
+  { code: "+31", label: "🇳🇱 +31 Hollanda" },
+  { code: "+33", label: "🇫🇷 +33 Fransa" },
+  { code: "+44", label: "🇬🇧 +44 Birleşik Krallık" },
+  { code: "+1", label: "🇺🇸 +1 ABD/Kanada" },
+  { code: "+7", label: "🇷🇺 +7 Rusya" },
+  { code: "+971", label: "🇦🇪 +971 BAE" },
+  { code: "+380", label: "🇺🇦 +380 Ukrayna" },
+  { code: "+995", label: "🇬🇪 +995 Gürcistan" },
+];
+
 const INITIAL_FORM: PatientFormState = {
   tcNo: "",
+  isForeigner: false,
+  phoneCountryCode: "+90",
   fullName: "",
   phone: "",
   profession: "",
@@ -123,7 +140,9 @@ function HastaEkleContent() {
     [form.surgeries, form.medications, form.otherDiseases].filter((value) => String(value || "").trim()).length;
 
   const completion = useMemo(() => {
-    const required = [form.tcNo, form.fullName, form.phone, form.gender];
+    const required = form.isForeigner
+      ? [form.fullName, form.phone, form.gender]
+      : [form.tcNo, form.fullName, form.phone, form.gender];
     const requiredDone = required.filter((value) => String(value || "").trim()).length;
     const recommended = [form.birthDate, form.address, form.bloodType];
     const recommendedDone = recommended.filter((value) => String(value || "").trim()).length;
@@ -140,6 +159,8 @@ function HastaEkleContent() {
         if (!res.ok) throw new Error(body?.message || "Hasta bilgileri alınamadı");
         setForm({
           tcNo: body.tcNo || "",
+          isForeigner: body.isForeigner || false,
+          phoneCountryCode: body.phoneCountryCode || "+90",
           fullName: body.fullName || "",
           phone: body.phone === "***" ? "" : body.phone || "",
           profession: body.profession || "",
@@ -214,8 +235,12 @@ function HastaEkleContent() {
   function validate() {
     const errors: Record<string, string> = {};
     if (!form.fullName.trim()) errors.fullName = "Ad soyad zorunludur.";
-    if (!/^[1-9]\d{10}$/.test(form.tcNo)) errors.tcNo = "TC Kimlik No 11 haneli olmalı ve 0 ile başlamamalıdır.";
-    if (!/^0\d{10}$/.test(form.phone)) errors.phone = "Telefon 11 haneli olmalı ve 0 ile başlamalıdır.";
+    if (!form.isForeigner) {
+      if (!/^\d{11}$/.test(form.tcNo)) errors.tcNo = "TC Kimlik No 11 haneli rakamdan oluşmalıdır.";
+      if (!/^5\d{9}$/.test(form.phone)) errors.phone = "Telefon 10 haneli olmalı ve 5 ile başlamalıdır.";
+    } else if (!/^\d{4,15}$/.test(form.phone)) {
+      errors.phone = "Telefon 4-15 haneli rakamdan oluşmalıdır.";
+    }
     if (!form.gender) errors.gender = "Cinsiyet seçimi zorunludur.";
     if (form.birthDate && Number.isNaN(new Date(form.birthDate).getTime())) errors.birthDate = "Geçerli bir doğum tarihi girin.";
     setFieldErrors(errors);
@@ -324,16 +349,38 @@ function HastaEkleContent() {
         <div className="space-y-4">
           <FormSection icon={UserRound} title="Kimlik Bilgileri" description="Hasta dosyasının temel ve zorunlu alanları.">
             <div className="grid gap-4 md:grid-cols-2">
-              <FormField label="TC Kimlik No" required error={fieldErrors.tcNo}>
-                <input
-                  className={`h-10 w-full rounded-lg border px-3 text-sm font-mono outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.tcNo))}`}
-                  placeholder="11 haneli TC No"
-                  inputMode="numeric"
-                  maxLength={11}
-                  value={form.tcNo}
-                  onChange={(event) => setField("tcNo", event.target.value.replace(/\D/g, "").slice(0, 11))}
-                />
-              </FormField>
+              <div className="flex items-center md:col-span-2">
+                <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-700">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-primary"
+                    checked={form.isForeigner}
+                    onChange={(event) => setField("isForeigner", event.target.checked)}
+                  />
+                  Yabancı uyruklu (TC vatandaşı değil)
+                </label>
+              </div>
+              {!form.isForeigner ? (
+                <FormField label="TC Kimlik No" required error={fieldErrors.tcNo}>
+                  <input
+                    className={`h-10 w-full rounded-lg border px-3 text-sm font-mono outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.tcNo))}`}
+                    placeholder="11 haneli TC No"
+                    inputMode="numeric"
+                    maxLength={11}
+                    value={form.tcNo}
+                    onChange={(event) => setField("tcNo", event.target.value.replace(/\D/g, "").slice(0, 11))}
+                  />
+                </FormField>
+              ) : (
+                <FormField label="Pasaport / Kimlik No" error={fieldErrors.tcNo}>
+                  <input
+                    className={`h-10 w-full rounded-lg border px-3 text-sm font-mono outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.tcNo))}`}
+                    placeholder="Opsiyonel"
+                    value={form.tcNo}
+                    onChange={(event) => setField("tcNo", event.target.value.trim())}
+                  />
+                </FormField>
+              )}
               <FormField label="Ad Soyad" required error={fieldErrors.fullName}>
                 <input
                   className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.fullName))}`}
@@ -367,8 +414,33 @@ function HastaEkleContent() {
           <FormSection icon={WalletCards} title="İletişim ve Kurum Bilgileri" description="Banko, randevu ve finans süreçlerinde kullanılan alanlar.">
             <div className="grid gap-4 md:grid-cols-2">
               <div>
-                <PhoneInput value={form.phone} onChange={(phone) => setField("phone", phone)} label="Telefon *" />
-                {fieldErrors.phone && <p className="mt-1 text-xs font-medium text-red-600">{fieldErrors.phone}</p>}
+                {!form.isForeigner ? (
+                  <>
+                    <PhoneInput value={form.phone} onChange={(phone) => setField("phone", phone)} label="Telefon *" />
+                    {fieldErrors.phone && <p className="mt-1 text-xs font-medium text-red-600">{fieldErrors.phone}</p>}
+                  </>
+                ) : (
+                  <FormField label="Telefon *" error={fieldErrors.phone}>
+                    <div className="flex gap-2">
+                      <select
+                        className="h-10 w-32 shrink-0 rounded-lg border border-slate-200 px-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                        value={form.phoneCountryCode}
+                        onChange={(event) => setField("phoneCountryCode", event.target.value)}
+                      >
+                        {COUNTRY_CODES.map((c) => (
+                          <option key={c.code} value={c.code}>{c.label}</option>
+                        ))}
+                      </select>
+                      <input
+                        className={`h-10 w-full rounded-lg border px-3 text-sm font-mono outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.phone))}`}
+                        placeholder="Numara"
+                        inputMode="numeric"
+                        value={form.phone}
+                        onChange={(event) => setField("phone", event.target.value.replace(/\D/g, "").slice(0, 15))}
+                      />
+                    </div>
+                  </FormField>
+                )}
               </div>
               <FormField label="Anlaşmalı Kurum">
                 <input className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Kurum adı" value={form.insurance} onChange={(event) => setField("insurance", event.target.value)} />

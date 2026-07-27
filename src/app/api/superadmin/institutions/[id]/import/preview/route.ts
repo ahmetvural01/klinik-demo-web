@@ -77,7 +77,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         select: { tcNo: true },
       })
     : [];
-  const existingTcSet = new Set(existingPatients.map((p) => p.tcNo));
+  const existingTcSet = new Set(existingPatients.map((p) => p.tcNo).filter((tc): tc is string => Boolean(tc)));
   const allKnownTc = new Set([...fileTcNos, ...existingTcSet]);
 
   const doctorRows = await prisma.user.findMany({

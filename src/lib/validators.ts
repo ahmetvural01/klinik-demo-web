@@ -47,10 +47,17 @@ export const loginSchema = z.object({
   password: z.string().min(6)
 });
 
+// Yabancı uyruklu hastalarda TC kimlik no zorunlu değildir; telefon da
+// ülke koduna göre farklı formatta olabileceğinden yalnızca Türkiye
+// (+90) seçiliyken 10 haneli cep telefonu formatı zorunlu kılınır —
+// diğer ülke kodlarında yalnızca makul bir rakam uzunluğu kontrol edilir
+// (bkz. kullanıcı geri bildirimi: yabancı hasta desteği).
 export const patientSchema = z.object({
-  tcNo: z.string().regex(TC_NO_REGEX, TC_NO_MESSAGE),
+  tcNo: z.string().optional().nullable(),
+  isForeigner: z.boolean().default(false),
+  phoneCountryCode: z.string().trim().min(2).max(5).default("+90"),
   fullName: z.string().min(3),
-  phone: z.string().regex(PHONE_REGEX, PHONE_MESSAGE),
+  phone: z.string(),
   address: z.string().optional(),
   profession: z.string().trim().max(120).optional(),
   gender: z.string().min(1),
@@ -72,6 +79,17 @@ export const patientSchema = z.object({
   contagiousDiseaseNote: z.string().trim().max(200).optional(),
   bloodType: z.string().optional(),
   toothChart: z.string().optional()
+}).superRefine((data, ctx) => {
+  if (!data.isForeigner) {
+    if (!data.tcNo || !TC_NO_REGEX.test(data.tcNo)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tcNo"], message: TC_NO_MESSAGE });
+    }
+    if (!PHONE_REGEX.test(data.phone)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["phone"], message: PHONE_MESSAGE });
+    }
+  } else if (!/^\d{4,15}$/.test(data.phone)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["phone"], message: "Telefon numarası 4-15 haneli rakamdan oluşmalıdır" });
+  }
 });
 
 export const appointmentSchema = z.object({

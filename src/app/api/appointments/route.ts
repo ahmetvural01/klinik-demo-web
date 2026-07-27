@@ -168,7 +168,7 @@ export const GET = withApiTiming("appointments", async function GET(request: Nex
   const dateTo = dateRange ? dateRange.end : (to ? new Date(to) : undefined);
 
   let appointments: Array<{
-    patient: { id: string; fullName: string; phone: string | null; tcNo: string; hasContagiousDisease: boolean; contagiousDiseaseNote: string | null } | null;
+    patient: { id: string; fullName: string; phone: string | null; tcNo: string | null; hasContagiousDisease: boolean; contagiousDiseaseNote: string | null } | null;
     [key: string]: unknown;
   }> = [];
   try {

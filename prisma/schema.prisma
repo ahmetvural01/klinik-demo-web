@@ -414,7 +414,14 @@ model Profile {
 model Patient {
   id                    String                 @id @default(cuid())
   institutionId         String?
-  tcNo                  String
+  // Yabancı uyruklu hastalarda TC kimlik no zorunlu değildir (bkz. isForeigner)
+  // — Postgres benzersiz indekste NULL değerler birbirinden farklı sayılır,
+  // yani birden fazla TC'siz yabancı hasta kaydı çakışma yaratmaz.
+  tcNo                  String?
+  isForeigner           Boolean                @default(false)
+  // Telefonun ülke kodu (ör. "+90", "+49") — numara her zaman ülke kodu
+  // olmadan, o ülkenin yerel formatında saklanır.
+  phoneCountryCode      String                 @default("+90")
   fullName              String
   phone                 String
   address               String?

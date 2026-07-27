@@ -268,7 +268,9 @@ export async function PUT(request: NextRequest, props: Params) {
   };
 
   const parsed = patientSchema.safeParse({
-    tcNo: typeof body.tcNo === "string" ? body.tcNo : existing.tcNo,
+    tcNo: body.tcNo === null ? null : (typeof body.tcNo === "string" ? body.tcNo : existing.tcNo),
+    isForeigner: typeof body.isForeigner === "boolean" ? body.isForeigner : existing.isForeigner,
+    phoneCountryCode: typeof body.phoneCountryCode === "string" ? body.phoneCountryCode : existing.phoneCountryCode,
     fullName: typeof body.fullName === "string" ? body.fullName : existing.fullName,
     phone: typeof body.phone === "string" ? body.phone : existing.phone,
     profession: normalizeOptional(body.profession, existing.profession),
