@@ -9,14 +9,24 @@ async function main() {
     throw new Error(`Health check failed: ${health.status}`);
   }
 
+  // Önceden gerçek bir kliniğe ait gibi görünen kimlik bilgileri (kurum adı,
+  // TC no, şifre) kaynak kodunda varsayılan değer olarak duruyordu — repo'ya
+  // erişimi olan herkes bu bilgilerle giriş deneyebilirdi (bkz. denetim
+  // raporu). Artık ortam değişkenleri zorunlu; tanımlı değilse script erken
+  // ve net bir hatayla durur.
+  const institution = process.env.INTEGRATION_INSTITUTION;
+  const identityNo = process.env.INTEGRATION_IDENTITY;
+  const password = process.env.INTEGRATION_PASSWORD;
+  if (!institution || !identityNo || !password) {
+    throw new Error(
+      "INTEGRATION_INSTITUTION, INTEGRATION_IDENTITY ve INTEGRATION_PASSWORD ortam değişkenleri tanımlı olmalı."
+    );
+  }
+
   const login = await fetch(`${BASE_URL}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      institution: process.env.INTEGRATION_INSTITUTION || "whitedental",
-      identityNo: process.env.INTEGRATION_IDENTITY || "90000000001",
-      password: process.env.INTEGRATION_PASSWORD || "10711453",
-    }),
+    body: JSON.stringify({ institution, identityNo, password }),
   });
 
   if (!login.ok) {

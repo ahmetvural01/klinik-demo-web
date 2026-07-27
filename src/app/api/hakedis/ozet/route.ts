@@ -16,18 +16,33 @@ export const GET = withApiTiming("hakedis-ozet", async function GET(_req: NextRe
   }
 
   const institutionId = auth.user.institutionId;
-  const doctors = await prisma.user.findMany({
+  const activeDoctors = await prisma.user.findMany({
     where: effectiveDoctorWhere(institutionId),
     select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
     orderBy: { fullName: "asc" },
   });
+
+  // Pasifleştirilmiş bir doktorun ödenmemiş kalan hakedişi varsa, önceden bu
+  // genel bakış listesinden tamamen kayboluyordu — muhasebe kimseye borç
+  // olduğunu fark etmiyordu (bkz. denetim raporu). Pasif doktorlar da ayrıca
+  // çekilip, yalnızca kalanı sıfırdan farklı olanlar sonuca eklenir.
+  const inactiveDoctors = await prisma.user.findMany({
+    where: {
+      isActive: false,
+      ...(institutionId ? { institutionId } : {}),
+      OR: [{ role: "DOKTOR" }, { role: "YONETICI" }],
+    },
+    select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
+  });
+  const doctors = [...activeDoctors, ...inactiveDoctors];
 
   const now = new Date();
   const year = now.getUTCFullYear();
   const month = now.getUTCMonth() + 1;
   const { start, end } = monthRangeUtc(year, month);
 
-  const rows = await Promise.all(doctors.map(async (doctor) => {
+  const inactiveIds = new Set(inactiveDoctors.map((d) => d.id));
+  const allRows = await Promise.all(doctors.map(async (doctor) => {
     const rates = {
       kkYuzde: Number(doctor.kkYuzde ?? 3),
       genelYuzde: Number(doctor.genelYuzde ?? 15),
@@ -41,13 +56,17 @@ export const GET = withApiTiming("hakedis-ozet", async function GET(_req: NextRe
     const hakedilen = monthRow?.hakedilen ?? 0;
     const odenen = Math.round((odenenMap.get(`${year}-${String(month).padStart(2, "0")}`) || 0) * 100) / 100;
     return {
-      doctor: { id: doctor.id, fullName: doctor.fullName },
+      doctor: { id: doctor.id, fullName: doctor.fullName, isActive: !inactiveIds.has(doctor.id) },
       ciro: monthRow?.ciro ?? 0,
       hakedilen,
       odenen,
       kalan: Math.round((hakedilen - odenen) * 100) / 100,
     };
   }));
+
+  // Pasif doktor kalanı sıfırsa listeyi kalabalıklaştırmasın — yalnızca
+  // gerçekten ödenmemiş/fazla ödenmiş bir bakiyesi varsa gösterilir.
+  const rows = allRows.filter((row) => row.doctor.isActive || Math.abs(row.kalan) > 0.5);
 
   rows.sort((a, b) => b.kalan - a.kalan);
 

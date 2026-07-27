@@ -178,6 +178,22 @@ export async function PATCH(request: NextRequest, props: Params) {
   if (existing.patientId && !finalDoctorId) {
     return NextResponse.json({ message: "Hasta tahsilatı için doktor seçimi zorunlu" }, { status: 400 });
   }
+
+  // Önceki kontrol yalnızca ESKİ doktorun dönemine bakıyordu — ödeme başka
+  // (zaten hakedişi ödenip kilitlenmiş) bir doktora aktarılırsa o doktorun
+  // kilidi hiç kontrol edilmiyordu. Böylece kapanmış bir dönem, doktor
+  // değişikliğiyle fark edilmeden yeniden açılıp bozulabiliyordu (bkz.
+  // denetim raporu).
+  if (finalDoctorId && finalDoctorId !== existing.doctorId && !body.force) {
+    const effectiveDate = nextCreatedAt ? new Date(nextCreatedAt) : new Date(existing.createdAt);
+    const newDoctorSettled = await isDoctorPeriodSettled(finalDoctorId, auth.user.institutionId, effectiveDate.getUTCFullYear(), effectiveDate.getUTCMonth() + 1);
+    if (newDoctorSettled) {
+      return NextResponse.json(
+        { message: "Bu ödeme aktarılmak istenen doktorun ilgili dönemi için zaten hakediş ödemesi yapılmış — ödeme bu doktora taşınamaz." },
+        { status: 400 },
+      );
+    }
+  }
   if (posRequiredMethods.has(finalMethod) && !finalPosId) {
     return NextResponse.json({ message: "Kart / mail order tahsilatı için POS seçimi zorunlu" }, { status: 400 });
   }

@@ -50,12 +50,22 @@ export async function PUT(request: NextRequest, props: Params) {
       return NextResponse.json({ message: "Fiyat kaydı bulunamadı" }, { status: 404 });
     }
 
+    // POST'ta uygulanan doğrulama (geçerli kod/tedavi/tutar) bu PUT'ta hiç
+    // yapılmıyordu — negatif veya sayısal olmayan bir tutar sessizce
+    // kaydedilebiliyordu (bkz. denetim raporu).
+    const code = String(body.code ?? existing.code).trim();
+    const treatment = String(body.treatment ?? existing.treatment).trim();
+    const amount = body.amount !== undefined ? Number(body.amount) : Number(existing.amount);
+    if (!code || !treatment || !Number.isFinite(amount) || amount < 0) {
+      return NextResponse.json({ message: "Geçerli kod, tedavi ve tutar zorunlu" }, { status: 400 });
+    }
+
     const item = await prisma.priceItem.update({
       where: { id: params.id },
       data: {
-        code: body.code,
-        treatment: body.treatment,
-        amount: body.amount,
+        code,
+        treatment,
+        amount,
         isFavorite: Boolean(body.isFavorite)
       }
     });
@@ -104,6 +114,13 @@ export async function PATCH(request: NextRequest, props: Params) {
     });
     if (!existing) {
       return NextResponse.json({ message: "Fiyat kaydı bulunamadı" }, { status: 404 });
+    }
+
+    if (body.amount !== undefined) {
+      const nextAmount = Number(body.amount);
+      if (!Number.isFinite(nextAmount) || nextAmount < 0) {
+        return NextResponse.json({ message: "Geçerli bir tutar girin" }, { status: 400 });
+      }
     }
 
     const item = await prisma.priceItem.update({

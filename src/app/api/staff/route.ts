@@ -40,7 +40,16 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: "desc" }
     });
 
-    return NextResponse.json(staff);
+    // Komisyon oranları (kkYuzde/genelYuzde/maasYuzde) doktorların net
+    // maaşını belirleyen hassas bilgidir — DOKTOR/ASISTAN/BANKO rolleri de
+    // `staff:read` iznine sahip olduğundan bu alanlar önceden herkese
+    // sızıyordu (bkz. denetim raporu). Yalnızca YONETICI/SUPERADMIN görebilir.
+    const canSeeRates = auth.user.role === "YONETICI" || auth.user.role === "SUPERADMIN";
+    const result = canSeeRates
+      ? staff
+      : staff.map(({ kkYuzde, genelYuzde, maasYuzde, ...rest }) => rest);
+
+    return NextResponse.json(result);
   } catch (error) {
     console.error("[staff GET] fallback:", error);
     return NextResponse.json({ message: "Personel listesi yüklenemedi. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });

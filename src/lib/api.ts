@@ -44,6 +44,26 @@ type CachedInstitution = {
 const _instCache = new Map<string, CachedInstitution>();
 const INST_CACHE_TTL_MS = 60_000; // 60 saniye
 
+// ── Kullanıcı isActive kısa-TTL cache ──────────────────────────────────────
+// requireAuth() önceden yalnızca JWT'yi çözüyordu, DB'ye hiç bakmıyordu — bir
+// personel pasifleştirildiğinde (işten çıkarma vb.) elindeki token, 7 günlük
+// süresi dolana kadar TÜM API'lerde geçerliliğini koruyordu (bkz. denetim
+// raporu). Institution cache'iyle aynı desende, kısa TTL'li bir kontrol
+// eklenerek pasifleştirme birkaç dakika içinde etkili hale getiriliyor —
+// her istekte DB'ye gitmeden.
+const _userActiveCache = new Map<string, { isActive: boolean; expiresAt: number }>();
+const USER_ACTIVE_CACHE_TTL_MS = 60_000;
+
+async function isUserStillActive(userId: string): Promise<boolean> {
+  const cached = _userActiveCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) return cached.isActive;
+
+  const row = await prisma.user.findUnique({ where: { id: userId }, select: { isActive: true } });
+  const isActive = row?.isActive ?? false;
+  _userActiveCache.set(userId, { isActive, expiresAt: Date.now() + USER_ACTIVE_CACHE_TTL_MS });
+  return isActive;
+}
+
 export function getRealtimeInstitutionVersion(institutionId?: string | null) {
   return getRealtimeInstitutionVersionBus(institutionId);
 }
@@ -101,6 +121,10 @@ export async function requireAuth(permission?: string) {
 
   if (!user) {
     return { error: NextResponse.json({ message: "Oturum gerekli" }, { status: 401 }) };
+  }
+
+  if (!(await isUserStillActive(user.id))) {
+    return { error: NextResponse.json({ message: "Hesabınız pasifleştirilmiş. Lütfen yöneticinizle iletişime geçin." }, { status: 401 }) };
   }
 
   if (permission === "superadmin" && user.role !== "SUPERADMIN") {

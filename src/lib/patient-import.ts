@@ -1,4 +1,5 @@
 import ExcelJS from "exceljs";
+import { PHONE_REGEX } from "@/lib/validators";
 
 // Klinik geçmiş verilerini (hasta + ödeme + tedavi + reçete geçmişi) toplu
 // aktarma şablonu ve ayrıştırıcısı. Süperadmin bu şablonu klinik için indirir,
@@ -467,7 +468,11 @@ export async function parseImportWorkbook(buffer: Buffer): Promise<ImportParseRe
       if (!/^\d{11}$/.test(tcNo)) errors.push("TC Kimlik No 11 haneli sayı olmalı");
       if (fullName.length < 3) errors.push("Ad Soyad zorunlu (en az 3 karakter)");
       const normalizedPhone = phone.replace(/\s+/g, "");
-      if (!/^0\d{10}$/.test(normalizedPhone)) errors.push("Telefon 0XXXXXXXXXX formatında olmalı");
+      // Önceden yalnızca "0 ile başlayan 11 hane" kontrol ediliyordu — sabit
+      // hat gibi geçerli olmayan numaralar bile kabul ediliyordu, oysa elle
+      // hasta ekleme aynı PHONE_REGEX (gerçek cep telefonu formatı) ile
+      // doğrulanıyor (bkz. denetim raporu — tutarsız doğrulama).
+      if (!PHONE_REGEX.test(normalizedPhone)) errors.push("Telefon 5XX XXX XX XX formatında (cep telefonu) olmalı");
 
       const genderRaw = normalizeTrKey(cellText(get("gender")));
       const gender = GENDER_MAP[genderRaw] || "";

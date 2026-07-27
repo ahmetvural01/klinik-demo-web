@@ -2462,7 +2462,11 @@ export default function HastaDetayContent() {
         rows: [
           ["Ad Soyad", patient.fullName],
           ["TC Kimlik", patient.tcNo],
-          ["Telefon", patient.phone],
+          // Ekranın diğer her yerinde (yazdırma, kenar çubuğu) telefon
+          // DOKTOR/ASISTAN rolünden gizlenirken, bu dışa aktarma özelliği
+          // hiç kontrol etmiyordu — aynı roller "Dışa Aktar" ile tam
+          // numarayı elde edebiliyordu (bkz. denetim raporu).
+          ["Telefon", shouldHidePatientPhone(currentUserRole) ? "***" : patient.phone],
           ["Meslek", patient.profession || "-"],
           ["Cinsiyet", patient.gender || "-"],
           ["Doğum Tarihi", patient.birthDate ? dateText(patient.birthDate) : "-"],

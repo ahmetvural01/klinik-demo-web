@@ -60,6 +60,13 @@ export async function GET(_: NextRequest, props: Params) {
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
   }
 
+  // bkz. src/app/api/staff/route.ts — aynı komisyon oranı gizliliği kontrolü.
+  const canSeeRates = auth.user.role === "YONETICI" || auth.user.role === "SUPERADMIN";
+  if (!canSeeRates) {
+    const { kkYuzde, genelYuzde, maasYuzde, ...rest } = user;
+    return NextResponse.json(rest);
+  }
+
   return NextResponse.json(user);
 }
 
