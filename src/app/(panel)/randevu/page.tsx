@@ -1052,13 +1052,15 @@ export default function RandevuPage() {
   };
 
   const updateStatus = async (id: string, status: string) => {
+    if (status === "IPTAL" && !(await confirmDialog({ message: "Randevu iptal edilsin mi?", danger: true, confirmText: "İptal Et" }))) return;
+
     const res = await fetch("/api/appointments/" + id, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
     if (!res.ok) {
       const body = await res.json().catch(() => ({ message: "Durum güncellenemedi" }));
       setError(body.message || "Durum güncellenemedi");
       return;
     }
-    setSelectedAppt(prev => prev && prev.id === id ? { ...prev, status } : prev);
+    setSelectedAppt(null);
     await load();
   };
 
@@ -2023,7 +2025,8 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                 />
                 {patientId && (
                   <button type="button" onClick={() => { setPatientId(""); setPatientSearch(""); setPatientResults([]); }}
-                    className="text-slate-400 hover:text-red-500 text-base leading-none">
+                    aria-label="Hasta seçimini temizle"
+                    className="flex shrink-0 items-center justify-center border-0 bg-transparent p-0 text-base leading-none text-slate-400 hover:text-red-500">
                     ×
                   </button>
                 )}
