@@ -140,10 +140,6 @@ function HastaContent() {
   const [pageSize, setPageSize] = useState(25);
   const [sortKey, setSortKey] = useState<SortKey>("createdAt");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
-  const [gender, setGender] = useState("");
-  const [risk, setRisk] = useState("");
-  const [missing, setMissing] = useState(false);
-  const [insurance, setInsurance] = useState("");
   const [doctorId, setDoctorId] = useState("");
   const [doctors, setDoctors] = useState<{ id: string; fullName: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -152,7 +148,7 @@ function HastaContent() {
 
   const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
   const canDeletePatients = userRole === "SUPERADMIN" || userRole === "YONETICI";
-  const activeFilterCount = [gender, risk, missing ? "missing" : "", insurance, doctorId].filter(Boolean).length;
+  const activeFilterCount = [doctorId].filter(Boolean).length;
 
   useEffect(() => {
     cachedGet<unknown>("/api/staff", 60_000).then((d) => {
@@ -207,10 +203,6 @@ function HastaContent() {
       sortBy: sortKey,
       sortDir,
     });
-    if (gender) params.set("gender", gender);
-    if (risk) params.set("risk", risk);
-    if (missing) params.set("missing", "true");
-    if (insurance.trim()) params.set("insurance", insurance.trim());
     if (doctorId) params.set("doctorId", doctorId);
 
     try {
@@ -233,7 +225,7 @@ function HastaContent() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedQuery, gender, insurance, doctorId, missing, page, pageSize, risk, sortDir, sortKey]);
+  }, [debouncedQuery, doctorId, page, pageSize, sortDir, sortKey]);
 
   useEffect(() => {
     void load();
@@ -286,10 +278,6 @@ function HastaContent() {
   const resetFilters = () => {
     setQuery("");
     setDebouncedQuery("");
-    setGender("");
-    setRisk("");
-    setMissing(false);
-    setInsurance("");
     setDoctorId("");
     setPage(1);
   };
@@ -343,7 +331,7 @@ function HastaContent() {
 
       <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="grid gap-2 xl:grid-cols-[1fr_auto] xl:items-center">
-          <div className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_160px_160px_160px_160px]">
+          <div className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_160px]">
             <label className="relative block">
               <span className="sr-only">Hasta ara</span>
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -351,44 +339,10 @@ function HastaContent() {
                 ref={searchInputRef}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Ad, TC veya telefon ile ara... ( / )"
+                placeholder="Ad, TC, telefon, kurum/sigorta veya referans kişi ile ara... ( / )"
                 className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/20"
               />
             </label>
-            <select
-              value={gender}
-              onChange={(event) => {
-                setGender(event.target.value);
-                setPage(1);
-              }}
-              aria-label="Cinsiyet filtresi"
-              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="">Tüm cinsiyetler</option>
-              <option value="ERKEK">Erkek</option>
-              <option value="KADIN">Kadın</option>
-            </select>
-            <select
-              value={risk}
-              onChange={(event) => {
-                setRisk(event.target.value);
-                setPage(1);
-              }}
-              aria-label="Medikal risk filtresi"
-              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="">Tüm riskler</option>
-              <option value="medical">Medikal uyarılı</option>
-            </select>
-            <input
-              value={insurance}
-              onChange={(event) => {
-                setInsurance(event.target.value);
-                setPage(1);
-              }}
-              placeholder="Kurum / sigorta"
-              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-            />
             <select
               value={doctorId}
               onChange={(event) => {
@@ -404,18 +358,6 @@ function HastaContent() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <label className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-600">
-              <input
-                type="checkbox"
-                checked={missing}
-                onChange={(event) => {
-                  setMissing(event.target.checked);
-                  setPage(1);
-                }}
-                className="accent-primary"
-              />
-              Eksik bilgi
-            </label>
             <div className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm text-slate-500">
               <Filter className="h-4 w-4" />
               {activeFilterCount} filtre

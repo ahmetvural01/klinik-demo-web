@@ -13,36 +13,6 @@ function parsePositiveInt(value: string | null, fallback: number, max: number) {
   return Math.min(parsed, max);
 }
 
-function buildMissingInfoWhere(): Prisma.PatientWhereInput {
-  return {
-    OR: [
-      { tcNo: "" },
-      { phone: "" },
-      { gender: "" },
-      { birthDate: null },
-      { address: null },
-      { address: "" },
-    ],
-  };
-}
-
-function buildMedicalRiskWhere(): Prisma.PatientWhereInput {
-  return {
-    OR: [
-      { hasAllergy: true },
-      { hasHepatitis: true },
-      { hasKidney: true },
-      { hasDiabetes: true },
-      { hasHeart: true },
-      { hasBloodIssue: true },
-      { hasContagiousDisease: true },
-      { surgeries: { not: null } },
-      { medications: { not: null } },
-      { otherDiseases: { not: null } },
-    ],
-  };
-}
-
 export const GET = withApiTiming("patients", async function GET(request: NextRequest) {
   try {
     const auth = await requireAuth("patients:read");
@@ -56,10 +26,6 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
     const sortByParam = request.nextUrl.searchParams.get("sortBy") || "createdAt";
     const sortBy = SORT_FIELDS.has(sortByParam) ? sortByParam : "createdAt";
     const sortDir = request.nextUrl.searchParams.get("sortDir") === "asc" ? "asc" : "desc";
-    const gender = (request.nextUrl.searchParams.get("gender") || "").trim();
-    const risk = (request.nextUrl.searchParams.get("risk") || "").trim();
-    const missing = (request.nextUrl.searchParams.get("missing") || "").trim();
-    const insurance = (request.nextUrl.searchParams.get("insurance") || "").trim();
     const doctorId = (request.nextUrl.searchParams.get("doctorId") || "").trim();
     const includeSummary = request.nextUrl.searchParams.get("summary") !== "false";
 
@@ -67,18 +33,21 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
     const filters: Prisma.PatientWhereInput[] = [];
 
     if (q) {
+      // Tek bir arama kutusu hem hasta bilgilerini hem de "kurum/sigorta" ve
+      // "referans eden kişi" alanlarını kapsar — ayrı filtre kutularına gerek
+      // kalmadan "mehmet gül" yazınca hem o isimli hastalar hem de Mehmet
+      // Gül'ün yönlendirdiği hastalar bulunur (bkz. kullanıcı geri bildirimi).
       filters.push({
         OR: [
           { fullName: { contains: q, mode: "insensitive" } },
           { tcNo: { contains: q, mode: "insensitive" } },
           { phone: { contains: q, mode: "insensitive" } },
           { profession: { contains: q, mode: "insensitive" } },
+          { insurance: { contains: q, mode: "insensitive" } },
+          { referrer: { contains: q, mode: "insensitive" } },
         ],
       });
     }
-    if (gender) filters.push({ gender });
-    if (insurance) filters.push({ insurance: { contains: insurance, mode: "insensitive" } });
-    if (risk === "medical") filters.push(buildMedicalRiskWhere());
     if (doctorId) {
       filters.push({
         OR: [
@@ -87,7 +56,6 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
         ],
       });
     }
-    if (missing === "true") filters.push(buildMissingInfoWhere());
 
     const where: Prisma.PatientWhereInput = filters.length ? { AND: [tenantWhere, ...filters] } : tenantWhere;
     const currentMonthStart = new Date();
