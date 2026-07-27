@@ -4,7 +4,7 @@ import { appointmentSchema, formatZodError } from "@/lib/validators";
 import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { sendSms } from "@/lib/sms";
 import { sendWhatsapp } from "@/lib/whatsapp";
-import { turkeyDayRangeUtc } from "@/lib/tz";
+import { turkeyDayRangeUtc, turkeyDayBeforeStartUtc } from "@/lib/tz";
 import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 import { getDailySchedules, checkWorkingHoursInterval } from "@/lib/working-hours";
@@ -118,8 +118,7 @@ async function scheduleAppointmentReminder(appointment: { id: string; patientId:
   // Hatırlatma kapalıysa açık reminder kaydı bırakma.
   if (!appointment.smsReminder) return;
 
-  const reminderDate = new Date(appointment.startAt);
-  reminderDate.setDate(reminderDate.getDate() - 1);
+  const reminderDate = turkeyDayBeforeStartUtc(appointment.startAt);
 
   const note = `${APPT_REMINDER_PREFIX}:${appointment.id}`;
 
@@ -292,7 +291,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: doctorHoursError }, { status: 400 });
   }
 
-  // ── Doktor çakışma kontrolü ─────────────────────────────────────────────
+  // ── Doktor çakışma kontrolü (hızlı ön kontrol — iyi UX için) ────────────
   const conflict = await prisma.appointment.findFirst({
     where: {
       doctorId: parsed.data.doctorId,
@@ -326,7 +325,7 @@ export async function POST(request: NextRequest) {
     }, { status: 409 });
   }
 
-  // ── Aynı hasta, aynı gün çakışma kontrolü ──────────────────────────────
+  // ── Aynı hasta, aynı gün çakışma kontrolü (hızlı ön kontrol) ────────────
   const patientConflict = await prisma.appointment.findFirst({
     where: {
       patientId: parsed.data.patientId,
@@ -350,7 +349,24 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    // Yukarıdaki kontroller (check) ile aşağıdaki create arasında bir yarış
+    // penceresi vardı: aynı doktor/saat için iki istek eşzamanlı gelirse
+    // ikisi de "boş" görüp randevu oluşturabiliyordu. Serializable izolasyon
+    // altında çakışan iki eşzamanlı işlemden biri P2034 ile başarısız olur
+    // (bkz. denetim raporu — çift randevu yarış koşulu).
     const appointment = await prisma.$transaction(async (tx) => {
+      const doctorConflictRecheck = await tx.appointment.findFirst({
+        where: {
+          doctorId: parsed.data.doctorId,
+          status: { notIn: ["IPTAL", "GELMEDI"] },
+          AND: [{ startAt: { lt: endAt } }, { endAt: { gt: startAt } }],
+        },
+        select: { id: true },
+      });
+      if (doctorConflictRecheck) {
+        throw new Error("DOCTOR_CONFLICT_RECHECK");
+      }
+
       const appt = await tx.appointment.create({
         data: { ...parsed.data, startAt, endAt },
         include: { patient: true, doctor: { select: { id: true, fullName: true } } },
@@ -358,9 +374,8 @@ export async function POST(request: NextRequest) {
 
     // Reminder'ı transaction içinde oluştur - bir başarısızsa ikisi de rollback
     if (parsed.data.smsReminder) {
-      const reminderDate = new Date(startAt);
-      reminderDate.setDate(reminderDate.getDate() - 1);
-      
+      const reminderDate = turkeyDayBeforeStartUtc(startAt);
+
       await tx.reminder.create({
         data: {
           patientId: appt.patientId,
@@ -372,7 +387,7 @@ export async function POST(request: NextRequest) {
     }
 
     return appt;
-  });
+  }, { isolationLevel: "Serializable" });
 
     let infoSms = { status: "skipped" as AppointmentSmsStatus["info"], message: "Bilgilendirme SMS'i seçilmedi." };
     if (auth.user.institutionId) {
@@ -401,6 +416,12 @@ export async function POST(request: NextRequest) {
       } satisfies AppointmentSmsStatus,
     }, { status: 201 });
   } catch (error) {
+    if (error instanceof Error && error.message === "DOCTOR_CONFLICT_RECHECK") {
+      return NextResponse.json({ message: "Bu doktor için bu saat aralığı az önce başka bir kullanıcı tarafından dolduruldu. Lütfen tekrar deneyin." }, { status: 409 });
+    }
+    if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2034") {
+      return NextResponse.json({ message: "Bu randevu aynı anda başka bir işlemle çakıştı. Lütfen tekrar deneyin." }, { status: 409 });
+    }
     console.error("[appointments POST] fallback:", error);
     return NextResponse.json({ message: "Randevu oluşturulamadı" }, { status: 503 });
   }

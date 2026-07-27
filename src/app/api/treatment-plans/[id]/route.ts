@@ -61,7 +61,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
 
   const existing = await (prisma as any).treatmentPlan.findFirst({
     where: treatmentPlanTenantWhere(params.id, user.institutionId, user.role),
-    select: { id: true, status: true },
+    select: { id: true, status: true, patientId: true, doctorId: true, createdAt: true, totalCost: true },
   });
   if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
@@ -98,6 +98,32 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   }
 
   if (stepDeletes && Array.isArray(stepDeletes) && stepDeletes.length > 0) {
+    // Payment modeli doğrudan bir tedavi planına bağlı değil (planId FK'sı
+    // yok), bu yüzden adım silindiğinde toplam tutar (totalCost) hastanın bu
+    // plan oluşturulduktan sonra bu doktora yaptığı tahsilatların altına
+    // düşüyorsa uyarıyoruz — kesin bir eşleşme değil (aynı hasta+doktor için
+    // birden fazla plan olabilir) ama ödeme kaydıyla tedavi tutarının
+    // sessizce tutarsızlaşmasına karşı en azından bir sinyal veriyor
+    // (bkz. denetim raporu — tedavi planı tutarı ödeme defterinden kopuk).
+    if (!body.force) {
+      const deletedTotal = await (prisma as any).treatmentStep.aggregate({
+        where: { id: { in: stepDeletes }, planId: params.id },
+        _sum: { amount: true },
+      });
+      const newTotalCost = Number(existing.totalCost || 0) - Number(deletedTotal._sum.amount || 0);
+      const paidSinceCreation = await prisma.payment.aggregate({
+        where: { patientId: existing.patientId, doctorId: existing.doctorId, createdAt: { gte: existing.createdAt } },
+        _sum: { amount: true },
+      });
+      const paidAmount = Number(paidSinceCreation._sum.amount || 0);
+      if (paidAmount > 0 && newTotalCost < paidAmount - 0.01) {
+        return NextResponse.json({
+          error: `Bu hasta, plan oluşturulduktan sonra bu doktora ${paidAmount.toFixed(2)} TL ödeme yapmış — silinecek adımlarla yeni plan tutarı (${newTotalCost.toFixed(2)} TL) bunun altına düşüyor. Devam etmek istediğinize emin misiniz?`,
+          requiresForce: true,
+        }, { status: 409 });
+      }
+    }
+
     await (prisma as any).treatmentStep.deleteMany({
       where: { id: { in: stepDeletes }, planId: params.id },
     });

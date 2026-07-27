@@ -5,6 +5,7 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
 import { getDailySchedules, checkWorkingHoursInterval } from "@/lib/working-hours";
 import { checkDoctorWorkingHoursInterval } from "@/lib/working-hours-core";
+import { turkeyDayBeforeStartUtc } from "@/lib/tz";
 
 const APPT_REMINDER_PREFIX = "[APPT_REMINDER]";
 
@@ -25,8 +26,7 @@ async function syncAppointmentReminder(appointment: {
     return;
   }
 
-  const reminderDate = new Date(appointment.startAt);
-  reminderDate.setDate(reminderDate.getDate() - 1);
+  const reminderDate = turkeyDayBeforeStartUtc(appointment.startAt);
 
   const existing = await prisma.reminder.findFirst({
     where: { note, planId: null },

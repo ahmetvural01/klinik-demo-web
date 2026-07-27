@@ -90,7 +90,11 @@ async function loadAlerts(role: string): Promise<PanelAlertCounts> {
           )
         : 0;
       const stok = Array.isArray(sData)
-        ? sData.filter((item: any) => Number(item.quantity || 0) < Number(item.minQuantity || 0)).length
+        // "<=" kullanılır: anasayfa'daki aynı KPI ile tutarlı olsun diye, ve
+        // minQuantity ayarlanmamış/0 olan bir kalem miktarı da 0'a düştüğünde
+        // hâlâ uyarabilsin diye ("<" ile bu asla tetiklenmiyordu — bkz.
+        // denetim raporu).
+        ? sData.filter((item: any) => Number(item.quantity || 0) <= Number(item.minQuantity || 0)).length
         : 0;
       const lab = Array.isArray(lData) ? lData.length : Number(lData?.total || 0);
       const waitingList: WaitingPatient[] = Array.isArray(aData)

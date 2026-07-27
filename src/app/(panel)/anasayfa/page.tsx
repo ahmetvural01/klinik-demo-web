@@ -244,7 +244,12 @@ export default function AnasayfaPage() {
 
       setTodayCiro(0);
 
-      const todayIso = new Date().toISOString().split("T")[0];
+      // toISOString() (UTC) yerine yerel tarih bileşenleri kullanılır — aksi
+      // halde gece 00:00-03:00 Türkiye saatinde "bugünün taksiti" dünün
+      // tarihiyle karşılaştırılıp kaçırılırdı (bkz. denetim raporu, aşağıdaki
+      // dateStr ile aynı düzeltme).
+      const todayNow = new Date();
+      const todayIso = `${todayNow.getFullYear()}-${String(todayNow.getMonth() + 1).padStart(2, "0")}-${String(todayNow.getDate()).padStart(2, "0")}`;
       const [labData, taksitData, stockData, smsLogData] = await Promise.all([
         canSeeLabDash ? readPanel("/api/lab-orders?limit=300", { labOrders: [] }) : Promise.resolve({ labOrders: [] }),
         canSeeTaksitDash ? readPanel("/api/taksit-plani?limit=400", { taksitPlanlari: [] }) : Promise.resolve({ taksitPlanlari: [] }),
@@ -332,7 +337,8 @@ export default function AnasayfaPage() {
       }
 
       if (["YONETICI", "SUPERADMIN"].includes(role || "")) {
-        const todayStr = new Date().toISOString().split("T")[0];
+        const logNow = new Date();
+        const todayStr = `${logNow.getFullYear()}-${String(logNow.getMonth() + 1).padStart(2, "0")}-${String(logNow.getDate()).padStart(2, "0")}`;
         fetch("/api/logs?from=" + todayStr + "&to=" + todayStr + "&limit=10")
           .then(r => r.json())
           .then(d => setLiveLogs(Array.isArray(d) ? d : (d.logs || [])))

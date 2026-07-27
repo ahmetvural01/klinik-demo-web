@@ -45,3 +45,18 @@ export function turkeyLocalDateTimeToUtc(dateKey: string, timeKey: string): Date
   const localAsUtc = new Date(`${dateKey}T${timeKey}:00.000Z`);
   return new Date(localAsUtc.getTime() - TURKEY_OFFSET_MS);
 }
+
+/**
+ * Bir anın Türkiye takviminde "N gün önce"sinin gün başlangıcını (Türkiye
+ * yerel 00:00, UTC Date olarak) döner. Randevu hatırlatmaları için kullanılır
+ * — `date.setDate(date.getDate() - 1)` gibi yerel/sunucu saat dilimine bağlı
+ * Date metotları, sunucu UTC'de çalışırken 00:00-02:59 Türkiye saatindeki
+ * randevularda bir gün kayması yaratıyordu (bkz. denetim raporu).
+ */
+export function turkeyDayBeforeStartUtc(date: Date, daysBefore = 1): Date {
+  const dateKey = turkeyDateKey(date);
+  const shifted = new Date(`${dateKey}T00:00:00.000Z`);
+  shifted.setUTCDate(shifted.getUTCDate() - daysBefore);
+  const prevDateKey = shifted.toISOString().slice(0, 10);
+  return turkeyDayRangeUtc(prevDateKey).start;
+}

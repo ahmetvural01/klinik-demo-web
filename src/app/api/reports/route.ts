@@ -3,6 +3,20 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming } from "@/lib/api";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { buildDataConsistencyReport } from "@/lib/data-consistency";
+import { turkeyDayRangeUtc, turkeyDateKey, turkeyLocalDateTimeToUtc } from "@/lib/tz";
+
+// Rapor ekranındaki <input type="datetime-local"> zaman dilimi belirtmeden
+// ("2026-07-15T09:30") gönderir — bu, kullanıcının Türkiye yerel saatidir.
+// Ham `new Date(str)` tarih-saatli dizgelerde bunu SUNUCUNUN yerel saat
+// dilimiyle (üretimde genelde UTC) yorumlar, bu da 3 saatlik bir kaymaya
+// ve yıl/gün sınırlarında hatalı dahil/hariç tutmaya yol açıyordu (bkz.
+// denetim raporu).
+function parseTurkeyLocalInput(value: string | null): Date | undefined {
+  if (!value) return undefined;
+  const [datePart, timePart] = value.split("T");
+  if (!datePart) return undefined;
+  return turkeyLocalDateTimeToUtc(datePart, (timePart || "00:00").slice(0, 5));
+}
 
 // 2026 gelir vergisi dilimleri
 function gelirVergisiHesapla(matrah: number): number {
@@ -29,14 +43,14 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
   const to   = request.nextUrl.searchParams.get("to")   || request.nextUrl.searchParams.get("end");
 
   // Yıl bazlı vergi hesabı için yıl başı/sonu
-  const pivotYear = from ? new Date(from).getFullYear() : new Date().getFullYear();
-  const yearStart = new Date(`${pivotYear}-01-01T00:00:00Z`);
-  const yearEnd   = new Date(`${pivotYear}-12-31T23:59:59Z`);
+  const pivotYear = from ? Number(from.slice(0, 4)) : Number(turkeyDateKey().slice(0, 4));
+  const yearStart = turkeyDayRangeUtc(`${pivotYear}-01-01`).start;
+  const yearEnd   = turkeyDayRangeUtc(`${pivotYear}-12-31`).end;
 
   // from/to hiç verilmezse tüm geçmiş taranmasın diye içinde bulunulan yıl varsayılır.
   const dateFilter = (from || to) ? {
-    gte: from ? new Date(from) : undefined,
-    lte: to   ? new Date(to)   : undefined,
+    gte: parseTurkeyLocalInput(from),
+    lte: parseTurkeyLocalInput(to),
   } : { gte: yearStart, lte: yearEnd };
 
   const treatmentOnlyWhere = {
