@@ -8,13 +8,13 @@ export function buildAuditWhere(searchParams: URLSearchParams): Prisma.AuditLogW
   const startDate = searchParams.get("startDate") || "";
   const endDate = searchParams.get("endDate") || "";
 
-  // Superadmin ve ghost müdahale kayıtları kurum/personel geçmişinde görünmez.
-  // Yeni kayıtlar writeAudit içinde yazılmadan atlanır; eski kayıtlar varsa bu
-  // filtreyle denetim ekranına da taşınmaz.
-  const where: Prisma.AuditLogWhereInput = {
-    user: { role: { not: "SUPERADMIN" } },
-    NOT: [{ actorRole: "SUPERADMIN" }, { isGhost: true }],
-  };
+  // Bu filtre yalnızca /superadmin/audit (ve CSV export) tarafından kullanılır.
+  // Klinik personelinin kendi /log ekranı AYRI bir where inşa eder
+  // (src/app/api/logs/route.ts) ve orada superadmin/ghost kayıtları bilerek
+  // gizlenir. Burada, süperadmin'in kendi hesap verebilirlik ekranında,
+  // superadmin/ghost işlemleri GÖRÜNMELİDİR — writeAudit bunları tam olarak
+  // bu amaçla kaydediyor (bkz. src/lib/api.ts writeAudit yorumu).
+  const where: Prisma.AuditLogWhereInput = {};
   if (userId) where.userId = userId;
   if (search) {
     where.OR = [

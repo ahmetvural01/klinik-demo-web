@@ -48,53 +48,69 @@ export async function POST(request: NextRequest) {
     create: { id: 1, availableBalance: 0 },
   });
 
-  if (wallet.availableBalance < smsToAdd) {
-    return NextResponse.json({
-      message: `Platform SMS stogu yetersiz. Gerekli: ${smsToAdd}, Mevcut: ${wallet.availableBalance}`,
-    }, { status: 400 });
-  }
-
   const dueDate = new Date();
   dueDate.setDate(dueDate.getDate() + dueDays);
 
   const invoiceNo = `INV-${Date.now()}`;
 
-  const result = await prisma.$transaction(async (tx) => {
-    const updatedWallet = await tx.platformSmsWallet.update({
-      where: { id: wallet.id },
-      data: { availableBalance: { decrement: smsToAdd } },
-    });
+  let result;
+  try {
+    result = await prisma.$transaction(async (tx) => {
+      // Bakiye kontrolü ile düşme aynı atomik güncellemede yapılır — aksi
+      // halde iki eşzamanlı satış isteği ikisi de "yeterli bakiye var"
+      // kontrolünü geçip cüzdanı negatife düşürebilir (TOCTOU yarış koşulu).
+      const decremented = await tx.platformSmsWallet.updateMany({
+        where: { id: wallet.id, availableBalance: { gte: smsToAdd } },
+        data: { availableBalance: { decrement: smsToAdd } },
+      });
 
-    const updatedInstitution = await tx.institution.update({
-      where: { id: institution.id },
-      data: { smsBalance: after },
-    });
+      if (decremented.count === 0) {
+        const current = await tx.platformSmsWallet.findUniqueOrThrow({ where: { id: wallet.id } });
+        throw new Error(`INSUFFICIENT_STOCK:${current.availableBalance}`);
+      }
 
-    const transaction = await tx.smsTransaction.create({
-      data: {
-        institutionId: institution.id,
-        smsPackageId: smsPackage.id,
-        quantity,
-        totalPrice,
-        balanceBefore: before,
-        balanceAfter: after,
-        status: "COMPLETED",
-      },
-    });
+      const updatedWallet = await tx.platformSmsWallet.findUniqueOrThrow({ where: { id: wallet.id } });
 
-    const invoice = await tx.invoice.create({
-      data: {
-        institutionId: institution.id,
-        invoiceNo,
-        amount: totalPrice,
-        description: `${smsPackage.name} paketi x ${quantity} adet`,
-        status: "PENDING",
-        dueDate,
-      },
-    });
+      const updatedInstitution = await tx.institution.update({
+        where: { id: institution.id },
+        data: { smsBalance: after },
+      });
 
-    return { updatedWallet, updatedInstitution, transaction, invoice };
-  });
+      const transaction = await tx.smsTransaction.create({
+        data: {
+          institutionId: institution.id,
+          smsPackageId: smsPackage.id,
+          quantity,
+          totalPrice,
+          balanceBefore: before,
+          balanceAfter: after,
+          status: "COMPLETED",
+        },
+      });
+
+      const invoice = await tx.invoice.create({
+        data: {
+          institutionId: institution.id,
+          invoiceNo,
+          amount: totalPrice,
+          description: `${smsPackage.name} paketi x ${quantity} adet`,
+          status: "PENDING",
+          dueDate,
+        },
+      });
+
+      return { updatedWallet, updatedInstitution, transaction, invoice };
+    });
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : "";
+    if (msg.startsWith("INSUFFICIENT_STOCK:")) {
+      const current = msg.split(":")[1];
+      return NextResponse.json({
+        message: `Platform SMS stogu yetersiz. Gerekli: ${smsToAdd}, Mevcut: ${current}`,
+      }, { status: 400 });
+    }
+    throw error;
+  }
 
   await writeAudit(
     auth.user.id,
