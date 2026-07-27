@@ -16,6 +16,7 @@ type Announcement = {
   isActive: boolean;
   createdAt: string;
   endsAt?: string | null;
+  startsAt?: string | null;
   institution?: { id: string; name: string; isDemo?: boolean } | null;
 };
 
@@ -27,6 +28,7 @@ export default function AnnouncementsPage() {
   const [text, setText] = useState("");
   const [targetMode, setTargetMode] = useState<"all" | "selected">("all");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -60,6 +62,7 @@ export default function AnnouncementsPage() {
     setText("");
     setSelectedIds([]);
     setTargetMode("all");
+    setStartsAt("");
     setEndsAt("");
     setError("");
   };
@@ -74,6 +77,10 @@ export default function AnnouncementsPage() {
       setError("En az bir kurum seçin.");
       return;
     }
+    if (startsAt && endsAt && startsAt > endsAt) {
+      setError("Başlangıç tarihi bitiş tarihinden sonra olamaz.");
+      return;
+    }
 
     setSaving(true);
     const res = await fetch("/api/superadmin/announcements", {
@@ -83,6 +90,7 @@ export default function AnnouncementsPage() {
         text,
         allInstitutions: targetMode === "all",
         institutionIds: targetMode === "selected" ? selectedIds : [],
+        startsAt: startsAt || null,
         endsAt: endsAt || null,
       }),
     });
@@ -150,10 +158,12 @@ export default function AnnouncementsPage() {
                     <span className="font-bold text-slate-900">{item.institution?.name || "Kurum yok"}</span>
                     {item.institution?.isDemo && <Badge tone="warning">Demo</Badge>}
                     {!item.isActive && <Badge tone="neutral">Pasif</Badge>}
+                    {item.isActive && item.startsAt && new Date(item.startsAt) > new Date() && <Badge tone="warning">Zamanlanmış</Badge>}
                   </div>
                   <p className="text-sm text-slate-600">{item.text}</p>
                   <p className="mt-1 text-xs text-slate-400">
                     {new Date(item.createdAt).toLocaleDateString("tr-TR")}
+                    {item.startsAt && new Date(item.startsAt) > new Date() ? ` - ${new Date(item.startsAt).toLocaleDateString("tr-TR")} tarihinden itibaren gösterilecek` : ""}
                     {item.endsAt ? ` - ${new Date(item.endsAt).toLocaleDateString("tr-TR")} tarihine kadar` : ""}
                   </p>
                 </div>
@@ -226,6 +236,14 @@ export default function AnnouncementsPage() {
           )}
 
           <div className="grid gap-3 md:grid-cols-2">
+            <FormField label="Başlangıç Tarihi" hint="Boş bırakılırsa hemen yayınlanır">
+              <input
+                type="date"
+                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ${inputErrorClass(false)}`}
+                value={startsAt}
+                onChange={(e) => setStartsAt(e.target.value)}
+              />
+            </FormField>
             <FormField label="Bitiş Tarihi">
               <input
                 type="date"
@@ -234,9 +252,9 @@ export default function AnnouncementsPage() {
                 onChange={(e) => setEndsAt(e.target.value)}
               />
             </FormField>
-            <div className="flex items-center rounded-xl bg-primary/10 px-3 py-2 text-sm text-primary">
-              Hedef kurum sayısı: <strong className="ml-1">{selectedCount}</strong>
-            </div>
+          </div>
+          <div className="flex items-center rounded-xl bg-primary/10 px-3 py-2 text-sm text-primary">
+            Hedef kurum sayısı: <strong className="ml-1">{selectedCount}</strong>
           </div>
 
           {error && <p className="text-sm font-semibold text-red-600">{error}</p>}

@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
 
-  const body = await request.json() as { text: string; institutionIds?: string[]; allInstitutions?: boolean; endsAt?: string | null };
+  const body = await request.json() as { text: string; institutionIds?: string[]; allInstitutions?: boolean; startsAt?: string | null; endsAt?: string | null };
   if (!body.text?.trim()) return NextResponse.json({ message: "text zorunlu" }, { status: 400 });
 
   const targetInstitutions = body.allInstitutions
@@ -48,9 +48,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "En az bir kurum seçilmeli" }, { status: 400 });
   }
 
+  const startsAt = body.startsAt ? new Date(body.startsAt) : null;
+  if (body.startsAt && Number.isNaN(startsAt?.getTime())) {
+    return NextResponse.json({ message: "Başlangıç tarihi geçersiz" }, { status: 400 });
+  }
   const endsAt = body.endsAt ? new Date(body.endsAt) : null;
   if (body.endsAt && Number.isNaN(endsAt?.getTime())) {
     return NextResponse.json({ message: "Bitiş tarihi geçersiz" }, { status: 400 });
+  }
+  if (startsAt && endsAt && startsAt > endsAt) {
+    return NextResponse.json({ message: "Başlangıç tarihi bitiş tarihinden sonra olamaz" }, { status: 400 });
   }
 
   const result = await prisma.announcement.createMany({
@@ -58,6 +65,7 @@ export async function POST(request: NextRequest) {
       institutionId: institution.id,
       text: body.text.trim(),
       createdById: auth.user.id,
+      startsAt,
       endsAt,
     })),
   });
