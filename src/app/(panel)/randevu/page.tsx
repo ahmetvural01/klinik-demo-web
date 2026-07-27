@@ -2220,8 +2220,13 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                             {canCreateAppointments && <button onClick={() => blockInfo && deleteBlockSlot(blockInfo.id, slot)} aria-label="Bu saati aç" title="Bu saati aç" className="ml-auto text-red-400 hover:text-red-600">✕</button>}
                           </div>
                         ) : continuingAppts.length > 0 ? (
-                          <div className="flex h-full min-h-8 items-center rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-semibold text-slate-500">
-                            Devam ediyor
+                          <div
+                            onClick={() => setSelectedAppt(continuingAppts[0])}
+                            title={`${continuingAppts[0].patient?.fullName || "-"} - devam ediyor`}
+                            className="flex h-full min-h-8 cursor-pointer items-center gap-1 truncate rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-semibold text-slate-500 hover:bg-slate-100"
+                          >
+                            <span className="shrink-0">↳</span>
+                            <span className="truncate">{continuingAppts[0].patient?.fullName || "Devam ediyor"}</span>
                           </div>
                         ) : (
                           <>
@@ -2327,8 +2332,13 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                             {canCreateAppointments && <button onClick={() => blockInfo && deleteBlockSlot(blockInfo.id, slot)} aria-label="Bu saati aç" title="Bu saati aç" className="ml-auto text-red-400 hover:text-red-600">✕</button>}
                           </div>
                         ) : continuingAppts.length > 0 ? (
-                          <div className="flex h-full min-h-8 items-center rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-semibold text-slate-500">
-                            Devam ediyor
+                          <div
+                            onClick={() => setSelectedAppt(continuingAppts[0])}
+                            title={`${continuingAppts[0].patient?.fullName || "-"} - devam ediyor`}
+                            className="flex h-full min-h-8 cursor-pointer items-center gap-1 truncate rounded-md border border-slate-200 bg-slate-50 px-2 text-xs font-semibold text-slate-500 hover:bg-slate-100"
+                          >
+                            <span className="shrink-0">↳</span>
+                            <span className="truncate">{continuingAppts[0].patient?.fullName || "Devam ediyor"}</span>
                           </div>
                         ) : (
                           <>
