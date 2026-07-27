@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, useRef } from "react";
 import { OdontogramSelector, ToothStatus as TSType, TOOTH_STATUS_LABELS } from "@/components/ToothChart";
 import PhoneInput from "@/components/PhoneInput";
+import { COUNTRY_CODES } from "@/lib/country-codes";
 import { PatientConsentPanel } from "@/components/PatientConsentPanel";
 import { SearchSelect } from "@/components/ui/SearchSelect";
 import { Modal } from "@/components/ui/Modal";
@@ -89,7 +90,7 @@ type TaksitPlan = {
   taksitler: TaksitItem[];
 };
 type Patient = {
-  id: string; fullName: string; tcNo: string; phone: string; gender: string;
+  id: string; fullName: string; tcNo: string | null; isForeigner?: boolean; phoneCountryCode?: string; phone: string; gender: string;
   birthDate?: string | null; insurance?: string | null; discountRate: number;
   referrer?: string | null; profession?: string | null;
   notes?: string | null; address?: string | null; surgeries?: string | null;
@@ -831,7 +832,7 @@ export default function HastaDetayContent() {
       // formu dolduruyor olabilir.
       if (!silent || tab !== "duzenle") {
         setEditForm({
-          fullName: normalizedData.fullName, tcNo: normalizedData.tcNo, phone: normalizedData.phone, gender: normalizedData.gender,
+          fullName: normalizedData.fullName, tcNo: normalizedData.tcNo, isForeigner: normalizedData.isForeigner || false, phoneCountryCode: normalizedData.phoneCountryCode || "+90", phone: normalizedData.phone, gender: normalizedData.gender,
           address: normalizedData.address || "", insurance: normalizedData.insurance || "", referrer: normalizedData.referrer || "", profession: normalizedData.profession || "",
           discountRate: normalizedData.discountRate, notes: normalizedData.notes || "",
           surgeries: normalizedData.surgeries || "", medications: normalizedData.medications || "",
@@ -2048,8 +2049,14 @@ export default function HastaDetayContent() {
   };
 
   const saveEdit = async () => {
-    if (!/^0\d{10}$/.test(String(editForm.phone || ""))) {
-      return showToast("error", "Telefon 11 haneli olmalı ve 0 ile başlamalıdır");
+    // PhoneInput artık 10 haneli, 0 önekisiz kanonik formatı üretiyor
+    // (bkz. src/components/PhoneInput.tsx) — bu kontrol hâlâ eski 11 haneli
+    // "0..." formatını zorunlu kılıyordu ve TÜM hastalarda (yabancı olmayan
+    // dahil) kaydetmeyi engelliyordu (bkz. denetim raporu — regresyon).
+    // Yabancı hastalarda telefon farklı formatta olabileceğinden o durumda
+    // bu katı Türkiye kontrolü hiç uygulanmaz.
+    if (!editForm.isForeigner && !/^0?5\d{9}$/.test(String(editForm.phone || ""))) {
+      return showToast("error", "Telefon 10 haneli olmalı ve 5 ile başlamalıdır (ör. 545 404 69 39)");
     }
     setEditLoading(true);
     const res = await updatePatient({ ...editForm, birthDate: toBirthDateIso(editForm.birthDate) });
@@ -2061,7 +2068,7 @@ export default function HastaDetayContent() {
   const cancelEdit = () => {
     if (!data) return;
     setEditForm({
-      fullName: data.fullName, tcNo: data.tcNo, phone: data.phone, gender: data.gender,
+      fullName: data.fullName, tcNo: data.tcNo, isForeigner: data.isForeigner || false, phoneCountryCode: data.phoneCountryCode || "+90", phone: data.phone, gender: data.gender,
       address: data.address || "", insurance: data.insurance || "", referrer: data.referrer || "", profession: data.profession || "",
       discountRate: data.discountRate, notes: data.notes || "",
       surgeries: data.surgeries || "", medications: data.medications || "",
@@ -4382,11 +4389,49 @@ export default function HastaDetayContent() {
             <FormField label="Ad Soyad">
               <input value={editForm.fullName||""} onChange={e=>setEditForm({...editForm,fullName:e.target.value})} className="mt-1 w-full rounded border px-3 py-2" />
             </FormField>
-            <FormField label="TC Kimlik No">
-              <input value={editForm.tcNo||""} inputMode="numeric" maxLength={11} onChange={e=>setEditForm({...editForm,tcNo:e.target.value.replace(/\D/g,"").slice(0,11)})} className="mt-1 w-full rounded border px-3 py-2 font-mono" />
+            <div className="flex items-center md:col-span-2">
+              <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-gray-700">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 accent-primary"
+                  checked={!!editForm.isForeigner}
+                  onChange={e=>setEditForm({...editForm,isForeigner:e.target.checked})}
+                />
+                Yabancı uyruklu (TC vatandaşı değil)
+              </label>
+            </div>
+            <FormField label={editForm.isForeigner ? "Pasaport / Kimlik No" : "TC Kimlik No"}>
+              {!editForm.isForeigner ? (
+                <input value={editForm.tcNo||""} inputMode="numeric" maxLength={11} onChange={e=>setEditForm({...editForm,tcNo:e.target.value.replace(/\D/g,"").slice(0,11)})} className="mt-1 w-full rounded border px-3 py-2 font-mono" />
+              ) : (
+                <input value={editForm.tcNo||""} placeholder="Opsiyonel" onChange={e=>setEditForm({...editForm,tcNo:e.target.value.trim()})} className="mt-1 w-full rounded border px-3 py-2 font-mono" />
+              )}
             </FormField>
             {currentUserRole !== "DOKTOR" && currentUserRole !== "ASISTAN" && (
-              <div><PhoneInput label="Telefon" value={editForm.phone||""} onChange={phone=>setEditForm({...editForm,phone})} /></div>
+              !editForm.isForeigner ? (
+                <div><PhoneInput label="Telefon" value={editForm.phone||""} onChange={phone=>setEditForm({...editForm,phone})} /></div>
+              ) : (
+                <FormField label="Telefon">
+                  <div className="mt-1 flex gap-2">
+                    <select
+                      className="w-32 shrink-0 rounded border px-2 py-2 text-sm"
+                      value={editForm.phoneCountryCode||"+90"}
+                      onChange={e=>setEditForm({...editForm,phoneCountryCode:e.target.value})}
+                    >
+                      {COUNTRY_CODES.map((c) => (
+                        <option key={c.code} value={c.code}>{c.label}</option>
+                      ))}
+                    </select>
+                    <input
+                      className="w-full rounded border px-3 py-2 font-mono"
+                      placeholder="Numara"
+                      inputMode="numeric"
+                      value={editForm.phone||""}
+                      onChange={e=>setEditForm({...editForm,phone:e.target.value.replace(/\D/g,"").slice(0,15)})}
+                    />
+                  </div>
+                </FormField>
+              )
             )}
             <FormField label="Cinsiyet">
               <select value={editForm.gender||""} onChange={e=>setEditForm({...editForm,gender:e.target.value})} className="mt-1 w-full rounded border px-3 py-2"><option value="ERKEK">Erkek</option><option value="KADIN">Kadın</option></select>

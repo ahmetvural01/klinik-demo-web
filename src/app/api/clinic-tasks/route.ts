@@ -38,8 +38,8 @@ export async function GET(request: NextRequest) {
       },
       include: {
         patient: { select: { id: true, fullName: true, phone: true } },
-        assignedTo: { select: { id: true, fullName: true } },
-        assignees: { include: { user: { select: { id: true, fullName: true, role: true } } } },
+        assignedTo: { select: { id: true, fullName: true, isActive: true } },
+        assignees: { include: { user: { select: { id: true, fullName: true, role: true, isActive: true } } } },
         createdBy: { select: { id: true, fullName: true } },
       },
       orderBy: [{ status: "asc" }, { priority: "desc" }, { dueAt: "asc" }, { createdAt: "desc" }],
@@ -71,12 +71,14 @@ export async function POST(request: NextRequest) {
 
   const requestedAssignees = Array.from(new Set([...(p.assignedToIds || []), ...(p.assignedToId ? [p.assignedToId] : [])].filter(Boolean)));
   if (requestedAssignees.length) {
+    // isActive kontrolü yoktu — pasifleştirilmiş (işten ayrılmış) bir
+    // personele hâlâ yeni görev atanabiliyordu (bkz. denetim raporu).
     const assignees = await prisma.user.findMany({
-      where: { id: { in: requestedAssignees }, institutionId: auth.user.institutionId },
+      where: { id: { in: requestedAssignees }, institutionId: auth.user.institutionId, isActive: true },
       select: { id: true },
     });
     if (assignees.length !== requestedAssignees.length) {
-      return NextResponse.json({ message: "Atanan personellerden bazıları kurumda bulunamadı." }, { status: 400 });
+      return NextResponse.json({ message: "Atanan personellerden bazıları kurumda bulunamadı veya artık aktif değil." }, { status: 400 });
     }
   }
 
@@ -103,8 +105,8 @@ export async function POST(request: NextRequest) {
       },
       include: {
         patient: { select: { id: true, fullName: true, phone: true } },
-        assignedTo: { select: { id: true, fullName: true } },
-        assignees: { include: { user: { select: { id: true, fullName: true, role: true } } } },
+        assignedTo: { select: { id: true, fullName: true, isActive: true } },
+        assignees: { include: { user: { select: { id: true, fullName: true, role: true, isActive: true } } } },
         createdBy: { select: { id: true, fullName: true } },
       },
     });

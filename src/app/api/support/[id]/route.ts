@@ -46,12 +46,20 @@ export async function PUT(request: NextRequest, props: Params) {
     return NextResponse.json({ message: "Destek kaydı bulunamadı" }, { status: 404 });
   }
 
+  // "answer" alanı yalnızca destek ekibinin (süperadmin) resmi yanıtını
+  // temsil eder — önceden aynı kurumdaki herhangi bir kullanıcı bu alanı
+  // kendi isteğiyle doldurup talebin resmi olarak yanıtlanmış gibi
+  // görünmesini sağlayabiliyordu (bkz. denetim raporu).
+  if (body.answer !== undefined && auth.user.role !== "SUPERADMIN") {
+    return NextResponse.json({ message: "Yanıt alanını yalnızca destek ekibi düzenleyebilir." }, { status: 403 });
+  }
+
   const ticket = await prisma.supportTicket.update({
     where: { id: params.id },
     data: {
-      subject: body.subject,
-      message: body.message,
-      answer: body.answer
+      ...(body.subject !== undefined && { subject: body.subject }),
+      ...(body.message !== undefined && { message: body.message }),
+      ...(body.answer !== undefined && { answer: body.answer }),
     }
   });
 

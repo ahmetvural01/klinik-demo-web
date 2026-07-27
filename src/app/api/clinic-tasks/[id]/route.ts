@@ -35,11 +35,11 @@ export async function PUT(request: NextRequest, props: Params) {
 
   if (requestedAssignees && requestedAssignees.length) {
     const assignees = await prisma.user.findMany({
-      where: { id: { in: requestedAssignees }, institutionId: auth.user.institutionId },
+      where: { id: { in: requestedAssignees }, institutionId: auth.user.institutionId, isActive: true },
       select: { id: true },
     });
     if (assignees.length !== requestedAssignees.length) {
-      return NextResponse.json({ message: "Atanan personellerden bazıları kurumda bulunamadı." }, { status: 400 });
+      return NextResponse.json({ message: "Atanan personellerden bazıları kurumda bulunamadı veya artık aktif değil." }, { status: 400 });
     }
   }
 
@@ -82,8 +82,8 @@ export async function PUT(request: NextRequest, props: Params) {
       where: { id: updated.id },
       include: {
         patient: { select: { id: true, fullName: true, phone: true } },
-        assignedTo: { select: { id: true, fullName: true } },
-        assignees: { include: { user: { select: { id: true, fullName: true, role: true } } } },
+        assignedTo: { select: { id: true, fullName: true, isActive: true } },
+        assignees: { include: { user: { select: { id: true, fullName: true, role: true, isActive: true } } } },
         createdBy: { select: { id: true, fullName: true } },
       },
     });

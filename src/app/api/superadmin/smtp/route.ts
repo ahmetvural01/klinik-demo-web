@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import nodemailer from "nodemailer";
+import { encryptField } from "@/lib/field-crypto";
 
 export async function GET() {
   const auth = await requireAuth("superadmin");
@@ -29,9 +30,13 @@ export async function PUT(request: NextRequest) {
   const body = await request.json();
 
   const existing = await prisma.smtpConfig.findUnique({ where: { id: 1 } });
+  // SMTP şifresi önceden düz metin kaydediliyordu — veritabanına erişimi olan
+  // herhangi biri (ör. bir SQL injection/okuma hatası) doğrudan kimlik
+  // bilgisini görebilirdi (bkz. denetim raporu). Hasta belgelerinde zaten
+  // kullanılan alan-bazlı AES-256-GCM şifreleme burada da uygulanıyor.
   const passwordToSave = body.password === "••••••••" && existing
     ? existing.password
-    : (body.password || "");
+    : encryptField(body.password || "");
 
   const config = await prisma.smtpConfig.upsert({
     where: { id: 1 },

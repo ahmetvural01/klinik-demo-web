@@ -5,6 +5,7 @@ import {
   resetRolePermissionMap,
   saveRolePermissionMap,
 } from "@/lib/role-permission-store";
+import { MANAGEABLE_ROLES, normalizeRolePermissionMap } from "@/lib/role-permissions";
 
 export async function GET() {
   const auth = await requireAuth("superadmin");
@@ -19,6 +20,18 @@ export async function PUT(req: NextRequest) {
 
   const body = await req.json().catch(() => ({}));
   const map = body?.map ?? {};
+
+  // Bu matris kurum bazlı değil TÜM kliniklerde geçerlidir — bir rolün
+  // yetkilerini boş kaydetmek (ör. UI'da yanlışlıkla tüm kutuların
+  // işareti kaldırılıp kaydedilirse) o rolü anında platform genelinde
+  // işlevsiz bırakırdı, hiçbir uyarı olmadan (bkz. denetim raporu).
+  const normalized = normalizeRolePermissionMap(map);
+  const emptyRoles = MANAGEABLE_ROLES.filter((role) => role !== "YONETICI" && (normalized[role] || []).length === 0);
+  if (emptyRoles.length > 0) {
+    return NextResponse.json({
+      message: `Şu rol(ler) hiç yetkiye sahip olmadan kaydedilemez: ${emptyRoles.join(", ")}. Bu, o rolü tüm kliniklerde işlevsiz bırakır.`,
+    }, { status: 400 });
+  }
 
   const next = await saveRolePermissionMap(map, auth.user.fullName || auth.user.id);
   await writeAudit(auth.user.id, "SUPERADMIN_ROLE_PERMISSIONS_UPDATE", `Rol yetki matrisi güncellendi. Versiyon: ${next.version}`);

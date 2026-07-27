@@ -25,7 +25,7 @@ type StaffTask = {
   status: "ACIK" | "BEKLEMEDE" | "TAMAMLANDI" | "IPTAL";
   dueAt?: string | null;
   patient?: { id: string; fullName: string; phone?: string | null } | null;
-  assignees?: Array<{ userId: string; user: { id: string; fullName: string; role: string } }>;
+  assignees?: Array<{ userId: string; user: { id: string; fullName: string; role: string; isActive?: boolean } }>;
   createdBy?: { id: string; fullName: string } | null;
   createdAt: string;
 };
@@ -321,7 +321,7 @@ export default function GorevlerPage() {
       header: "Atanan",
       cellClassName: "max-w-[220px]",
       render: (task) => (
-        <span className="block truncate text-xs text-slate-500">{task.assignees && task.assignees.length > 0 ? task.assignees.map((a) => a.user.fullName).join(", ") : "-"}</span>
+        <span className="block truncate text-xs text-slate-500">{task.assignees && task.assignees.length > 0 ? task.assignees.map((a) => a.user.isActive === false ? `${a.user.fullName} (pasif)` : a.user.fullName).join(", ") : "-"}</span>
       ),
     },
     {

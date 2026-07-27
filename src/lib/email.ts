@@ -1,5 +1,6 @@
 import nodemailer from "nodemailer";
 import { prisma } from "@/lib/prisma";
+import { decryptField } from "@/lib/field-crypto";
 
 export type EmailSendResult = {
   success: boolean;
@@ -21,7 +22,7 @@ export async function getSmtpTransporter() {
       secure: config.secure,
       auth: {
         user: config.username,
-        pass: config.password,
+        pass: decryptField(config.password),
       },
       disableFileAccess: true,
       disableUrlAccess: true,
