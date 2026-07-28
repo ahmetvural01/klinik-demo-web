@@ -28,8 +28,9 @@ function normalizeCategory(value?: string | null) {
   return normalized;
 }
 
-function enrichStockItem(item: any, purchaseLines?: any[]) {
+function enrichStockItem(item: any, purchaseLines?: any[], activeLots?: any[]) {
   const purchaseItems = Array.isArray(purchaseLines) ? purchaseLines : Array.isArray(item.purchaseItems) ? item.purchaseItems : [];
+  const lots = Array.isArray(activeLots) ? activeLots : [];
   const sortedPurchases = [...purchaseItems].sort((a, b) => {
     const ad = new Date(a.purchase?.tarih || a.createdAt || 0).getTime();
     const bd = new Date(b.purchase?.tarih || b.createdAt || 0).getTime();
@@ -38,12 +39,26 @@ function enrichStockItem(item: any, purchaseLines?: any[]) {
   const lastLine = sortedPurchases[0];
   const totalQty = purchaseItems.reduce((sum: number, line: any) => sum + Number(line.quantity || 0), 0);
   const totalCost = purchaseItems.reduce((sum: number, line: any) => sum + Number(line.lineTotal || 0), 0);
-  const averageUnitPrice = totalQty > 0 ? Math.round((totalCost / totalQty) * 100) / 100 : null;
+  const lotQuantity = lots.reduce((sum: number, lot: any) => sum + Number(lot.quantityRemaining || 0), 0);
+  const lotCost = lots.reduce(
+    (sum: number, lot: any) => sum + Number(lot.quantityRemaining || 0) * Number(lot.unitCost || 0),
+    0,
+  );
+  const averageUnitPrice = lotQuantity > 0
+    ? Math.round((lotCost / lotQuantity) * 100) / 100
+    : totalQty > 0
+      ? Math.round((totalCost / totalQty) * 100) / 100
+      : null;
+  const expiringLot = [...lots]
+    .filter((lot) => lot.expiresAt)
+    .sort((a, b) => new Date(a.expiresAt).getTime() - new Date(b.expiresAt).getTime())[0];
 
   return {
     ...item,
     category: normalizeCategory(item.category),
     averageUnitPrice,
+    activeLotCount: lots.length,
+    nearestExpiry: expiringLot?.expiresAt || null,
     lastPurchase: lastLine ? {
       date: lastLine.purchase?.tarih || lastLine.createdAt,
       supplier: lastLine.purchase?.firma?.name || null,
@@ -107,7 +122,34 @@ export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
     linesByItem.set(line.stockItemId, arr);
   }
 
-  return NextResponse.json(items.map((item) => enrichStockItem(item, linesByItem.get(item.id) || [])));
+  const activeLots = itemIds.length
+    ? await (prisma as any).stockLot.findMany({
+        where: {
+          stockItemId: { in: itemIds },
+          status: "AKTIF",
+          quantityRemaining: { gt: 0 },
+          ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        },
+        select: {
+          stockItemId: true,
+          quantityRemaining: true,
+          unitCost: true,
+          expiresAt: true,
+        },
+      })
+    : [];
+  const lotsByItem = new Map<string, any[]>();
+  for (const lot of activeLots) {
+    const arr = lotsByItem.get(lot.stockItemId) || [];
+    arr.push(lot);
+    lotsByItem.set(lot.stockItemId, arr);
+  }
+
+  return NextResponse.json(items.map((item) => enrichStockItem(
+    item,
+    linesByItem.get(item.id) || [],
+    lotsByItem.get(item.id) || [],
+  )));
 });
 
 export async function POST(req: NextRequest) {
@@ -182,5 +224,5 @@ export async function POST(req: NextRequest) {
   }
 
   await writeAudit(auth.user.id, "STOCK_ITEM_CREATE", `"${name}" stok kalemi oluşturuldu`);
-  return NextResponse.json(enrichStockItem({ ...item, purchaseItems: [] }), { status: 201 });
+  return NextResponse.json(enrichStockItem({ ...item, purchaseItems: [] }, [], []), { status: 201 });
 }

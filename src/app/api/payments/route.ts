@@ -20,6 +20,10 @@ export async function POST(request: NextRequest) {
     const auth = await requireAuth("payments:write");
     if (auth.error) return auth.error;
     institutionId = auth.user.institutionId;
+    if (!institutionId) {
+      return NextResponse.json({ message: "Tahsilat için kurum bağlamı zorunlu." }, { status: 403 });
+    }
+    const currentInstitutionId = institutionId;
 
     const parsed = paymentSchema.safeParse(await request.json());
 
@@ -67,6 +71,7 @@ export async function POST(request: NextRequest) {
         where: {
           id: patientId,
           institutionId: auth.user.institutionId,
+          archivedAt: null,
         },
         select: { id: true, fullName: true },
       });
@@ -99,7 +104,7 @@ export async function POST(request: NextRequest) {
         include: { patient: { select: { institutionId: true } } },
       });
       if (existingPayment) {
-        if (auth.user.institutionId && existingPayment.patient?.institutionId !== auth.user.institutionId) {
+        if (existingPayment.institutionId !== currentInstitutionId) {
           return NextResponse.json({ message: "İşlem anahtarı başka bir kayıtta kullanılmış" }, { status: 409 });
         }
         return NextResponse.json({ ...toPublicPayment(existingPayment), duplicatePrevented: true }, { status: 200 });
@@ -110,6 +115,7 @@ export async function POST(request: NextRequest) {
       (tx) =>
         createIntegratedPayment({
           tx,
+          institutionId: currentInstitutionId,
           requestKey,
           patientId,
           doctorId,
@@ -150,7 +156,7 @@ export async function POST(request: NextRequest) {
         });
         if (
           existingPayment &&
-          (!institutionId || existingPayment.patient?.institutionId === institutionId)
+          existingPayment.institutionId === institutionId
         ) {
           return NextResponse.json({ ...toPublicPayment(existingPayment), duplicatePrevented: true }, { status: 200 });
         }
@@ -177,28 +183,15 @@ export const GET = withApiTiming("payments", async function GET(request: NextReq
 
     const { searchParams } = new URL(request.url);
     const patientId = searchParams.get("patientId");
-    const institutionUsers = auth.user.institutionId
-      ? await prisma.user.findMany({
-          where: { institutionId: auth.user.institutionId, isActive: true },
-          select: { id: true },
-        })
-      : [];
-    const userIds = institutionUsers.map((user) => user.id);
-    const institutionFilter = auth.user.institutionId
-      ? {
-          OR: [
-            { patient: { institutionId: auth.user.institutionId } },
-            // Eski doktor hakedişi kayıtlarında hasta bulunmaz. Hasta bağlı bir
-            // tahsilat yalnızca hastanın kurumu üzerinden görünür olmalıdır.
-            { patientId: null, doctorId: { in: userIds } },
-          ],
-        }
-      : {};
+    if (!auth.user.institutionId && auth.user.role !== "SUPERADMIN") {
+      return NextResponse.json({ message: "Kurum bağlamı bulunamadı." }, { status: 403 });
+    }
 
     const payments = await prisma.payment.findMany({
       where: {
         ...(patientId ? { patientId } : {}),
-        ...institutionFilter,
+        status: "ACTIVE",
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
       },
       include: {
         patient: { select: { id: true, fullName: true } },

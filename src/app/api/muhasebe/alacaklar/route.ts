@@ -22,59 +22,67 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
       ],
     };
 
-    // Sadece ücretlendirmeye dahil tedaviler (diagnoz/muayene hariç)
-    const examGroups = await prisma.examination.groupBy({
-      by: ["patientId"],
-      where: institutionId
-        ? { ...treatmentOnlyWhere, patient: { institutionId } }
-        : treatmentOnlyWhere,
-      _sum: { amount: true },
-    });
+    const examinationWhere = institutionId
+      ? { ...treatmentOnlyWhere, patient: { institutionId } }
+      : treatmentOnlyWhere;
+    const paymentWhere = institutionId
+      ? { institutionId, status: "ACTIVE", patientId: { not: null } }
+      : { status: "ACTIVE", patientId: { not: null } };
 
-    // Tüm hasta ödemeleri
-    const payGroups = await prisma.payment.groupBy({
-      by: ["patientId"],
-      _sum: { amount: true },
-      where: institutionId
-        ? {
-            patientId: { not: null },
-            patient: { institutionId },
-          }
-        : { patientId: { not: null } },
-    });
-
-    const examDoctorRows = await prisma.examination.findMany({
-      where: institutionId
-        ? { ...treatmentOnlyWhere, patient: { institutionId } }
-        : treatmentOnlyWhere,
-      select: {
-        patientId: true,
-        doctorId: true,
-        doctor: { select: { fullName: true } },
-      },
-      distinct: ["patientId", "doctorId"],
-    });
-
-    const latestTreatmentRows = await prisma.examination.findMany({
-      where: institutionId
-        ? { ...treatmentOnlyWhere, patient: { institutionId } }
-        : treatmentOnlyWhere,
-      select: {
-        patientId: true,
-        diagnosedAt: true,
-      },
-      orderBy: { diagnosedAt: "desc" },
-      distinct: ["patientId"],
-    });
-
-    const latestPayments = await prisma.payment.findMany({
-      where: institutionId
-        ? { patientId: { not: null }, patient: { institutionId } }
-        : { patientId: { not: null } },
-      select: { patientId: true, createdAt: true },
-      orderBy: { createdAt: "desc" },
-      distinct: ["patientId"],
-    });
+    // Birbirinden bağımsız defter sorgularını ardışık bekletmek, hasta sayısı
+    // arttıkça ekranın açılışını gereksiz yere uzatıyordu. Aynı tutarlı anlık
+    // görünüm için paralel okuyup son aşamada hasta kartlarıyla birleştiriyoruz.
+    const [
+      examGroups,
+      payGroups,
+      examDoctorRows,
+      latestTreatmentRows,
+      latestPayments,
+      activeTaksitPatientRows,
+    ] = await Promise.all([
+      prisma.examination.groupBy({
+        by: ["patientId"],
+        where: examinationWhere,
+        _sum: { amount: true },
+      }),
+      prisma.payment.groupBy({
+        by: ["patientId"],
+        _sum: { amount: true },
+        where: paymentWhere,
+      }),
+      prisma.examination.findMany({
+        where: examinationWhere,
+        select: {
+          patientId: true,
+          doctorId: true,
+          doctor: { select: { fullName: true } },
+        },
+        distinct: ["patientId", "doctorId"],
+      }),
+      prisma.examination.findMany({
+        where: examinationWhere,
+        select: {
+          patientId: true,
+          diagnosedAt: true,
+        },
+        orderBy: { diagnosedAt: "desc" },
+        distinct: ["patientId"],
+      }),
+      prisma.payment.findMany({
+        where: paymentWhere,
+        select: { patientId: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+        distinct: ["patientId"],
+      }),
+      prisma.taksitPlan.findMany({
+        where: {
+          status: "AKTIF",
+          ...(institutionId ? { patient: { institutionId } } : {}),
+        },
+        select: { patientId: true },
+        distinct: ["patientId"],
+      }),
+    ]);
 
     const doctorMap = new Map<string, Set<string>>();
     const treatmentDateMap = new Map<string, Date>();
@@ -99,14 +107,6 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
     // "Tüm Bakiyeler" bakiyesi taksit ödemelerini yansıtmaz (taksit tahsilatı
     // ayrı bir tabloda tutulur, Payment'a yazılmaz), UI'da bu belirsizliği
     // gizlemek yerine açıkça göstermek daha güvenli (bkz. denetim raporu).
-    const activeTaksitPatientRows = await prisma.taksitPlan.findMany({
-      where: {
-        status: "AKTIF",
-        ...(institutionId ? { patient: { institutionId } } : {}),
-      },
-      select: { patientId: true },
-      distinct: ["patientId"],
-    });
     const activeTaksitPatientIds = new Set(activeTaksitPatientRows.map((r) => r.patientId));
 
     // Patient bilgileri
@@ -114,6 +114,7 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
     const patients = await prisma.patient.findMany({
       where: {
         id: { in: patientIds },
+        archivedAt: null,
         ...(institutionId ? { institutionId } : {}),
       },
       select: { id: true, fullName: true, phone: true, discountRate: true },

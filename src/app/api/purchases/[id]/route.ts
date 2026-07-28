@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { purchaseUpdateSchema, formatZodError } from "@/lib/validators";
-import { applyStockMovement } from "@/lib/stock-ledger";
+import { applyStockMovement, reversePurchaseItemStock } from "@/lib/stock-ledger";
 import { resolveOrCreateStockItem } from "@/lib/purchase-helpers";
 import { findPurchasePayments, firmaIslemToken, purchasePaymentToken, sumPurchasePayments } from "@/lib/purchase-payment-links";
 import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
@@ -105,13 +105,12 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       for (const existing of purchase.items) {
         if (incomingIds.has(existing.id)) continue;
         if (isReceived) {
-          await applyStockMovement({
+          await reversePurchaseItemStock({
             tx,
+            purchaseItemId: existing.id,
             stockItemId: existing.stockItemId,
             institutionId,
             userId: auth.user.id,
-            type: "CIKIS",
-            quantity: Number(existing.quantity),
             note: `Satın alma düzeltmesi: satır silindi (${existing.productName})`,
           });
         }
@@ -126,6 +125,20 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         if (!existing) {
           // Yeni satır eklendi.
           const resolved = await resolveOrCreateStockItem(tx, institutionId, firma.name, incoming);
+          const lineTotal = Math.round(incoming.quantity * incoming.unitPrice * 100) / 100;
+          const createdItem = await tx.purchaseItem.create({
+            data: {
+              purchaseId: purchase.id,
+              stockItemId: resolved.id,
+              productName: resolved.name,
+              quantity: incoming.quantity,
+              unit: resolved.unit,
+              unitPrice: incoming.unitPrice,
+              lineTotal,
+              lotNo: incoming.lotNo || null,
+              expiresAt: incoming.expiresAt ? new Date(incoming.expiresAt) : null,
+            },
+          });
           const movement = isReceived
             ? await applyStockMovement({
                 tx,
@@ -137,21 +150,18 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
                 note: `${firma.name} satın alma düzeltmesi: yeni satır`,
                 supplier: firma.name,
                 unitPrice: incoming.unitPrice,
+                purchaseItemId: createdItem.id,
+                lotNo: incoming.lotNo,
+                receivedAt: purchase.receivedAt || purchase.tarih,
+                expiresAt: incoming.expiresAt,
               })
             : null;
-          const lineTotal = Math.round(incoming.quantity * incoming.unitPrice * 100) / 100;
-          await tx.purchaseItem.create({
-            data: {
-              purchaseId: purchase.id,
-              stockItemId: resolved.id,
-              productName: resolved.name,
-              quantity: incoming.quantity,
-              unit: resolved.unit,
-              unitPrice: incoming.unitPrice,
-              lineTotal,
-              stockMovementId: movement?.movement.id || null,
-            },
-          });
+          if (movement) {
+            await tx.purchaseItem.update({
+              where: { id: createdItem.id },
+              data: { stockMovementId: movement.movement.id },
+            });
+          }
           runningTotal += lineTotal;
           continue;
         }
@@ -166,17 +176,31 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
 
         if (productChanged) {
           if (isReceived) {
-            await applyStockMovement({
+            await reversePurchaseItemStock({
               tx,
+              purchaseItemId: existing.id,
               stockItemId: existing.stockItemId,
               institutionId,
               userId: auth.user.id,
-              type: "CIKIS",
-              quantity: Number(existing.quantity),
               note: `Satın alma düzeltmesi: ürün değiştirildi (${existing.productName} çıkarıldı)`,
             });
           }
           const resolved = resolvedIncoming || (await resolveOrCreateStockItem(tx, institutionId, firma.name, incoming));
+          const lineTotal = Math.round(incoming.quantity * incoming.unitPrice * 100) / 100;
+          await tx.purchaseItem.update({
+            where: { id: existing.id },
+            data: {
+              stockItemId: resolved.id,
+              productName: resolved.name,
+              quantity: incoming.quantity,
+              unit: resolved.unit,
+              unitPrice: incoming.unitPrice,
+              lineTotal,
+              stockMovementId: null,
+              lotNo: incoming.lotNo || null,
+              expiresAt: incoming.expiresAt ? new Date(incoming.expiresAt) : null,
+            },
+          });
           const movement = isReceived
             ? await applyStockMovement({
                 tx,
@@ -188,45 +212,74 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
                 note: `${firma.name} satın alma düzeltmesi: ürün değişti`,
                 supplier: firma.name,
                 unitPrice: incoming.unitPrice,
+                purchaseItemId: existing.id,
+                lotNo: incoming.lotNo,
+                receivedAt: purchase.receivedAt || purchase.tarih,
+                expiresAt: incoming.expiresAt,
               })
             : null;
-          const lineTotal = Math.round(incoming.quantity * incoming.unitPrice * 100) / 100;
-          await tx.purchaseItem.update({
-            where: { id: existing.id },
-            data: {
-              stockItemId: resolved.id,
-              productName: resolved.name,
-              quantity: incoming.quantity,
-              unit: resolved.unit,
-              unitPrice: incoming.unitPrice,
-              lineTotal,
-              stockMovementId: movement?.movement.id || null,
-            },
-          });
+          if (movement) {
+            await tx.purchaseItem.update({
+              where: { id: existing.id },
+              data: { stockMovementId: movement.movement.id },
+            });
+          }
           runningTotal += lineTotal;
           continue;
         }
 
-        // Aynı ürün: miktar/fiyat farkını uygula.
-        const delta = incoming.quantity - Number(existing.quantity);
-        if (isReceived && delta > 0) {
-          await applyStockMovement({
-            tx, stockItemId: existing.stockItemId, institutionId, userId: auth.user.id,
-            type: "GIRIS", quantity: delta, note: "Satın alma düzeltmesi: miktar arttırıldı",
-            supplier: firma.name,
-            unitPrice: incoming.unitPrice,
-          });
-        } else if (isReceived && delta < 0) {
-          await applyStockMovement({
-            tx, stockItemId: existing.stockItemId, institutionId, userId: auth.user.id,
-            type: "CIKIS", quantity: -delta, note: "Satın alma düzeltmesi: miktar azaltıldı",
+        // Aynı üründe miktar, maliyet veya parti bilgisi değiştiyse henüz
+        // tüketilmemiş eski parti kapatılır ve düzeltilmiş parti yeniden açılır.
+        const incomingExpiry = incoming.expiresAt ? new Date(incoming.expiresAt).getTime() : null;
+        const existingExpiry = existing.expiresAt ? new Date(existing.expiresAt).getTime() : null;
+        const stockDataChanged =
+          incoming.quantity !== Number(existing.quantity)
+          || incoming.unitPrice !== Number(existing.unitPrice)
+          || (incoming.lotNo || null) !== (existing.lotNo || null)
+          || incomingExpiry !== existingExpiry;
+        if (isReceived && stockDataChanged) {
+          await reversePurchaseItemStock({
+            tx,
+            purchaseItemId: existing.id,
+            stockItemId: existing.stockItemId,
+            institutionId,
+            userId: auth.user.id,
+            note: `Satın alma düzeltmesi: parti yeniden oluşturuldu (${existing.productName})`,
           });
         }
         const lineTotal = Math.round(incoming.quantity * incoming.unitPrice * 100) / 100;
         await tx.purchaseItem.update({
           where: { id: existing.id },
-          data: { quantity: incoming.quantity, unitPrice: incoming.unitPrice, lineTotal },
+          data: {
+            quantity: incoming.quantity,
+            unitPrice: incoming.unitPrice,
+            lineTotal,
+            lotNo: incoming.lotNo || null,
+            expiresAt: incoming.expiresAt ? new Date(incoming.expiresAt) : null,
+            stockMovementId: stockDataChanged && isReceived ? null : undefined,
+          },
         });
+        if (isReceived && stockDataChanged) {
+          const movement = await applyStockMovement({
+            tx,
+            stockItemId: existing.stockItemId,
+            institutionId,
+            userId: auth.user.id,
+            type: "GIRIS",
+            quantity: incoming.quantity,
+            note: "Satın alma düzeltmesi: parti yeniden oluşturuldu",
+            supplier: firma.name,
+            unitPrice: incoming.unitPrice,
+            purchaseItemId: existing.id,
+            lotNo: incoming.lotNo,
+            receivedAt: purchase.receivedAt || purchase.tarih,
+            expiresAt: incoming.expiresAt,
+          });
+          await tx.purchaseItem.update({
+            where: { id: existing.id },
+            data: { stockMovementId: movement.movement.id },
+          });
+        }
         runningTotal += lineTotal;
       }
 
@@ -280,7 +333,10 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         await tx.expense.updateMany({
           where: {
             status: "AKTIF",
-            description: { contains: firmaIslemToken(payment.id) },
+            OR: [
+              { sourceType: "FIRMA_ISLEM", sourceId: payment.id },
+              { description: { contains: firmaIslemToken(payment.id) } },
+            ],
           },
           data: {
             faturaNo: newFaturaNo,

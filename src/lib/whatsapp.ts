@@ -1,4 +1,6 @@
+import { isIP } from "net";
 import { prisma } from "@/lib/prisma";
+import { decryptField, encryptField } from "@/lib/field-crypto";
 
 export type WhatsappSendResult = {
   success: boolean;
@@ -8,10 +10,24 @@ export type WhatsappSendResult = {
   providerCode?: string;
 };
 
+export type WhatsappSendOptions = {
+  institutionId?: string | null;
+  patientId?: string | null;
+  appointmentId?: string | null;
+  countryCode?: string | null;
+  template?: {
+    name?: string;
+    language?: string;
+    bodyParameters?: string[];
+  };
+};
+
 type ProviderConfig = {
   id: string;
+  institutionId: string | null;
   code: string;
   name: string;
+  providerType: string;
   isActive: boolean;
   priority: number;
   sendUrl: string | null;
@@ -23,124 +39,344 @@ type ProviderConfig = {
   headersJson: string | null;
   bodyTemplate: string | null;
   successPattern: string | null;
+  phoneNumberId: string | null;
+  businessAccountId: string | null;
+  apiVersion: string;
+  appointmentTemplateName: string | null;
+  appointmentTemplateLanguage: string;
 };
 
-// Aynı normalizasyon kuralı src/lib/sms.ts'deki normalizePhone() ile aynı —
-// WhatsApp API'leri de genelde numarayı ülke koduyla (90XXXXXXXXXX) ister.
-function normalizePhone(raw: string): string | null {
-  const digits = raw.replace(/\D/g, "");
-  if (digits.length === 10) return `90${digits}`;
-  if (digits.length === 11 && digits.startsWith("0")) return `9${digits}`;
-  if (digits.length === 12 && digits.startsWith("90")) return digits;
+export function normalizeWhatsappPhone(raw: string, countryCode?: string | null): string | null {
+  const phoneDigits = raw.replace(/\D/g, "");
+  const countryDigits = String(countryCode || "").replace(/\D/g, "");
+  if (!phoneDigits) return null;
+
+  if (raw.trim().startsWith("+") && phoneDigits.length >= 8 && phoneDigits.length <= 15) {
+    return phoneDigits;
+  }
+  if (countryDigits) {
+    const local = phoneDigits.replace(/^0+/, "");
+    const combined = phoneDigits.startsWith(countryDigits) ? phoneDigits : `${countryDigits}${local}`;
+    return combined.length >= 8 && combined.length <= 15 ? combined : null;
+  }
+  if (phoneDigits.length === 10) return `90${phoneDigits}`;
+  if (phoneDigits.length === 11 && phoneDigits.startsWith("0")) return `9${phoneDigits}`;
+  if (phoneDigits.length >= 8 && phoneDigits.length <= 15) return phoneDigits;
   return null;
 }
 
-function parseHeaders(headersJson: string | null): Record<string, string> {
+function parseHeaders(headersJson: string | null, vars: Record<string, string>): Record<string, string> {
   if (!headersJson) return {};
   try {
     const parsed = JSON.parse(headersJson);
-    return typeof parsed === "object" && parsed ? (parsed as Record<string, string>) : {};
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed as Record<string, unknown>).map(([key, value]) => [
+        key,
+        renderTemplate(String(value ?? ""), vars),
+      ]),
+    );
   } catch {
     return {};
   }
 }
 
-function renderBodyTemplate(template: string, vars: Record<string, string>) {
+function renderTemplate(template: string, vars: Record<string, string>) {
   return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
+}
+
+function validateOutboundUrl(raw: string) {
+  const url = new URL(raw);
+  if (url.protocol !== "https:") throw new Error("WhatsApp gönderim adresi HTTPS olmalıdır.");
+  const host = url.hostname.toLowerCase();
+  if (
+    host === "localhost" ||
+    host.endsWith(".local") ||
+    host === "0.0.0.0" ||
+    host === "::1" ||
+    (isIP(host) && (
+      host.startsWith("10.") ||
+      host.startsWith("127.") ||
+      host.startsWith("169.254.") ||
+      host.startsWith("192.168.") ||
+      /^172\.(1[6-9]|2\d|3[01])\./.test(host)
+    ))
+  ) {
+    throw new Error("Yerel veya özel ağ adreslerine WhatsApp isteği gönderilemez.");
+  }
+  return url.toString();
+}
+
+function extractMessageId(raw: string) {
+  try {
+    const data = JSON.parse(raw);
+    return data?.messages?.[0]?.id || data?.messageId || data?.id || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function sendWithMockProvider(provider: ProviderConfig, phone: string, message: string): Promise<WhatsappSendResult> {
   const mockId = `MOCK-WA-${Date.now()}`;
-  const payload = { provider: provider.code, phone, message, sender: provider.sender || "KlinikPanel", queuedAt: new Date().toISOString() };
-
+  const payload = {
+    provider: provider.code,
+    phone,
+    message,
+    sender: provider.sender || "KlinikPanel",
+    queuedAt: new Date().toISOString(),
+  };
   await prisma.mockWhatsappLog.create({
-    data: { phone, message, sender: provider.sender || "KlinikPanel", status: "SENT", responseData: JSON.stringify(payload) },
+    data: {
+      phone,
+      message,
+      sender: provider.sender || "KlinikPanel",
+      status: "SENT",
+      responseData: JSON.stringify(payload),
+    },
   });
-
-  return { success: true, providerMessageId: mockId, providerRaw: JSON.stringify(payload), providerCode: provider.code };
+  return {
+    success: true,
+    providerMessageId: mockId,
+    providerRaw: JSON.stringify(payload),
+    providerCode: provider.code,
+  };
 }
 
-async function sendWithCustomProvider(provider: ProviderConfig, phone: string, message: string): Promise<WhatsappSendResult> {
-  if (!provider.sendUrl) {
-    return { success: false, providerRaw: "CUSTOM_SEND_URL_MISSING", error: "WhatsApp sağlayıcı gönderim adresi tanımlı değil", providerCode: provider.code };
+async function sendWithMetaProvider(
+  provider: ProviderConfig,
+  phone: string,
+  message: string,
+  options: WhatsappSendOptions,
+): Promise<WhatsappSendResult> {
+  const token = decryptField(provider.apiKey || "");
+  if (!provider.phoneNumberId || !token) {
+    return {
+      success: false,
+      providerRaw: "META_CONFIG_MISSING",
+      error: "Meta telefon numarası kimliği veya erişim anahtarı eksik.",
+      providerCode: provider.code,
+    };
   }
 
-  const headers = parseHeaders(provider.headersJson);
-  if (!headers["Content-Type"] && !headers["content-type"]) {
-    headers["Content-Type"] = "application/json";
-  }
+  const templateName = options.template?.name || provider.appointmentTemplateName;
+  const language = options.template?.language || provider.appointmentTemplateLanguage || "tr";
+  const body = templateName
+    ? {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: phone,
+        type: "template",
+        template: {
+          name: templateName,
+          language: { code: language },
+          ...(options.template?.bodyParameters?.length
+            ? {
+                components: [{
+                  type: "body",
+                  parameters: options.template.bodyParameters.map((text) => ({ type: "text", text })),
+                }],
+              }
+            : {}),
+        },
+      }
+    : {
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to: phone,
+        type: "text",
+        text: { preview_url: false, body: message },
+      };
 
-  const bodyTemplate = provider.bodyTemplate || '{"phone":"{{phone}}","message":"{{message}}"}';
-  const body = renderBodyTemplate(bodyTemplate, {
-    phone, message,
-    username: provider.username || "", password: provider.password || "",
-    apiKey: provider.apiKey || "", sender: provider.sender || "",
-  });
-
-  const response = await fetch(provider.sendUrl, {
-    method: (provider.httpMethod || "POST").toUpperCase(),
-    headers,
-    body,
-  });
-
+  const response = await fetch(
+    `https://graph.facebook.com/${provider.apiVersion || "v23.0"}/${provider.phoneNumberId}/messages`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(12_000),
+    },
+  );
   const raw = (await response.text()).trim();
-
-  if (provider.successPattern) {
-    const ok = raw.includes(provider.successPattern);
-    return { success: ok, providerRaw: raw, error: ok ? undefined : `Başarılı yanıt ölçütü bulunamadı: ${provider.successPattern}`, providerCode: provider.code };
-  }
-
-  return { success: response.ok, providerRaw: raw, error: response.ok ? undefined : `HTTP ${response.status}`, providerCode: provider.code };
+  return {
+    success: response.ok,
+    providerMessageId: extractMessageId(raw),
+    providerRaw: raw,
+    error: response.ok ? undefined : `Meta WhatsApp API HTTP ${response.status}`,
+    providerCode: provider.code,
+  };
 }
 
-async function sendWithProvider(provider: ProviderConfig, phone: string, message: string): Promise<WhatsappSendResult> {
-  if (provider.code === "MOCK") return sendWithMockProvider(provider, phone, message);
+async function sendWithCustomProvider(
+  provider: ProviderConfig,
+  phone: string,
+  message: string,
+): Promise<WhatsappSendResult> {
+  if (!provider.sendUrl) {
+    return {
+      success: false,
+      providerRaw: "CUSTOM_SEND_URL_MISSING",
+      error: "WhatsApp sağlayıcı gönderim adresi tanımlı değil.",
+      providerCode: provider.code,
+    };
+  }
+
+  const vars = {
+    phone,
+    message,
+    username: provider.username || "",
+    password: decryptField(provider.password || ""),
+    apiKey: decryptField(provider.apiKey || ""),
+    sender: provider.sender || "",
+  };
+  const headers = parseHeaders(provider.headersJson, vars);
+  if (!headers["Content-Type"] && !headers["content-type"]) headers["Content-Type"] = "application/json";
+  const bodyTemplate = provider.bodyTemplate || '{"phone":"{{phone}}","message":"{{message}}"}';
+
+  try {
+    const response = await fetch(validateOutboundUrl(provider.sendUrl), {
+      method: (provider.httpMethod || "POST").toUpperCase(),
+      headers,
+      body: renderTemplate(bodyTemplate, vars),
+      signal: AbortSignal.timeout(12_000),
+    });
+    const raw = (await response.text()).trim();
+    const success = provider.successPattern ? raw.includes(provider.successPattern) : response.ok;
+    return {
+      success,
+      providerMessageId: extractMessageId(raw),
+      providerRaw: raw,
+      error: success ? undefined : `WhatsApp sağlayıcısı HTTP ${response.status}`,
+      providerCode: provider.code,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      providerRaw: "CUSTOM_PROVIDER_ERROR",
+      error: error instanceof Error ? error.message : "WhatsApp sağlayıcısına erişilemedi.",
+      providerCode: provider.code,
+    };
+  }
+}
+
+async function sendWithProvider(
+  provider: ProviderConfig,
+  phone: string,
+  message: string,
+  options: WhatsappSendOptions,
+) {
+  if (provider.code === "MOCK" || provider.providerType === "MOCK") {
+    return sendWithMockProvider(provider, phone, message);
+  }
+  if (provider.providerType === "META_CLOUD") {
+    return sendWithMetaProvider(provider, phone, message, options);
+  }
   return sendWithCustomProvider(provider, phone, message);
 }
 
 export async function getWhatsappProviderConfigs() {
-  return prisma.whatsappProviderConfig.findMany({ orderBy: [{ priority: "asc" }, { createdAt: "asc" }] });
+  return prisma.whatsappProviderConfig.findMany({
+    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+  });
 }
 
 export async function testWhatsappProviderSend(providerId: string, phoneRaw: string, message: string) {
   const provider = await prisma.whatsappProviderConfig.findUnique({ where: { id: providerId } });
   if (!provider) {
-    return { success: false, providerRaw: "PROVIDER_NOT_FOUND", error: "WhatsApp sağlayıcısı bulunamadı." } as WhatsappSendResult;
+    return {
+      success: false,
+      providerRaw: "PROVIDER_NOT_FOUND",
+      error: "WhatsApp sağlayıcısı bulunamadı.",
+    } as WhatsappSendResult;
   }
-  const normalizedPhone = normalizePhone(phoneRaw);
+  const normalizedPhone = normalizeWhatsappPhone(phoneRaw);
   if (!normalizedPhone) {
-    return { success: false, providerRaw: "INVALID_PHONE", error: `Geçersiz telefon numarası: ${phoneRaw}`, providerCode: provider.code };
+    return {
+      success: false,
+      providerRaw: "INVALID_PHONE",
+      error: `Geçersiz telefon numarası: ${phoneRaw}`,
+      providerCode: provider.code,
+    };
   }
-  return sendWithProvider(provider, normalizedPhone, message);
+  return sendWithProvider(provider, normalizedPhone, message, {});
 }
 
-/**
- * Kurumun WhatsApp kanalı açıksa (Institution.whatsappEnabled, yalnızca
- * süperadmin tarafından ayarlanır) ve aktif bir sağlayıcı varsa buradan
- * gönderim yapılır — SMS bakiyesi TÜKETİLMEZ. Kanal kapalıysa veya aktif
- * sağlayıcı yoksa null döner; çağıran taraf bu durumda SMS'e düşmelidir.
- */
-export async function sendWhatsapp(phoneRaw: string, message: string): Promise<WhatsappSendResult> {
-  const normalizedPhone = normalizePhone(phoneRaw);
+export async function sendWhatsapp(
+  phoneRaw: string,
+  message: string,
+  options: WhatsappSendOptions = {},
+): Promise<WhatsappSendResult> {
+  const normalizedPhone = normalizeWhatsappPhone(phoneRaw, options.countryCode);
   if (!normalizedPhone) {
-    return { success: false, providerRaw: "INVALID_PHONE", error: `Geçersiz telefon numarası: ${phoneRaw}` };
+    return {
+      success: false,
+      providerRaw: "INVALID_PHONE",
+      error: `Geçersiz telefon numarası: ${phoneRaw}`,
+    };
+  }
+
+  if (options.patientId) {
+    const patient = await prisma.patient.findUnique({
+      where: { id: options.patientId },
+      select: { whatsappOptInAt: true, whatsappOptOutAt: true },
+    });
+    if (patient?.whatsappOptOutAt || !patient?.whatsappOptInAt) {
+      return {
+        success: false,
+        providerRaw: "WHATSAPP_CONSENT_REQUIRED",
+        error: "Hastanın WhatsApp iletişim izni bulunmuyor.",
+      };
+    }
   }
 
   const providers = await prisma.whatsappProviderConfig.findMany({
-    where: { isActive: true },
-    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+    where: {
+      isActive: true,
+      ...(options.institutionId
+        ? { OR: [{ institutionId: options.institutionId }, { institutionId: null }] }
+        : {}),
+    },
+    orderBy: [{ institutionId: "desc" }, { priority: "asc" }, { createdAt: "asc" }],
   });
-
   if (providers.length === 0) {
-    return { success: false, providerRaw: "NO_ACTIVE_PROVIDER", error: "Aktif bir WhatsApp sağlayıcısı tanımlı değil." };
+    return {
+      success: false,
+      providerRaw: "NO_ACTIVE_PROVIDER",
+      error: "Aktif bir WhatsApp sağlayıcısı tanımlı değil.",
+    };
   }
 
   const errors: string[] = [];
   for (const provider of providers) {
-    const result = await sendWithProvider(provider, normalizedPhone, message);
+    const result = await sendWithProvider(provider, normalizedPhone, message, options);
+    if (options.institutionId) {
+      await prisma.whatsappMessage.create({
+        data: {
+          institutionId: options.institutionId,
+          providerId: provider.id,
+          patientId: options.patientId || null,
+          appointmentId: options.appointmentId || null,
+          externalMessageId: result.providerMessageId || null,
+          direction: "OUTBOUND",
+          status: result.success ? "SENT" : "FAILED",
+          phone: normalizedPhone,
+          content: encryptField(message),
+          templateName: options.template?.name || provider.appointmentTemplateName || null,
+          errorDetail: result.success ? null : result.error || result.providerRaw.slice(0, 1000),
+          sentAt: result.success ? new Date() : null,
+          failedAt: result.success ? null : new Date(),
+        },
+      });
+    }
     if (result.success) return result;
     errors.push(`${provider.code}: ${result.error || result.providerRaw}`);
   }
 
-  return { success: false, providerRaw: errors.join(" | "), error: "Tüm etkin WhatsApp sağlayıcılarıyla gönderim başarısız oldu." };
+  return {
+    success: false,
+    providerRaw: errors.join(" | "),
+    error: "Tüm etkin WhatsApp sağlayıcılarıyla gönderim başarısız oldu.",
+  };
 }

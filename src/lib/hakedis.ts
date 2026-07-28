@@ -116,7 +116,12 @@ export async function computeDoctorMonthlyHakedis(params: {
   const patientIds = [...new Set(examinations.map((e) => e.patientId))];
   const patientPayments = patientIds.length > 0
     ? await prisma.payment.findMany({
-        where: { patientId: { in: patientIds }, doctorId, createdAt: { gte: rangeStart, lte: rangeEnd } },
+        where: {
+          patientId: { in: patientIds },
+          doctorId,
+          status: "ACTIVE",
+          createdAt: { gte: rangeStart, lte: rangeEnd },
+        },
         select: { amount: true, method: true, createdAt: true },
       })
     : [];
@@ -200,6 +205,8 @@ export async function isDoctorPeriodSettled(doctorId: string, institutionId: str
       where: {
         doctorId,
         patientId: null,
+        status: "ACTIVE",
+        ...(institutionId ? { institutionId } : {}),
         createdAt: { gte: monthRangeUtc(year, month).start, lte: monthRangeUtc(year, month).end },
       },
     }),
@@ -232,7 +239,13 @@ export async function computeDoctorMonthlyOdenen(params: {
       select: { tutar: true, periodYear: true, periodMonth: true, tarih: true },
     }),
     prisma.payment.findMany({
-      where: { doctorId, patientId: null, createdAt: { gte: rangeStart, lte: rangeEnd } },
+      where: {
+        doctorId,
+        patientId: null,
+        status: "ACTIVE",
+        ...(institutionId ? { institutionId } : {}),
+        createdAt: { gte: rangeStart, lte: rangeEnd },
+      },
       select: { amount: true, createdAt: true },
     }),
   ]);
@@ -285,7 +298,13 @@ export async function getDoctorMonthDetail(params: {
   const patientIds = [...new Set(examinations.map((e) => e.patientId))];
   const patientPayments = patientIds.length > 0
     ? await prisma.payment.findMany({
-        where: { patientId: { in: patientIds }, doctorId, createdAt: { gte: start, lte: end } },
+        where: {
+          patientId: { in: patientIds },
+          doctorId,
+          status: "ACTIVE",
+          ...(institutionId ? { institutionId } : {}),
+          createdAt: { gte: start, lte: end },
+        },
         select: { id: true, createdAt: true, amount: true, method: true, patient: { select: { fullName: true } } },
         orderBy: { createdAt: "asc" },
       })

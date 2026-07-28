@@ -116,6 +116,7 @@ function HastaContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const summaryLoadedRef = useRef(false);
   useSlashFocus(searchInputRef);
 
   const [query, setQuery] = useState(searchParams.get("q") || "");
@@ -205,6 +206,7 @@ function HastaContent() {
       sortDir,
     });
     if (doctorId) params.set("doctorId", doctorId);
+    if (summaryLoadedRef.current && !force) params.set("summary", "false");
 
     try {
       const url = `/api/patients?${params.toString()}`;
@@ -213,7 +215,10 @@ function HastaContent() {
       setPatients(Array.isArray(json.patients) ? json.patients : []);
       setTotal(Number(json.total || 0));
       setPageCount(Math.max(1, Number(json.pageCount || 1)));
-      setSummary(json.summary);
+      if (json.summary) {
+        summaryLoadedRef.current = true;
+        setSummary(json.summary);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Hasta listesi yüklenemedi");
       // Bir filtre yenilenirken mevcut tabloyu boşaltmak, ekranda gereksiz
@@ -244,11 +249,11 @@ function HastaContent() {
     const patient = patients.find((p) => p.id === id);
     if (
       !(await confirmDialog({
-        title: `"${patient?.fullName || "Hasta"}" kalıcı olarak silinecek`,
+        title: `"${patient?.fullName || "Hasta"}" arşivlensin mi?`,
         message:
-          "Bu işlemle birlikte randevu, muayene, ödeme, taksit, reçete ve laboratuvar kayıtları da silinir.\n\nKurumsal kullanımda arşivleme tercih edilmelidir. Yine de devam etmek istiyor musunuz?",
+          "Hasta aktif listeden kaldırılır. Klinik, finans, laboratuvar ve yasal kayıt geçmişi korunur; gelecekteki randevular iptal edilir.",
         danger: true,
-        confirmText: "Kalıcı Olarak Sil",
+        confirmText: "Arşivle",
       }))
     ) {
       return;

@@ -121,7 +121,14 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       // aynı tutar/tarih/açıklamayla daha önce içe aktarılmış bir kayıt var mı
       // kontrol edilir.
       const duplicate = await prisma.payment.findFirst({
-        where: { patientId, amount: data.amount, createdAt, description },
+        where: {
+          institutionId: params.id,
+          status: "ACTIVE",
+          patientId,
+          amount: data.amount,
+          createdAt,
+          description,
+        },
         select: { id: true },
       });
       if (duplicate) {
@@ -131,6 +138,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
       await prisma.payment.create({
         data: {
+          institutionId: params.id,
           patientId,
           doctorId,
           method: data.method as never,

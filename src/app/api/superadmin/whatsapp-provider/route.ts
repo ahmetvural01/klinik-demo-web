@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { encryptField } from "@/lib/field-crypto";
 
 export async function GET() {
   const auth = await requireAuth("superadmin");
@@ -19,8 +20,12 @@ export async function GET() {
       ...p,
       password: p.password ? "********" : "",
       apiKey: p.apiKey ? "********" : "",
+      verifyToken: p.verifyToken ? "********" : "",
+      appSecret: p.appSecret ? "********" : "",
       hasPassword: Boolean(p.password),
       hasApiKey: Boolean(p.apiKey),
+      hasVerifyToken: Boolean(p.verifyToken),
+      hasAppSecret: Boolean(p.appSecret),
     })),
   });
 }
@@ -36,6 +41,8 @@ export async function POST(request: NextRequest) {
   const body = await request.json() as {
     code?: string;
     name?: string;
+    institutionId?: string;
+    providerType?: string;
     isActive?: boolean;
     priority?: number;
     sendUrl?: string;
@@ -47,6 +54,13 @@ export async function POST(request: NextRequest) {
     headersJson?: string;
     bodyTemplate?: string;
     successPattern?: string;
+    phoneNumberId?: string;
+    businessAccountId?: string;
+    verifyToken?: string;
+    appSecret?: string;
+    apiVersion?: string;
+    appointmentTemplateName?: string;
+    appointmentTemplateLanguage?: string;
   };
 
   if (!body.code || !body.name) {
@@ -61,18 +75,27 @@ export async function POST(request: NextRequest) {
     return tx.whatsappProviderConfig.create({
       data: {
         code: (body.code ?? "").toUpperCase(),
+        institutionId: body.institutionId || null,
         name: body.name ?? "",
+        providerType: body.providerType || "CUSTOM",
         isActive: body.isActive ?? false,
         priority: Number(body.priority ?? 100),
         sendUrl: body.sendUrl || null,
         httpMethod: (body.httpMethod || "POST").toUpperCase(),
         username: body.username || null,
-        password: body.password || null,
-        apiKey: body.apiKey || null,
+        password: body.password ? encryptField(body.password) : null,
+        apiKey: body.apiKey ? encryptField(body.apiKey) : null,
         sender: body.sender || null,
         headersJson: body.headersJson || null,
         bodyTemplate: body.bodyTemplate || null,
         successPattern: body.successPattern || null,
+        phoneNumberId: body.phoneNumberId || null,
+        businessAccountId: body.businessAccountId || null,
+        verifyToken: body.verifyToken ? encryptField(body.verifyToken) : null,
+        appSecret: body.appSecret ? encryptField(body.appSecret) : null,
+        apiVersion: body.apiVersion || "v23.0",
+        appointmentTemplateName: body.appointmentTemplateName || null,
+        appointmentTemplateLanguage: body.appointmentTemplateLanguage || "tr",
       },
     });
   });
@@ -91,7 +114,9 @@ export async function PUT(request: NextRequest) {
 
   const body = await request.json() as {
     id?: string;
+    institutionId?: string;
     name?: string;
+    providerType?: string;
     isActive?: boolean;
     priority?: number;
     sendUrl?: string;
@@ -103,6 +128,13 @@ export async function PUT(request: NextRequest) {
     headersJson?: string;
     bodyTemplate?: string;
     successPattern?: string;
+    phoneNumberId?: string;
+    businessAccountId?: string;
+    verifyToken?: string;
+    appSecret?: string;
+    apiVersion?: string;
+    appointmentTemplateName?: string;
+    appointmentTemplateLanguage?: string;
   };
 
   if (!body.id) {
@@ -124,17 +156,32 @@ export async function PUT(request: NextRequest) {
       where: { id: body.id },
       data: {
         name: body.name ?? current.name,
+        institutionId: body.institutionId === undefined ? current.institutionId : (body.institutionId || null),
+        providerType: body.providerType ?? current.providerType,
         isActive: body.isActive ?? current.isActive,
         priority: body.priority == null ? current.priority : Number(body.priority),
         sendUrl: body.sendUrl === undefined ? current.sendUrl : (body.sendUrl || null),
         httpMethod: body.httpMethod ? body.httpMethod.toUpperCase() : current.httpMethod,
         username: body.username === undefined ? current.username : (body.username || null),
-        password: body.password === undefined || body.password === "" ? current.password : body.password,
-        apiKey: body.apiKey === undefined || body.apiKey === "" ? current.apiKey : body.apiKey,
+        password: body.password === undefined || body.password === "" ? current.password : encryptField(body.password),
+        apiKey: body.apiKey === undefined || body.apiKey === "" ? current.apiKey : encryptField(body.apiKey),
         sender: body.sender === undefined ? current.sender : (body.sender || null),
         headersJson: body.headersJson === undefined ? current.headersJson : (body.headersJson || null),
         bodyTemplate: body.bodyTemplate === undefined ? current.bodyTemplate : (body.bodyTemplate || null),
         successPattern: body.successPattern === undefined ? current.successPattern : (body.successPattern || null),
+        phoneNumberId: body.phoneNumberId === undefined ? current.phoneNumberId : (body.phoneNumberId || null),
+        businessAccountId: body.businessAccountId === undefined ? current.businessAccountId : (body.businessAccountId || null),
+        verifyToken: body.verifyToken === undefined || body.verifyToken === ""
+          ? current.verifyToken
+          : encryptField(body.verifyToken),
+        appSecret: body.appSecret === undefined || body.appSecret === ""
+          ? current.appSecret
+          : encryptField(body.appSecret),
+        apiVersion: body.apiVersion || current.apiVersion,
+        appointmentTemplateName: body.appointmentTemplateName === undefined
+          ? current.appointmentTemplateName
+          : (body.appointmentTemplateName || null),
+        appointmentTemplateLanguage: body.appointmentTemplateLanguage || current.appointmentTemplateLanguage,
       },
     });
   });

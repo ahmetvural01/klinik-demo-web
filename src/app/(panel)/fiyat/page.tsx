@@ -147,6 +147,8 @@ function FiyatManagement() {
 		if (stored === "standard" || stored === "custom") setActiveList(stored);
 		void loadSettings();
 		void loadAll();
+	// İlk yüklemede yalnızca bir kez çalışması gereken başlangıç fonksiyonları.
+	// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
 	const loadSettings = async () => {

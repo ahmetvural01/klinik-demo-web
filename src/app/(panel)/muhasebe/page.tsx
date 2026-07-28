@@ -1065,14 +1065,14 @@ export default function MuhasebePage() {
 
   const deletePayment = async (id: string) => {
     if (!(await confirmDialog({
-      title: "Tahsilat silinecek",
-      message: "Bu tahsilat kaydı ve bağlı taksit etkileri geri alınır. Devam etmek istiyor musunuz?",
+      title: "Tahsilat iptal edilecek",
+      message: "Tahsilatın finansal etkileri geri alınır; denetim geçmişi korunur. Devam etmek istiyor musunuz?",
       danger: true,
-      confirmText: "Tahsilatı Sil",
+      confirmText: "Tahsilatı İptal Et",
     }))) return;
     const r = await fetch(`/api/payments/${id}`, { method: "DELETE" }).catch(() => null);
-    if (r?.ok) { showToast("success", "Tahsilat silindi"); loadPayments(); refreshSummary(); }
-    else showToast("error", "Tahsilat silinemedi");
+    if (r?.ok) { showToast("success", "Tahsilat iptal edildi"); loadPayments(); refreshSummary(); }
+    else showToast("error", "Tahsilat iptal edilemedi");
   };
 
   const exportRows = useMemo(() => ledgerRows.map(row => ({
@@ -1141,6 +1141,7 @@ export default function MuhasebePage() {
   type HakedisOzetRow = { doctor: { id: string; fullName: string }; ciro: number; hakedilen: number; odenen: number; kalan: number };
   const [hakedisOzet, setHakedisOzet] = useState<HakedisOzetRow[]>([]);
   const [hakedisOzetLoading, setHakedisOzetLoading] = useState(false);
+  const lastVisibleRefreshAtRef = useRef(0);
 
   useLayoutEffect(() => {
     const cached = readMuhasebeCache();
@@ -1283,18 +1284,19 @@ export default function MuhasebePage() {
   }, [activeTab]);
 
   useEffect(() => { if (taksitSubTab === "hatirlatma") loadReminders(); }, [taksitSubTab, loadReminders]);
-  useEffect(() => { if (activeTab === "alacak") loadTaksitPlans(); }, [activeTab, loadTaksitPlans]);
-
   // Başka bir personel ödeme/gider/taksit/borç kaydı ekleyince aktif sekmeyi
   // sessizce (sayfa yenilemeden) tazele.
   const refreshActiveTab = useCallback(() => {
-    refreshSummary();
     if (activeTab === "defter") {
       loadPayments();
       loadExpenses();
       loadGiderKats();
     }
-    if (activeTab === "alacak") { loadTaksitPlans(); loadAlacaklar(); }
+    if (activeTab === "alacak") {
+      refreshSummary();
+      loadTaksitPlans();
+      loadAlacaklar();
+    }
     if (activeTab === "hakedis") {
       if (selectedDoctor) loadDoctorFinance(selectedDoctor);
       else loadHakedisOzet();
@@ -1320,6 +1322,8 @@ export default function MuhasebePage() {
   useEffect(() => {
     const refreshVisible = () => {
       if (typeof document !== "undefined" && document.hidden) return;
+      if (Date.now() - lastVisibleRefreshAtRef.current < 10_000) return;
+      lastVisibleRefreshAtRef.current = Date.now();
       refreshActiveTab();
     };
     window.addEventListener("focus", refreshVisible);

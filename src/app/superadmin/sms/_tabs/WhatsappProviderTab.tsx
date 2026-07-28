@@ -10,8 +10,10 @@ import { showToastSafe } from "@/lib/toast-client";
 
 type Provider = {
   id: string;
+  institutionId: string | null;
   code: string;
   name: string;
+  providerType: string;
   isActive: boolean;
   priority: number;
   sendUrl: string | null;
@@ -23,18 +25,30 @@ type Provider = {
   headersJson: string | null;
   bodyTemplate: string | null;
   successPattern: string | null;
+  phoneNumberId: string | null;
+  businessAccountId: string | null;
+  apiVersion: string;
+  appointmentTemplateName: string | null;
+  appointmentTemplateLanguage: string;
+  hasVerifyToken: boolean;
+  hasAppSecret: boolean;
 };
+
+type InstitutionOption = { id: string; name: string };
 
 const inputClass = "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
 
 const emptyForm = {
-  code: "", name: "", priority: "100", sendUrl: "", httpMethod: "POST",
+  code: "", name: "", institutionId: "", providerType: "META_CLOUD", priority: "100", sendUrl: "", httpMethod: "POST",
   username: "", password: "", apiKey: "", sender: "", headersJson: "", bodyTemplate: "", successPattern: "",
+  phoneNumberId: "", businessAccountId: "", verifyToken: "", appSecret: "", apiVersion: "v23.0",
+  appointmentTemplateName: "", appointmentTemplateLanguage: "tr",
   isActive: false,
 };
 
 export default function WhatsappProviderTab() {
   const [providers, setProviders] = useState<Provider[]>([]);
+  const [institutions, setInstitutions] = useState<InstitutionOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<Provider | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -53,7 +67,13 @@ export default function WhatsappProviderTab() {
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    fetch("/api/superadmin/institutions?take=500")
+      .then((response) => response.json())
+      .then((body) => setInstitutions(Array.isArray(body) ? body : body?.institutions || []))
+      .catch(() => setInstitutions([]));
+  }, []);
 
   const openCreate = () => {
     setEditing(null);
@@ -65,10 +85,16 @@ export default function WhatsappProviderTab() {
     setEditing(p);
     setForm({
       code: p.code, name: p.name, priority: String(p.priority),
+      institutionId: p.institutionId || "",
+      providerType: p.providerType,
       sendUrl: p.sendUrl ?? "", httpMethod: p.httpMethod,
       username: p.username ?? "", password: "", apiKey: "",
       sender: p.sender ?? "", headersJson: p.headersJson ?? "", bodyTemplate: p.bodyTemplate ?? "",
       successPattern: p.successPattern ?? "", isActive: p.isActive,
+      phoneNumberId: p.phoneNumberId ?? "", businessAccountId: p.businessAccountId ?? "",
+      verifyToken: "", appSecret: "", apiVersion: p.apiVersion || "v23.0",
+      appointmentTemplateName: p.appointmentTemplateName ?? "",
+      appointmentTemplateLanguage: p.appointmentTemplateLanguage || "tr",
     });
     setShowForm(true);
   };
@@ -211,6 +237,21 @@ export default function WhatsappProviderTab() {
           <FormField label="Ad" required>
             <input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Meta WhatsApp Cloud API" />
           </FormField>
+          <FormField label="Kurum" hint="Gelen mesajların doğru kliniğe bağlanması için Meta sağlayıcısında zorunludur.">
+            <select className={inputClass} value={form.institutionId} onChange={(e) => setForm({ ...form, institutionId: e.target.value })}>
+              <option value="">Platform geneli / yalnızca gönderim</option>
+              {institutions.map((institution) => (
+                <option key={institution.id} value={institution.id}>{institution.name}</option>
+              ))}
+            </select>
+          </FormField>
+          <FormField label="Sağlayıcı Türü" required>
+            <select className={inputClass} value={form.providerType} onChange={(e) => setForm({ ...form, providerType: e.target.value })}>
+              <option value="META_CLOUD">Meta WhatsApp Cloud API</option>
+              <option value="CUSTOM">Özel HTTP sağlayıcısı</option>
+              <option value="MOCK">Test sağlayıcısı</option>
+            </select>
+          </FormField>
           <FormField label="Öncelik">
             <input type="number" className={inputClass} value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} />
           </FormField>
@@ -220,11 +261,11 @@ export default function WhatsappProviderTab() {
               <option value="GET">GET</option>
             </select>
           </FormField>
-          <div className="sm:col-span-2">
+          {form.providerType === "CUSTOM" && <div className="sm:col-span-2">
             <FormField label="Gönderim URL">
               <input className={inputClass} value={form.sendUrl} onChange={(e) => setForm({ ...form, sendUrl: e.target.value })} placeholder="https://graph.facebook.com/v20.0/{{phoneNumberId}}/messages" />
             </FormField>
-          </div>
+          </div>}
           <FormField label="Kullanıcı Adı">
             <input className={inputClass} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
           </FormField>
@@ -237,21 +278,46 @@ export default function WhatsappProviderTab() {
           <FormField label="API Anahtarı / Erişim Token" hint={editing ? "Değiştirmek istemiyorsanız boş bırakın" : undefined}>
             <input type="password" className={inputClass} value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder="••••••••" />
           </FormField>
-          <div className="sm:col-span-2">
+          {form.providerType === "META_CLOUD" && (
+            <>
+              <FormField label="Telefon Numarası Kimliği" required>
+                <input className={inputClass} value={form.phoneNumberId} onChange={(e) => setForm({ ...form, phoneNumberId: e.target.value })} />
+              </FormField>
+              <FormField label="WhatsApp Business Hesap Kimliği">
+                <input className={inputClass} value={form.businessAccountId} onChange={(e) => setForm({ ...form, businessAccountId: e.target.value })} />
+              </FormField>
+              <FormField label="Webhook Doğrulama Anahtarı" hint={editing ? "Değiştirmek istemiyorsanız boş bırakın" : undefined}>
+                <input type="password" className={inputClass} value={form.verifyToken} onChange={(e) => setForm({ ...form, verifyToken: e.target.value })} />
+              </FormField>
+              <FormField label="Meta Uygulama Gizli Anahtarı" hint={editing ? "Değiştirmek istemiyorsanız boş bırakın" : undefined}>
+                <input type="password" className={inputClass} value={form.appSecret} onChange={(e) => setForm({ ...form, appSecret: e.target.value })} />
+              </FormField>
+              <FormField label="Graph API Sürümü">
+                <input className={inputClass} value={form.apiVersion} onChange={(e) => setForm({ ...form, apiVersion: e.target.value })} placeholder="v23.0" />
+              </FormField>
+              <FormField label="Randevu Şablonu">
+                <input className={inputClass} value={form.appointmentTemplateName} onChange={(e) => setForm({ ...form, appointmentTemplateName: e.target.value })} placeholder="randevu_bilgilendirme" />
+              </FormField>
+              <FormField label="Şablon Dili">
+                <input className={inputClass} value={form.appointmentTemplateLanguage} onChange={(e) => setForm({ ...form, appointmentTemplateLanguage: e.target.value })} placeholder="tr" />
+              </FormField>
+            </>
+          )}
+          {form.providerType === "CUSTOM" && <div className="sm:col-span-2">
             <FormField label="Ek Header'lar (JSON)" hint='Opsiyonel — ör. {"Authorization": "Bearer {{apiKey}}"}'>
               <textarea className={inputClass} rows={2} value={form.headersJson} onChange={(e) => setForm({ ...form, headersJson: e.target.value })} placeholder='{"Authorization": "Bearer {{apiKey}}"}' />
             </FormField>
-          </div>
-          <div className="sm:col-span-2">
+          </div>}
+          {form.providerType === "CUSTOM" && <div className="sm:col-span-2">
             <FormField label="İstek Gövde Şablonu (JSON)" hint="Opsiyonel — {{phone}}, {{message}} yer tutucularını kullanabilirsiniz">
               <textarea className={inputClass} rows={3} value={form.bodyTemplate} onChange={(e) => setForm({ ...form, bodyTemplate: e.target.value })} placeholder='{"messaging_product":"whatsapp","to":"{{phone}}","type":"text","text":{"body":"{{message}}"}}' />
             </FormField>
-          </div>
-          <div className="sm:col-span-2">
+          </div>}
+          {form.providerType === "CUSTOM" && <div className="sm:col-span-2">
             <FormField label="Başarı Deseni (regex)" hint="Opsiyonel">
               <input className={inputClass} value={form.successPattern} onChange={(e) => setForm({ ...form, successPattern: e.target.value })} />
             </FormField>
-          </div>
+          </div>}
           <div className="sm:col-span-2">
             <label className="flex cursor-pointer items-center gap-2">
               <input

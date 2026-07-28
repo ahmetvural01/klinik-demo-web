@@ -27,23 +27,15 @@ async function findAccessiblePayment(id: string, auth: { user: { role: string; i
     doctor: { select: { id: true, fullName: true } },
   } as const;
   if (auth.user.role === "SUPERADMIN") {
-    return prisma.payment.findUnique({ where: { id }, include });
+    return prisma.payment.findFirst({ where: { id, status: "ACTIVE" }, include });
   }
   if (!auth.user.institutionId) return null;
-
-  const institutionUsers = await prisma.user.findMany({
-    where: { institutionId: auth.user.institutionId, isActive: true },
-    select: { id: true },
-  });
-  const userIds = institutionUsers.map((user) => user.id);
 
   return prisma.payment.findFirst({
     where: {
       id,
-      OR: [
-        { patient: { institutionId: auth.user.institutionId } },
-        { patientId: null, doctorId: { in: userIds } },
-      ],
+      institutionId: auth.user.institutionId,
+      status: "ACTIVE",
     },
     include,
   });
@@ -59,7 +51,7 @@ export async function DELETE(_: NextRequest, props: Params) {
   // yönetici, silme/iade işleminin hâlâ payments:write ile mümkün kaldığını
   // fark etmezdi (bkz. denetim raporu).
   if (!auth.user.ghost && auth.user.role !== "SUPERADMIN" && !(await can(auth.user.role as import("@prisma/client").Role, "payments:refund"))) {
-    return NextResponse.json({ message: "Bu işlem için yetkiniz yok (iade/silme yetkisi gerekli)." }, { status: 403 });
+    return NextResponse.json({ message: "Bu işlem için tahsilat iptal yetkisi gerekli." }, { status: 403 });
   }
 
   const existing = await findAccessiblePayment(params.id, auth);
@@ -72,7 +64,7 @@ export async function DELETE(_: NextRequest, props: Params) {
     if (settled) {
       if (auth.user.role !== "SUPERADMIN") {
         return NextResponse.json(
-          { message: "Bu ödemenin ait olduğu dönem için doktora zaten hakediş ödemesi yapılmış — bu kayıt silinemez." },
+          { message: "Bu ödemenin ait olduğu dönem için doktora zaten hakediş ödemesi yapılmış; tahsilat iptal edilemez." },
           { status: 400 },
         );
       }
@@ -85,11 +77,16 @@ export async function DELETE(_: NextRequest, props: Params) {
 
   try {
     const { taksitReverseInfo } = await prisma.$transaction(
-      (tx) => deleteIntegratedPayment(tx, params.id),
+      (tx) => deleteIntegratedPayment(
+        tx,
+        params.id,
+        auth.user.id,
+        "Kullanıcı tarafından tahsilat iptal edildi.",
+      ),
       { isolationLevel: "Serializable" }
     );
     const detail = [
-      `${auth.user.fullName || "Personel"} tarafından tahsilat silindi.`,
+      `${auth.user.fullName || "Personel"} tarafından tahsilat iptal edildi.`,
       `Hasta: ${existing.patient?.fullName || "Genel tahsilat"}`,
       `Doktor: ${existing.doctor?.fullName || "-"}`,
       `Tutar: ${Number(existing.amount)} TL`,
@@ -98,7 +95,7 @@ export async function DELETE(_: NextRequest, props: Params) {
       taksitReverseInfo.updatedCount ? `Taksit entegrasyonu: ${taksitReverseInfo.updatedCount} taksit geri güncellendi` : "Taksit entegrasyonu: değişiklik yok",
       periodLockOverridden ? "UYARI: Dönem kilidi SUPERADMIN tarafından atlandı." : "",
     ].filter(Boolean).join("\n");
-    await writeAudit(auth.user.id, "PAYMENT_DELETE", detail);
+    await writeAudit(auth.user.id, "PAYMENT_VOID", detail);
 
     return NextResponse.json({ ok: true, taksitReverseInfo });
   } catch (e) {
@@ -227,6 +224,8 @@ export async function PATCH(request: NextRequest, props: Params) {
           posId: body.posId !== undefined ? body.posId || null : undefined,
           createdAt: nextCreatedAt,
           doctorId: nextDoctorId,
+          actorId: auth.user.id,
+          reason: body.reason ? String(body.reason) : "Kullanıcı tarafından tahsilat güncellendi.",
         }),
       { isolationLevel: "Serializable" }
     );

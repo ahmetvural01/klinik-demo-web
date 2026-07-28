@@ -43,6 +43,26 @@ async function main() {
     );
     process.exit(1);
   }
+
+  const documentProvider = String(process.env.DOCUMENT_STORAGE_PROVIDER || "DATABASE").toUpperCase();
+  if (!["DATABASE", "S3"].includes(documentProvider)) {
+    console.error(
+      "Üretimde DOCUMENT_STORAGE_PROVIDER DATABASE veya S3 olmalıdır; LOCAL depolama yeniden dağıtımda belge kaybına yol açar.",
+    );
+    process.exit(1);
+  }
+  if (documentProvider === "S3") {
+    const requiredS3 = [
+      "DOCUMENT_S3_BUCKET",
+      "DOCUMENT_S3_ACCESS_KEY_ID",
+      "DOCUMENT_S3_SECRET_ACCESS_KEY",
+    ] as const;
+    const missingS3 = requiredS3.filter((key) => !process.env[key]);
+    if (missingS3.length > 0) {
+      console.error(`S3 belge depolama ayarları eksik: ${missingS3.join(", ")}`);
+      process.exit(1);
+    }
+  }
   if (!process.env.REDIS_URL) {
     console.warn("REDIS_URL tanimli degil; tek web worker için süreç içi gerçek zamanli bildirim kullaniliyor.");
   }

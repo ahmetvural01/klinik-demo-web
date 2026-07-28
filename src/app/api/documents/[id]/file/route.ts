@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { readFile } from "fs/promises";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { can } from "@/lib/rbac";
 import type { Role } from "@prisma/client";
-import { documentFilePath } from "@/lib/document-storage";
-import { decryptBuffer } from "@/lib/field-crypto";
+import { readDocumentFile } from "@/lib/document-storage";
 
 function permissionForCategory(category: string, action: "read" | "write" | "delete") {
   return category === "BELGE" ? `documents:${action}` : `xray:${action}`;
@@ -30,8 +28,16 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       return NextResponse.json({ error: "Bu işlem için yetkiniz yok." }, { status: 403 });
     }
 
-    const rawBuffer = await readFile(documentFilePath(document.storedName));
-    const buffer = decryptBuffer(rawBuffer);
+    const buffer = await readDocumentFile(
+      document.storedName,
+      document.storageProvider,
+      document.sha256,
+    );
+    await writeAudit(
+      auth.user.id,
+      "DOCUMENT_VIEW",
+      `${document.category}: ${document.fileName} · Hasta: ${document.patientId}`,
+    );
     return new NextResponse(buffer, {
       status: 200,
       headers: {

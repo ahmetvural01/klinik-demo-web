@@ -112,7 +112,12 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       });
       const newTotalCost = Number(existing.totalCost || 0) - Number(deletedTotal._sum.amount || 0);
       const paidSinceCreation = await prisma.payment.aggregate({
-        where: { patientId: existing.patientId, doctorId: existing.doctorId, createdAt: { gte: existing.createdAt } },
+        where: {
+          patientId: existing.patientId,
+          doctorId: existing.doctorId,
+          status: "ACTIVE",
+          createdAt: { gte: existing.createdAt },
+        },
         _sum: { amount: true },
       });
       const paidAmount = Number(paidSinceCreation._sum.amount || 0);

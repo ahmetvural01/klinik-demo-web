@@ -122,6 +122,7 @@ export async function POST(request: NextRequest) {
     patient = await prisma.patient.findFirst({
       where: {
         id: parsed.data.patientId,
+        archivedAt: null,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
       },
       select: { id: true, fullName: true },

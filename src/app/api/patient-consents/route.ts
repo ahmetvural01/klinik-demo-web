@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
     const patient = await (prisma as any).patient.findFirst({
       where: {
         id: patientId,
+        archivedAt: null,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
       },
       select: { id: true, fullName: true },

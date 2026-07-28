@@ -138,7 +138,10 @@ export async function applyLabInvoiceFirmaIntegration(input: LabFirmaInput): Pro
   const existing = await input.tx.firmaIslem.findFirst({
     where: {
       status: "AKTIF",
-      aciklama: { contains: sourceToken },
+      OR: [
+        { sourceType: "LAB_INVOICE", sourceId: input.labInvoiceId || sourceToken },
+        { aciklama: { contains: sourceToken } },
+      ],
     },
     select: { id: true },
   });
@@ -172,6 +175,8 @@ export async function applyLabInvoiceFirmaIntegration(input: LabFirmaInput): Pro
       dueDate: null,
       status: "AKTIF",
       kdvOrani: 0,
+      sourceType: "LAB_INVOICE",
+      sourceId: input.labInvoiceId || sourceToken,
     },
   });
 
@@ -211,7 +216,13 @@ export async function reverseLabInvoiceFirmaIntegration(
   const islemler = await tx.firmaIslem.findMany({
     where: {
       status: "AKTIF",
-      aciklama: { contains: sourceToken },
+      OR: [
+        {
+          sourceType: "LAB_INVOICE",
+          sourceId: input.labInvoiceId || sourceToken,
+        },
+        { aciklama: { contains: sourceToken } },
+      ],
     },
     select: { id: true },
   });

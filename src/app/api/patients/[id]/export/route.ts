@@ -9,7 +9,7 @@ type Params = { params: Promise<{ id: string }> };
  * KVKK m.11 (ilgili kişinin erişim/taşınabilirlik hakkı) için hastanın sistemde
  * tutulan tüm verilerini tek bir dosyada dışa aktarır. Erişim audit log'a yazılır.
  */
-export async function GET(_: NextRequest, props: Params) {
+export async function GET(request: NextRequest, props: Params) {
   const params = await props.params;
   const auth = await requireAuth("patients:read");
   if (auth.error) return auth.error;
@@ -29,6 +29,7 @@ export async function GET(_: NextRequest, props: Params) {
         orderBy: { diagnosedAt: "desc" },
       },
       payments: {
+        where: { status: "ACTIVE" },
         include: {
           doctor: { select: { id: true, fullName: true } },
           pos: { select: { id: true, name: true } },
@@ -94,6 +95,26 @@ export async function GET(_: NextRequest, props: Params) {
     patient: patientForExport,
   };
 
+  if (
+    patient.institutionId
+    && auth.user.role !== "SUPERADMIN"
+    && !auth.user.ghost
+  ) {
+    await prisma.patientAccessLog.create({
+      data: {
+        institutionId: patient.institutionId,
+        patientId: patient.id,
+        userId: auth.user.id,
+        action: "VERI_DISA_AKTARMA",
+        purpose: "Hasta/KVKK veri erişim talebi",
+        route: request.nextUrl.pathname,
+        ip: (request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "")
+          .split(",")[0]
+          .trim()
+          .slice(0, 100) || null,
+      },
+    });
+  }
   await writeAudit(auth.user.id, "PATIENT_DATA_EXPORT", `${patient.fullName} hastasının verileri dışa aktarıldı (KVKK erişim talebi)`);
 
   const fileDate = new Date().toISOString().slice(0, 10);

@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { sendSms, type SmsSendResult } from "@/lib/sms";
-import { sendWhatsapp } from "@/lib/whatsapp";
+import { sendWhatsapp, type WhatsappSendOptions } from "@/lib/whatsapp";
 
 /**
  * Kurumun bildirim kanalını (SMS ya da WhatsApp) tek noktadan yönlendirir.
@@ -14,7 +14,12 @@ import { sendWhatsapp } from "@/lib/whatsapp";
  * (bkz. src/app/api/appointments/route.ts sendAppointmentInfoSms). Hatırlatma,
  * doğum günü ve toplu gönderim akışları aynı desenle buraya taşınabilir.
  */
-export async function sendNotification(institutionId: string | null | undefined, phone: string, message: string): Promise<SmsSendResult & { channel: "WHATSAPP" | "SMS" }> {
+export async function sendNotification(
+  institutionId: string | null | undefined,
+  phone: string,
+  message: string,
+  options: Omit<WhatsappSendOptions, "institutionId"> = {},
+): Promise<SmsSendResult & { channel: "WHATSAPP" | "SMS" }> {
   if (institutionId) {
     const institution = await prisma.institution.findUnique({
       where: { id: institutionId },
@@ -22,7 +27,7 @@ export async function sendNotification(institutionId: string | null | undefined,
     });
 
     if (institution?.whatsappEnabled) {
-      const result = await sendWhatsapp(phone, message);
+      const result = await sendWhatsapp(phone, message, { ...options, institutionId });
       if (result.success) {
         return { ...result, channel: "WHATSAPP" };
       }

@@ -29,7 +29,7 @@ export async function DELETE(req: NextRequest, props: { params: Promise<{ id: st
     }
 
     await prisma.document.delete({ where: { id: document.id } });
-    await deleteDocumentFile(document.storedName);
+    await deleteDocumentFile(document.storedName, document.storageProvider);
 
     await writeAudit(auth.user.id, "DOCUMENT_DELETE", `${document.category}: ${document.fileName}`);
     return NextResponse.json({ ok: true });

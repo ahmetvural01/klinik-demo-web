@@ -17,7 +17,10 @@ export async function GET() {
       where: isSuperAdmin ? {} : { patient: { institutionId } },
     }),
     prisma.patient.count({
-      where: isSuperAdmin ? {} : { institutionId },
+      where: {
+        archivedAt: null,
+        ...(isSuperAdmin ? {} : { institutionId }),
+      },
     }),
     prisma.user.count({
       where: {

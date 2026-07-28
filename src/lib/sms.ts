@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { decryptField } from "@/lib/field-crypto";
 
 export type SmsSendResult = {
   success: boolean;
@@ -32,6 +33,14 @@ type ProviderConfig = {
   bodyTemplate: string | null;
   successPattern: string | null;
 };
+
+function decryptProvider<T extends ProviderConfig>(provider: T): T {
+  return {
+    ...provider,
+    password: provider.password ? decryptField(provider.password) : null,
+    apiKey: provider.apiKey ? decryptField(provider.apiKey) : null,
+  };
+}
 
 function normalizePhone(raw: string): string | null {
   const digits = raw.replace(/\D/g, "");
@@ -281,9 +290,10 @@ async function sendWithProvider(provider: ProviderConfig, phone: string, message
 }
 
 export async function getProviderConfigs() {
-  return prisma.smsProviderConfig.findMany({
+  const providers = await prisma.smsProviderConfig.findMany({
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
   });
+  return providers.map(decryptProvider);
 }
 
 export async function testProviderSend(providerId: string, phoneRaw: string, message: string) {
@@ -306,7 +316,7 @@ export async function testProviderSend(providerId: string, phoneRaw: string, mes
     };
   }
 
-  return sendWithProvider(provider, normalizedPhone, message);
+  return sendWithProvider(decryptProvider(provider), normalizedPhone, message);
 }
 
 function parseBalance(raw: string): string | null {
@@ -409,7 +419,7 @@ export async function testProviderBalance(providerId: string) {
   if (!provider) {
     return { success: false, raw: "", error: "SMS sağlayıcısı bulunamadı." } as SmsBalanceResult;
   }
-  return getProviderBalanceInternal(provider);
+  return getProviderBalanceInternal(decryptProvider(provider));
 }
 
 export async function sendSms(phoneRaw: string, message: string): Promise<SmsSendResult> {
@@ -430,7 +440,8 @@ export async function sendSms(phoneRaw: string, message: string): Promise<SmsSen
 
   if (providers.length > 0) {
     const errors: string[] = [];
-    for (const provider of providers) {
+    for (const storedProvider of providers) {
+      const provider = decryptProvider(storedProvider);
       const result = await sendWithProvider(provider, normalizedPhone, message);
       if (result.success) return result;
       errors.push(`${provider.code}: ${result.error || result.providerRaw}`);

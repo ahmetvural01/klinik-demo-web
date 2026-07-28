@@ -135,7 +135,16 @@ export async function POST(req: NextRequest) {
     const transactionDate = new Date(tarih);
 
     const result = await (prisma as any).$transaction(async (tx: any) => {
-      const lineData: { stockItemId: string; productName: string; quantity: number; unit: string; unitPrice: number; lineTotal: number }[] = [];
+      const lineData: {
+        stockItemId: string;
+        productName: string;
+        quantity: number;
+        unit: string;
+        unitPrice: number;
+        lineTotal: number;
+        lotNo: string | null;
+        expiresAt: Date | null;
+      }[] = [];
 
       for (const item of items) {
         const resolved = await resolveOrCreateStockItem(tx, auth.user.institutionId, firma.name, item);
@@ -146,6 +155,8 @@ export async function POST(req: NextRequest) {
           unit: resolved.unit,
           unitPrice: item.unitPrice,
           lineTotal: Math.round(item.quantity * item.unitPrice * 100) / 100,
+          lotNo: item.lotNo || null,
+          expiresAt: item.expiresAt ? new Date(item.expiresAt) : null,
         });
       }
 
@@ -185,9 +196,28 @@ export async function POST(req: NextRequest) {
           requestKey,
         },
       });
+      if (firmaIslem) {
+        await tx.firmaIslem.update({
+          where: { id: firmaIslem.id },
+          data: { sourceType: "PURCHASE", sourceId: purchase.id },
+        });
+      }
 
       const createdItems = [];
       for (const line of lineData) {
+        const purchaseItem = await tx.purchaseItem.create({
+          data: {
+            purchaseId: purchase.id,
+            stockItemId: line.stockItemId,
+            productName: line.productName,
+            quantity: line.quantity,
+            unit: line.unit,
+            unitPrice: line.unitPrice,
+            lineTotal: line.lineTotal,
+            lotNo: line.lotNo,
+            expiresAt: line.expiresAt,
+          },
+        });
         const movement = isReceived
           ? await applyStockMovement({
               tx,
@@ -199,21 +229,19 @@ export async function POST(req: NextRequest) {
               note: `${firma.name} satın alma${faturaNo ? ` (Fatura: ${faturaNo})` : ""}`,
               supplier: firma.name,
               unitPrice: line.unitPrice,
+              purchaseItemId: purchaseItem.id,
+              lotNo: line.lotNo,
+              receivedAt: transactionDate,
+              expiresAt: line.expiresAt,
             })
           : null;
 
-        const purchaseItem = await tx.purchaseItem.create({
-          data: {
-            purchaseId: purchase.id,
-            stockItemId: line.stockItemId,
-            productName: line.productName,
-            quantity: line.quantity,
-            unit: line.unit,
-            unitPrice: line.unitPrice,
-            lineTotal: line.lineTotal,
-            stockMovementId: movement?.movement.id || null,
-          },
-        });
+        if (movement) {
+          await tx.purchaseItem.update({
+            where: { id: purchaseItem.id },
+            data: { stockMovementId: movement.movement.id },
+          });
+        }
         createdItems.push(purchaseItem);
       }
 
@@ -235,6 +263,8 @@ export async function POST(req: NextRequest) {
             kdvOrani,
             status: "AKTIF",
             requestKey: requestKey ? `${requestKey}:payment` : null,
+            sourceType: "PURCHASE_PAYMENT",
+            sourceId: purchase.id,
           },
         });
 

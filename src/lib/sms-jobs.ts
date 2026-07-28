@@ -7,6 +7,8 @@ import { resolveSmsTemplate } from "@/lib/sms-templates";
 import { maskPatientName, maskPatientPhone } from "@/lib/audit-mask";
 
 const SMS_QUEUE_KEY = process.env.SMS_QUEUE_KEY || "ks:sms:jobs";
+const SMS_DEAD_LETTER_KEY = process.env.SMS_DEAD_LETTER_KEY || "ks:sms:dead";
+const MAX_JOB_ATTEMPTS = 3;
 
 export type SmsDispatchJob = {
   institutionId: string;
@@ -14,6 +16,8 @@ export type SmsDispatchJob = {
   appointmentIds: string[];
   smsType: "BILGI" | "HATIRLATMA" | "ANKET";
   queuedAt: string;
+  attempt?: number;
+  lastError?: string;
 };
 
 function renderTemplate(template: string, vars: Record<string, string>) {
@@ -180,13 +184,70 @@ export async function runSmsWorker() {
       const job = JSON.parse(raw) as SmsDispatchJob;
       if (!job?.institutionId || !job?.userId || !Array.isArray(job.appointmentIds)) {
         console.error("[sms-worker] Geçersiz iş atlandı:", raw);
+        await redis.lpush(SMS_DEAD_LETTER_KEY, JSON.stringify({
+          failedAt: new Date().toISOString(),
+          reason: "Geçersiz iş gövdesi",
+          raw,
+        }));
         continue;
       }
-      await processSmsDispatchJob(job);
+      const result = await processSmsDispatchJob(job);
+      if (result.failed > 0 && result.failedRecipients.length > 0) {
+        await retryOrDeadLetter(redis, job, {
+          appointmentIds: result.failedRecipients.map((item) => item.appointmentId),
+          reason: result.failedRecipients.map((item) => item.reason).join(" | "),
+        });
+      }
     } catch (error) {
-      // Bozuk veri veya işleme hatası — worker döngüsü devam eder, ama artık
-      // sessizce yutulmuyor: kaybolan randevu hatırlatma SMS'i artık iz bırakıyor.
-      console.error("[sms-worker] İş işlenemedi, atlanıyor:", raw, error);
+      console.error("[sms-worker] İş işlenemedi:", raw, error);
+      let parsed: SmsDispatchJob | null = null;
+      try {
+        parsed = JSON.parse(raw) as SmsDispatchJob;
+      } catch {
+        // Geçersiz JSON aşağıda doğrudan son hata kuyruğuna alınır.
+      }
+      if (parsed?.institutionId && parsed.userId && Array.isArray(parsed.appointmentIds)) {
+        await retryOrDeadLetter(redis, parsed, {
+          appointmentIds: parsed.appointmentIds,
+          reason: error instanceof Error ? error.message : "Bilinmeyen worker hatası",
+        });
+      } else {
+        await redis.lpush(SMS_DEAD_LETTER_KEY, JSON.stringify({
+          failedAt: new Date().toISOString(),
+          reason: error instanceof Error ? error.message : "Bilinmeyen worker hatası",
+          raw,
+        }));
+      }
     }
   }
+}
+
+async function retryOrDeadLetter(
+  redis: Redis,
+  job: SmsDispatchJob,
+  failure: { appointmentIds: string[]; reason: string },
+) {
+  const nextAttempt = (job.attempt || 0) + 1;
+  const retryJob: SmsDispatchJob = {
+    ...job,
+    appointmentIds: failure.appointmentIds,
+    attempt: nextAttempt,
+    lastError: failure.reason.slice(0, 2000),
+  };
+  if (nextAttempt >= MAX_JOB_ATTEMPTS) {
+    await redis.lpush(SMS_DEAD_LETTER_KEY, JSON.stringify({
+      ...retryJob,
+      failedAt: new Date().toISOString(),
+    }));
+    console.error(`[sms-worker] İş ${MAX_JOB_ATTEMPTS} denemeden sonra son hata kuyruğuna alındı.`);
+    return;
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 1000 * nextAttempt));
+  await redis.lpush(SMS_QUEUE_KEY, JSON.stringify(retryJob));
+  console.warn(`[sms-worker] ${failure.appointmentIds.length} alıcı için yeniden deneme kuyruğa alındı (${nextAttempt}/${MAX_JOB_ATTEMPTS}).`);
+}
+
+export function isSmsQueueConfigured() {
+  return Boolean(process.env.REDIS_URL);
 }

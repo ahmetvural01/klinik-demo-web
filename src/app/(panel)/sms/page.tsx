@@ -9,6 +9,7 @@ import { FormField } from "@/components/ui/FormField";
 import { getAuditActionLabel } from "@/lib/audit-labels";
 import BulkSendTab from "./_tabs/BulkSendTab";
 import TemplatesTab from "./_tabs/TemplatesTab";
+import WhatsappMessagesTab from "./_tabs/WhatsappMessagesTab";
 
 type SmsSettings = {
   smsEnabled: boolean;
@@ -442,7 +443,7 @@ function SmsSettingsPanel() {
 }
 
 export default function SmsPage() {
-  const [tab, setTab] = useState<"kayitlar" | "ayarlar" | "sablonlar" | "toplu">("kayitlar");
+  const [tab, setTab] = useState<"kayitlar" | "whatsapp" | "ayarlar" | "sablonlar" | "toplu">("kayitlar");
 
   return (
     <div className="space-y-4">
@@ -452,6 +453,9 @@ export default function SmsPage() {
         </Button>
         <Button variant={tab === "ayarlar" ? "primary" : "secondary"} size="sm" onClick={() => setTab("ayarlar")}>
           Ayarlar
+        </Button>
+        <Button variant={tab === "whatsapp" ? "primary" : "secondary"} size="sm" onClick={() => setTab("whatsapp")}>
+          WhatsApp
         </Button>
         <Button variant={tab === "sablonlar" ? "primary" : "secondary"} size="sm" onClick={() => setTab("sablonlar")}>
           Şablonlar
@@ -465,6 +469,7 @@ export default function SmsPage() {
           başka bir sekmeye bakıp geri döndüğünde kaybolmaması için. */}
       <div className={tab === "kayitlar" ? "" : "hidden"}><SmsManagement onGoToSettings={() => setTab("ayarlar")} /></div>
       <div className={tab === "ayarlar" ? "" : "hidden"}><SmsSettingsPanel /></div>
+      <div className={tab === "whatsapp" ? "" : "hidden"}><WhatsappMessagesTab /></div>
       <div className={tab === "toplu" ? "" : "hidden"}><BulkSendTab /></div>
       <div className={tab === "sablonlar" ? "" : "hidden"}><TemplatesTab /></div>
     </div>

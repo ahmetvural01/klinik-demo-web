@@ -31,12 +31,13 @@ export async function GET() {
         prisma.payment.aggregate({
           _sum: { amount: true },
           where: institutionId
-            ? {
+              ? {
+                institutionId,
+                status: "ACTIVE",
                 createdAt: { gte: start, lte: end },
                 patientId: { not: null },
-                patient: { institutionId },
               }
-            : { createdAt: { gte: start, lte: end } },
+            : { status: "ACTIVE", createdAt: { gte: start, lte: end } },
         }),
         (prisma as any).expense.aggregate({
           _sum: { tutar: true },

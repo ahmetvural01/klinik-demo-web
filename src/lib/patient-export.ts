@@ -63,7 +63,10 @@ export async function buildExportWorkbook(institutionId: string): Promise<{ buff
 
   const [payments, treatmentSteps, prescriptions] = await Promise.all([
     patientIds.length
-      ? prisma.payment.findMany({ where: { patientId: { in: patientIds } }, orderBy: { createdAt: "asc" } })
+      ? prisma.payment.findMany({
+          where: { patientId: { in: patientIds }, status: "ACTIVE" },
+          orderBy: { createdAt: "asc" },
+        })
       : [],
     patientIds.length
       ? prisma.treatmentStep.findMany({

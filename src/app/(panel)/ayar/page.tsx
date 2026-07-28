@@ -96,6 +96,8 @@ export default function AyarPage() {
     void fetchSettings();
     void fetchPos();
     void fetchTreatmentTypes();
+  // İlk yüklemede yalnızca bir kez çalışması gereken başlangıç fonksiyonları.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const changeTab = (tab: SettingsTab) => {

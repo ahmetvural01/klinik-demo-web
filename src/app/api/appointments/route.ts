@@ -34,7 +34,16 @@ async function sendAppointmentInfoSms(params: {
   const appointment = await prisma.appointment.findUnique({
     where: { id: params.appointmentId },
     include: {
-      patient: { select: { fullName: true, phone: true } },
+      patient: {
+        select: {
+          id: true,
+          fullName: true,
+          phone: true,
+          phoneCountryCode: true,
+          whatsappOptInAt: true,
+          whatsappOptOutAt: true,
+        },
+      },
       doctor: { select: { fullName: true } },
     },
   });
@@ -67,12 +76,24 @@ async function sendAppointmentInfoSms(params: {
   // başarılı olursa aşağıdaki SMS-özel rezervasyon/iade akışına hiç girilmez
   // (bkz. src/lib/notify.ts).
   if (institution.whatsappEnabled) {
-    const waResult = await sendWhatsapp(appointment.patient.phone, message);
+    const waResult = await sendWhatsapp(appointment.patient.phone, message, {
+      institutionId: params.institutionId,
+      patientId: appointment.patient.id,
+      appointmentId: appointment.id,
+      countryCode: appointment.patient.phoneCountryCode,
+      template: {
+        bodyParameters: [
+          appointment.patient.fullName,
+          dateText,
+          appointment.doctor.fullName,
+        ],
+      },
+    });
     if (waResult.success) {
       await writeAudit(
         params.createdByUserId,
         "WHATSAPP_BILGI_AUTO",
-        `${appointment.patient.fullName} (${appointment.patient.phone}) - ProviderMsgId: ${waResult.providerMessageId || "-"}`
+        `Hasta: ${appointment.patient.id} - ProviderMsgId: ${waResult.providerMessageId || "-"}`
       );
       return { status: "sent", message: "Bilgilendirme WhatsApp mesajı gönderildi." };
     }
@@ -270,7 +291,7 @@ export async function POST(request: NextRequest) {
 
   if (auth.user.institutionId) {
     const patient = await prisma.patient.findFirst({
-      where: { id: parsed.data.patientId, institutionId: auth.user.institutionId },
+      where: { id: parsed.data.patientId, institutionId: auth.user.institutionId, archivedAt: null },
       select: { id: true },
     });
     if (!patient) {

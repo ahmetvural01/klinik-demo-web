@@ -1,6 +1,7 @@
 import { runDueInvoiceReminderSweep } from "@/lib/billing-reminders";
 import { runPatientPaymentReminderSweep } from "@/lib/patient-payment-reminders";
 import { runBirthdaySmsSweep } from "@/lib/birthday-reminders";
+import { runAppointmentReminderSweep } from "@/lib/appointment-reminders";
 
 // Render'da tek, sürekli çalışan bir Node süreci olarak barındırıyoruz
 // (next start, custom sunucu değil) — bu yüzden ayrı bir cron servisi
@@ -9,6 +10,7 @@ import { runBirthdaySmsSweep } from "@/lib/birthday-reminders";
 // zamanlayıcının iki kere başlamaması için globalThis üzerinde işaretleniyor.
 const FLAG = Symbol.for("klinik.scheduler.started");
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000; // saatte bir
+const APPOINTMENT_SWEEP_INTERVAL_MS = 60 * 1000;
 const FIRST_RUN_DELAY_MS = 30 * 1000; // sunucu ayağa kalkarken DB bağlantısına zaman tanı
 
 type GlobalWithFlag = typeof globalThis & { [FLAG]?: boolean };
@@ -52,12 +54,26 @@ async function runBirthdaySweepSafely() {
   }
 }
 
+async function runAppointmentSweepSafely() {
+  try {
+    const result = await runAppointmentReminderSweep();
+    if (result.processed > 0) {
+      console.log(
+        `[scheduler] Randevu hatırlatmaları: ${result.processed} kayıt işlendi, ${result.sentWhatsapp} WhatsApp, ${result.sentSms} SMS gönderildi, ${result.failed} başarısız.`,
+      );
+    }
+  } catch (error) {
+    console.error("[scheduler] Randevu hatırlatma taraması başarısız:", error);
+  }
+}
+
 export function startBillingReminderScheduler() {
   const g = globalThis as GlobalWithFlag;
   if (g[FLAG]) return;
   g[FLAG] = true;
 
   setTimeout(() => {
+    void runAppointmentSweepSafely();
     void runBillingSweepSafely();
     void runPatientReminderSweepSafely();
     void runBirthdaySweepSafely();
@@ -66,7 +82,10 @@ export function startBillingReminderScheduler() {
       void runPatientReminderSweepSafely();
       void runBirthdaySweepSafely();
     }, SWEEP_INTERVAL_MS);
+    setInterval(() => {
+      void runAppointmentSweepSafely();
+    }, APPOINTMENT_SWEEP_INTERVAL_MS);
   }, FIRST_RUN_DELAY_MS);
 
-  console.log("[scheduler] Fatura, hasta taksit ve doğum günü hatırlatma zamanlayıcıları başlatıldı (saatte bir çalışacak).");
+  console.log("[scheduler] Randevu, fatura, taksit ve doğum günü zamanlayıcıları başlatıldı.");
 }

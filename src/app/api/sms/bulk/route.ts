@@ -45,11 +45,11 @@ export async function POST(request: NextRequest) {
   // da ayni filtre kullanilir, sadece patientIds yerine kurumun tum hastalari.
   const patients = audience === "ALL"
     ? await prisma.patient.findMany({
-        where: { institutionId: auth.user.institutionId },
+        where: { institutionId: auth.user.institutionId, archivedAt: null },
         select: { id: true, fullName: true, phone: true },
       })
     : await prisma.patient.findMany({
-        where: { id: { in: patientIds }, institutionId: auth.user.institutionId },
+        where: { id: { in: patientIds }, institutionId: auth.user.institutionId, archivedAt: null },
         select: { id: true, fullName: true, phone: true },
       });
 

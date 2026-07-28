@@ -29,7 +29,10 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
     const doctorId = (request.nextUrl.searchParams.get("doctorId") || "").trim();
     const includeSummary = request.nextUrl.searchParams.get("summary") !== "false";
 
-    const tenantWhere: Prisma.PatientWhereInput = auth.user.institutionId ? { institutionId: auth.user.institutionId } : {};
+    const tenantWhere: Prisma.PatientWhereInput = {
+      archivedAt: null,
+      ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+    };
     const filters: Prisma.PatientWhereInput[] = [];
 
     if (q) {
@@ -70,6 +73,9 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
           fullName: true,
           tcNo: true,
           phone: true,
+          phoneCountryCode: true,
+          whatsappOptInAt: true,
+          whatsappOptOutAt: true,
           profession: true,
           gender: true,
           birthDate: true,
@@ -93,7 +99,7 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
         skip,
         take,
       }),
-      includeSummary ? prisma.patient.count({ where }) : Promise.resolve(0),
+      prisma.patient.count({ where }),
       includeSummary ? prisma.patient.count({ where: tenantWhere }) : Promise.resolve(0),
       includeSummary
         ? prisma.patient.count({ where: { AND: [tenantWhere, { createdAt: { gte: currentMonthStart } }] } })
@@ -144,11 +150,17 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const { whatsappConsent, ...patientData } = parsed.data;
     const patient = await prisma.patient.create({
       data: {
-        ...parsed.data,
+        ...patientData,
         institutionId: auth.user.institutionId,
         birthDate: parsed.data.birthDate ? new Date(parsed.data.birthDate) : null,
+        whatsappOptInAt: whatsappConsent ? new Date() : null,
+        whatsappOptOutAt: null,
+        communicationConsentSource: whatsappConsent
+          ? parsed.data.communicationConsentSource || "Hasta kayıt formu"
+          : null,
       },
     });
 

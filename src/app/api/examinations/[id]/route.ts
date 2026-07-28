@@ -91,7 +91,7 @@ export async function PUT(request: NextRequest, props: Params) {
     const doctorChanged = parsed.data.doctorId !== existing.doctorId;
     if (patientChanged) {
       const patient = await prisma.patient.findFirst({
-        where: { id: parsed.data.patientId, institutionId: auth.user.institutionId },
+        where: { id: parsed.data.patientId, institutionId: auth.user.institutionId, archivedAt: null },
         select: { id: true },
       });
       if (!patient) return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });

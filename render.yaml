@@ -19,6 +19,18 @@ services:
         sync: false
       - key: FIELD_ENCRYPTION_KEY
         sync: false
+      - key: DOCUMENT_STORAGE_PROVIDER
+        value: DATABASE
+      - key: DOCUMENT_S3_ENDPOINT
+        sync: false
+      - key: DOCUMENT_S3_REGION
+        value: auto
+      - key: DOCUMENT_S3_BUCKET
+        sync: false
+      - key: DOCUMENT_S3_ACCESS_KEY_ID
+        sync: false
+      - key: DOCUMENT_S3_SECRET_ACCESS_KEY
+        sync: false
       - key: SMTP_MASTER_PASSWORD
         sync: false
       - key: SUPERADMIN_MASTER_SECRET
@@ -33,3 +45,36 @@ services:
         sync: false
       - key: REDIS_URL
         sync: false
+      - key: ENABLE_IN_PROCESS_SCHEDULER
+        value: "true"
+  - type: worker
+    name: klinik-bildirim-worker
+    runtime: node
+    buildCommand: npm ci --include=dev && npx prisma generate
+    startCommand: npm run worker:sms
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: FIELD_ENCRYPTION_KEY
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: SMS_QUEUE_KEY
+        value: ks:sms:jobs
+      - key: SMS_DEAD_LETTER_KEY
+        value: ks:sms:dead
+      - key: SMS_PROVIDER
+        value: NETGSM
+      - key: NETGSM_USERCODE
+        sync: false
+      - key: NETGSM_PASSWORD
+        sync: false
+      - key: NETGSM_HEADER
+        sync: false
+      - key: ENABLE_IN_PROCESS_SCHEDULER
+        value: "false"

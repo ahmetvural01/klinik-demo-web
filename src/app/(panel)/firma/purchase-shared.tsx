@@ -8,6 +8,7 @@ export type StockItem = { id: string; name: string; quantity: number; unit: stri
 export type PurchaseItemRow = {
   id: string; stockItemId: string; productName: string;
   quantity: number; unit: string; unitPrice: number; lineTotal: number;
+  lotNo?: string | null; expiresAt?: string | null;
 };
 
 export type Purchase = {
@@ -31,6 +32,7 @@ export type Purchase = {
 export type PurchaseLineForm = {
   key: string; id?: string; stockItemId: string; productQuery: string;
   category: string; unit: string; quantity: string; unitPrice: string;
+  lotNo: string; expiresAt: string;
 };
 
 export const fmt = (n: number) =>
@@ -48,7 +50,17 @@ const PAYMENT_METHODS = [
 ];
 
 const newLineKey = () => (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Math.random()));
-export const emptyLine = (): PurchaseLineForm => ({ key: newLineKey(), stockItemId: "", productQuery: "", category: "Sarf", unit: "adet", quantity: "", unitPrice: "" });
+export const emptyLine = (): PurchaseLineForm => ({
+  key: newLineKey(),
+  stockItemId: "",
+  productQuery: "",
+  category: "Sarf",
+  unit: "adet",
+  quantity: "",
+  unitPrice: "",
+  lotNo: "",
+  expiresAt: "",
+});
 const purchaseTotal = (items: PurchaseLineForm[]) => items.reduce((s, l) => s + (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0), 0);
 const normalizeSearch = (value: string) => value.trim().replace(/\s+/g, " ").toLocaleLowerCase("tr-TR");
 
@@ -167,6 +179,24 @@ export function PurchaseLineEditor({ items, setItems, stockItems }: {
             <button type="button" onClick={() => removeLine(line.key)} disabled={items.length === 1}
               className="rounded-lg border border-red-200 px-2 py-2 text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40">Sil</button>
           </div>
+          <div className="col-span-6 sm:col-span-3">
+            <label className="mb-1 block text-xs font-semibold text-slate-500">Parti / Lot No</label>
+            <input
+              value={line.lotNo}
+              onChange={e => updateLine(line.key, { lotNo: e.target.value })}
+              placeholder="Varsa üretici lot numarası"
+              className={formInput}
+            />
+          </div>
+          <div className="col-span-6 sm:col-span-3">
+            <label className="mb-1 block text-xs font-semibold text-slate-500">Son Kullanma Tarihi</label>
+            <input
+              type="date"
+              value={line.expiresAt}
+              onChange={e => updateLine(line.key, { expiresAt: e.target.value })}
+              className={formInput}
+            />
+          </div>
         </div>
       ))}
       <div className="flex justify-end border-t border-slate-100 pt-2">
@@ -210,6 +240,7 @@ export function usePurchaseModals({
   const receiveRequestKeyRef = useRef("");
   const [receiveForm, setReceiveForm] = useState({
     receivedAt: new Date().toISOString().split("T")[0],
+    itemLots: [] as { purchaseItemId: string; productName: string; lotNo: string; expiresAt: string }[],
     paidNow: false,
     paymentDate: new Date().toISOString().split("T")[0],
     paymentMethod: "NAKIT",
@@ -287,6 +318,8 @@ export function usePurchaseModals({
           newProductName: line.stockItemId ? null : line.productQuery.trim(),
           category: line.category, unit: line.unit,
           quantity: Number(line.quantity), unitPrice: Number(line.unitPrice),
+          lotNo: line.lotNo || null,
+          expiresAt: line.expiresAt || null,
         })),
       }),
     });
@@ -325,6 +358,12 @@ export function usePurchaseModals({
     setReceivingPurchase(purchase);
     setReceiveForm({
       receivedAt: today,
+      itemLots: (purchase.items || []).map(item => ({
+        purchaseItemId: item.id,
+        productName: item.productName,
+        lotNo: item.lotNo || "",
+        expiresAt: item.expiresAt?.substring(0, 10) || "",
+      })),
       paidNow: false,
       paymentDate: today,
       paymentMethod: "NAKIT",
@@ -356,6 +395,11 @@ export function usePurchaseModals({
         headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
         body: JSON.stringify({
           receivedAt: receiveForm.receivedAt,
+          itemLots: receiveForm.itemLots.map(item => ({
+            purchaseItemId: item.purchaseItemId,
+            lotNo: item.lotNo || null,
+            expiresAt: item.expiresAt || null,
+          })),
           paidNow: receiveForm.paidNow,
           paymentDate: receiveForm.paidNow ? receiveForm.paymentDate : null,
           paymentMethod: receiveForm.paidNow ? receiveForm.paymentMethod : null,
@@ -393,6 +437,7 @@ export function usePurchaseModals({
       items: (p.items || []).map(it => ({
         key: newLineKey(), id: it.id, stockItemId: it.stockItemId, productQuery: it.productName,
         category: "Sarf", unit: it.unit, quantity: String(it.quantity), unitPrice: String(it.unitPrice),
+        lotNo: it.lotNo || "", expiresAt: it.expiresAt?.substring(0, 10) || "",
       })),
     });
     setShowEditPurchase(true);
@@ -421,6 +466,8 @@ export function usePurchaseModals({
           newProductName: line.stockItemId ? null : line.productQuery.trim(),
           category: line.category, unit: line.unit,
           quantity: Number(line.quantity), unitPrice: Number(line.unitPrice),
+          lotNo: line.lotNo || null,
+          expiresAt: line.expiresAt || null,
         })),
       }),
     });
@@ -675,7 +722,15 @@ export function usePurchaseModals({
                     <tbody className="divide-y divide-slate-100">
                       {(viewingPurchase.items || []).map(it => (
                         <tr key={it.id}>
-                          <td className="px-3 py-2 font-semibold text-slate-800">{it.productName}</td>
+                          <td className="px-3 py-2 font-semibold text-slate-800">
+                            {it.productName}
+                            {(it.lotNo || it.expiresAt) && (
+                              <span className="mt-0.5 block text-[11px] font-medium text-slate-500">
+                                {it.lotNo ? `Lot: ${it.lotNo}` : "Lot belirtilmedi"}
+                                {it.expiresAt ? ` · SKT: ${fmtDate(it.expiresAt)}` : ""}
+                              </span>
+                            )}
+                          </td>
                           <td className="px-3 py-2 text-right">{it.quantity}</td>
                           <td className="px-3 py-2">{it.unit}</td>
                           <td className="px-3 py-2 text-right">{fmt(Number(it.unitPrice))}</td>
@@ -743,6 +798,46 @@ export function usePurchaseModals({
                 onChange={event => setReceiveForm(form => ({ ...form, receivedAt: event.target.value }))}
                 className={formInput}
               />
+            </div>
+
+            <div className="space-y-2">
+              <div>
+                <p className="text-sm font-black text-slate-900">Parti Bilgileri</p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Lot ve son kullanma tarihi bilinen ürünlerde girin; stok çıkışı en yakın tarihten başlar.
+                </p>
+              </div>
+              {receiveForm.itemLots.map(item => (
+                <div
+                  key={item.purchaseItemId}
+                  className="grid gap-2 rounded-xl border border-slate-200 p-3 sm:grid-cols-[minmax(0,1fr)_150px_150px]"
+                >
+                  <p className="self-center truncate text-sm font-bold text-slate-800">{item.productName}</p>
+                  <input
+                    value={item.lotNo}
+                    onChange={event => setReceiveForm(form => ({
+                      ...form,
+                      itemLots: form.itemLots.map(line => line.purchaseItemId === item.purchaseItemId
+                        ? { ...line, lotNo: event.target.value }
+                        : line),
+                    }))}
+                    placeholder="Lot no"
+                    className={formInput}
+                  />
+                  <input
+                    type="date"
+                    value={item.expiresAt}
+                    onChange={event => setReceiveForm(form => ({
+                      ...form,
+                      itemLots: form.itemLots.map(line => line.purchaseItemId === item.purchaseItemId
+                        ? { ...line, expiresAt: event.target.value }
+                        : line),
+                    }))}
+                    aria-label={`${item.productName} son kullanma tarihi`}
+                    className={formInput}
+                  />
+                </div>
+              ))}
             </div>
 
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">

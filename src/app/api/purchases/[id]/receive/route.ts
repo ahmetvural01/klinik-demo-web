@@ -84,6 +84,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       }
 
       const receivedAt = new Date(parsed.data.receivedAt);
+      const itemLots = new Map(
+        parsed.data.itemLots.map((item) => [item.purchaseItemId, item]),
+      );
       const firmaIslem = await tx.firmaIslem.create({
         data: {
           firmaId: purchase.firma.id,
@@ -96,10 +99,17 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
           dueDate: null,
           kdvOrani: purchase.kdvOrani,
           status: "AKTIF",
+          sourceType: "PURCHASE",
+          sourceId: purchase.id,
         },
       });
 
       for (const item of purchase.items) {
+        const lotInput = itemLots.get(item.id);
+        const lotNo = lotInput?.lotNo ?? item.lotNo ?? null;
+        const expiresAt = lotInput?.expiresAt
+          ? new Date(lotInput.expiresAt)
+          : item.expiresAt;
         const movement = await applyStockMovement({
           tx,
           stockItemId: item.stockItemId,
@@ -110,10 +120,18 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
           note: `${purchase.firma.name} sipariş teslimi${purchase.faturaNo ? ` (Fatura: ${purchase.faturaNo})` : ""}`,
           supplier: purchase.firma.name,
           unitPrice: Number(item.unitPrice),
+          purchaseItemId: item.id,
+          lotNo,
+          receivedAt,
+          expiresAt,
         });
         await tx.purchaseItem.update({
           where: { id: item.id },
-          data: { stockMovementId: movement.movement.id },
+          data: {
+            stockMovementId: movement.movement.id,
+            lotNo,
+            expiresAt,
+          },
         });
       }
 
@@ -143,6 +161,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
             kdvOrani: purchase.kdvOrani,
             status: "AKTIF",
             requestKey: requestKey ? `${requestKey}:payment` : null,
+            sourceType: "PURCHASE_PAYMENT",
+            sourceId: purchase.id,
           },
         });
         await applyFirmaIslemIntegration({

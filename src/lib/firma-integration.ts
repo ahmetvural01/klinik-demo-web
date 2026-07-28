@@ -95,6 +95,8 @@ export async function applyFirmaIslemIntegration({
         faturaNo: islem.faturaNo || null,
         kdvOrani: Number(islem.kdvOrani || 0),
         status: "AKTIF",
+        sourceType: "FIRMA_ISLEM",
+        sourceId: islem.id,
       },
     });
 
@@ -135,7 +137,10 @@ export async function reverseFirmaIslemIntegration(tx: TxClient, userId: string,
   await tx.expense.updateMany({
     where: {
       status: "AKTIF",
-      description: { contains: tag },
+      OR: [
+        { sourceType: "FIRMA_ISLEM", sourceId: islemId },
+        { description: { contains: tag } },
+      ],
     },
     data: { status: "IPTAL" },
   });

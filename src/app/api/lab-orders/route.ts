@@ -137,7 +137,7 @@ export async function POST(req: NextRequest) {
   if (auth.user.institutionId) {
     const [patient, doctor] = await Promise.all([
       prisma.patient.findFirst({
-        where: { id: patientId, institutionId: auth.user.institutionId },
+        where: { id: patientId, institutionId: auth.user.institutionId, archivedAt: null },
         select: { id: true },
       }),
       prisma.user.findFirst({

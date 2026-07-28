@@ -55,9 +55,12 @@ export const loginSchema = z.object({
 export const patientSchema = z.object({
   tcNo: z.string().optional().nullable(),
   isForeigner: z.boolean().default(false),
-  phoneCountryCode: z.string().trim().min(2).max(5).default("+90"),
-  fullName: z.string().min(3),
-  phone: z.string(),
+    phoneCountryCode: z.string().trim().min(2).max(5).default("+90"),
+    fullName: z.string().min(3),
+    phone: z.string(),
+    preferredContactChannel: z.enum(["SMS", "WHATSAPP", "TELEFON", "EPOSTA", "ILETISIM_YOK"]).default("SMS"),
+    whatsappConsent: z.boolean().default(false),
+    communicationConsentSource: z.string().trim().max(120).optional(),
   address: z.string().optional(),
   profession: z.string().trim().max(120).optional(),
   gender: z.string().min(1),
@@ -208,6 +211,8 @@ const purchaseItemSchema = z.object({
   unit: z.string().trim().max(20).default("adet"),
   quantity: z.coerce.number().int().positive("Miktar 0'dan büyük olmalı").max(1_000_000),
   unitPrice: z.coerce.number().finite().min(0).max(100_000_000),
+  lotNo: optionalNullableTrimmed(80),
+  expiresAt: optionalNullableDateString,
 }).superRefine((data, ctx) => {
   if (!data.stockItemId && !data.newProductName) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["stockItemId"], message: "Mevcut bir ürün seçin veya yeni ürün adı girin" });
@@ -257,11 +262,18 @@ export const purchaseUpdateSchema = z.object({
     unit: z.string().trim().max(20).default("adet"),
     quantity: z.coerce.number().int().positive("Miktar 0'dan büyük olmalı").max(1_000_000),
     unitPrice: z.coerce.number().finite().min(0).max(100_000_000),
+    lotNo: optionalNullableTrimmed(80),
+    expiresAt: optionalNullableDateString,
   })).min(1, "En az bir satır olmalı").max(100),
 });
 
 export const purchaseReceiveSchema = z.object({
   receivedAt: z.string().refine((value) => !Number.isNaN(new Date(value).getTime()), "Geçerli teslim tarihi girin"),
+  itemLots: z.array(z.object({
+    purchaseItemId: z.string().min(1),
+    lotNo: optionalNullableTrimmed(80),
+    expiresAt: optionalNullableDateString,
+  })).max(100).default([]),
   paidNow: z.boolean().default(false),
   paymentDate: optionalNullableDateString,
   paymentMethod: z.preprocess(emptyToNull, z.enum(["NAKIT", "KREDI_KARTI", "HAVALE_EFT", "MAIL_ORDER", "DIGER"]).nullable()),

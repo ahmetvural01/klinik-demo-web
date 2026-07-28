@@ -26,6 +26,7 @@ export async function GET(req: NextRequest) {
     const patient = await prisma.patient.findFirst({
       where: {
         id: patientId,
+        archivedAt: null,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
       },
       select: { id: true },
@@ -83,13 +84,14 @@ export async function POST(req: NextRequest) {
     const patient = await prisma.patient.findFirst({
       where: {
         id: patientId,
+        archivedAt: null,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
       },
       select: { id: true },
     });
     if (!patient) return NextResponse.json({ error: "Hasta bulunamadı" }, { status: 404 });
 
-    const { storedName, fileSize } = await saveDocumentFile(file);
+    const { storedName, storageProvider, fileSize, sha256 } = await saveDocumentFile(file);
 
     let document;
     try {
@@ -101,6 +103,8 @@ export async function POST(req: NextRequest) {
           category: category as DocumentCategory,
           fileName: file.name,
           storedName,
+          storageProvider,
+          sha256,
           mimeType: file.type,
           fileSize,
           toothNo,
@@ -109,7 +113,7 @@ export async function POST(req: NextRequest) {
         include: { uploadedBy: { select: { fullName: true } } },
       });
     } catch (dbError) {
-      await deleteDocumentFile(storedName);
+      await deleteDocumentFile(storedName, storageProvider);
       throw dbError;
     }
 

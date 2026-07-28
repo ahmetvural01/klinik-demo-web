@@ -27,6 +27,7 @@
     "worker:sms": "tsx scripts/sms-worker.ts",
     "verify:redis:realtime": "tsx scripts/verify-redis-realtime.ts",
     "test:integration": "tsx scripts/integration-basic.ts",
+    "test:stock-ledger": "tsx scripts/stock-ledger-test.ts",
     "test:working-hours": "tsx scripts/working-hours-rules-test.ts",
     "test:visual": "node scripts/visual-audit.mjs",
     "preflight:prod": "tsx scripts/preflight-prod.ts",
@@ -40,6 +41,7 @@
     "node": "20.x"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1096.0",
     "@prisma/client": "^5.17.0",
     "@tanstack/react-table": "^8.21.3",
     "@types/jsbarcode": "^3.11.4",

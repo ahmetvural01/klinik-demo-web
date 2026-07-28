@@ -13,6 +13,9 @@ type PatientFormState = {
   phoneCountryCode: string;
   fullName: string;
   phone: string;
+  preferredContactChannel: "SMS" | "WHATSAPP" | "TELEFON" | "EPOSTA" | "ILETISIM_YOK";
+  whatsappConsent: boolean;
+  communicationConsentSource: string;
   profession: string;
   gender: string;
   birthDate: string;
@@ -48,6 +51,7 @@ type HealthFlagKey =
 
 const INITIAL_FORM: PatientFormState = {
   tcNo: "", isForeigner: false, phoneCountryCode: "+90", fullName: "", phone: "",
+  preferredContactChannel: "SMS", whatsappConsent: false, communicationConsentSource: "",
   profession: "", gender: "", birthDate: "", insurance: "", referrer: "", discountRate: 0,
   address: "", notes: "", surgeries: "", medications: "", bloodType: "", otherDiseases: "",
   hasAllergy: false, hasHepatitis: false, hasKidney: false, hasDiabetes: false,
@@ -114,6 +118,9 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
           tcNo: body.tcNo || "", isForeigner: body.isForeigner || false,
           phoneCountryCode: body.phoneCountryCode || "+90", fullName: body.fullName || "",
           phone: body.phone === "***" ? "" : body.phone || "", profession: body.profession || "",
+          preferredContactChannel: body.preferredContactChannel || "SMS",
+          whatsappConsent: Boolean(body.whatsappOptInAt && !body.whatsappOptOutAt),
+          communicationConsentSource: body.communicationConsentSource || "",
           gender: body.gender || "", birthDate: toDateInput(body.birthDate),
           insurance: body.insurance || "", referrer: body.referrer || "", discountRate: body.discountRate || 0,
           address: body.address || "", notes: body.notes || "", surgeries: body.surgeries || "",
@@ -327,6 +334,49 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
                     <input className="h-10 min-w-0 flex-1 border-0 bg-transparent px-3 text-sm font-mono outline-none" placeholder="Telefon numarası" inputMode="numeric" value={form.phone} onChange={(e) => setField("phone", e.target.value.replace(/\D/g, "").slice(0, 15))} />
                   </div>
                 </FormField>
+              )}
+              <FormField label="Tercih Edilen İletişim Kanalı">
+                <select
+                  className="h-10 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  value={form.preferredContactChannel}
+                  onChange={(e) => setField("preferredContactChannel", e.target.value as PatientFormState["preferredContactChannel"])}
+                >
+                  <option value="SMS">SMS</option>
+                  <option value="WHATSAPP" disabled={!form.whatsappConsent}>WhatsApp</option>
+                  <option value="TELEFON">Telefon araması</option>
+                  <option value="EPOSTA">E-posta</option>
+                  <option value="ILETISIM_YOK">Bilgilendirme istemiyor</option>
+                </select>
+              </FormField>
+              {!hidePhoneField && (
+                <div className="md:col-span-2 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
+                  <label className="flex cursor-pointer items-start gap-3">
+                    <input
+                      type="checkbox"
+                      className="mt-0.5 h-4 w-4 accent-emerald-600"
+                      checked={form.whatsappConsent}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setForm((current) => ({
+                          ...current,
+                          whatsappConsent: checked,
+                          preferredContactChannel:
+                            !checked && current.preferredContactChannel === "WHATSAPP"
+                              ? "SMS"
+                              : current.preferredContactChannel,
+                          communicationConsentSource: checked ? "Hasta kayıt formu" : "",
+                        }));
+                      }}
+                    />
+                    <span>
+                      <span className="block text-sm font-bold text-emerald-900">WhatsApp bilgilendirme izni</span>
+                      <span className="mt-1 block text-xs leading-5 text-emerald-800">
+                        Hasta, randevu ve klinik bilgilendirmelerinin bu numaraya WhatsApp üzerinden gönderilmesini kabul etti.
+                        İzin daha sonra geri alınabilir.
+                      </span>
+                    </span>
+                  </label>
+                </div>
               )}
               <FormField label="Anlaşmalı Kurum">
                 <input className="h-10 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Kurum adı" value={form.insurance} onChange={(e) => setField("insurance", e.target.value)} />

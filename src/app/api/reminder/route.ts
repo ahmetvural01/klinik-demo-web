@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
 
       if (patientId) {
         const patient = await (prisma as any).patient.findFirst({
-          where: { id: patientId, institutionId: auth.user.institutionId },
+          where: { id: patientId, institutionId: auth.user.institutionId, archivedAt: null },
           select: { id: true },
         });
         if (!patient) return NextResponse.json({ error: "Hasta bulunamadı" }, { status: 404 });

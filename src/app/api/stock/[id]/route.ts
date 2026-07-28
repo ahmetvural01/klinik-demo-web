@@ -40,7 +40,28 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
       movements: {
         orderBy: { createdAt: "desc" },
         take: 50,
-        include: { user: { select: { fullName: true } } },
+        include: {
+          user: { select: { fullName: true } },
+          lotAllocations: {
+            include: {
+              lot: {
+                select: {
+                  lotNo: true,
+                  expiresAt: true,
+                  unitCost: true,
+                  supplierName: true,
+                },
+              },
+            },
+          },
+        },
+      },
+      lots: {
+        where: { status: { not: "IPTAL" } },
+        orderBy: [
+          { expiresAt: { sort: "asc", nulls: "last" } },
+          { receivedAt: "desc" },
+        ],
       },
     },
   });

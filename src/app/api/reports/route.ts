@@ -84,11 +84,12 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
       prisma.payment.findMany({
         where: institutionId
           ? {
+              institutionId,
+              status: "ACTIVE",
               createdAt: dateFilter,
               patientId: { not: null },
-              patient: { institutionId },
             }
-          : { createdAt: dateFilter },
+          : { status: "ACTIVE", createdAt: dateFilter },
       }),
       prisma.examination.findMany({
         where: institutionId
@@ -198,8 +199,9 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
     prisma.payment.aggregate({
       _sum: { amount: true },
       where: {
+        status: "ACTIVE",
         createdAt: { gte: yearStart, lte: yearEnd },
-        ...(institutionId ? { patient: { institutionId } } : {}),
+        ...(institutionId ? { institutionId } : {}),
       },
     }),
     (prisma as any).expense.findMany({

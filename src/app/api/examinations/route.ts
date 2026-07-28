@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
   if (auth.user.role !== "SUPERADMIN") {
     const [patient, doctor] = await Promise.all([
       prisma.patient.findFirst({
-        where: { id: parsed.data.patientId, institutionId: auth.user.institutionId },
+        where: { id: parsed.data.patientId, institutionId: auth.user.institutionId, archivedAt: null },
         select: { id: true, fullName: true },
       }),
       prisma.user.findFirst({

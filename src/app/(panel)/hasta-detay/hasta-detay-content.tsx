@@ -550,6 +550,8 @@ export default function HastaDetayContent() {
   const [noteSaving, setNoteSaving] = useState(false);
   const [clinicTasks, setClinicTasks] = useState<ClinicTask[]>([]);
   const [treatmentPlans, setTreatmentPlans] = useState<{ id: string; title: string; status: string; totalCost: number | string | null; steps: { id: string }[] }[]>([]);
+  const patientAccessRecordedRef = useRef(false);
+  const lastSilentRefreshAtRef = useRef(0);
   const [taskTitle, setTaskTitle] = useState("");
   const [taskType, setTaskType] = useState<ClinicTask["type"]>("PARCA_SIPARIS");
   const [taskPriority, setTaskPriority] = useState(2);
@@ -794,7 +796,10 @@ export default function HastaDetayContent() {
     setLoadError("");
     try {
       const [res, taskRes, planRes] = await Promise.all([
-        fetch("/api/patients/" + id, { cache: "no-store" }),
+        fetch("/api/patients/" + id, {
+          cache: "no-store",
+          headers: patientAccessRecordedRef.current ? { "x-silent-refresh": "1" } : undefined,
+        }),
         fetch(`/api/clinic-tasks?patientId=${id}&take=200`, { cache: "no-store" }),
         // Hasta detayında tedavi planları hiç görünmüyordu — hasta-detay ile
         // tedavi-plani arasındaki zincir kopuktu (bkz. denetim raporu Tema 6/7).
@@ -805,6 +810,8 @@ export default function HastaDetayContent() {
         setLoadError(res.status === 404 ? "Hasta bulunamadı" : "Hasta kartı yüklenemedi");
         return;
       }
+      patientAccessRecordedRef.current = true;
+      lastSilentRefreshAtRef.current = Date.now();
 
       const d = await res.json();
       const taskJson = await taskRes.json().catch(() => []);
@@ -837,6 +844,8 @@ export default function HastaDetayContent() {
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
+    patientAccessRecordedRef.current = false;
+    lastSilentRefreshAtRef.current = 0;
     setTab("bilgi");
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -869,6 +878,7 @@ export default function HastaDetayContent() {
   useEffect(() => {
     const refreshVisible = () => {
       if (typeof document !== "undefined" && document.hidden) return;
+      if (Date.now() - lastSilentRefreshAtRef.current < 15_000) return;
       void load(true);
     };
     window.addEventListener("focus", refreshVisible);
@@ -3729,7 +3739,7 @@ export default function HastaDetayContent() {
                       <td className="px-3 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
                           <button onClick={() => startEditPayment(p)} className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-200">Düzenle</button>
-                          <button onClick={async()=>{if(!(await confirmDialog({ message: "Ödeme silinsin mi?", danger: true, confirmText: "Sil" })))return;const res=await fetch("/api/payments/"+p.id,{method:"DELETE"});if(!res.ok){const err=await res.json().catch(()=>({}));showToast("error",err.message||"Ödeme silinemedi");return;}showToast("success","Ödeme silindi");void load();}} className="rounded-lg bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600 hover:bg-red-200">Sil</button>
+                          <button onClick={async()=>{if(!(await confirmDialog({ message: "Bu tahsilat iptal edilsin mi? Kayıt geçmişi korunacaktır.", danger: true, confirmText: "İptal Et" })))return;const res=await fetch("/api/payments/"+p.id,{method:"DELETE"});if(!res.ok){const err=await res.json().catch(()=>({}));showToast("error",err.message||"Tahsilat iptal edilemedi");return;}showToast("success","Tahsilat iptal edildi");void load();}} className="rounded-lg bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600 hover:bg-red-200">İptal Et</button>
                         </div>
                       </td>
                     </tr>

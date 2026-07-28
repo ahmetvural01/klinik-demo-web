@@ -44,7 +44,12 @@ export async function runBirthdaySmsSweep(): Promise<{
     if (!institution) continue;
 
     const candidates = await prisma.patient.findMany({
-      where: { institutionId: institution.id, birthDate: { not: null }, phone: { not: "" } },
+      where: {
+        institutionId: institution.id,
+        archivedAt: null,
+        birthDate: { not: null },
+        phone: { not: "" },
+      },
       select: { id: true, fullName: true, phone: true, birthDate: true },
     });
 

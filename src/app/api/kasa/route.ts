@@ -13,8 +13,8 @@ export async function GET(req: NextRequest) {
     // yapıldığında "Bugün Gelir" rakamı yanlışlıkla şişiyordu.
     const institutionFilter = auth.user.institutionId
       ? {
+          institutionId: auth.user.institutionId,
           patientId: { not: null },
-          patient: { institutionId: auth.user.institutionId },
         }
       : {};
 
@@ -29,6 +29,7 @@ export async function GET(req: NextRequest) {
 
     const payments = await prisma.payment.findMany({
       where: {
+        status: "ACTIVE",
         createdAt: { gte: start, lte: end },
         ...institutionFilter,
       },

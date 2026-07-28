@@ -56,7 +56,10 @@ export async function POST(request: NextRequest) {
   }
 
   const [patient, doctor] = await Promise.all([
-    prisma.patient.findFirst({ where: { id: patientId, institutionId: auth.user.institutionId }, select: { id: true } }),
+    prisma.patient.findFirst({
+      where: { id: patientId, institutionId: auth.user.institutionId, archivedAt: null },
+      select: { id: true },
+    }),
     prisma.user.findFirst({ where: { id: doctorId, institutionId: auth.user.institutionId, isActive: true }, select: { id: true } }),
   ]);
   if (!patient) return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });
@@ -108,7 +111,14 @@ export async function POST(request: NextRequest) {
 
     if (remaining <= 0) {
       const payment = await tx.payment.create({
-        data: { patientId, doctorId, method, amount: price, description: `Paket satışı: ${name}` },
+        data: {
+          institutionId: auth.user.institutionId as string,
+          patientId,
+          doctorId,
+          method,
+          amount: price,
+          description: `Paket satışı: ${name}`,
+        },
       });
       paymentId = payment.id;
     } else {
@@ -135,7 +145,14 @@ export async function POST(request: NextRequest) {
 
       if (pesnat > 0) {
         const payment = await tx.payment.create({
-          data: { patientId, doctorId, method, amount: pesnat, description: `Paket peşinatı: ${name}` },
+          data: {
+            institutionId: auth.user.institutionId as string,
+            patientId,
+            doctorId,
+            method,
+            amount: pesnat,
+            description: `Paket peşinatı: ${name}`,
+          },
         });
         paymentId = payment.id;
       }

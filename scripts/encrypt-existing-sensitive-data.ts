@@ -70,6 +70,49 @@ async function encryptUploadedDocuments() {
   return { total: files.length, updated };
 }
 
+async function encryptProviderSecrets() {
+  const smsProviders = await prisma.smsProviderConfig.findMany();
+  const whatsappProviders = await prisma.whatsappProviderConfig.findMany();
+  let updated = 0;
+
+  for (const provider of smsProviders) {
+    const password = provider.password && !isEncryptedValue(provider.password)
+      ? encryptField(provider.password)
+      : undefined;
+    const apiKey = provider.apiKey && !isEncryptedValue(provider.apiKey)
+      ? encryptField(provider.apiKey)
+      : undefined;
+    if (password || apiKey) {
+      await prisma.smsProviderConfig.update({
+        where: { id: provider.id },
+        data: { ...(password ? { password } : {}), ...(apiKey ? { apiKey } : {}) },
+      });
+      updated += 1;
+    }
+  }
+
+  for (const provider of whatsappProviders) {
+    const fields = {
+      password: provider.password,
+      apiKey: provider.apiKey,
+      verifyToken: provider.verifyToken,
+      appSecret: provider.appSecret,
+    };
+    const data: Record<string, string> = {};
+    for (const [key, value] of Object.entries(fields)) {
+      if (value && !isEncryptedValue(value)) data[key] = encryptField(value) as string;
+    }
+    if (Object.keys(data).length) {
+      await prisma.whatsappProviderConfig.update({
+        where: { id: provider.id },
+        data,
+      });
+      updated += 1;
+    }
+  }
+  return { total: smsProviders.length + whatsappProviders.length, updated };
+}
+
 async function main() {
   if (!process.env.FIELD_ENCRYPTION_KEY) {
     console.error("FIELD_ENCRYPTION_KEY tanımlı değil — önce .env dosyasına ekleyin, sonra tekrar çalıştırın.");
@@ -83,6 +126,10 @@ async function main() {
   console.log("Yüklenmiş belgeler şifreleniyor...");
   const docResult = await encryptUploadedDocuments();
   console.log(`  ${docResult.updated}/${docResult.total} dosya şifrelendi.`);
+
+  console.log("Bildirim sağlayıcı anahtarları şifreleniyor...");
+  const providerResult = await encryptProviderSecrets();
+  console.log(`  ${providerResult.updated}/${providerResult.total} sağlayıcı kaydı güncellendi.`);
 
   await prisma.$disconnect();
   console.log("Tamamlandı.");

@@ -42,12 +42,9 @@ const addIssue = (
 };
 
 function paymentInstitutionScope(institutionId?: string | null) {
-  if (!institutionId) return {};
   return {
-    OR: [
-      { patient: { institutionId } },
-      { doctor: { institutionId } },
-    ],
+    status: "ACTIVE",
+    ...(institutionId ? { institutionId } : {}),
   };
 }
 
@@ -306,19 +303,12 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
     prisma.payment.count({
       where: {
         doctorId: null,
-        ...(institutionId ? { patient: { institutionId } } : {}),
+        ...paymentScope,
       },
     }),
-    // Payment tablosunda doğrudan institutionId kolonu yok — hasta VEYA doktor
-    // ilişkisinden biri üzerinden kuruma bağlanıyor. patientId VE doctorId ikisi
-    // birden null ise bu kaydın hangi kuruma ait olduğu hiçbir şekilde tespit
-    // edilemez (yukarıdaki iki kontrol de bu satırı kaçırır). Bu yüzden kurum
-    // bazlı taramaya değil, yalnızca platform geneli (superadmin) görünümüne
-    // dahil ediyoruz. Yeni tahsilat oluşumu yalnızca /api/payments üzerinden
-    // hasta ve doktor zorunluluğuyla yapılır; bu sayaç eski kayıtları yakalar.
-    institutionId
-      ? Promise.resolve(0)
-      : prisma.payment.count({ where: { patientId: null, doctorId: null } }),
+    prisma.payment.count({
+      where: { patientId: null, doctorId: null, ...paymentScope },
+    }),
     prisma.payment.count({
       where: {
         method: { in: ["KREDI_KARTI", "MAIL_ORDER"] },

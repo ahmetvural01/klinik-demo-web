@@ -1,6 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { encryptField } from "@/lib/field-crypto";
+
+function publicProvider<T extends { password: string | null; apiKey: string | null }>(provider: T) {
+  return {
+    ...provider,
+    password: provider.password ? "********" : "",
+    apiKey: provider.apiKey ? "********" : "",
+    hasPassword: Boolean(provider.password),
+    hasApiKey: Boolean(provider.apiKey),
+  };
+}
 
 export async function GET() {
   const auth = await requireAuth("superadmin");
@@ -15,13 +26,7 @@ export async function GET() {
   });
 
   return NextResponse.json({
-    providers: providers.map((p) => ({
-      ...p,
-      password: p.password ? "********" : "",
-      apiKey: p.apiKey ? "********" : "",
-      hasPassword: Boolean(p.password),
-      hasApiKey: Boolean(p.apiKey),
-    })),
+    providers: providers.map(publicProvider),
   });
 }
 
@@ -72,8 +77,8 @@ export async function POST(request: NextRequest) {
         balanceUrl: body.balanceUrl || null,
         httpMethod: (body.httpMethod || "POST").toUpperCase(),
         username: body.username || null,
-        password: body.password || null,
-        apiKey: body.apiKey || null,
+        password: body.password ? encryptField(body.password) : null,
+        apiKey: body.apiKey ? encryptField(body.apiKey) : null,
         sender: body.sender || null,
         headersJson: body.headersJson || null,
         bodyTemplate: body.bodyTemplate || null,
@@ -83,7 +88,7 @@ export async function POST(request: NextRequest) {
   });
 
   await writeAudit(auth.user.id, "SUPERADMIN_SMS_PROVIDER_CREATE", `${created.name} sağlayıcısı oluşturuldu${created.isActive ? " ve aktif edildi" : ""}`);
-  return NextResponse.json(created);
+  return NextResponse.json(publicProvider(created));
 }
 
 export async function PUT(request: NextRequest) {
@@ -139,8 +144,12 @@ export async function PUT(request: NextRequest) {
         balanceUrl: body.balanceUrl === undefined ? current.balanceUrl : (body.balanceUrl || null),
         httpMethod: body.httpMethod ? body.httpMethod.toUpperCase() : current.httpMethod,
         username: body.username === undefined ? current.username : (body.username || null),
-        password: body.password === undefined || body.password === "" ? current.password : body.password,
-        apiKey: body.apiKey === undefined || body.apiKey === "" ? current.apiKey : body.apiKey,
+        password: body.password === undefined || body.password === ""
+          ? current.password
+          : encryptField(body.password),
+        apiKey: body.apiKey === undefined || body.apiKey === ""
+          ? current.apiKey
+          : encryptField(body.apiKey),
         sender: body.sender === undefined ? current.sender : (body.sender || null),
         headersJson: body.headersJson === undefined ? current.headersJson : (body.headersJson || null),
         bodyTemplate: body.bodyTemplate === undefined ? current.bodyTemplate : (body.bodyTemplate || null),
@@ -150,5 +159,5 @@ export async function PUT(request: NextRequest) {
   });
 
   await writeAudit(auth.user.id, "SUPERADMIN_SMS_PROVIDER_UPDATE", `${updated.name} sağlayıcısı güncellendi${updated.isActive ? " (aktif)" : ""}`);
-  return NextResponse.json(updated);
+  return NextResponse.json(publicProvider(updated));
 }

@@ -767,7 +767,7 @@ export default function InstitutionDetailPage() {
               </label>
               <p className="mt-1.5 text-xs text-slate-500">
                 Açıldığında randevu bildirimleri gibi süreçler SMS bakiyesi tüketmeden WhatsApp üzerinden
-                gönderilmeye çalışılır (aktif bir sağlayıcı yoksa otomatik olarak SMS'e döner).
+                gönderilmeye çalışılır (aktif bir sağlayıcı yoksa otomatik olarak SMS&apos;e döner).
                 Sağlayıcı ayarları SMS Yönetimi &gt; WhatsApp sekmesinden yapılır.
               </p>
             </FormSection>

@@ -3,7 +3,6 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { patientSchema } from "@/lib/validators";
 import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
-import { reverseLabInvoiceFirmaIntegration } from "@/lib/lab-firma-integration";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 
 type Params = { params: Promise<{ id: string }> };
@@ -11,6 +10,8 @@ type Params = { params: Promise<{ id: string }> };
 const FIELD_LABELS: Record<string, string> = {
   fullName: "Ad Soyad",
   phone: "Telefon",
+  preferredContactChannel: "İletişim Tercihi",
+  whatsappOptInAt: "WhatsApp İzni",
   profession: "Meslek",
   birthDate: "Doğum Tarihi",
   address: "Adres",
@@ -115,7 +116,7 @@ function buildPatientUpdateAuditDetail(
   ].join("\n");
 }
 
-export const GET = withApiTiming("patients-detail", async function GET(_: NextRequest, props: Params) {
+export const GET = withApiTiming("patients-detail", async function GET(request: NextRequest, props: Params) {
   const params = await props.params;
   const auth = await requireAuth("patients:read");
   if (auth.error) return auth.error;
@@ -123,6 +124,7 @@ export const GET = withApiTiming("patients-detail", async function GET(_: NextRe
   const patient = await prisma.patient.findFirst({
     where: {
       id: params.id,
+      archivedAt: null,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
     },
     select: {
@@ -133,6 +135,10 @@ export const GET = withApiTiming("patients-detail", async function GET(_: NextRe
       phoneCountryCode: true,
       fullName: true,
       phone: true,
+      preferredContactChannel: true,
+      whatsappOptInAt: true,
+      whatsappOptOutAt: true,
+      communicationConsentSource: true,
       profession: true,
       address: true,
       gender: true,
@@ -181,6 +187,7 @@ export const GET = withApiTiming("patients-detail", async function GET(_: NextRe
         orderBy: { diagnosedAt: "desc" },
       },
       payments: {
+        where: { status: "ACTIVE" },
         select: {
           id: true,
           amount: true,
@@ -239,6 +246,28 @@ export const GET = withApiTiming("patients-detail", async function GET(_: NextRe
     return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });
   }
 
+  if (
+    patient.institutionId
+    && auth.user.role !== "SUPERADMIN"
+    && !auth.user.ghost
+    && request.headers.get("x-silent-refresh") !== "1"
+  ) {
+    await prisma.patientAccessLog.create({
+      data: {
+        institutionId: patient.institutionId,
+        patientId: patient.id,
+        userId: auth.user.id,
+        action: "DOSYA_GORUNTULEME",
+        purpose: request.headers.get("x-access-purpose")?.slice(0, 250) || "Klinik hizmet sunumu",
+        route: request.nextUrl.pathname,
+        ip: (request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "")
+          .split(",")[0]
+          .trim()
+          .slice(0, 100) || null,
+      },
+    });
+  }
+
   // DOKTOR ve ASISTAN telefon numaralarını göremez
   if (shouldHidePatientPhone(auth.user.role)) {
     return NextResponse.json({ ...patient, phone: "***" });
@@ -256,6 +285,7 @@ export async function PUT(request: NextRequest, props: Params) {
   const existing = await prisma.patient.findFirst({
     where: {
       id: params.id,
+      archivedAt: null,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
     },
   });
@@ -275,6 +305,16 @@ export async function PUT(request: NextRequest, props: Params) {
     phoneCountryCode: typeof body.phoneCountryCode === "string" ? body.phoneCountryCode : existing.phoneCountryCode,
     fullName: typeof body.fullName === "string" ? body.fullName : existing.fullName,
     phone: typeof body.phone === "string" ? body.phone : existing.phone,
+    preferredContactChannel: typeof body.preferredContactChannel === "string"
+      ? body.preferredContactChannel
+      : existing.preferredContactChannel,
+    whatsappConsent: typeof body.whatsappConsent === "boolean"
+      ? body.whatsappConsent
+      : Boolean(existing.whatsappOptInAt && !existing.whatsappOptOutAt),
+    communicationConsentSource: normalizeOptional(
+      body.communicationConsentSource,
+      existing.communicationConsentSource,
+    ),
     profession: normalizeOptional(body.profession, existing.profession),
     address: normalizeOptional(body.address, existing.address),
     gender: typeof body.gender === "string" ? body.gender : existing.gender,
@@ -307,11 +347,28 @@ export async function PUT(request: NextRequest, props: Params) {
   // Prisma hatası kullanıcıya sızıyordu (bkz. denetim raporu).
   let patient;
   try {
+    const { whatsappConsent, ...patientData } = parsed.data;
+    const consentChanged = whatsappConsent !== Boolean(existing.whatsappOptInAt && !existing.whatsappOptOutAt);
     patient = await prisma.patient.update({
       where: { id: params.id },
       data: {
-        ...parsed.data,
-        birthDate: parsed.data.birthDate ? new Date(parsed.data.birthDate) : null
+        ...patientData,
+        birthDate: parsed.data.birthDate ? new Date(parsed.data.birthDate) : null,
+        ...(consentChanged && whatsappConsent
+          ? {
+              whatsappOptInAt: new Date(),
+              whatsappOptOutAt: null,
+              communicationConsentSource: parsed.data.communicationConsentSource || "Hasta düzenleme formu",
+            }
+          : {}),
+        ...(consentChanged && !whatsappConsent
+          ? {
+              whatsappOptOutAt: new Date(),
+              preferredContactChannel: parsed.data.preferredContactChannel === "WHATSAPP"
+                ? "SMS"
+                : parsed.data.preferredContactChannel,
+            }
+          : {}),
       }
     });
   } catch (error) {
@@ -328,6 +385,7 @@ export async function PUT(request: NextRequest, props: Params) {
     {
       ...existing,
       ...parsed.data,
+      whatsappOptInAt: patient.whatsappOptInAt,
       birthDate: parsed.data.birthDate ?? (existing.birthDate ? existing.birthDate.toISOString() : undefined),
     } as Record<string, unknown>
   );
@@ -336,7 +394,7 @@ export async function PUT(request: NextRequest, props: Params) {
   return NextResponse.json(patient);
 }
 
-export async function DELETE(_: NextRequest, props: Params) {
+export async function DELETE(request: NextRequest, props: Params) {
   const params = await props.params;
   const auth = await requireAuth("patients:delete");
   if (auth.error) return auth.error;
@@ -344,6 +402,7 @@ export async function DELETE(_: NextRequest, props: Params) {
   const existing = await prisma.patient.findFirst({
     where: {
       id: params.id,
+      archivedAt: null,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
     },
     select: { id: true, fullName: true },
@@ -353,99 +412,38 @@ export async function DELETE(_: NextRequest, props: Params) {
     return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });
   }
 
-  let deleted: { fullName: string };
-  try {
-    deleted = await prisma.$transaction(async (tx) => {
-    // Önce taksit planlarının ID'lerini al (reminder silimi için)
-    const planIds = (await tx.taksitPlan.findMany({
-      where: { patientId: params.id },
-      select: { id: true }
-    })).map(p => p.id);
+  const reason = request.headers.get("x-archive-reason")?.trim().slice(0, 500)
+    || "Kullanıcı talebiyle hasta kartı arşivlendi.";
+  const archivedAt = new Date();
 
-    // Hatırlatıcıları sil (hem hastaya hem plan'a bağlı olanlar)
-    await tx.reminder.deleteMany({
+  await prisma.$transaction(async (tx) => {
+    await tx.appointment.updateMany({
       where: {
-        OR: [
-          { patientId: params.id },
-          ...(planIds.length > 0 ? [{ planId: { in: planIds } }] : [])
-        ]
-      }
+        patientId: params.id,
+        startAt: { gte: archivedAt },
+        status: { notIn: ["IPTAL", "TAMAMLANDI"] },
+      },
+      data: { status: "IPTAL", note: "Hasta kartı arşivlendiği için iptal edildi." },
     });
-
-    // Taksit planlarını sil (Taksit ve TaksitOdeme cascade ile silinir)
-    await tx.taksitPlan.deleteMany({ where: { patientId: params.id } });
-
-    const labOrders = await tx.labOrder.findMany({
-      where: { patientId: params.id },
-      select: {
-        id: true,
-        labType: true,
-        invoiceNo: true,
-        price: true,
-        invoices: { select: { id: true, item: true, amount: true, invoiceNo: true } },
+    await tx.reminder.updateMany({
+      where: { patientId: params.id, status: { in: ["AKTIF", "GONDERILIYOR"] } },
+      data: {
+        status: "TAMAMLANDI",
+        nextAttemptAt: null,
+        lastError: "Hasta kartı arşivlendiği için bildirim iptal edildi.",
       },
     });
-
-    for (const order of labOrders) {
-      if (order.invoices.length > 0) {
-        for (const invoice of order.invoices) {
-          await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, {
-            labInvoiceId: invoice.id,
-            labOrderId: order.id,
-            invoiceNo: invoice.invoiceNo || null,
-            item: invoice.item || null,
-            amount: Number(invoice.amount || 0),
-          });
-        }
-      } else if (order.invoiceNo || order.price) {
-        await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, {
-          labOrderId: order.id,
-          invoiceNo: order.invoiceNo || null,
-          item: order.labType,
-          amount: Number(order.price || 0),
-        });
-      }
-    }
-
-    // Lab siparişlerini sil (LabTrip ve LabOrderInvoice cascade ile silinir)
-    await tx.labOrder.deleteMany({ where: { patientId: params.id } });
-
-    // Hasta takip kayıtlarını sil (PatientFollowUp/Event, ON DELETE RESTRICT
-    // olduğu için silinmeden hasta.delete() FK ihlaliyle çöker — events önce,
-    // sonra follow-up'lar).
-    const followUpIds = (await tx.patientFollowUp.findMany({
-      where: { patientId: params.id },
-      select: { id: true },
-    })).map((f) => f.id);
-    await tx.patientFollowUpEvent.deleteMany({
-      where: {
-        OR: [
-          { patientId: params.id },
-          ...(followUpIds.length > 0 ? [{ followUpId: { in: followUpIds } }] : []),
-        ],
+    await tx.patient.update({
+      where: { id: params.id },
+      data: {
+        archivedAt,
+        archivedById: auth.user.id,
+        archiveReason: reason,
+        whatsappOptOutAt: archivedAt,
       },
     });
-    await tx.patientFollowUp.deleteMany({ where: { patientId: params.id } });
+  });
 
-    // Reçeteleri sil
-    await tx.prescription.deleteMany({ where: { patientId: params.id } });
-
-    // Tedavi planlarını sil (TreatmentStep cascade ile silinir)
-    await tx.treatmentPlan.deleteMany({ where: { patientId: params.id } });
-
-    await tx.appointment.deleteMany({ where: { patientId: params.id } });
-    await tx.examination.deleteMany({ where: { patientId: params.id } });
-    await tx.payment.deleteMany({ where: { patientId: params.id } });
-      return tx.patient.delete({ where: { id: params.id } });
-    });
-  } catch {
-    return NextResponse.json(
-      { message: "Hasta silinemedi: bağlı kayıtlar tam temizlenemedi. Lütfen tekrar deneyin veya destek ekibiyle iletişime geçin." },
-      { status: 409 }
-    );
-  }
-
-  await writeAudit(auth.user.id, "PATIENT_DELETE", `${deleted.fullName || existing.fullName} kalıcı olarak silindi`);
-
-  return NextResponse.json({ ok: true });
+  await writeAudit(auth.user.id, "PATIENT_ARCHIVE", `${existing.fullName} arşivlendi. Gerekçe: ${reason}`);
+  return NextResponse.json({ ok: true, archived: true });
 }

@@ -282,6 +282,7 @@ async function main() {
   });
 
   await upsertPaymentByMarker({
+    institutionId: institution.id,
     patientId: createdPatients[0].id,
     posId: pos.id,
     marker: `${MARKER}-PAY-1`,
@@ -686,7 +687,7 @@ async function upsertExaminationByMarker(args: { patientId: string; doctorId: st
   });
 }
 
-async function upsertPaymentByMarker(args: { patientId: string; posId: string; marker: string }) {
+async function upsertPaymentByMarker(args: { institutionId: string; patientId: string; posId: string; marker: string }) {
   const existing = await prisma.payment.findFirst({
     where: { patientId: args.patientId, description: { contains: args.marker } },
   });
@@ -706,6 +707,7 @@ async function upsertPaymentByMarker(args: { patientId: string; posId: string; m
 
   await prisma.payment.create({
     data: {
+      institutionId: args.institutionId,
       patientId: args.patientId,
       amount: new Prisma.Decimal(1500),
       method: "KREDI_KARTI",
@@ -1142,6 +1144,7 @@ async function upsertWorkflowScenarioPack(args: {
   });
 
   await upsertPaymentByMarker({
+    institutionId: args.institutionId,
     patientId: p2.id,
     posId: args.posId,
     marker: `${MARKER}-SCN-ODEME-KART`,
@@ -1220,6 +1223,7 @@ async function upsertWorkflowScenarioPack(args: {
 
   if (p8) {
     await upsertPaymentByMarker({
+      institutionId: args.institutionId,
       patientId: p8.id,
       posId: args.posId,
       marker: `${MARKER}-SCN-NAKIT-TAHSILAT`,

@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
 
   if (auth.user.role !== "SUPERADMIN") {
     const patient = await prisma.patient.findFirst({
-      where: { id: parsed.data.patientId, institutionId: auth.user.institutionId },
+      where: { id: parsed.data.patientId, institutionId: auth.user.institutionId, archivedAt: null },
       select: { id: true },
     });
     if (!patient) {

@@ -10,7 +10,80 @@ type StockMovementInput = {
   note?: string | null;
   supplier?: string | null;
   unitPrice?: number | null;
+  purchaseItemId?: string | null;
+  lotNo?: string | null;
+  receivedAt?: Date | string | null;
+  expiresAt?: Date | string | null;
 };
+
+function dateOrNull(value?: Date | string | null) {
+  return value ? new Date(value) : null;
+}
+
+async function lockStockItem(tx: TxClient, stockItemId: string) {
+  await tx.$queryRaw`SELECT "id" FROM "StockItem" WHERE "id" = ${stockItemId} FOR UPDATE`;
+}
+
+async function allocateLots(
+  tx: TxClient,
+  stockItemId: string,
+  movementId: string,
+  quantity: number,
+) {
+  await tx.$queryRaw`
+    SELECT "id"
+    FROM "StockLot"
+    WHERE "stockItemId" = ${stockItemId}
+      AND "status" = 'AKTIF'
+      AND "quantityRemaining" > 0
+    ORDER BY "expiresAt" ASC NULLS LAST, "receivedAt" ASC, "createdAt" ASC
+    FOR UPDATE
+  `;
+
+  const lots = await tx.stockLot.findMany({
+    where: {
+      stockItemId,
+      status: "AKTIF",
+      quantityRemaining: { gt: 0 },
+    },
+    orderBy: [
+      { expiresAt: { sort: "asc", nulls: "last" } },
+      { receivedAt: "asc" },
+      { createdAt: "asc" },
+    ],
+  });
+
+  let remaining = quantity;
+  for (const lot of lots) {
+    if (remaining <= 0) break;
+    const available = Number(lot.quantityRemaining);
+    const used = Math.min(available, remaining);
+    const after = available - used;
+
+    await tx.stockLot.update({
+      where: { id: lot.id },
+      data: {
+        quantityRemaining: after,
+        status: after === 0 ? "TUKENDI" : "AKTIF",
+      },
+    });
+    await tx.stockMovementLotAllocation.create({
+      data: {
+        movementId,
+        lotId: lot.id,
+        quantity: used,
+        unitCost: Number(lot.unitCost),
+      },
+    });
+    remaining -= used;
+  }
+
+  if (remaining > 0) {
+    throw new Error(
+      `Stok partileri ile kart bakiyesi uyumsuz. ${remaining} birim için kullanılabilir parti bulunamadı.`,
+    );
+  }
+}
 
 export async function applyStockMovement({
   tx,
@@ -22,10 +95,15 @@ export async function applyStockMovement({
   note,
   supplier,
   unitPrice,
+  purchaseItemId,
+  lotNo,
+  receivedAt,
+  expiresAt,
 }: StockMovementInput) {
   if (!stockItemId) throw new Error("Stok kalemi zorunlu");
   if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("Miktar pozitif olmalı");
 
+  await lockStockItem(tx, stockItemId);
   const item = await tx.stockItem.findFirst({
     where: {
       id: stockItemId,
@@ -36,26 +114,18 @@ export async function applyStockMovement({
   if (!item) throw new Error("Stok kalemi bulunamadı");
   if (!item.isActive) throw new Error("Pasif stok kalemi güncellenemez");
 
-  // Çıkış için: eşzamanlı iki hareketin birbirinin üzerine yazmasını (lost update)
-  // önlemek amacıyla, koşullu atomik bir UPDATE ile miktarın hâlâ yeterli olduğunu
-  // veritabanı seviyesinde garanti ediyoruz. GİRİŞ için basit artırma yeterli.
-  const updated =
-    type === "GIRIS"
-      ? await tx.stockItem.update({
-          where: { id: stockItemId },
-          data: { quantity: { increment: quantity } },
-        })
-      : await (async () => {
-          const result = await tx.stockItem.updateMany({
-            where: { id: stockItemId, quantity: { gte: quantity } },
-            data: { quantity: { decrement: quantity } },
-          });
-          if (result.count === 0) {
-            const fresh = await tx.stockItem.findUnique({ where: { id: stockItemId }, select: { quantity: true } });
-            throw new Error(`Yetersiz stok. Mevcut: ${Number(fresh?.quantity ?? 0)}, İstenen çıkış: ${quantity}`);
-          }
-          return tx.stockItem.findUnique({ where: { id: stockItemId } });
-        })();
+  if (type === "CIKIS" && Number(item.quantity) < quantity) {
+    throw new Error(`Yetersiz stok. Mevcut: ${Number(item.quantity)}, İstenen çıkış: ${quantity}`);
+  }
+
+  const updated = await tx.stockItem.update({
+    where: { id: stockItemId },
+    data: {
+      quantity: type === "GIRIS"
+        ? { increment: quantity }
+        : { decrement: quantity },
+    },
+  });
 
   const movement = await tx.stockMovement.create({
     data: {
@@ -68,6 +138,115 @@ export async function applyStockMovement({
       unitPrice: unitPrice ?? null,
     },
   });
+
+  if (type === "GIRIS") {
+    await tx.stockLot.create({
+      data: {
+        institutionId: item.institutionId,
+        stockItemId,
+        purchaseItemId: purchaseItemId || null,
+        lotNo: lotNo?.trim() || null,
+        receivedAt: dateOrNull(receivedAt) || new Date(),
+        expiresAt: dateOrNull(expiresAt),
+        quantityReceived: quantity,
+        quantityRemaining: quantity,
+        unitCost: Number(unitPrice || 0),
+        supplierName: supplier?.trim() || null,
+        status: "AKTIF",
+      },
+    });
+  } else {
+    await allocateLots(tx, stockItemId, movement.id, quantity);
+  }
+
+  return {
+    item: updated,
+    movement,
+    isCritical: Number(updated.quantity) < Number(updated.minQuantity),
+  };
+}
+
+export async function assertPurchaseItemLotEditable(tx: TxClient, purchaseItemId: string) {
+  const lots = await tx.stockLot.findMany({
+    where: { purchaseItemId, status: { not: "IPTAL" } },
+    select: { quantityReceived: true, quantityRemaining: true },
+  });
+  const consumed = lots.some(
+    (lot: { quantityReceived: number; quantityRemaining: number }) =>
+      Number(lot.quantityRemaining) < Number(lot.quantityReceived),
+  );
+  if (consumed) {
+    throw new Error(
+      "Bu satın alma partisinden stok çıkışı yapılmış. Ürün, miktar veya maliyet değiştirilemez; düzeltme için ters stok hareketi oluşturun.",
+    );
+  }
+}
+
+export async function reversePurchaseItemStock({
+  tx,
+  purchaseItemId,
+  stockItemId,
+  institutionId,
+  userId,
+  note,
+}: {
+  tx: TxClient;
+  purchaseItemId: string;
+  stockItemId: string;
+  institutionId?: string | null;
+  userId: string;
+  note: string;
+}) {
+  await assertPurchaseItemLotEditable(tx, purchaseItemId);
+  await lockStockItem(tx, stockItemId);
+
+  const lots = await tx.stockLot.findMany({
+    where: { purchaseItemId, status: { not: "IPTAL" } },
+  });
+  const quantity = lots.reduce(
+    (sum: number, lot: { quantityRemaining: number }) => sum + Number(lot.quantityRemaining),
+    0,
+  );
+
+  if (quantity === 0) return null;
+  const item = await tx.stockItem.findFirst({
+    where: {
+      id: stockItemId,
+      ...(institutionId ? { institutionId } : {}),
+    },
+  });
+  if (!item || Number(item.quantity) < quantity) {
+    throw new Error("Satın alma partisi kart bakiyesiyle uyuşmuyor; otomatik geri alma durduruldu.");
+  }
+
+  const updated = await tx.stockItem.update({
+    where: { id: stockItemId },
+    data: { quantity: { decrement: quantity } },
+  });
+  const movement = await tx.stockMovement.create({
+    data: {
+      stockItemId,
+      type: "CIKIS",
+      quantity,
+      note,
+      userId,
+    },
+  });
+
+  for (const lot of lots) {
+    await tx.stockMovementLotAllocation.create({
+      data: {
+        movementId: movement.id,
+        lotId: lot.id,
+        quantity: Number(lot.quantityRemaining),
+        unitCost: Number(lot.unitCost),
+      },
+    });
+    await tx.stockLot.update({
+      where: { id: lot.id },
+      data: { quantityRemaining: 0, status: "IPTAL" },
+    });
+  }
 
   return {
     item: updated,

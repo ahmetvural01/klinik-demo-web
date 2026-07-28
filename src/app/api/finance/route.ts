@@ -75,7 +75,12 @@ export const GET = withApiTiming("finance", async function GET(request: NextRequ
     }),
     // Kurumun bu doktora yaptığı ödemeler — eski (Payment.doctorId) akış
     prisma.payment.findMany({
-      where: hasScopedDoctors ? { doctorId: doctorIdFilter, ...payDateFilter } : { ...payDateFilter },
+      where: {
+        status: "ACTIVE",
+        ...(institutionId ? { institutionId } : {}),
+        ...(hasScopedDoctors ? { doctorId: doctorIdFilter } : {}),
+        ...payDateFilter,
+      },
       orderBy: { createdAt: "desc" }
     }),
     // Kurumun bu doktora yaptığı ödemeler — güncel (muhasebe > Hakediş sekmesi,
@@ -94,6 +99,8 @@ export const GET = withApiTiming("finance", async function GET(request: NextRequ
     // Tüm hasta ödemeleri (patientId üzerinden)
     prisma.payment.findMany({
       where: {
+        status: "ACTIVE",
+        ...(institutionId ? { institutionId } : {}),
         doctorId: null,
         ...payDateFilter,
         ...(hasScopedDoctors

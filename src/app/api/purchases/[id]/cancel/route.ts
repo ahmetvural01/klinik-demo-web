@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
-import { applyStockMovement } from "@/lib/stock-ledger";
+import { reversePurchaseItemStock } from "@/lib/stock-ledger";
 import { findPurchasePayments, firmaIslemToken } from "@/lib/purchase-payment-links";
 import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
 
@@ -56,13 +56,12 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ id: str
 
       if (purchase.receiptStatus === "TESLIM_ALINDI") {
         for (const item of purchase.items) {
-          await applyStockMovement({
+          await reversePurchaseItemStock({
             tx,
+            purchaseItemId: item.id,
             stockItemId: item.stockItemId,
             institutionId: auth.user.institutionId,
             userId: auth.user.id,
-            type: "CIKIS",
-            quantity: Number(item.quantity),
             note: `Satın alma iptali: ${purchase.firma.name} (${item.productName})`,
           });
         }
@@ -75,7 +74,10 @@ export async function POST(_req: NextRequest, props: { params: Promise<{ id: str
         await tx.expense.updateMany({
           where: {
             status: "AKTIF",
-            description: { contains: firmaIslemToken(payment.id) },
+            OR: [
+              { sourceType: "FIRMA_ISLEM", sourceId: payment.id },
+              { description: { contains: firmaIslemToken(payment.id) } },
+            ],
           },
           data: { status: "IPTAL" },
         });

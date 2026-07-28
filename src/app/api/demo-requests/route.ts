@@ -214,6 +214,7 @@ export async function POST(request: NextRequest) {
 
       await tx.payment.create({
         data: {
+          institutionId: institution.id,
           patientId: patients[0].id,
           posId: pos.id,
           method: "KREDI_KARTI",

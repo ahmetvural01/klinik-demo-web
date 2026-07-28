@@ -361,8 +361,8 @@ async function createExamination(patientId: string, doctorId: string, treatmentN
   });
 }
 
-async function createPayment(patientId: string, doctorId: string, amount: number, method: "NAKIT" | "KREDI_KARTI" | "HAVALE_EFT" | "MAIL_ORDER" | "DIGER", posId: string | null, description: string, daysAgo = 0) {
-  const existing = await prisma.payment.findFirst({ where: { patientId, doctorId, description } });
+async function createPayment(institutionId: string, patientId: string, doctorId: string, amount: number, method: "NAKIT" | "KREDI_KARTI" | "HAVALE_EFT" | "MAIL_ORDER" | "DIGER", posId: string | null, description: string, daysAgo = 0) {
+  const existing = await prisma.payment.findFirst({ where: { institutionId, patientId, doctorId, description } });
   if (existing) {
     return prisma.payment.update({
       where: { id: existing.id },
@@ -370,7 +370,7 @@ async function createPayment(patientId: string, doctorId: string, amount: number
     });
   }
   return prisma.payment.create({
-    data: { patientId, doctorId, amount: dec(amount), method, posId: posId || undefined, description, createdAt: at(-daysAgo, 12) },
+    data: { institutionId, patientId, doctorId, amount: dec(amount), method, posId: posId || undefined, description, createdAt: at(-daysAgo, 12) },
   });
 }
 
@@ -404,11 +404,11 @@ async function upsertClinicalFlow(
   await createExamination(patients["Burak Şahin"].id, drElif.id, "Gece Plağı", null, 2800, "TEDAVI_BEKLIYOR", 2);
   await createExamination(patients["Selin Koç"].id, drMert.id, "Kompozit Dolgu (Tek Yüz)", "25", 1750, "TEDAVI_BEKLIYOR", 1);
 
-  await createPayment(patients["Akif Balcı"].id, drElif.id, 10000, "KREDI_KARTI", pos["Akbank POS"], "İmplant tedavisi peşinatı", 1);
-  await createPayment(patients["Zeynep Arslan"].id, drElif.id, 5000, "HAVALE_EFT", null, "Zirkonyum tedavisi ön ödeme", 2);
-  await createPayment(patients["Ayşe Yılmaz"].id, drMert.id, 1800, "NAKIT", null, "Detertraj tahsilatı", 2);
-  await createPayment(patients["Elif Demir"].id, drMert.id, 2350, "MAIL_ORDER", pos["Mail Order Sanal POS"], "Dolgu tedavisi mail order tahsilatı", 8);
-  await createPayment(patients["Mehmet Kaya"].id, drMert.id, 1500, "KREDI_KARTI", pos["Garanti POS"], "Kanal tedavisi kapora", 0);
+  await createPayment(institutionId, patients["Akif Balcı"].id, drElif.id, 10000, "KREDI_KARTI", pos["Akbank POS"], "İmplant tedavisi peşinatı", 1);
+  await createPayment(institutionId, patients["Zeynep Arslan"].id, drElif.id, 5000, "HAVALE_EFT", null, "Zirkonyum tedavisi ön ödeme", 2);
+  await createPayment(institutionId, patients["Ayşe Yılmaz"].id, drMert.id, 1800, "NAKIT", null, "Detertraj tahsilatı", 2);
+  await createPayment(institutionId, patients["Elif Demir"].id, drMert.id, 2350, "MAIL_ORDER", pos["Mail Order Sanal POS"], "Dolgu tedavisi mail order tahsilatı", 8);
+  await createPayment(institutionId, patients["Mehmet Kaya"].id, drMert.id, 1500, "KREDI_KARTI", pos["Garanti POS"], "Kanal tedavisi kapora", 0);
 
   const plan = await prisma.treatmentPlan.upsert({
     where: { id: `plan-${patients["Akif Balcı"].id}` },
