@@ -202,6 +202,10 @@ try {
         const isVisible = (element) => {
           const style = getComputedStyle(element);
           const rect = element.getBoundingClientRect();
+          const closedDetails = element.closest("details:not([open])");
+          if (closedDetails && element !== closedDetails && element.tagName !== "SUMMARY") {
+            return false;
+          }
           return (
             style.display !== "none" &&
             style.visibility !== "hidden" &&
