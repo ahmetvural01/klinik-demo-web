@@ -286,7 +286,7 @@ export async function POST(request: NextRequest) {
 
   const selectedUnit = await isEligibleClinicUnit(parsed.data.clinicUnitId, auth.user.institutionId);
   if (parsed.data.clinicUnitId && !selectedUnit) {
-    return NextResponse.json({ message: "Seçilen klinik ünitesi bulunamadı veya pasif durumda." }, { status: 400 });
+    return NextResponse.json({ message: "Seçilen tedavi alanı bulunamadı veya pasif durumda." }, { status: 400 });
   }
 
   if (auth.user.institutionId) {
@@ -366,7 +366,7 @@ export async function POST(request: NextRequest) {
       const cs = unitConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
       const ce = unitConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
       return NextResponse.json({
-        message: `${selectedUnit.name} ünitesi ${cs}–${ce} saatleri arasında dolu (${unitConflict.patient?.fullName ?? "—"}).`,
+        message: `${selectedUnit.name} tedavi alanı ${cs}–${ce} saatleri arasında dolu (${unitConflict.patient?.fullName ?? "—"}).`,
         conflictId: unitConflict.id,
       }, { status: 409 });
     }
@@ -470,7 +470,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${appointment.patient.fullName} için randevu${appointment.clinicUnit ? ` · Ünite: ${appointment.clinicUnit.name}` : ""}`);
+    await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${appointment.patient.fullName} için randevu${appointment.clinicUnit ? ` · Tedavi alanı: ${appointment.clinicUnit.name}` : ""}`);
     return NextResponse.json({
       ...appointment,
       smsStatus: {
@@ -487,7 +487,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: "Bu doktor için bu saat aralığı az önce başka bir kullanıcı tarafından dolduruldu. Lütfen tekrar deneyin." }, { status: 409 });
     }
     if (error instanceof Error && error.message === "CLINIC_UNIT_CONFLICT_RECHECK") {
-      return NextResponse.json({ message: "Bu klinik ünitesi bu saat aralığında az önce başka bir randevuya ayrıldı. Lütfen tekrar deneyin." }, { status: 409 });
+      return NextResponse.json({ message: "Bu tedavi alanı aynı saat aralığında başka bir randevuya ayrıldı. Lütfen tekrar deneyin." }, { status: 409 });
     }
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2034") {
       return NextResponse.json({ message: "Bu randevu aynı anda başka bir işlemle çakıştı. Lütfen tekrar deneyin." }, { status: 409 });

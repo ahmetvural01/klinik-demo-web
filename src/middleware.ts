@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jwtVerify } from "jose";
 import { extractModuleFromPath, hasModuleAccess } from "@/lib/superadmin-modules";
 import { metricIncrement } from "@/lib/metrics";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
+import { parseRolePreview, ROLE_PREVIEW_COOKIE } from "@/lib/role-preview";
 
 const TOKEN_NAME = "klinik_token";
 
@@ -114,30 +116,22 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(new URL("/klinik/giris", request.url));
   }
 
-  // JWT yapısı: header.payload.signature — decode ederek exp kontrolü
+  // Sayfa yetkilendirmesi yalnızca imzası doğrulanmış JWT ile yapılır.
   try {
-    const parts = token.split(".");
-    if (parts.length !== 3) throw new Error("invalid");
-
-    const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"))) as {
-      exp?: number;
+    const secret = process.env.JWT_SECRET;
+    if (!secret) throw new Error("JWT_SECRET tanımlı değil");
+    const verified = await jwtVerify(token, new TextEncoder().encode(secret), { algorithms: ["HS256"] });
+    const payload = verified.payload as {
       role?: string;
       superadminModules?: string[];
     };
-
-    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
-      metricIncrement("auth_failures_total");
-      // Token süresi dolmuş
-      if (pathname.startsWith("/api/")) {
-        return NextResponse.json({ message: "Oturum süresi doldu" }, { status: 401 });
-      }
-      const response = NextResponse.redirect(new URL("/klinik/giris", request.url));
-      response.cookies.delete(TOKEN_NAME);
-      return response;
-    }
+    const previewRole = payload.role === "SUPERADMIN"
+      ? parseRolePreview(request.cookies.get(ROLE_PREVIEW_COOKIE)?.value)
+      : null;
+    const effectiveRole = previewRole || payload.role;
 
     if (
-      payload.role === "SUPERADMIN" &&
+      effectiveRole === "SUPERADMIN" &&
       pathname !== "/superadmin/yetki-yok" &&
       pathname !== "/api/auth/superadmin/permissions"
     ) {
@@ -151,7 +145,7 @@ export async function middleware(request: NextRequest) {
     }
 
     // Rol bazlı sayfa & API erişim kontrolü (SUPERADMIN ve YONETICI hariç)
-    const role = payload.role;
+    const role = effectiveRole;
     if (role && role !== "SUPERADMIN" && role !== "YONETICI") {
       // Sayfa erişim kontrolü
       if (!pathname.startsWith("/api/")) {

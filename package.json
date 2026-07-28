@@ -51,6 +51,7 @@
     "exceljs": "^4.4.0",
     "flag-icons": "^7.5.0",
     "ioredis": "^5.10.1",
+    "jose": "^5.10.0",
     "jsbarcode": "^3.12.3",
     "jsonwebtoken": "^9.0.2",
     "jspdf": "^4.2.1",

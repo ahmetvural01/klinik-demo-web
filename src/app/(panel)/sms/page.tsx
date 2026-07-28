@@ -443,35 +443,47 @@ function SmsSettingsPanel() {
 }
 
 export default function SmsPage() {
-  const [tab, setTab] = useState<"kayitlar" | "whatsapp" | "ayarlar" | "sablonlar" | "toplu">("kayitlar");
+  type SmsTab = "kayitlar" | "whatsapp" | "ayarlar" | "sablonlar" | "toplu";
+  const [tab, setTab] = useState<SmsTab>("kayitlar");
+  const [mountedTabs, setMountedTabs] = useState<Set<SmsTab>>(() => new Set(["kayitlar"]));
+
+  const activateTab = useCallback((nextTab: SmsTab) => {
+    setMountedTabs((current) => {
+      if (current.has(nextTab)) return current;
+      const next = new Set(current);
+      next.add(nextTab);
+      return next;
+    });
+    setTab(nextTab);
+  }, []);
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap gap-2">
-        <Button variant={tab === "kayitlar" ? "primary" : "secondary"} size="sm" onClick={() => setTab("kayitlar")}>
+        <Button variant={tab === "kayitlar" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("kayitlar")}>
           Kayıtlar
         </Button>
-        <Button variant={tab === "ayarlar" ? "primary" : "secondary"} size="sm" onClick={() => setTab("ayarlar")}>
+        <Button variant={tab === "ayarlar" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("ayarlar")}>
           Ayarlar
         </Button>
-        <Button variant={tab === "whatsapp" ? "primary" : "secondary"} size="sm" onClick={() => setTab("whatsapp")}>
+        <Button variant={tab === "whatsapp" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("whatsapp")}>
           WhatsApp
         </Button>
-        <Button variant={tab === "sablonlar" ? "primary" : "secondary"} size="sm" onClick={() => setTab("sablonlar")}>
+        <Button variant={tab === "sablonlar" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("sablonlar")}>
           Şablonlar
         </Button>
-        <Button variant={tab === "toplu" ? "primary" : "secondary"} size="sm" onClick={() => setTab("toplu")}>
+        <Button variant={tab === "toplu" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("toplu")}>
           Toplu Gönderim
         </Button>
       </div>
       {/* Sekmeler DOM'dan tamamen kaldırılmak yerine gizleniyor — özellikle Toplu
           Gönderim'deki seçili hasta listesi gibi girilmiş verinin, kullanıcı
           başka bir sekmeye bakıp geri döndüğünde kaybolmaması için. */}
-      <div className={tab === "kayitlar" ? "" : "hidden"}><SmsManagement onGoToSettings={() => setTab("ayarlar")} /></div>
-      <div className={tab === "ayarlar" ? "" : "hidden"}><SmsSettingsPanel /></div>
-      <div className={tab === "whatsapp" ? "" : "hidden"}><WhatsappMessagesTab /></div>
-      <div className={tab === "toplu" ? "" : "hidden"}><BulkSendTab /></div>
-      <div className={tab === "sablonlar" ? "" : "hidden"}><TemplatesTab /></div>
+      {mountedTabs.has("kayitlar") && <div className={tab === "kayitlar" ? "" : "hidden"}><SmsManagement onGoToSettings={() => activateTab("ayarlar")} /></div>}
+      {mountedTabs.has("ayarlar") && <div className={tab === "ayarlar" ? "" : "hidden"}><SmsSettingsPanel /></div>}
+      {mountedTabs.has("whatsapp") && <div className={tab === "whatsapp" ? "" : "hidden"}><WhatsappMessagesTab /></div>}
+      {mountedTabs.has("toplu") && <div className={tab === "toplu" ? "" : "hidden"}><BulkSendTab /></div>}
+      {mountedTabs.has("sablonlar") && <div className={tab === "sablonlar" ? "" : "hidden"}><TemplatesTab /></div>}
     </div>
   );
 }

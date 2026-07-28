@@ -16,11 +16,14 @@ const viewports = [
 
 const baseRoutes = [
   { name: "anasayfa", path: "/anasayfa" },
+  { name: "randevular", path: "/randevu" },
   { name: "hastalar", path: "/hasta" },
   { name: "muhasebe", path: "/muhasebe" },
   { name: "laboratuvar", path: "/lab" },
   { name: "stok", path: "/stok" },
   { name: "tedarikciler", path: "/firma" },
+  { name: "personeller", path: "/personel" },
+  { name: "sms-yonetimi", path: "/sms" },
   { name: "ayarlar", path: "/ayar" },
 ];
 const publicRoutes = [

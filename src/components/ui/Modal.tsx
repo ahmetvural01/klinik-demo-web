@@ -71,9 +71,14 @@ export function Modal({
         </div>
         <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto px-4 py-4 sm:px-5">
           {children}
+          {footer && (
+            <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-slate-100/80 pt-3 sm:hidden">
+              {footer}
+            </div>
+          )}
         </div>
         {footer && (
-          <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-slate-100/80 bg-slate-50/70 px-4 py-3 sm:px-5">
+          <div className="hidden shrink-0 flex-wrap justify-end gap-2 border-t border-slate-100/80 bg-slate-50/70 px-4 py-3 sm:flex sm:px-5">
             {footer}
           </div>
         )}

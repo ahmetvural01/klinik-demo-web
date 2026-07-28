@@ -27,7 +27,7 @@ const TABS = [
   { id: "fiyat", label: "Fiyat Listesi" },
   { id: "pos", label: "POS Cihazları" },
   { id: "tedavi", label: "Tedavi Türleri" },
-  { id: "uniteler", label: "Klinik Üniteleri" },
+  { id: "uniteler", label: "Tedavi Alanları" },
 ] as const;
 
 type SettingsTab = (typeof TABS)[number]["id"];

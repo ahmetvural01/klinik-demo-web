@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { headers } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { decodeTokenUser } from "@/lib/auth";
 import { can } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 import { metricObserve } from "@/lib/metrics";
+import { parseRolePreview, ROLE_PREVIEW_COOKIE } from "@/lib/role-preview";
 import {
   bumpRealtimeInstitution as bumpRealtimeInstitutionBus,
   getRealtimeInstitutionVersion as getRealtimeInstitutionVersionBus,
@@ -128,11 +129,20 @@ function isLimitedBlockedPermission(permission?: string) {
 
 export async function requireAuth(permission?: string) {
   // JWT çözümleme — DB sorgusu yok
-  const user = await decodeTokenUser();
+  const tokenUser = await decodeTokenUser();
 
-  if (!user) {
+  if (!tokenUser) {
     return { error: NextResponse.json({ message: "Oturum gerekli" }, { status: 401 }) };
   }
+
+  const previewRole = tokenUser.role === "SUPERADMIN"
+    ? parseRolePreview((await cookies()).get(ROLE_PREVIEW_COOKIE)?.value)
+    : null;
+  // Önizleme yalnızca doğrulanmış SUPERADMIN oturumunu daraltır. İstemci
+  // cookie'si normal bir kullanıcıya ek yetki kazandıramaz.
+  const user = previewRole
+    ? { ...tokenUser, role: previewRole, ghost: false, actualRole: tokenUser.role }
+    : { ...tokenUser, actualRole: tokenUser.role };
 
   const sessionState = await getUserSessionState(user.id);
   if (!sessionState.isActive) {

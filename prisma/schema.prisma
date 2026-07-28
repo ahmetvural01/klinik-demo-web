@@ -335,6 +335,7 @@ model WhatsappMessage {
   deliveredAt       DateTime?
   readAt            DateTime?
   failedAt          DateTime?
+  seenAt            DateTime?
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
   institution       Institution             @relation(fields: [institutionId], references: [id], onDelete: Cascade)
@@ -344,6 +345,7 @@ model WhatsappMessage {
 
   @@index([institutionId, createdAt])
   @@index([institutionId, status])
+  @@index([institutionId, direction, seenAt])
   @@index([patientId, createdAt])
   @@index([phone, createdAt])
 }

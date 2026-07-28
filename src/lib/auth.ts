@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { prisma } from "@/lib/prisma";
 
 const TOKEN_NAME = "klinik_token";
+const ROLE_PREVIEW_COOKIE = "klinik_preview_role";
 
 async function readAuthToken() {
   try {
@@ -161,11 +162,18 @@ export async function setAuthCookie(token: string) {
 }
 
 export async function clearAuthCookie() {
-  (await cookies()).set(TOKEN_NAME, "", {
+  const cookieStore = await cookies();
+  cookieStore.set(TOKEN_NAME, "", {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: 0
+  });
+  cookieStore.set(ROLE_PREVIEW_COOKIE, "", {
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
   });
 }

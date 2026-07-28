@@ -17,6 +17,8 @@ type ProfessionalDataTableProps<TData> = {
   columns: ColumnDef<TData, unknown>[];
   emptyText?: string;
   pageSize?: number;
+  onRowClick?: (item: TData) => void;
+  getRowAriaLabel?: (item: TData) => string;
 };
 
 export function ProfessionalDataTable<TData>({
@@ -24,6 +26,8 @@ export function ProfessionalDataTable<TData>({
   columns,
   emptyText = "Kayıt bulunamadı",
   pageSize = 15,
+  onRowClick,
+  getRowAriaLabel,
 }: ProfessionalDataTableProps<TData>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const stableColumns = useMemo(() => columns, [columns]);
@@ -51,7 +55,7 @@ export function ProfessionalDataTable<TData>({
                   <th
                     key={header.id}
                     className={`whitespace-nowrap px-3 py-2.5 text-xs font-bold uppercase tracking-normal text-slate-500 sm:px-4 ${
-                      header.column.id === "actions" ? "sticky right-0 z-10 bg-slate-50/95 shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.08)]" : ""
+                      header.column.id === "actions" ? "md:sticky md:right-0 md:z-10 md:bg-slate-50/95 md:shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.08)]" : ""
                     }`}
                   >
                     {header.isPlaceholder ? null : (
@@ -83,12 +87,25 @@ export function ProfessionalDataTable<TData>({
               </tr>
             ) : (
               rows.map((row) => (
-                <tr key={row.id} className="group transition hover:bg-slate-50/80">
+                <tr
+                  key={row.id}
+                  tabIndex={onRowClick ? 0 : undefined}
+                  role={onRowClick ? "button" : undefined}
+                  aria-label={onRowClick ? getRowAriaLabel?.(row.original) : undefined}
+                  onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                  onKeyDown={onRowClick ? (event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onRowClick(row.original);
+                    }
+                  } : undefined}
+                  className={`group transition hover:bg-slate-50/80 ${onRowClick ? "cursor-pointer focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/30" : ""}`}
+                >
                   {row.getVisibleCells().map((cell) => (
                     <td
                       key={cell.id}
                       className={`px-3 py-2.5 sm:px-4 ${
-                        cell.column.id === "actions" ? "sticky right-0 z-10 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.08)] group-hover:bg-slate-50/80" : ""
+                        cell.column.id === "actions" ? "md:sticky md:right-0 md:z-10 md:bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] md:shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.08)] md:group-hover:bg-slate-50/80" : ""
                       }`}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}

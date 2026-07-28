@@ -2172,14 +2172,14 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
             </div>
             {clinicUnits.some((unit) => unit.isActive) && (
               <label>
-                <span className="mb-1.5 block text-xs font-bold text-slate-600">Klinik ünitesi</span>
+                <span className="mb-1.5 block text-xs font-bold text-slate-600">Tedavi alanı <span className="font-medium text-slate-400">(isteğe bağlı)</span></span>
                 <select
                   value={newClinicUnitId}
                   onChange={(event) => setNewClinicUnitId(event.target.value)}
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-                  aria-label="Klinik ünitesi"
+                  aria-label="Tedavi alanı"
                 >
-                  <option value="">Ünite seçilmedi</option>
+                  <option value="">Koltuk / oda seçilmedi</option>
                   {clinicUnits.filter((unit) => unit.isActive).map((unit) => <option key={unit.id} value={unit.id}>{unit.name}{unit.code ? ` · ${unit.code}` : ""}</option>)}
                 </select>
               </label>
@@ -2817,13 +2817,13 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                   </div>
                 </div>
                 {clinicUnits.some((unit) => unit.isActive || unit.id === editClinicUnitId) && (
-                  <FormField label="Klinik Ünitesi (isteğe bağlı)">
+                  <FormField label="Tedavi Alanı (isteğe bağlı)">
                     <select
                       value={editClinicUnitId}
                       onChange={(event) => setEditClinicUnitId(event.target.value)}
                       className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                     >
-                      <option value="">Ünite seçilmedi</option>
+                      <option value="">Koltuk / oda seçilmedi</option>
                       {clinicUnits
                         .filter((unit) => unit.isActive || unit.id === editClinicUnitId)
                         .map((unit) => (
@@ -2862,7 +2862,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                     )}
                   </span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Doktor:</span><span>{selectedAppt.doctor?.fullName}</span></div>
-                  {selectedAppt.clinicUnit && <div className="flex justify-between"><span className="text-gray-500">Ünite:</span><span>{selectedAppt.clinicUnit.name}{selectedAppt.clinicUnit.code ? ` · ${selectedAppt.clinicUnit.code}` : ""}</span></div>}
+                  {selectedAppt.clinicUnit && <div className="flex justify-between"><span className="text-gray-500">Tedavi alanı:</span><span>{selectedAppt.clinicUnit.name}{selectedAppt.clinicUnit.code ? ` · ${selectedAppt.clinicUnit.code}` : ""}</span></div>}
                   <div className="flex justify-between"><span className="text-gray-500">Başlangıç:</span><span>{new Date(selectedAppt.startAt).toLocaleString("tr-TR")}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Bitiş:</span><span>{new Date(selectedAppt.endAt).toLocaleString("tr-TR")}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Tedavi:</span><span className="rounded-full px-2 py-0.5 text-xs font-semibold text-white" style={{ backgroundColor: treatmentMeta.color }}>{treatmentMeta.label}</span></div>

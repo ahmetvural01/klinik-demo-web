@@ -384,21 +384,6 @@ export default function StokPage() {
         );
       },
     },
-    {
-      id: "actions",
-      header: "İşlem",
-      enableSorting: false,
-      cell: ({ row }) => {
-        const item = row.original;
-        return (
-          <div className="flex items-center justify-end gap-1 whitespace-nowrap">
-            <Button size="sm" variant="secondary" onClick={() => setDetailItem(item)}>
-              Detay
-            </Button>
-          </div>
-        );
-      },
-    },
   ];
 
   const inp = "rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none";
@@ -441,7 +426,14 @@ export default function StokPage() {
           Stok kalemleri yükleniyor...
         </div>
       ) : (
-        <ProfessionalDataTable data={filtered} columns={stockColumns} emptyText="Stok kalemi bulunamadı" pageSize={15} />
+        <ProfessionalDataTable
+          data={filtered}
+          columns={stockColumns}
+          emptyText="Stok kalemi bulunamadı"
+          pageSize={15}
+          onRowClick={setDetailItem}
+          getRowAriaLabel={(item) => `${item.name} stok detayını aç`}
+        />
       )}
 
       {/* New Item Modal */}

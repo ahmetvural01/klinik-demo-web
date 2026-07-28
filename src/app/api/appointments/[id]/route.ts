@@ -211,7 +211,7 @@ export async function PUT(request: NextRequest, props: Params) {
     });
   }
   if (requestedClinicUnitId && !selectedUnit) {
-    return NextResponse.json({ message: "Seçilen klinik ünitesi bulunamadı veya pasif durumda." }, { status: 400 });
+    return NextResponse.json({ message: "Seçilen tedavi alanı bulunamadı veya pasif durumda." }, { status: 400 });
   }
 
   const newStart = new Date(parsed.data.startAt);
@@ -263,7 +263,7 @@ export async function PUT(request: NextRequest, props: Params) {
     if (unitConflict) {
       const cs = unitConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
       const ce = unitConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
-      return NextResponse.json({ message: `${selectedUnit.name} ünitesi ${cs}–${ce} saatleri arasında dolu (${unitConflict.patient?.fullName ?? "—"}).`, conflictId: unitConflict.id }, { status: 409 });
+      return NextResponse.json({ message: `${selectedUnit.name} tedavi alanı ${cs}–${ce} saatleri arasında dolu (${unitConflict.patient?.fullName ?? "—"}).`, conflictId: unitConflict.id }, { status: 409 });
     }
   }
 
@@ -340,7 +340,7 @@ export async function PUT(request: NextRequest, props: Params) {
       return NextResponse.json({ message: "Bu doktor için bu saat aralığı az önce başka bir kullanıcı tarafından dolduruldu. Lütfen tekrar deneyin." }, { status: 409 });
     }
     if (error instanceof Error && error.message === "CLINIC_UNIT_CONFLICT_RECHECK") {
-      return NextResponse.json({ message: "Bu klinik ünitesi bu saat aralığında az önce başka bir randevuya ayrıldı. Lütfen tekrar deneyin." }, { status: 409 });
+      return NextResponse.json({ message: "Bu tedavi alanı aynı saat aralığında başka bir randevuya ayrıldı. Lütfen tekrar deneyin." }, { status: 409 });
     }
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2034") {
       return NextResponse.json({ message: "Randevu aynı anda başka bir işlemle çakıştı. Lütfen tekrar deneyin." }, { status: 409 });
@@ -377,7 +377,7 @@ export async function PUT(request: NextRequest, props: Params) {
   pushDiff("Tür", existing.type, parsed.data.type);
   pushDiff("Not", existing.note, parsed.data.note);
   pushDiff("Doktor", existing.doctorId, parsed.data.doctorId);
-  pushDiff("Ünite", existing.clinicUnit?.name, appointment.clinicUnit?.name);
+  pushDiff("Tedavi alanı", existing.clinicUnit?.name, appointment.clinicUnit?.name);
 
   const detail = [
     `${auth.user.fullName || "Personel"} tarafından ${appointment.patient.fullName} randevusu güncellendi.`,

@@ -30,6 +30,7 @@ import {
 } from "lucide-react";
 import { usePanelAlerts } from "@/components/layout/use-panel-alerts";
 import { useEscapeClose } from "@/lib/use-modal-dismiss";
+import { parseRolePreview, ROLE_PREVIEW_COOKIE, ROLE_PREVIEW_STORAGE } from "@/lib/role-preview";
 
 const ICONS: Record<string, JSX.Element> = {
   home: <Home className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
@@ -259,7 +260,11 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
 
   useEffect(() => {
     if (isSuperAdmin) {
-      const saved = sessionStorage.getItem("dev-preview-role");
+      const cookieValue = document.cookie
+        .split("; ")
+        .find((entry) => entry.startsWith(`${ROLE_PREVIEW_COOKIE}=`))
+        ?.split("=")[1];
+      const saved = parseRolePreview(cookieValue || sessionStorage.getItem(ROLE_PREVIEW_STORAGE));
       if (saved) setPreviewRole(saved);
     }
   }, [isSuperAdmin]);
@@ -289,13 +294,17 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
 
   const handlePreviewRole = (role: string | null) => {
     if (role) {
-      sessionStorage.setItem("dev-preview-role", role);
+      sessionStorage.setItem(ROLE_PREVIEW_STORAGE, role);
+      document.cookie = `${ROLE_PREVIEW_COOKIE}=${encodeURIComponent(role)}; Path=/; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
     } else {
-      sessionStorage.removeItem("dev-preview-role");
+      sessionStorage.removeItem(ROLE_PREVIEW_STORAGE);
+      document.cookie = `${ROLE_PREVIEW_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0${location.protocol === "https:" ? "; Secure" : ""}`;
     }
     setPreviewRole(role);
     setRolePickerOpen(false);
     window.dispatchEvent(new Event("preview-role-change"));
+    router.replace("/anasayfa");
+    router.refresh();
   };
 
   const userRole = user.role;

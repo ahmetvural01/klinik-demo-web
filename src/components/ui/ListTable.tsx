@@ -21,6 +21,7 @@ export interface ListTableProps<T> {
   skeletonRows?: number;
   emptyText?: string;
   onRowClick?: (row: T) => void;
+  getRowAriaLabel?: (row: T) => string;
   pager?: ListPagerProps;
 }
 
@@ -41,6 +42,7 @@ export function ListTable<T>({
   skeletonRows = 6,
   emptyText = "Kayıt bulunamadı",
   onRowClick,
+  getRowAriaLabel,
   pager,
 }: ListTableProps<T>) {
   const hasStickyActions = columns.some((column) => column.key === "islem" || column.key === "actions");
@@ -59,7 +61,7 @@ export function ListTable<T>({
                     "whitespace-nowrap px-3 py-2.5 sm:px-4",
                     ALIGN_CLASS[col.align || "left"],
                     hasStickyActions && (col.key === "islem" || col.key === "actions")
-                      ? "sticky right-0 z-10 bg-slate-50/95 shadow-[-5px_0_8px_-8px_rgb(15_23_42/0.35)]"
+                      ? "md:sticky md:right-0 md:z-10 md:bg-slate-50/95 md:shadow-[-5px_0_8px_-8px_rgb(15_23_42/0.35)]"
                       : "",
                     col.headerClassName || "",
                   ].filter(Boolean).join(" ")}
@@ -82,8 +84,17 @@ export function ListTable<T>({
               rows.map((row) => (
                 <tr
                   key={rowKey(row)}
+                  tabIndex={onRowClick ? 0 : undefined}
+                  role={onRowClick ? "button" : undefined}
+                  aria-label={onRowClick ? getRowAriaLabel?.(row) : undefined}
                   onClick={onRowClick ? () => onRowClick(row) : undefined}
-                  className={`group transition hover:bg-slate-50/80 ${onRowClick ? "cursor-pointer" : ""}`}
+                  onKeyDown={onRowClick ? (event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onRowClick(row);
+                    }
+                  } : undefined}
+                  className={`group transition hover:bg-slate-50/80 ${onRowClick ? "cursor-pointer focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/30" : ""}`}
                 >
                   {columns.map((col) => (
                     <td
@@ -92,7 +103,7 @@ export function ListTable<T>({
                         "px-3 py-2.5 sm:px-4",
                         ALIGN_CLASS[col.align || "left"],
                         hasStickyActions && (col.key === "islem" || col.key === "actions")
-                          ? "sticky right-0 z-10 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] shadow-[-5px_0_8px_-8px_rgb(15_23_42/0.35)] group-hover:bg-slate-50/80"
+                          ? "md:sticky md:right-0 md:z-10 md:bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] md:shadow-[-5px_0_8px_-8px_rgb(15_23_42/0.35)] md:group-hover:bg-slate-50/80"
                           : "",
                         col.cellClassName || "",
                       ].filter(Boolean).join(" ")}
