@@ -107,7 +107,7 @@ export function Modal({
       <div
         ref={dialogRef}
         tabIndex={-1}
-        className={`ui-modal-panel flex max-h-[calc(100dvh-20px)] w-full flex-col rounded-t-xl border border-slate-200 bg-[rgb(var(--app-surface))] shadow-[var(--shadow-floating)] outline-none sm:max-h-[calc(100dvh-32px)] sm:rounded-lg ${SIZE_CLASS[size]}`}
+        className={`ui-modal-panel flex max-h-[calc(100dvh-20px)] w-full flex-col rounded-t-2xl border border-slate-200 bg-[rgb(var(--app-surface))] shadow-[var(--shadow-floating)] outline-none sm:max-h-[calc(100dvh-32px)] sm:rounded-2xl ${SIZE_CLASS[size]}`}
       >
         <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-5">
           <div className="min-w-0">
@@ -132,7 +132,7 @@ export function Modal({
           )}
         </div>
         {footer && (
-          <div className="hidden shrink-0 flex-wrap justify-end gap-2 border-t border-slate-100 bg-slate-50/70 px-4 py-3 sm:flex sm:px-5">
+          <div className="hidden shrink-0 flex-wrap justify-end gap-2 rounded-b-2xl border-t border-slate-100 bg-gradient-to-b from-slate-50/40 to-slate-50/80 px-4 py-3 sm:flex sm:px-5">
             {footer}
           </div>
         )}
