@@ -30,16 +30,18 @@ export async function GET() {
       orderBy: { order: "asc" },
     });
 
+    // Yeni/boş bir kurumun tedavi türü listesi hiç dolmazsa randevu formunda
+    // seçilecek hiçbir tedavi olmazdı — ilk açılışta varsayılan liste tohumlanır
+    // (bkz. denetim raporu).
     if (types.length === 0) {
       await prisma.treatmentType.createMany({
-        data: APPOINTMENT_TREATMENT_OPTIONS.map((item, idx) => ({
-          institutionId: auth.user.institutionId as string,
-          value: item.value,
-          label: item.label,
-          color: item.color,
-          order: idx,
+        data: APPOINTMENT_TREATMENT_OPTIONS.map((opt, index) => ({
+          institutionId: auth.user.institutionId!,
+          value: opt.value,
+          label: opt.label,
+          color: opt.color,
+          order: index,
         })),
-        skipDuplicates: true,
       });
       types = await prisma.treatmentType.findMany({
         where: { institutionId: auth.user.institutionId },

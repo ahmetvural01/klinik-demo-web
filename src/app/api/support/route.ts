@@ -8,7 +8,7 @@ export const GET = withApiTiming("support", async function GET() {
   if (auth.error) return auth.error;
 
   const tickets = await prisma.supportTicket.findMany({
-    where: auth.user.role !== "SUPERADMIN" ? { user: { institutionId: auth.user.institutionId } } : {},
+    where: auth.user.role !== "SUPERADMIN" ? { institutionId: auth.user.institutionId } : {},
     orderBy: { createdAt: "desc" },
     include: { user: { select: { id: true, fullName: true, role: true, institutionId: true } } },
     take: 500,
@@ -37,6 +37,7 @@ export async function POST(request: NextRequest) {
   const ticket = await prisma.supportTicket.create({
     data: {
       userId: auth.user.id,
+      institutionId: auth.user.institutionId,
       subject: subject || "Genel",
       message
     }

@@ -24,7 +24,10 @@ export async function GET(request: NextRequest) {
       orderBy: { createdAt: "desc" },
       skip,
       take: limit,
-      include: { user: { select: { fullName: true, role: true, email: true } } },
+      include: {
+        user: { select: { fullName: true, role: true, email: true, institutionId: true } },
+        institution: { select: { id: true, name: true } },
+      },
     }),
   ]);
 

@@ -15,8 +15,13 @@ export async function GET(request: NextRequest) {
   const status = searchParams.get("status") || "";
   const institutionId = searchParams.get("institutionId") || "";
   const q = (searchParams.get("q") || "").trim();
+  // "status" filtresi burada UYGULANMAZ — ham DB durumuna göre filtrelemek,
+  // vadesi geçmiş ama henüz DB'de "OVERDUE" işaretlenmemiş (hâlâ "PENDING")
+  // faturaları "Gecikti" filtresinden tamamen gizliyordu (bkz. denetim
+  // raporu). Bunun yerine tüm kayıtlar çekilip aşağıda canlı türetilmiş
+  // duruma göre filtrelenir — summary de aynı canlı duruma göre, filtreden
+  // BAĞIMSIZ tam veri setinden hesaplanır.
   const where = {
-    ...(status ? { status: status as "PENDING" | "PAID" | "OVERDUE" | "CANCELLED" } : {}),
     ...(institutionId ? { institutionId } : {}),
     ...(q
       ? {
@@ -54,7 +59,9 @@ export async function GET(request: NextRequest) {
     unpaidAmount: normalized.filter((i) => i.status !== "PAID").reduce((s, i) => s + Number(i.amount), 0),
   };
 
-  return NextResponse.json({ invoices: normalized, summary });
+  const filtered = status ? normalized.filter((i) => i.status === status) : normalized;
+
+  return NextResponse.json({ invoices: filtered, summary });
 }
 
 export async function POST(request: NextRequest) {

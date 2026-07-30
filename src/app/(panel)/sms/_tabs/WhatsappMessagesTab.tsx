@@ -124,6 +124,7 @@ export default function WhatsappMessagesTab() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [activePatient, setActivePatient] = useState<PatientOption | null>(null);
   const [canReply, setCanReply] = useState(false);
+  const [templateAllowed, setTemplateAllowed] = useState(false);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
   const [threadLoading, setThreadLoading] = useState(false);
@@ -135,6 +136,8 @@ export default function WhatsappMessagesTab() {
   const [patientOptions, setPatientOptions] = useState<PatientOption[]>([]);
   const [selectedPatient, setSelectedPatient] = useState<PatientOption | null>(null);
   const [detailMessage, setDetailMessage] = useState<Message | null>(null);
+  const [templateName, setTemplateName] = useState("");
+  const [templateLanguage, setTemplateLanguage] = useState("tr");
   const threadEndRef = useRef<HTMLDivElement>(null);
 
   const loadConversations = useCallback(async (silent = false) => {
@@ -170,6 +173,7 @@ export default function WhatsappMessagesTab() {
         setMessages(Array.isArray(body?.messages) ? body.messages : []);
         setActivePatient(body?.patient || null);
         setCanReply(Boolean(body?.canReply));
+        setTemplateAllowed(Boolean(body?.templateAllowed));
         await fetch("/api/whatsapp/messages", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -233,14 +237,19 @@ export default function WhatsappMessagesTab() {
     setMobileThreadOpen(true);
   };
 
-  const sendMessage = async (patient: PatientOption | null, message: string) => {
-    if (!patient || !message.trim() || sending) return null;
+  const sendMessage = async (patient: PatientOption | null, message: string, template?: { name?: string; language?: string }) => {
+    if (!patient || (template ? !template.name?.trim() : !message.trim()) || sending) return null;
     setSending(true);
     try {
       const response = await fetch("/api/whatsapp/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ patientId: patient.id, message: message.trim() }),
+        body: JSON.stringify({
+          patientId: patient.id,
+          message: message.trim(),
+          templateName: template?.name,
+          templateLanguage: template?.language,
+        }),
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) {
@@ -257,7 +266,14 @@ export default function WhatsappMessagesTab() {
   };
 
   const submitThread = async () => {
-    if (await sendMessage(activePatient, content)) setContent("");
+    const template = !canReply && templateAllowed && templateName.trim()
+      ? { name: templateName.trim(), language: templateLanguage.trim() || "tr" }
+      : undefined;
+    if (!canReply && !template) return;
+    if (await sendMessage(activePatient, content, template)) {
+      setContent("");
+      setTemplateName("");
+    }
   };
 
   const closeComposer = () => {
@@ -267,10 +283,22 @@ export default function WhatsappMessagesTab() {
     setPatientOptions([]);
     setSelectedPatient(null);
     setContent("");
+    setTemplateName("");
+    setTemplateLanguage("tr");
+    // Kompozer, seçilen hastaya özel canReply/templateAllowed değerlerini bu
+    // paylaşılan state'e yazıyordu — kapatınca arkadaki asıl aktif görüşmenin
+    // gerçek değerleri geri yüklenmeli, yoksa ana panel kompozerden kalma
+    // bayat bir durumu göstermeye devam eder.
+    if (activePhone) void loadThread(activePhone, true);
+    else { setCanReply(false); setTemplateAllowed(false); }
   };
 
   const submitNewMessage = async () => {
-    const phone = await sendMessage(selectedPatient, content);
+    const template = !canReply && templateAllowed && templateName.trim()
+      ? { name: templateName.trim(), language: templateLanguage.trim() || "tr" }
+      : undefined;
+    if (!canReply && !template) return;
+    const phone = await sendMessage(selectedPatient, content, template);
     if (!phone) return;
     closeComposer();
     setActivePhone(phone);
@@ -435,10 +463,16 @@ export default function WhatsappMessagesTab() {
               </div>
 
               <footer className="border-t border-slate-200 bg-white p-3">
-                {!canReply && (
+                {!canReply && templateAllowed && (
                   <div className="mb-2 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
                     <Info className="mt-0.5 h-4 w-4 shrink-0" />
-                    <span>24 saatlik serbest mesaj süresi kapalı veya hastanın iletişim izni yok. Görüşme, onaylı bir şablonla yeniden başlatılmalıdır.</span>
+                    <span>24 saatlik serbest mesaj süresi kapalı. Onaylı bir WhatsApp şablonu girerseniz görüşme yeniden başlatılır.</span>
+                  </div>
+                )}
+                {!canReply && !templateAllowed && (
+                  <div className="mb-2 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    <Info className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>Bu hastanın WhatsApp iletişim izni yok. Şablon da gönderilemez.</span>
                   </div>
                 )}
                 <div className="flex items-end gap-2">
@@ -452,18 +486,38 @@ export default function WhatsappMessagesTab() {
                       }
                     }}
                     rows={2}
-                    disabled={!canReply || sending}
-                    placeholder={canReply ? "Mesaj yazın" : "Mesaj gönderimi şu anda kapalı"}
+                    disabled={(!canReply && !templateAllowed) || sending}
+                    placeholder={canReply ? "Mesaj yazın" : "Şablon için ilk değişkeni yazın"}
                     className="min-h-10 flex-1 resize-none rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary disabled:bg-slate-100"
                   />
                   <Button
                     icon={Send}
                     onClick={() => void submitThread()}
                     loading={sending}
-                    disabled={!canReply || !content.trim()}
+                    disabled={sending || (!canReply && !templateAllowed) || (!templateName.trim() && !content.trim())}
                     aria-label="Mesajı gönder"
                   />
                 </div>
+                {!canReply && templateAllowed && (
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                    <FormField label="Şablon Adı" required hint="24 saat penceresi kapalıysa onaylı şablon adı girin.">
+                      <input
+                        value={templateName}
+                        onChange={(event) => setTemplateName(event.target.value)}
+                        placeholder="randevu_bilgilendirme"
+                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary"
+                      />
+                    </FormField>
+                    <FormField label="Şablon Dili" hint="Genelde tr">
+                      <input
+                        value={templateLanguage}
+                        onChange={(event) => setTemplateLanguage(event.target.value)}
+                        placeholder="tr"
+                        className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary"
+                      />
+                    </FormField>
+                  </div>
+                )}
               </footer>
             </>
           )}
@@ -474,13 +528,13 @@ export default function WhatsappMessagesTab() {
         open={composerOpen}
         onClose={closeComposer}
         title="Yeni WhatsApp Görüşmesi"
-        description="Serbest mesaj için hastanın iletişim izni ve son 24 saat içinde gelen mesajı bulunmalıdır."
+        description="Serbest mesaj için son 24 saat içinde gelen yanıt gerekir; süre kapalıysa onaylı bir şablonla başlayabilirsiniz."
         size="lg"
         closeOnBackdrop={!sending}
         footer={(
           <>
             <Button variant="secondary" onClick={closeComposer} disabled={sending}>Vazgeç</Button>
-            <Button icon={Send} onClick={() => void submitNewMessage()} loading={sending} disabled={!selectedPatient || !content.trim()}>
+            <Button icon={Send} onClick={() => void submitNewMessage()} loading={sending} disabled={!selectedPatient || (canReply ? !content.trim() : !(templateAllowed && templateName.trim()))}>
               Gönder
             </Button>
           </>
@@ -509,6 +563,24 @@ export default function WhatsappMessagesTab() {
                 const patient = patientOptions.find((item) => item.id === option.id) || null;
                 setSelectedPatient(patient);
                 setPatientQuery(patient?.fullName || option.label);
+                // canReply/templateAllowed önceki açık olan görüşmeden kalma
+                // (bayat) değerlerse, yeni hasta için "Gönder" butonu hem
+                // yanlış disabled görünebiliyor hem de tıklanınca sessizce
+                // hiçbir şey olmuyordu (bkz. denetim raporu) — her yeni hasta
+                // seçiminde bu hastaya özel 24 saatlik pencere/şablon durumu
+                // taze olarak sorgulanır.
+                setCanReply(false);
+                setTemplateAllowed(false);
+                if (patient?.phone) {
+                  fetch(`/api/whatsapp/messages?${new URLSearchParams({ phone: patient.phone, take: "1" })}`, { cache: "no-store" })
+                    .then((res) => (res.ok ? res.json() : null))
+                    .then((body) => {
+                      if (!body) return;
+                      setCanReply(Boolean(body.canReply));
+                      setTemplateAllowed(Boolean(body.templateAllowed));
+                    })
+                    .catch(() => null);
+                }
               }}
               placeholder="Hasta adı veya telefon"
               emptyText="Eşleşen hasta bulunamadı"
@@ -524,6 +596,26 @@ export default function WhatsappMessagesTab() {
               className="w-full resize-y rounded-lg border border-slate-200 px-3 py-2 text-sm leading-6 outline-none focus:border-primary"
             />
           </FormField>
+          {!canReply && templateAllowed && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <FormField label="Şablon Adı" required hint="24 saat penceresi kapalıysa onaylı şablon adı girin.">
+                <input
+                  value={templateName}
+                  onChange={(event) => setTemplateName(event.target.value)}
+                  placeholder="randevu_bilgilendirme"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+              </FormField>
+              <FormField label="Şablon Dili" hint="Genelde tr">
+                <input
+                  value={templateLanguage}
+                  onChange={(event) => setTemplateLanguage(event.target.value)}
+                  placeholder="tr"
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary"
+                />
+              </FormField>
+            </div>
+          )}
         </div>
       </Modal>
 

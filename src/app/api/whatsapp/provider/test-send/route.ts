@@ -5,10 +5,18 @@ import { testWhatsappProviderSend } from "@/lib/whatsapp";
 
 const PROVIDER_CODE = "TWILIO";
 
+async function requireAnyAuth(primaryPermission: string, fallbackPermission: string | null = null) {
+  const primary = await requireAuth(primaryPermission);
+  if (!primary.error) return primary;
+  if (!fallbackPermission) return primary;
+  const fallback = await requireAuth(fallbackPermission);
+  return fallback.error ? primary : fallback;
+}
+
 // Kliniğin kendi bağlantısını test etmesi — providerId istemciden alınmaz,
 // yalnızca kendi kurumunun kaydı sorgulanır (IDOR'a kapalı).
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth("settings:write");
+  const auth = await requireAnyAuth("whatsapp:write", "settings:write");
   if (auth.error) return auth.error;
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Yalnızca klinik kullanıcıları erişebilir." }, { status: 403 });

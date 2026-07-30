@@ -76,6 +76,11 @@ export function invalidateUserSessionCache(userId: string) {
   _userActiveCache.delete(userId);
 }
 
+export function invalidateInstitutionCache(institutionId?: string | null) {
+  if (!institutionId) return;
+  _instCache.delete(institutionId);
+}
+
 export function getRealtimeInstitutionVersion(institutionId?: string | null) {
   return getRealtimeInstitutionVersionBus(institutionId);
 }

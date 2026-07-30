@@ -54,7 +54,7 @@ export default function ReportsPage() {
   const stats = [
     { label: "Bu Ay Ödenen Toplam", value: `₺${data.totalIncome.toLocaleString("tr-TR")}`, icon: Wallet },
     { label: "Aktif Klinik", value: data.activeClinicCount, icon: CheckCircle2 },
-    { label: "Toplam SMS Kullanımı", value: data.totalSmsUsed.toLocaleString("tr-TR"), icon: Smartphone },
+    { label: "Bu Ay SMS Kullanımı", value: data.totalSmsUsed.toLocaleString("tr-TR"), icon: Smartphone },
   ];
 
   return (

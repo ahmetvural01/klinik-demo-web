@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const auth = await requireAuth("dashboard:read");
   if (auth.error) return auth.error;

@@ -92,8 +92,6 @@ export async function GET() {
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
   }
 
-  await prisma.celebrationDay.createMany({ data: DEFAULT_CELEBRATION_DAYS, skipDuplicates: true });
-
   const days = await prisma.celebrationDay.findMany({ orderBy: [{ month: "asc" }, { day: "asc" }] });
   return NextResponse.json(days);
 }

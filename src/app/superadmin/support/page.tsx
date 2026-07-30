@@ -17,7 +17,8 @@ type Ticket = {
   subject: string;
   message: string;
   answer?: string | null;
-  user?: { fullName: string; role?: string; email?: string } | null;
+  user?: { fullName: string; role?: string; email?: string; institutionId?: string | null } | null;
+  institution?: { id: string; name: string } | null;
   createdAt: string;
 };
 
@@ -146,7 +147,7 @@ export default function SupportPage() {
                       </div>
                     )}
                     <p className="text-xs text-slate-400">
-                      {t.user?.fullName ?? "—"} · {t.user?.email ?? "—"} ·{" "}
+                      {t.user?.fullName ?? "—"} · {t.user?.email ?? "—"} · {t.institution?.name ?? t.user?.institutionId ?? "—"} · {" "}
                       {new Date(t.createdAt).toLocaleDateString("tr-TR")}
                     </p>
                   </div>

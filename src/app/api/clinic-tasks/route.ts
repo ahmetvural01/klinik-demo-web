@@ -5,7 +5,7 @@ import { clinicTaskCreateSchema } from "@/lib/validators";
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await requireAuth("dashboard:read");
+    const auth = await requireAuth("clinictasks:read");
     if (auth.error) return auth.error;
 
     if (!auth.user.institutionId) {
@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth("dashboard:read");
+  const auth = await requireAuth("clinictasks:write");
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {

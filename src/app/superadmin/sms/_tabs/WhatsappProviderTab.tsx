@@ -177,10 +177,8 @@ export default function WhatsappProviderTab() {
     <section className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-slate-500">
-          WhatsApp, SMS bakiyesi tüketmeyen paralel bir bildirim kanalıdır. Bir klinik için modülü açmak
-          Kurumlar &gt; Kurum Detayı ekranından yapılır — açıldıktan sonra klinik kendi Meta hesabını
-          Ayarlar &gt; SMS &gt; WhatsApp Ayarları&apos;ndan kendisi bağlayabilir. Buradaki liste; kliniğin kendi
-          yapamadığı durumlarda destek amaçlı manuel tanımlama içindir.
+          Buradaki kayıtlar, teknik destek veya platform yöneticisi tarafından yönetilen WhatsApp sağlayıcılarını gösterir.
+          Kliniklerin günlük kullanım akışı Kurumlar &gt; Kurum Detayı ve Ayarlar &gt; SMS &gt; WhatsApp üzerinden yürür.
         </p>
         <Button icon={PlusCircle} size="sm" onClick={openCreate}>Yeni Sağlayıcı</Button>
       </div>

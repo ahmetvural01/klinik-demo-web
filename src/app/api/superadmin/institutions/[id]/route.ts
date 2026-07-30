@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { invalidateInstitutionCache, requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { getPlanDefaultLimits, type SubscriptionPlanId } from "@/lib/subscription-plans";
 
@@ -78,9 +78,33 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
     },
   });
 
+  const whatsappProvider = await prisma.whatsappProviderConfig.findFirst({
+    where: { institutionId: params.id },
+    orderBy: [{ isActive: "desc" }, { priority: "asc" }, { createdAt: "asc" }],
+    select: {
+      id: true,
+      code: true,
+      name: true,
+      providerType: true,
+      isActive: true,
+      updatedAt: true,
+    },
+  });
+
   return NextResponse.json({
     ...institution,
     allAds,
+    whatsappProvider: whatsappProvider
+      ? {
+          exists: true,
+          id: whatsappProvider.id,
+          code: whatsappProvider.code,
+          name: whatsappProvider.name,
+          providerType: whatsappProvider.providerType,
+          isActive: whatsappProvider.isActive,
+          updatedAt: whatsappProvider.updatedAt,
+        }
+      : { exists: false },
     paymentSummary: {
       overdueCount,
       pendingCount,
@@ -194,6 +218,8 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
     `${updated.name}: ${changedFields.length > 0 ? changedFields.join(", ") : "alan değişikliği yok"}`,
   );
 
+  invalidateInstitutionCache(params.id);
+
   return NextResponse.json(updated);
 }
 
@@ -210,6 +236,7 @@ export async function DELETE(_req: NextRequest, props: { params: Promise<{ id: s
   });
 
   await writeAudit(auth.user.id, "SUPERADMIN_INSTITUTION_DEACTIVATE", `${updated.name} pasife alındı.`);
+  invalidateInstitutionCache(params.id);
 
   return NextResponse.json(updated);
 }

@@ -138,6 +138,20 @@ export async function middleware(request: NextRequest) {
       pathname !== "/api/auth/superadmin/permissions"
     ) {
       const requiredModule = extractModuleFromPath(pathname);
+      // Süperadmin yüzeyindeki (/superadmin veya /api/superadmin altındaki) bir
+      // sayfa/route superadmin-modules.ts'teki MODULE_ROUTE_RULES'a kaydedilmeyi
+      // unutursa, extractModuleFromPath null döner ve modül kısıtlaması hiç
+      // UYGULANMAZ (fail-open) — kısıtlı bir süperadmin hesabı o route'a modülü
+      // kapalı olsa bile erişebilirdi (bkz. denetim raporu). Bu yüzden süperadmin
+      // yüzeyinde eşleşmeyen bir route varsayılan olarak REDDEDİLİR; yeni bir
+      // route eklerken MODULE_ROUTE_RULES'a kaydedilmesi zorunlu hale gelir.
+      const isSuperadminSurface = pathname.startsWith("/superadmin/") || pathname.startsWith("/api/superadmin/");
+      if (isSuperadminSurface && !requiredModule) {
+        if (pathname.startsWith("/api/")) {
+          return NextResponse.json({ message: "Bu modüle erişim yetkiniz yok" }, { status: 403 });
+        }
+        return NextResponse.redirect(new URL("/superadmin/yetki-yok", request.url));
+      }
       if (requiredModule && !hasModuleAccess(payload.superadminModules, requiredModule)) {
         if (pathname.startsWith("/api/")) {
           return NextResponse.json({ message: "Bu modüle erişim yetkiniz yok" }, { status: 403 });
@@ -164,6 +178,7 @@ export async function middleware(request: NextRequest) {
         }
       }
     }
+
   } catch {
     metricIncrement("auth_failures_total");
     if (pathname.startsWith("/api/")) {

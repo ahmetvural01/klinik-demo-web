@@ -26,12 +26,9 @@ const emptyForm = {
   isActive: true,
 };
 
-// Klinik kendi WhatsApp bağlantısını buradan tanımlar — süperadmin yalnızca
-// modülü açar (bkz. docs/ILETISIM-MIMARISI-RAPORU.md §3). Bilinçli olarak
-// Meta Cloud API'nin teknik alanları (phoneNumberId, businessAccountId vb.)
-// yerine Twilio üzerinden gidilir: klinik yalnızca Twilio konsolundan
-// kopyaladığı 3 basit değeri girer. Bu, SMS tarafında zaten kullanılan
-// Twilio Account SID/Auth Token deseniyle tutarlıdır (bkz. src/lib/sms.ts).
+// Klinik kendi WhatsApp bağlantısını buradan tanımlar; süperadmin yalnızca
+// modülü açar. Akış, teknik detayları mümkün olduğunca gizleyip klinik için
+// tek ekrandan bağla / test et / yeniden bağla deneyimi sağlamayı hedefler.
 export default function WhatsappSettingsTab() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [provider, setProvider] = useState<Provider | null>(null);
@@ -144,13 +141,19 @@ export default function WhatsappSettingsTab() {
     );
   }
 
+  const connectionStatus = provider
+    ? provider.isActive
+      ? { tone: "success" as const, label: "Bağlı ve aktif" }
+      : { tone: "warning" as const, label: "Bağlı ama pasif" }
+    : { tone: "neutral" as const, label: "Henüz bağlı değil" };
+
   return (
     <section className="space-y-4">
       <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-lg font-black text-slate-900">WhatsApp Ayarları</h1>
-            <p className="mt-1 text-sm text-slate-500">Kendi Twilio hesabınızı bağlayın — mesajlarınız kendi WhatsApp numaranızdan gider.</p>
+            <h1 className="text-lg font-black text-slate-900">WhatsApp Bağlantısı</h1>
+            <p className="mt-1 text-sm text-slate-500">Klinik numaranızı bağlayın, test edin ve gerektiğinde yeniden yapılandırın.</p>
           </div>
           {provider && (
             <Badge tone={provider.isActive ? "success" : "neutral"} size="md">
@@ -160,13 +163,26 @@ export default function WhatsappSettingsTab() {
         </div>
       </div>
 
+      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Bağlantı Durumu</p>
+            <p className="mt-1 text-sm font-semibold text-slate-800">{connectionStatus.label}</p>
+            <p className="mt-1 text-xs text-slate-500">
+              WhatsApp etkinse, randevu ve bilgilendirme mesajları SMS yerine burada seçilen bağlantı üzerinden gönderilmeye çalışılır.
+            </p>
+          </div>
+          <Badge tone={connectionStatus.tone}>{connectionStatus.label}</Badge>
+        </div>
+      </div>
+
       <div className="rounded-2xl border border-primary/15 bg-primary/5 p-4 text-xs leading-relaxed text-slate-600">
-        <p className="font-bold text-slate-700">Nasıl bağlanırım? (özet)</p>
+        <p className="font-bold text-slate-700">Nasıl bağlanırım?</p>
         <ol className="mt-1.5 list-decimal space-y-1 pl-4">
           <li><a href="https://www.twilio.com/try-twilio" target="_blank" rel="noreferrer" className="font-semibold text-primary hover:underline">twilio.com</a> üzerinden ücretsiz bir hesap açın (birkaç dakika sürer).</li>
           <li>Twilio Console ana sayfasında <strong>Account SID</strong> ve <strong>Auth Token</strong> değerlerini kopyalayın.</li>
-          <li>Twilio&apos;nun WhatsApp Sandbox&apos;ı ile hemen ücretsiz test edin, gerçek numaranız için Twilio&apos;nun WhatsApp Gönderici başvurusunu tamamlayın.</li>
-          <li>Aşağıya bu 3 bilgiyi girip kaydedin — teknik bir şey yapmanıza gerek yok.</li>
+          <li>WhatsApp Sandbox ile test edin, sonra kendi onaylı WhatsApp gönderici numaranıza geçin.</li>
+          <li>Aşağıya bilgileri girip kaydedin, ardından test mesajı gönderin.</li>
         </ol>
         <details className="mt-3 border-t border-primary/15 pt-3">
           <summary className="cursor-pointer font-bold text-primary hover:underline">Adım adım detaylı rehber (resimsiz, açıklamalı)</summary>
@@ -185,11 +201,11 @@ export default function WhatsappSettingsTab() {
             </div>
             <div>
               <p className="font-bold text-slate-700">4) Panelde bağlantıyı tanımlayın</p>
-              <p className="mt-1">Az önce kopyaladığınız Account SID, Auth Token ve Sandbox numarasını (ör. +14155238886) aşağıdaki forma girip <strong>Kaydet</strong>&apos;e basın. Ardından <strong>Bağlantıyı Test Et</strong> ile kendi telefonunuza bir deneme mesajı gönderin.</p>
+              <p className="mt-1">Az önce kopyaladığınız Account SID, Auth Token ve WhatsApp numarasını aşağıdaki forma girip <strong>Kaydet</strong>&apos;e basın. Ardından <strong>Bağlantıyı Test Et</strong> ile kendi telefonunuza bir deneme mesajı gönderin.</p>
             </div>
             <div>
               <p className="font-bold text-slate-700">5) Gerçek/onaylı numaraya geçiş (Sandbox&apos;tan çıkış)</p>
-              <p className="mt-1">Sandbox yalnızca test amaçlıdır: yalnızca &quot;join&quot; mesajı gönderen numaralara ulaşır ve üstünde Twilio ile paylaşılan ortak bir numaradır. Gerçek hastalarınıza kesintisiz mesaj gönderebilmek için Twilio Console&apos;da <strong>Messaging &gt; Senders &gt; WhatsApp senders</strong> bölümünden kendi numaranız (yeni bir Twilio numarası veya mevcut işletme numaranız) için WhatsApp Business başvurusu yapmanız gerekir. Twilio bu başvuruda sizi adım adım yönlendirir; onay süreci Meta (WhatsApp) tarafında birkaç gün sürebilir. Onaylandığında yalnızca yukarıdaki <strong>WhatsApp Numarası</strong> alanını yeni onaylı numarayla güncellemeniz yeterlidir, başka hiçbir ayar değişmez.</p>
+              <p className="mt-1">Sandbox yalnızca test amaçlıdır. Gerçek hastalara kesintisiz mesaj gönderebilmek için Twilio Console&apos;da <strong>Messaging &gt; Senders &gt; WhatsApp senders</strong> bölümünden kendi onaylı numaranız için başvuru yapmanız gerekir. Onaylandığında yalnızca yukarıdaki <strong>WhatsApp Numarası</strong> alanını güncellemeniz yeterlidir.</p>
             </div>
             <div>
               <p className="font-bold text-slate-700">Sık karşılaşılan sorunlar</p>
@@ -205,13 +221,13 @@ export default function WhatsappSettingsTab() {
 
       <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
         <div className="grid gap-4 md:grid-cols-2">
-          <FormField label="Twilio Account SID" required hint="Twilio Console ana sayfasından kopyalanır.">
+          <FormField label="Hesap SID" required hint="Bağlantı sağlayıcınızın hesap kimliği. Twilio kullanıyorsanız Console ana sayfasından kopyalanır.">
             <input className={inputClass} value={form.accountSid} onChange={(e) => setForm({ ...form, accountSid: e.target.value })} placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
           </FormField>
-          <FormField label="Twilio Auth Token" required={!provider} hint={provider ? "Değiştirmek istemiyorsanız boş bırakın" : "Twilio Console ana sayfasından kopyalanır."}>
+          <FormField label="Doğrulama Anahtarı" required={!provider} hint={provider ? "Değiştirmek istemiyorsanız boş bırakın" : "Hesap doğrulama anahtarını girin."}>
             <input type="password" className={inputClass} value={form.authToken} onChange={(e) => setForm({ ...form, authToken: e.target.value })} placeholder="••••••••" />
           </FormField>
-          <FormField label="WhatsApp Numarası" required hint="Twilio Sandbox numarası veya onaylı kendi numaranız — ülke koduyla, ör. +14155238886">
+          <FormField label="WhatsApp Numarası" required hint="WhatsApp üzerinden gönderim yapacak numara, ülke koduyla girilir.">
             <input className={inputClass} value={form.whatsappNumber} onChange={(e) => setForm({ ...form, whatsappNumber: e.target.value })} placeholder="+14155238886" />
           </FormField>
         </div>

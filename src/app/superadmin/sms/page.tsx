@@ -23,6 +23,7 @@ type TabId = (typeof TABS)[number]["id"];
 export default function SmsPage() {
   const [activeTab, setActiveTab] = useState<TabId>("packages");
   const ActiveComponent = TABS.find((t) => t.id === activeTab)?.Component ?? PackagesTab;
+  const isWhatsappTab = activeTab === "whatsapp";
 
   return (
     <section className="space-y-5">
@@ -47,6 +48,14 @@ export default function SmsPage() {
             {tab.label}
           </button>
         ))}
+      </div>
+
+      <div className="rounded-2xl border border-slate-100 bg-white p-4 text-sm text-slate-600 shadow-sm">
+        {isWhatsappTab ? (
+          <p><strong>WhatsApp</strong>: Klinik bazlı bağlantı burada yönetilir. Superadmin yalnızca modül erişimini açar; her klinik kendi sağlayıcı bilgilerini ayrı tutar.</p>
+        ) : (
+          <p><strong>SMS</strong>: Paketler, stok, şablonlar ve sağlayıcı bağlantısı burada yönetilir. WhatsApp ayarları ayrı sekmededir ve klinik bazlıdır.</p>
+        )}
       </div>
 
       <ActiveComponent />

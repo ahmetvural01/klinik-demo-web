@@ -58,6 +58,7 @@ model Institution {
   posDevices          PosDevice[]
   payments            Payment[]
   users               User[]
+  supportTickets      SupportTicket[]
   whatsappProviders   WhatsappProviderConfig[]
   whatsappMessages    WhatsappMessage[]
   documents           Document[]
@@ -1012,13 +1013,16 @@ model DoctorBlock {
 model SupportTicket {
   id        String   @id @default(cuid())
   userId    String?
+  institutionId String?
   subject   String
   message   String
   answer    String?
   createdAt DateTime @default(now())
   user      User?    @relation(fields: [userId], references: [id])
+  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
 
   @@index([userId])
+  @@index([institutionId])
 }
 
 model Message {

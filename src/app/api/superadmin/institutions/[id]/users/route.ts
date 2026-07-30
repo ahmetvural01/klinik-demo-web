@@ -1,5 +1,5 @@
+import { requireAuth, writeAudit } from "@/lib/api";
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 
@@ -104,6 +104,8 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
   await prisma.profile.create({
     data: { userId: user.id },
   });
+
+  await writeAudit(auth.user.id, "SUPERADMIN_INSTITUTION_USER_CREATE", `Kurum ${params.id} için kullanıcı eklendi: ${user.fullName} (${user.role})`);
 
   return NextResponse.json(user, { status: 201 });
 }

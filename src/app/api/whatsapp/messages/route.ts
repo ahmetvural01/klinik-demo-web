@@ -9,6 +9,14 @@ function parseTake(value: string | null) {
   return Number.isFinite(parsed) ? Math.min(200, Math.max(1, Math.trunc(parsed))) : 100;
 }
 
+async function requireAnyAuth(primaryPermission: string, fallbackPermission: string | null = null) {
+  const primary = await requireAuth(primaryPermission);
+  if (!primary.error) return primary;
+  if (!fallbackPermission) return primary;
+  const fallback = await requireAuth(fallbackPermission);
+  return fallback.error ? primary : fallback;
+}
+
 function presentMessage<T extends { content: string | null; errorDetail: string | null }>(message: T) {
   return {
     ...message,
@@ -18,7 +26,7 @@ function presentMessage<T extends { content: string | null; errorDetail: string 
 }
 
 export async function GET(request: NextRequest) {
-  const auth = await requireAuth("sms:read");
+  const auth = await requireAnyAuth("whatsapp:read", "sms:read");
   if (auth.error) return auth.error;
   if (!auth.user.institutionId) return NextResponse.json({ messages: [] });
 
@@ -114,6 +122,7 @@ export async function GET(request: NextRequest) {
         && !patient.whatsappOptOutAt
         && recentInbound,
       ),
+      templateAllowed: Boolean(patient?.whatsappOptInAt && !patient.whatsappOptOutAt),
     });
   }
 
@@ -145,7 +154,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  const auth = await requireAuth("sms:read");
+  const auth = await requireAnyAuth("whatsapp:read", "sms:read");
   if (auth.error) return auth.error;
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 400 });
@@ -167,15 +176,17 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth("sms:write");
+  const auth = await requireAnyAuth("whatsapp:write", "sms:write");
   if (auth.error) return auth.error;
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 400 });
   }
 
-  const body = await request.json() as { patientId?: string; message?: string };
+  const body = await request.json() as { patientId?: string; message?: string; templateName?: string; templateLanguage?: string };
   const content = String(body.message || "").trim();
-  if (!body.patientId || !content) {
+  const templateName = String(body.templateName || "").trim();
+  const templateLanguage = String(body.templateLanguage || "tr").trim() || "tr";
+  if (!body.patientId || (!content && !templateName)) {
     return NextResponse.json({ message: "Hasta ve mesaj zorunludur." }, { status: 400 });
   }
   if (content.length > 4096) {
@@ -218,15 +229,17 @@ export async function POST(request: NextRequest) {
   }
 
   const serviceWindowStart = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  const recentInbound = await prisma.whatsappMessage.findFirst({
-    where: {
-      institutionId: auth.user.institutionId,
-      patientId: patient.id,
-      direction: "INBOUND",
-      createdAt: { gte: serviceWindowStart },
-    },
-    select: { id: true },
-  });
+  const recentInbound = templateName
+    ? true
+    : await prisma.whatsappMessage.findFirst({
+        where: {
+          institutionId: auth.user.institutionId,
+          patientId: patient.id,
+          direction: "INBOUND",
+          createdAt: { gte: serviceWindowStart },
+        },
+        select: { id: true },
+      });
   if (!recentInbound) {
     return NextResponse.json(
       { message: "24 saatlik görüşme penceresi kapalı. Bu hastaya yalnızca onaylı bir WhatsApp şablonu gönderilebilir." },
@@ -238,6 +251,7 @@ export async function POST(request: NextRequest) {
     institutionId: auth.user.institutionId,
     patientId: patient.id,
     countryCode: patient.phoneCountryCode,
+    template: templateName ? { name: templateName, language: templateLanguage, bodyParameters: content ? [content] : [] } : undefined,
   });
   if (!result.success) {
     // sendWhatsapp() her denemeyi (başarılı/başarısız) WhatsappMessage'a zaten

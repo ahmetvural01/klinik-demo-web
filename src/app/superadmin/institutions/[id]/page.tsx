@@ -84,6 +84,17 @@ type Institution = {
   users: UserRow[];
   smsTransactions: SmsTransactionRow[];
   invoices: InvoiceRow[];
+  whatsappProvider?:
+    | {
+        exists: true;
+        id: string;
+        code: string;
+        name: string;
+        providerType: string;
+        isActive: boolean;
+        updatedAt: string;
+      }
+    | { exists: false };
   paymentSummary: { overdueCount: number; pendingCount: number; paidCount: number; unpaidTotal: number };
 };
 
@@ -196,6 +207,9 @@ export default function InstitutionDetailPage() {
 
   const [deactivating, setDeactivating] = useState(false);
   const [markingPaidId, setMarkingPaidId] = useState<string | null>(null);
+
+  const [smsCreditAmount, setSmsCreditAmount] = useState("");
+  const [smsCreditSaving, setSmsCreditSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -338,6 +352,12 @@ export default function InstitutionDetailPage() {
   };
 
   const markPaid = async (invoiceId: string) => {
+    const ok = await confirmDialog({
+      title: "Fatura Ödendi İşaretle",
+      message: "Bu fatura ödendi olarak işaretlensin mi? Klinik hizmet kısıtlaması varsa bu işlem kısıtlamayı kaldırabilir.",
+      confirmText: "Ödendi İşaretle",
+    });
+    if (!ok) return;
     setMarkingPaidId(invoiceId);
     const res = await fetch(`/api/superadmin/invoices/${invoiceId}`, {
       method: "PATCH",
@@ -351,6 +371,39 @@ export default function InstitutionDetailPage() {
       return;
     }
     showToastSafe({ message: "Fatura ödendi olarak işaretlendi", type: "success" });
+    void load();
+  };
+
+  const adjustSmsCredit = async () => {
+    if (!institution) return;
+    const amount = Math.trunc(Number(smsCreditAmount));
+    if (!amount || Number.isNaN(amount)) {
+      showToastSafe({ message: "Geçerli bir miktar girin (ör. 500 veya -100)", type: "error" });
+      return;
+    }
+    const ok = await confirmDialog({
+      title: amount > 0 ? "SMS Kredisi Ekle" : "SMS Kredisi Azalt",
+      message: amount > 0
+        ? `"${institution.name}" kliniğine ${amount} SMS kredisi eklensin mi? Bu miktar platform stoğundan düşülür.`
+        : `"${institution.name}" kliniğinden ${Math.abs(amount)} SMS kredisi düşülsün mü? Bu miktar platform stoğuna geri eklenir.`,
+      confirmText: amount > 0 ? "Ekle" : "Azalt",
+      danger: amount < 0,
+    });
+    if (!ok) return;
+    setSmsCreditSaving(true);
+    const res = await fetch(`/api/superadmin/institutions/${institution.id}/sms-credit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ amount }),
+    });
+    const data = await res.json().catch(() => ({}));
+    setSmsCreditSaving(false);
+    if (!res.ok) {
+      showToastSafe({ message: data.message || "SMS kredisi güncellenemedi", type: "error" });
+      return;
+    }
+    showToastSafe({ message: `SMS bakiyesi güncellendi: ${data.smsBalance}`, type: "success" });
+    setSmsCreditAmount("");
     void load();
   };
 
@@ -593,7 +646,21 @@ export default function InstitutionDetailPage() {
 
         {/* SMS transactions */}
         <section className="space-y-2">
-          <h2 className="text-sm font-black text-slate-900">SMS İşlemleri</h2>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-black text-slate-900">SMS İşlemleri — Bakiye: {institution.smsBalance}</h2>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                value={smsCreditAmount}
+                onChange={(e) => setSmsCreditAmount(e.target.value)}
+                placeholder="ör. 500 veya -100"
+                className="h-9 w-40 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              />
+              <Button size="sm" onClick={() => void adjustSmsCredit()} loading={smsCreditSaving} disabled={!smsCreditAmount.trim()}>
+                Uygula
+              </Button>
+            </div>
+          </div>
           <ListTable columns={smsColumns} rows={institution.smsTransactions} rowKey={(r) => r.id} emptyText="SMS işlemi bulunamadı" />
         </section>
       </div>
@@ -757,19 +824,36 @@ export default function InstitutionDetailPage() {
             </FormSection>
 
             <FormSection icon={ShieldAlert} title="WhatsApp Bildirim Kanalı">
-              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={editForm.whatsappEnabled}
-                  onChange={(e) => setEditForm((f) => f && { ...f, whatsappEnabled: e.target.checked })}
-                />
-                Bu klinik için WhatsApp bildirimlerini etkinleştir
-              </label>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+                  <input
+                    type="checkbox"
+                    checked={editForm.whatsappEnabled}
+                    onChange={(e) => setEditForm((f) => f && { ...f, whatsappEnabled: e.target.checked })}
+                  />
+                  Bu klinik için WhatsApp bildirimlerini etkinleştir
+                </label>
+                <Button variant="secondary" size="sm" href="/superadmin/sms">
+                  WhatsApp Yönetimine Git
+                </Button>
+              </div>
               <p className="mt-1.5 text-xs text-slate-500">
                 Açıldığında randevu bildirimleri gibi süreçler SMS bakiyesi tüketmeden WhatsApp üzerinden
                 gönderilmeye çalışılır (aktif bir sağlayıcı yoksa otomatik olarak SMS&apos;e döner).
                 Sağlayıcı ayarları SMS Yönetimi &gt; WhatsApp sekmesinden yapılır.
               </p>
+              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
+                {institution.whatsappProvider?.exists ? (
+                  <p>
+                    Mevcut sağlayıcı: <strong>{institution.whatsappProvider.name}</strong> ({institution.whatsappProvider.code})
+                    , durum: <strong>{institution.whatsappProvider.isActive ? "aktif" : "pasif"}</strong>.
+                  </p>
+                ) : (
+                  <p>
+                    Bu klinik için henüz WhatsApp sağlayıcısı tanımlı değil. Modül açık olsa bile gerçek gönderim için SMS Yönetimi &gt; WhatsApp sekmesinden bağlantı kurulması gerekir.
+                  </p>
+                )}
+              </div>
             </FormSection>
 
             <FormSection icon={ShieldAlert} title="Reklamlar">

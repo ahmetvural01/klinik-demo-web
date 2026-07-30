@@ -15,8 +15,16 @@ import { encryptField } from "@/lib/field-crypto";
 // bağlantısı olur — kod sabit "TWILIO" tutulur.
 const PROVIDER_CODE = "TWILIO";
 
+async function requireAnyAuth(primaryPermission: string, fallbackPermission: string | null = null) {
+  const primary = await requireAuth(primaryPermission);
+  if (!primary.error) return primary;
+  if (!fallbackPermission) return primary;
+  const fallback = await requireAuth(fallbackPermission);
+  return fallback.error ? primary : fallback;
+}
+
 export async function GET() {
-  const auth = await requireAuth("settings:write");
+  const auth = await requireAnyAuth("whatsapp:write", "settings:write");
   if (auth.error) return auth.error;
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Yalnızca klinik kullanıcıları erişebilir." }, { status: 403 });
@@ -49,7 +57,7 @@ export async function GET() {
 }
 
 export async function PUT(request: NextRequest) {
-  const auth = await requireAuth("settings:write");
+  const auth = await requireAnyAuth("whatsapp:write", "settings:write");
   if (auth.error) return auth.error;
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Yalnızca klinik kullanıcıları güncelleyebilir." }, { status: 403 });

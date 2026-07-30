@@ -8,6 +8,7 @@ import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { FormField, inputErrorClass } from "@/components/ui/FormField";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { ListPager } from "@/components/ui/ListPager";
+import { confirmDialog } from "@/lib/confirm-client";
 
 type Invoice = {
   id: string;
@@ -103,6 +104,12 @@ export default function InvoicesPage() {
   );
 
   const markPaid = async (id: string) => {
+    const ok = await confirmDialog({
+      title: "Fatura Ödendi İşaretle",
+      message: "Bu fatura ödendi olarak işaretlensin mi? Klinik hizmet kısıtlaması varsa bu işlem kısıtlamayı kaldırabilir.",
+      confirmText: "Ödendi İşaretle",
+    });
+    if (!ok) return;
     const r = await fetch(`/api/superadmin/invoices/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

@@ -31,7 +31,13 @@ export async function POST(req: NextRequest) {
     }
 
     const institution = await prisma.institution.findFirst({
-      where: { name: { equals: kurum, mode: "insensitive" }, isActive: true },
+      where: {
+        isActive: true,
+        OR: [
+          { id: kurum },
+          { name: { equals: kurum, mode: "insensitive" } },
+        ],
+      },
       select: { id: true, ownerId: true },
     });
     if (!institution) return NextResponse.json({ error: "Kurum bulunamadı" }, { status: 404 });

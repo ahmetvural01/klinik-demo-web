@@ -29,11 +29,7 @@ export async function GET() {
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
   }
 
-  const wallet = await prisma.platformSmsWallet.upsert({
-    where: { id: 1 },
-    update: {},
-    create: { id: 1, availableBalance: 0 },
-  });
+  const wallet = await prisma.platformSmsWallet.findUnique({ where: { id: 1 } }) || { id: 1, availableBalance: 0 };
 
   const [purchases, institutions] = await Promise.all([
     prisma.platformSmsPurchase.findMany({
@@ -52,56 +48,13 @@ export async function GET() {
     }),
   ]);
 
-  // Aktif sağlayıcı varsa bakiye çekip platform stokunu otomatik senkronla.
-  const activeProvider = await prisma.smsProviderConfig.findFirst({
-    where: { isActive: true },
-    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
-  });
-
-  let providerSync: {
-    providerCode?: string;
-    providerBalance?: number;
-    ok: boolean;
-    message?: string;
-  } = { ok: false, message: "Aktif saglayici yok" };
-
-  let effectiveWallet = wallet;
-
-  if (activeProvider) {
-    const balanceResult = await testProviderBalance(activeProvider.id);
-    const parsedProviderBalance = parseSmsCount(balanceResult.balance || balanceResult.raw);
-
-    if (balanceResult.success && parsedProviderBalance != null) {
-      const allocatedToClinics = institutions.reduce((sum, i) => sum + i.smsBalance, 0);
-      const computedAvailable = Math.max(0, parsedProviderBalance - allocatedToClinics);
-
-      effectiveWallet = await prisma.platformSmsWallet.update({
-        where: { id: wallet.id },
-        data: { availableBalance: computedAvailable },
-      });
-
-      providerSync = {
-        ok: true,
-        providerCode: activeProvider.code,
-        providerBalance: parsedProviderBalance,
-        message: `Saglayici bakiyesi ile senkronlandi. Kliniklere ayrilan: ${allocatedToClinics}`,
-      };
-    } else {
-      providerSync = {
-        ok: false,
-        providerCode: activeProvider.code,
-        message: balanceResult.error || "Saglayici bakiyesi okunamadi",
-      };
-    }
-  }
-
   return NextResponse.json({
-    wallet: effectiveWallet,
-    providerSync,
+    wallet,
+    providerSync: { ok: false, message: "Senkronizasyon GET sırasında yapılmaz." },
     totals: {
       totalAssignedToClinics: institutions.reduce((sum, i) => sum + i.smsBalance, 0),
-      totalProviderBalance: providerSync.ok ? providerSync.providerBalance || 0 : effectiveWallet.availableBalance + institutions.reduce((sum, i) => sum + i.smsBalance, 0),
-      totalSystemSms: effectiveWallet.availableBalance + institutions.reduce((sum, i) => sum + i.smsBalance, 0),
+      totalProviderBalance: wallet.availableBalance + institutions.reduce((sum, i) => sum + i.smsBalance, 0),
+      totalSystemSms: wallet.availableBalance + institutions.reduce((sum, i) => sum + i.smsBalance, 0),
       clinicCountWithSms: institutions.filter((i) => i.smsBalance > 0).length,
     },
     institutions,

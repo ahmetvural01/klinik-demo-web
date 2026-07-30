@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
+import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 
 export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
@@ -100,6 +100,12 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
       });
     }
   });
+
+  await writeAudit(
+    auth.user.id,
+    "SUPERADMIN_INSTITUTION_ADS_UPDATE",
+    `${institution.name} reklam ayarları güncellendi${body.adsEnabled !== undefined ? ` (adsEnabled: ${body.adsEnabled})` : ""}${body.adIntensity !== undefined ? ` (yoğunluk: ${body.adIntensity})` : ""}${normalizedAssignments.length > 0 ? ` — ${normalizedAssignments.length} kampanya ataması güncellendi` : ""}`,
+  );
 
   return NextResponse.json({ ok: true });
 }

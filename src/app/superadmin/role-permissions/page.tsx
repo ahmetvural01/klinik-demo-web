@@ -136,6 +136,7 @@ export default function RolePermissionsPage() {
 
   const save = async () => {
     if (!payload) return;
+    if (!(await confirmDialog({ message: "Yetki değişiklikleri kaydedilsin mi? Bu değişiklik anında platformdaki TÜM kliniklerin her API/sayfa yetki kontrolüne yansır.", danger: true, confirmText: "Kaydet" }))) return;
     setSaving(true);
     const res = await fetch("/api/superadmin/role-permissions", {
       method: "PUT",

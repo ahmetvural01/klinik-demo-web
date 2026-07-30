@@ -7,7 +7,7 @@ type Params = { params: Promise<{ id: string }> };
 
 export async function PUT(request: NextRequest, props: Params) {
   const params = await props.params;
-  const auth = await requireAuth("dashboard:read");
+  const auth = await requireAuth("clinictasks:write");
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {
@@ -96,7 +96,7 @@ export async function PUT(request: NextRequest, props: Params) {
 
 export async function DELETE(_: NextRequest, props: Params) {
   const params = await props.params;
-  const auth = await requireAuth("dashboard:read");
+  const auth = await requireAuth("clinictasks:delete");
   if (auth.error) return auth.error;
 
   if (!auth.user.institutionId) {

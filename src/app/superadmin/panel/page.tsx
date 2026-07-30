@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Building2, FileWarning, MessageSquare, Wallet } from "lucide-react";
+import { AlertTriangle, Activity, Building2, CalendarDays, FileWarning, MessageSquare, Stethoscope, Users, Wallet } from "lucide-react";
 import { cachedGet } from "@/lib/client-cache";
 import { Badge } from "@/components/ui/Badge";
 
@@ -25,10 +25,33 @@ type Dashboard = {
     amount: number;
     createdAt: string;
   }[];
+  planDistribution: { plan: string; count: number }[];
+};
+
+type SystemStats = {
+  totalPatients: number;
+  totalAppointments: number;
+  totalExaminations: number;
+  totalStaff: number;
+  latestLogs: {
+    id: string;
+    action: string;
+    detail: string;
+    createdAt: string;
+    user: { fullName: string; role: string };
+  }[];
+};
+
+type SystemMetrics = {
+  counters: Record<string, number>;
+  timers: Record<string, { count: number; avgMs: number; minMs: number; maxMs: number }>;
+  generatedAt: string;
 };
 
 export default function SuperadminPanelPage() {
   const [data, setData] = useState<Dashboard | null>(null);
+  const [stats, setStats] = useState<SystemStats | null>(null);
+  const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
@@ -44,12 +67,28 @@ export default function SuperadminPanelPage() {
         router.replace("/superadmin");
         return;
       }
-      const res = await fetch("/api/superadmin/dashboard");
-      if (res.ok) {
-        setData(await res.json() as Dashboard);
-      } else {
+      const [dashboardRes, statsRes, metricsRes] = await Promise.allSettled([
+        fetch("/api/superadmin/dashboard", { cache: "no-store" }),
+        fetch("/api/dashboard/stats", { cache: "no-store" }),
+        fetch("/api/system/metrics", { cache: "no-store" }),
+      ]);
+
+      if (dashboardRes.status !== "fulfilled" || !dashboardRes.value.ok) {
         setError("Dashboard verisi alınamadı");
+        setLoading(false);
+        return;
       }
+
+      setData(await dashboardRes.value.json() as Dashboard);
+
+      if (statsRes.status === "fulfilled" && statsRes.value.ok) {
+        setStats(await statsRes.value.json() as SystemStats);
+      }
+
+      if (metricsRes.status === "fulfilled" && metricsRes.value.ok) {
+        setMetrics(await metricsRes.value.json() as SystemMetrics);
+      }
+
       setLoading(false);
     };
     void run();
@@ -73,6 +112,17 @@ export default function SuperadminPanelPage() {
   }
 
   const hasAttention = data.lowSmsInstitutions.length > 0 || data.overdueInvoices > 0 || data.suspendedInstitutions > 0;
+  const totalPatients = stats?.totalPatients ?? 0;
+  const totalAppointments = stats?.totalAppointments ?? 0;
+  const totalExaminations = stats?.totalExaminations ?? 0;
+  const totalStaff = stats?.totalStaff ?? 0;
+
+  const metricCards = [
+    { label: "Toplam Hasta", value: totalPatients.toLocaleString("tr-TR"), icon: Users, tone: "bg-primary/10 text-primary" },
+    { label: "Toplam Randevu", value: totalAppointments.toLocaleString("tr-TR"), icon: CalendarDays, tone: "bg-sky-50 text-sky-600" },
+    { label: "Aktif Personel", value: totalStaff.toLocaleString("tr-TR"), icon: Activity, tone: "bg-emerald-50 text-emerald-600" },
+    { label: "Muayene Sayısı", value: totalExaminations.toLocaleString("tr-TR"), icon: Stethoscope, tone: "bg-violet-50 text-violet-600" },
+  ];
 
   return (
     <section className="space-y-6">
@@ -114,6 +164,45 @@ export default function SuperadminPanelPage() {
         </article>
       </div>
 
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        {metricCards.map((card) => {
+          const Icon = card.icon;
+          return (
+            <article key={card.label} className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+              <span className={`mb-2 flex h-8 w-8 items-center justify-center rounded-lg ${card.tone}`}><Icon className="h-4 w-4" /></span>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{card.label}</p>
+              <p className="mt-1 text-2xl font-black text-slate-900">{card.value}</p>
+            </article>
+          );
+        })}
+      </div>
+
+      {metrics && (
+        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <Activity className="h-4 w-4 text-primary" />
+            <h3 className="text-sm font-black text-slate-900">Sistem Sayaçları</h3>
+            <span className="text-xs text-slate-400">{new Date(metrics.generatedAt).toLocaleString("tr-TR")}</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(metrics.counters).map(([key, value]) => (
+              <Badge key={key} tone="neutral">{key}: {value}</Badge>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {data.planDistribution.length > 0 && (
+        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+          <h3 className="text-sm font-black text-slate-900">Plan Dağılımı</h3>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {data.planDistribution.map((item) => (
+              <Badge key={item.plan} tone="info">{item.plan}: {item.count}</Badge>
+            ))}
+          </div>
+        </div>
+      )}
+
       {hasAttention && (
         <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
           <div className="flex items-center gap-2">
@@ -133,15 +222,44 @@ export default function SuperadminPanelPage() {
               <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-amber-700">SMS Kredisi Az Olan Klinikler</p>
               <div className="flex flex-wrap gap-1.5">
                 {data.lowSmsInstitutions.map((i) => (
-                  <span key={i.id} className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800">
+                  <a
+                    key={i.id}
+                    href={`/superadmin/institutions/${i.id}`}
+                    className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
+                    title="Kredi eklemek için kurum sayfasına git"
+                  >
                     {i.name}: {i.smsBalance} SMS
-                  </span>
+                  </a>
                 ))}
               </div>
             </div>
           )}
         </div>
       )}
+
+      <div className="space-y-2">
+        <h3 className="text-sm font-black text-slate-900">Son Sistem Hareketleri</h3>
+        <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+          {stats?.latestLogs?.length ? (
+            <div className="divide-y divide-slate-100">
+              {stats.latestLogs.map((log) => (
+                <div key={log.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm">
+                  <div>
+                    <p className="font-bold text-slate-900">{log.action}</p>
+                    <p className="text-xs text-slate-500">{log.detail}</p>
+                  </div>
+                  <div className="text-right text-xs text-slate-500">
+                    <p>{log.user.fullName} · {log.user.role}</p>
+                    <p>{new Date(log.createdAt).toLocaleString("tr-TR")}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="px-4 py-8 text-center text-sm text-slate-400">Kayıt yok</p>
+          )}
+        </div>
+      </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <div className="space-y-2">

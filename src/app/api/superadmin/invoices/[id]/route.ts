@@ -14,6 +14,11 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
 
   const body = await request.json();
 
+  const VALID_STATUSES = new Set(["PENDING", "PAID", "OVERDUE", "CANCELLED"]);
+  if (typeof body.status !== "string" || !VALID_STATUSES.has(body.status)) {
+    return NextResponse.json({ message: "Geçersiz fatura durumu" }, { status: 400 });
+  }
+
   const existing = await prisma.invoice.findUnique({ where: { id: params.id }, select: { status: true, amount: true, institutionId: true } });
   if (!existing) {
     return NextResponse.json({ message: "Fatura bulunamadı" }, { status: 404 });

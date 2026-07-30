@@ -12,7 +12,7 @@ function fmt(v: unknown): string {
 function supportTenantWhere(id: string, role: string, institutionId: string | null | undefined) {
   return {
     id,
-    ...(role !== "SUPERADMIN" ? { user: { institutionId } } : {}),
+    ...(role !== "SUPERADMIN" ? { institutionId } : {}),
   };
 }
 

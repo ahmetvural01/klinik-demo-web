@@ -3,7 +3,6 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 
 let lastCleanupAt = 0;
-
 export async function GET() {
   const auth = await requireAuth("messages:read");
   if (auth.error) return auth.error;
@@ -17,20 +16,6 @@ export async function GET() {
     : { user: { institutionId: auth.user.institutionId } };
 
   try {
-    // Retention cleanup hourly to avoid heavy delete on every request.
-    const nowMs = Date.now();
-    if (nowMs - lastCleanupAt > 60 * 60 * 1000) {
-      const now = new Date();
-      const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      await prisma.message.deleteMany({
-        where: {
-          createdAt: { lt: startOfToday },
-          ...institutionScope,
-        },
-      });
-      lastCleanupAt = nowMs;
-    }
-
     const messages = await prisma.message.findMany({
       where: institutionScope,
       orderBy: { createdAt: "desc" },

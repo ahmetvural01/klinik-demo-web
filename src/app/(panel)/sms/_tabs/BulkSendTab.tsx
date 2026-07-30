@@ -12,7 +12,7 @@ import { toStoredText, type SmsPlaceholder } from "@/lib/sms-template-placeholde
 type Patient = { id: string; fullName: string; phone: string };
 type Audience = "SELECTED" | "ALL";
 
-// Toplu gönderimde randevu/ödeme-özel alanlar (doktor, tutar, vade) anlamsız —
+// Toplu iletişimde randevu/ödeme-özel alanlar (doktor, tutar, vade) anlamsız —
 // sadece klinik/hasta adı ve klinik telefonu sunulur.
 const BULK_PLACEHOLDERS: SmsPlaceholder[] = [
   { token: "institutionName", label: "Klinik Adı", sample: "Kliniğiniz" },
@@ -184,9 +184,9 @@ export default function BulkSendTab() {
   return (
     <section className="space-y-4">
       <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-black text-slate-900">Toplu Gönderim</h2>
+        <h2 className="text-sm font-black text-slate-900">Toplu İletişim</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Bayram, kampanya veya duyuru gibi özel günlerde hastalarınıza serbest metinli SMS gönderin. Bu özellik SMS bakiyenizi tüketir.
+          Bayram, kampanya veya duyuru gibi özel günlerde hastalarınıza toplu mesaj gönderin. Kanal, izin ve mevcut bağlantıya göre otomatik seçilir.
         </p>
       </div>
 

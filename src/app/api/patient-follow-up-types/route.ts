@@ -30,17 +30,6 @@ function parseStoredTypes(value?: string | null) {
   }
 }
 
-async function ensureSetting(institutionId: string, institutionName: string) {
-  return prisma.setting.upsert({
-    where: { institutionId },
-    update: {},
-    create: {
-      institutionId,
-      institutionName,
-    },
-  });
-}
-
 export async function GET() {
   try {
     const auth = await requireAuth("hastatracking:read");
@@ -55,8 +44,8 @@ export async function GET() {
     });
     if (!institution) return NextResponse.json({ message: "Klinik bulunamadı" }, { status: 404 });
 
-    const setting = await ensureSetting(auth.user.institutionId, institution.name);
-    return NextResponse.json({ types: parseStoredTypes(setting.followUpCustomTypes) });
+    const setting = await prisma.setting.findUnique({ where: { institutionId: auth.user.institutionId } });
+    return NextResponse.json({ types: parseStoredTypes(setting?.followUpCustomTypes) });
   } catch (error) {
     console.error("[patient-follow-up-types GET]", error);
     return NextResponse.json({ message: "Takip tipleri yüklenemedi" }, { status: 503 });

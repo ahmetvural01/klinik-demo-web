@@ -18,7 +18,13 @@ export async function GET(req: NextRequest) {
 
   try {
     const institution = await prisma.institution.findFirst({
-      where: { name: { equals: kurum, mode: "insensitive" }, isActive: true },
+      where: {
+        isActive: true,
+        OR: [
+          { id: kurum },
+          { name: { equals: kurum, mode: "insensitive" } },
+        ],
+      },
       select: {
         id: true,
         name: true,

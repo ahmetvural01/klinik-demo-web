@@ -156,12 +156,16 @@ export async function GET() {
   if (auth.error) return auth.error;
 
   try {
-    await ensureComprehensiveTemplate(auth.user.institutionId);
-    const template = await (prisma as any).consentTemplate.findFirst({
-      where: { institutionId: auth.user.institutionId, title: COMPREHENSIVE_TITLE, isActive: true },
+    // Yeni/boş bir kurum ilk kez bu ekranı açtığında kapsamlı onam şablonu
+    // otomatik oluşturulur — aksi halde hasta onayı almadan tedaviye
+    // başlanabilecek boş bir liste görünürdü (bkz. denetim raporu).
+    await ensureComprehensiveTemplate(auth.user.institutionId ?? null);
+
+    const templates = await (prisma as any).consentTemplate.findMany({
+      where: { institutionId: auth.user.institutionId },
       orderBy: { updatedAt: "desc" },
     });
-    return NextResponse.json(template ? [template] : []);
+    return NextResponse.json(templates);
   } catch (error) {
     console.error("[consent-templates GET]", error);
     return NextResponse.json({ message: "Onam şablonu yüklenemedi." }, { status: 503 });

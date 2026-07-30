@@ -51,7 +51,7 @@ function validateLogoUrl(value: unknown): string | null {
 
 export async function GET() {
   try {
-    const auth = await requireAuth("dashboard:read");
+    const auth = await requireAuth("settings:read");
     if (auth.error) return auth.error;
 
     if (!auth.user.institutionId) {
@@ -62,12 +62,12 @@ export async function GET() {
       prisma.setting.findUnique({ where: { institutionId: auth.user.institutionId } }),
       prisma.institution.findUnique({
         where: { id: auth.user.institutionId },
-        select: { name: true, email: true, phone: true, address: true, taxNo: true, registryNo: true, website: true, logo: true, whatsappEnabled: true },
+        select: { id: true, name: true, email: true, phone: true, address: true, taxNo: true, registryNo: true, website: true, logo: true, whatsappEnabled: true },
       }),
     ]);
     return NextResponse.json({
       ...settings,
-      institutionSlug: institution?.name || "",
+      institutionSlug: institution?.id || institution?.name || "",
       whatsappEnabled: institution?.whatsappEnabled ?? false,
       // SMS onay bağlantılarının (/sms-onay/[token]) hangi adresten üretildiği
       // — SMS Ayarları ekranında "Onay bağlantısı çalışma durumu" için.

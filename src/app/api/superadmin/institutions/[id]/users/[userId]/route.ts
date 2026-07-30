@@ -1,5 +1,5 @@
+import { invalidateUserSessionCache, requireAuth, writeAudit } from "@/lib/api";
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
 
@@ -86,6 +86,12 @@ export async function PUT(
     },
   });
 
+  if (existingUser.isActive && body.isActive === false) {
+    invalidateUserSessionCache(params.userId);
+  }
+
+  await writeAudit(auth.user.id, "SUPERADMIN_INSTITUTION_USER_UPDATE", `Kurum ${params.id} kullanıcısı güncellendi: ${updated.fullName} (${updated.role})`);
+
   return NextResponse.json(updated);
 }
 
@@ -112,6 +118,10 @@ export async function DELETE(
     data: { isActive: false },
     select: { id: true, fullName: true, isActive: true },
   });
+
+  invalidateUserSessionCache(params.userId);
+
+  await writeAudit(auth.user.id, "SUPERADMIN_INSTITUTION_USER_DEACTIVATE", `Kurum ${params.id} kullanıcısı pasife alındı: ${updated.fullName}`);
 
   return NextResponse.json(updated);
 }

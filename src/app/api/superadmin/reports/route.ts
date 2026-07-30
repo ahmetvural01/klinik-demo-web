@@ -3,6 +3,8 @@ import { requireAuth } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { turkeyDateKey, turkeyMonthRangeUtc } from "@/lib/tz";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;
@@ -19,20 +21,25 @@ export async function GET() {
   const [totalIncome, totalSmsUsed, activeClinicCount, previousMonthIncome, smsTransactions] = await Promise.all([
     prisma.invoice.aggregate({
       _sum: { amount: true },
-      where: { status: "PAID", createdAt: { gte: currentRange.start, lte: currentRange.end } },
+      where: { status: "PAID", paidAt: { gte: currentRange.start, lte: currentRange.end } },
     }),
+    // Diğer tüm rakamlar ("Bu Ay Ödenen Toplam", "En Çok Kullanan Klinikler")
+    // bu ayla sınırlıyken bu toplam tarihsiz/ömür-boyu kümülatif hesaplanıyordu —
+    // aynı sayfada yan yana gösterilince hiçbir zaman birbirini tutmayan,
+    // yanıltıcı bir "Toplam SMS Kullanımı" ortaya çıkıyordu (bkz. denetim raporu).
     prisma.smsTransaction.aggregate({
       _sum: { quantity: true },
+      where: { createdAt: { gte: currentRange.start, lte: currentRange.end } },
     }),
     prisma.institution.count({ where: { isActive: true } }),
     prisma.invoice.aggregate({
       _sum: { amount: true },
-      where: { status: "PAID", createdAt: { gte: previousRange.start, lte: previousRange.end } },
+      where: { status: "PAID", paidAt: { gte: previousRange.start, lte: previousRange.end } },
     }),
     prisma.smsTransaction.findMany({
-      include: { institution: true, smsPackage: true },
+      include: { institution: { select: { id: true, name: true } }, smsPackage: { select: { smsCount: true } } },
       orderBy: { createdAt: "desc" },
-      take: 100,
+      where: { createdAt: { gte: currentRange.start, lte: currentRange.end } },
     }),
   ]);
 
@@ -41,10 +48,7 @@ export async function GET() {
   const monthlyGrowth = previousMonth > 0 ? Math.round(((currentMonth - previousMonth) / previousMonth) * 100) : 0;
 
   // Top clinics by SMS usage
-  const clinicUsage = new Map<
-    string,
-    { name: string; smsUsed: number; revenue: number }
-  >();
+  const clinicUsage = new Map<string, { name: string; smsUsed: number; revenue: number }>();
 
   smsTransactions.forEach((t) => {
     const key = t.institutionId;
