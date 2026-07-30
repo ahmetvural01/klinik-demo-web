@@ -63,19 +63,23 @@ export async function POST(request: NextRequest) {
     appointmentTemplateLanguage?: string;
   };
 
-  if (!body.code || !body.name) {
-    return NextResponse.json({ message: "code ve name zorunlu" }, { status: 400 });
+  if (!body.code || !body.name || !body.institutionId) {
+    return NextResponse.json({ message: "code, name ve institutionId zorunlu — platform genelinde paylaşılan sağlayıcı desteklenmiyor" }, { status: 400 });
   }
+  const institutionId = body.institutionId;
 
   const created = await prisma.$transaction(async (tx) => {
     if (body.isActive) {
-      await tx.whatsappProviderConfig.updateMany({ where: { isActive: true }, data: { isActive: false } });
+      // Yalnızca aynı kliniğin diğer sağlayıcıları pasifleşir — başka bir
+      // kliniğin aktif WhatsApp sağlayıcısına dokunulmaz (bkz.
+      // docs/ILETISIM-MIMARISI-RAPORU.md §3: her klinik kendi numarasından gönderir).
+      await tx.whatsappProviderConfig.updateMany({ where: { isActive: true, institutionId }, data: { isActive: false } });
     }
 
     return tx.whatsappProviderConfig.create({
       data: {
         code: (body.code ?? "").toUpperCase(),
-        institutionId: body.institutionId || null,
+        institutionId,
         name: body.name ?? "",
         providerType: body.providerType || "CUSTOM",
         isActive: body.isActive ?? false,
@@ -149,14 +153,18 @@ export async function PUT(request: NextRequest) {
   const updated = await prisma.$transaction(async (tx) => {
     const willActivate = body.isActive === true;
     if (willActivate) {
-      await tx.whatsappProviderConfig.updateMany({ where: { isActive: true, id: { not: body.id } }, data: { isActive: false } });
+      // Yalnızca aynı kliniğin diğer sağlayıcıları pasifleşir (bkz. POST'taki not).
+      await tx.whatsappProviderConfig.updateMany({
+        where: { isActive: true, id: { not: body.id }, institutionId: current.institutionId },
+        data: { isActive: false },
+      });
     }
 
     return tx.whatsappProviderConfig.update({
       where: { id: body.id },
       data: {
         name: body.name ?? current.name,
-        institutionId: body.institutionId === undefined ? current.institutionId : (body.institutionId || null),
+        institutionId: body.institutionId || current.institutionId,
         providerType: body.providerType ?? current.providerType,
         isActive: body.isActive ?? current.isActive,
         priority: body.priority == null ? current.priority : Number(body.priority),

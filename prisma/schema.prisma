@@ -252,13 +252,16 @@ model MockSmsLog {
 
 // WhatsApp, SMS'e paralel bir bildirim kanalı olarak eklendi. Amaç: SMS gönderimi
 // klinik başına satılan bir kredi tükettiği için gelir kaynağıdır; WhatsApp ise
-// yalnızca süperadmin'in özel olarak açtığı kliniklerde SMS kredisi tüketmeden
-// aynı süreçleri (randevu bilgilendirme, hatırlatma, toplu gönderim vb.)
-// yürütür. Şema, henüz seçilmiş bir sağlayıcı olmadığından SmsProviderConfig
-// ile aynı genel (jenerik HTTP + mock) yapıyı kullanır.
+// yalnızca süperadmin'in "WhatsApp modülünü kullanabilir" yetkisini açtığı
+// kliniklerde SMS kredisi tüketmeden aynı süreçleri (randevu bilgilendirme,
+// hatırlatma, toplu gönderim vb.) yürütür. Her kaydın institutionId'si
+// zorunludur — platform genelinde paylaşılan/ortak bir WhatsApp sağlayıcısı
+// (institutionId: null fallback) kasıtlı olarak desteklenmez: bir kliniğin
+// mesajı hiçbir zaman başka bir ortak numaradan gitmemelidir. Klinik kendi
+// Meta Business hesabını bu tablo üzerinden tanımlar (bkz. src/lib/whatsapp.ts).
 model WhatsappProviderConfig {
   id                          String             @id @default(cuid())
-  institutionId               String?
+  institutionId               String
   code                        String
   name                        String
   providerType                String             @default("CUSTOM")
@@ -282,7 +285,7 @@ model WhatsappProviderConfig {
   appointmentTemplateLanguage String             @default("tr")
   createdAt                   DateTime           @default(now())
   updatedAt                   DateTime           @updatedAt
-  institution                 Institution?       @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  institution                 Institution        @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   templates                   WhatsappTemplate[]
   messages                    WhatsappMessage[]
 
@@ -616,6 +619,10 @@ model Patient {
   birthdaySmsLogs            BirthdaySmsLog[]
   packages                   PatientPackage[]
   accessLogs                 PatientAccessLog[]
+  smsPreference              PatientSmsPreference?
+  smsPreferenceEvents        PatientSmsPreferenceEvent[]
+  smsConsentTokens           PatientSmsConsentToken[]
+  smsDispatches              SmsDispatch[]
 
   @@unique([institutionId, tcNo])
   @@index([institutionId])
@@ -957,6 +964,11 @@ model Setting {
   reviewLink                String?
   // Doğum günü olan hastalara otomatik kutlama SMS'i (bkz. src/lib/birthday-reminders.ts).
   birthdaySmsEnabled        Boolean     @default(false)
+  // Otomatik bildirimlerin (randevu, hatırlatma, ödeme vb.) varsayılan olarak
+  // hangi kanaldan gideceği. Yalnızca Institution.whatsappEnabled açık kliniklerde
+  // WHATSAPP seçilebilir; kapalıysa merkezi servis her zaman SMS'e düşer
+  // (bkz. src/lib/notification-dispatch.ts).
+  defaultNotificationChannel NotificationChannel @default(SMS)
   updatedAt                 DateTime    @updatedAt
   institutionId             String      @unique
   activePriceList           String      @default("standard")
@@ -1402,6 +1414,117 @@ model BirthdaySmsLog {
   patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
   @@unique([patientId, year])
+}
+
+// Hastanın kliniğe SMS ile iletişim kurulmasına verdiği güncel iznin anlık
+// görünümü. Tek bir onay; randevu/hatırlatma/ödeme/doğum günü/bayram gibi
+// bütün hizmet ve kutlama SMS'lerini kapsar (bkz. docs/ILETISIM-MIMARISI-RAPORU.md
+// §1). Bu tabloyu hiçbir ekran doğrudan güncellemez — yalnızca merkezi
+// dispatch servisi (src/lib/notification-dispatch.ts) ve onay linki/token
+// akışı günceller; personel manuel olarak ONAYLANDI/REDDEDILDI yazamaz,
+// yalnızca yeni bir token üretip tekrar gönderim tetikleyebilir.
+model PatientSmsPreference {
+  id                String            @id @default(cuid())
+  institutionId     String
+  patientId         String            @unique
+  status            SmsConsentStatus  @default(PENDING)
+  firstConsentAt    DateTime?
+  lastRejectionAt   DateTime?
+  lastRequestSentAt DateTime?
+  // Son gönderim DENEMESİ (başarılı ya da başarısız) — hasta kartında "Onay
+  // Bekliyor" durumunun aslında hiç gönderilememiş bir SMS'i başarılıymış gibi
+  // göstermesini önlemek için lastRequestSentAt'tan (yalnızca başarı) ayrı tutulur.
+  lastRequestAttemptAt DateTime?
+  lastRequestError     String?
+  consentTokenId    String?
+  lastChangeSource  SmsConsentSource  @default(SYSTEM_MIGRATION)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  patient           Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  consentToken      PatientSmsConsentToken? @relation(fields: [consentTokenId], references: [id], onDelete: SetNull)
+
+  @@index([institutionId])
+  @@index([institutionId, status])
+}
+
+// Tercih geçmişini silmeden tutan ekleme temelli audit tablosu — eski
+// olaylar hiçbir zaman güncellenmez veya silinmez.
+model PatientSmsPreferenceEvent {
+  id            String            @id @default(cuid())
+  institutionId String
+  patientId     String
+  oldStatus     SmsConsentStatus?
+  newStatus     SmsConsentStatus
+  source        SmsConsentSource
+  tokenId       String?
+  ipHash        String?
+  createdAt     DateTime          @default(now())
+  patient       Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@index([institutionId, createdAt])
+  @@index([patientId, createdAt])
+}
+
+// Onay linkindeki güvenli, tek kullanımlık, süreli token. Düz metin token
+// hiçbir zaman saklanmaz — yalnızca SHA-256 hash'i tutulur (bkz.
+// src/lib/sms-consent-token.ts). Giriş gerektirmeyen /sms-onay/[token]
+// sayfası bu tabloyu doğrular.
+model PatientSmsConsentToken {
+  id            String                 @id @default(cuid())
+  institutionId String
+  patientId     String
+  tokenHash     String                 @unique
+  purpose       SmsConsentTokenPurpose @default(INITIAL)
+  expiresAt     DateTime
+  usedAt        DateTime?
+  usedFromIp    String?
+  usedUserAgent String?
+  resultStatus  SmsConsentStatus?
+  // Bu hasta için daha yeni bir token üretildiğinde eski, henüz kullanılmamış
+  // token'lar burada işaretlenir — hasta eski bağlantıdan hâlâ onay/ret
+  // verebilirse iki farklı bağlantıdan çelişkili sonuç oluşabilirdi (bkz.
+  // docs/ILETISIM-MIMARISI-RAPORU.md §1.6 taşma senaryosu).
+  invalidatedAt DateTime?
+  createdById   String?
+  createdAt     DateTime               @default(now())
+  patient       Patient                @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  preferences   PatientSmsPreference[]
+
+  @@index([institutionId])
+  @@index([patientId, createdAt])
+}
+
+// Merkezi dispatch servisinden geçen her SMS/WhatsApp gönderiminin tek
+// gerçek kaynağı (bkz. src/lib/notification-dispatch.ts). idempotencyKey
+// aynı olayın ikinci kez gönderilmesini DB seviyesinde de engeller. İzin
+// olmadığı için gönderilmeyen mesajlar da (SUPPRESSED) burada, sağlayıcıya
+// hiç ulaşmadan kaydedilir.
+model SmsDispatch {
+  id                String              @id @default(cuid())
+  institutionId     String
+  patientId         String
+  channel           NotificationChannel
+  eventType         String
+  purpose           SmsDispatchPurpose
+  phoneMasked       String
+  messageHash       String
+  idempotencyKey    String
+  status            SmsDispatchStatus   @default(QUEUED)
+  providerCode      String?
+  providerMessageId String?
+  attemptCount      Int                 @default(0)
+  lastError         String?
+  scheduledFor      DateTime?
+  sentAt            DateTime?
+  deliveredAt       DateTime?
+  createdById       String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  patient           Patient             @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@unique([institutionId, idempotencyKey])
+  @@index([institutionId, createdAt])
+  @@index([patientId, createdAt])
 }
 
 model PosDevice {
@@ -1899,4 +2022,45 @@ enum BookingRequestStatus {
   ONAYLANDI
   REDDEDILDI
   IPTAL
+}
+
+// Hastanın SMS iznine ait güncel durum. PENDING: onay SMS'i gönderildi,
+// henüz yanıt yok. EXPIRED, ayrı bir alan olarak yazılmaz — token süresi
+// dolduğunda ve hasta hiç yanıt vermediğinde arayüzde türetilerek gösterilir.
+enum SmsConsentStatus {
+  PENDING
+  ENABLED
+  DISABLED
+  EXPIRED
+}
+
+enum SmsConsentSource {
+  PATIENT_CARD
+  PUBLIC_LINK
+  IMPORT
+  SYSTEM_MIGRATION
+}
+
+enum SmsConsentTokenPurpose {
+  INITIAL
+  RESEND
+}
+
+enum SmsDispatchStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  SUPPRESSED
+}
+
+enum SmsDispatchPurpose {
+  SERVICE
+  GREETING
+  CONSENT_REQUEST
+}
+
+enum NotificationChannel {
+  SMS
+  WHATSAPP
 }

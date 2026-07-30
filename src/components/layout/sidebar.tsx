@@ -27,65 +27,41 @@ import {
   UsersRound,
   UserCheck,
   WalletCards,
+  Code2,
+  ChevronDown,
+  X,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { usePanelAlerts } from "@/components/layout/use-panel-alerts";
+import { IconFrame } from "@/components/ui/IconFrame";
 import { useEscapeClose } from "@/lib/use-modal-dismiss";
 import { parseRolePreview, ROLE_PREVIEW_COOKIE, ROLE_PREVIEW_STORAGE } from "@/lib/role-preview";
 
-const ICONS: Record<string, JSX.Element> = {
-  home: <Home className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  calendar: <CalendarDays className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  users: <UsersRound className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  clipboard: <ClipboardList className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  flask: <FlaskConical className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  finance: <Landmark className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  chart: <ChartColumnIncreasing className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  box: <Package2 className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  person: <UserRound className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  sms: <MessagesSquare className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  settings: <Settings2 className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  profile: <UserRound className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  support: <LifeBuoy className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  follow: <UserCheck className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  logout: <LogOut className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  taksit: <BadgeDollarSign className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  gider: <ReceiptText className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  firma: <Building2 className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  recete: <FileText className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  kasa: <WalletCards className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  rapor: <FileBarChart2 className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  hakediş: <HandCoins className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
-  log: <FileClock className="h-[17px] w-[17px] shrink-0" strokeWidth={1.9} aria-hidden="true" />,
+const ICONS: Record<string, LucideIcon> = {
+  home: Home,
+  calendar: CalendarDays,
+  users: UsersRound,
+  clipboard: ClipboardList,
+  flask: FlaskConical,
+  finance: Landmark,
+  chart: ChartColumnIncreasing,
+  box: Package2,
+  person: UserRound,
+  sms: MessagesSquare,
+  settings: Settings2,
+  profile: UserRound,
+  support: LifeBuoy,
+  follow: UserCheck,
+  logout: LogOut,
+  taksit: BadgeDollarSign,
+  gider: ReceiptText,
+  firma: Building2,
+  recete: FileText,
+  kasa: WalletCards,
+  rapor: FileBarChart2,
+  hakediş: HandCoins,
+  log: FileClock,
 };
-
-// Her bölüm kendi sakin tonunu taşır; etkin rota tek vurgu rengine döner.
-// Böylece ikonlar yalnızca süs değil, tarama hızını artıran yön işaretleri olur.
-const ICON_TONES: Record<string, string> = {
-  home: "text-cyan-700",
-  calendar: "text-sky-700",
-  users: "text-indigo-700",
-  clipboard: "text-slate-700",
-  follow: "text-emerald-700",
-  sms: "text-teal-700",
-  flask: "text-violet-700",
-  finance: "text-emerald-700",
-  rapor: "text-blue-700",
-  box: "text-slate-700",
-  firma: "text-amber-700",
-  person: "text-slate-700",
-  chart: "text-sky-800",
-  settings: "text-slate-600",
-  profile: "text-indigo-700",
-  log: "text-slate-700",
-  support: "text-cyan-700",
-  logout: "text-rose-600",
-};
-
-const NAV_ICON_BASE =
-  "flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[1rem] border border-slate-200/70 bg-gradient-to-br from-white to-slate-50 text-slate-500 shadow-[0_6px_16px_rgba(15,23,42,0.06)] ring-1 ring-slate-100 transition-all duration-150 group-hover:-translate-y-[1px] group-hover:shadow-[0_8px_18px_rgba(15,23,42,0.08)]";
-
-const NAV_ICON_ACTIVE =
-  "flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[1rem] border border-primary/25 bg-gradient-to-br from-primary/15 via-primary/10 to-primary/5 text-primary shadow-[0_10px_24px_rgba(13,125,111,0.16)] ring-1 ring-primary/10";
 
 const NAV_LABEL_BASE =
   "min-w-0 overflow-hidden whitespace-nowrap text-left tracking-[-0.01em] transition-all duration-150 ease-out";
@@ -94,9 +70,9 @@ const NAV_LABEL_OPEN = "max-w-[180px] opacity-100 translate-x-0";
 
 const NAV_LABEL_CLOSED = "max-w-0 opacity-0 -translate-x-1";
 
-const NAV_ITEM_OPEN = "grid grid-cols-[40px_minmax(0,1fr)_auto] items-center gap-x-3";
+const NAV_ITEM_OPEN = "grid grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-x-3";
 
-const NAV_ITEM_CLOSED = "grid grid-cols-[40px] justify-items-center";
+const NAV_ITEM_CLOSED = "grid grid-cols-[32px] items-center justify-items-center";
 
 const ROLE_LABELS: Record<string, string> = {
   YONETICI:  "Yönetici",
@@ -253,7 +229,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
         // eslint-disable-next-line @next/next/no-img-element
         <img src={brand.logoUrl} alt="Kurum logosu" className="h-full w-full object-contain p-1" />
       ) : (
-        <svg className="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M12 2C8 2 5 5 5 8c0 2 .5 3.5 1 5l1 4.5C7.5 19 8.5 22 10 22h4c1.5 0 2.5-3 3-4.5l1-4.5c.5-1.5 1-3 1-5 0-3-3-6-7-6z"/></svg>
+        <ShieldCheck className="h-4 w-4 text-white" strokeWidth={1.9} />
       )}
     </div>
   );
@@ -375,7 +351,9 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                   <BrandMark />
                   <p className="max-w-[190px] truncate text-sm font-black text-slate-900">{brand.name}</p>
                 </div>
-                <button onClick={() => setMobileOpen(false)} aria-label="Kapat" className="rounded-lg p-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900">✕</button>
+                <button onClick={() => setMobileOpen(false)} aria-label="Kapat" className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900">
+                  <X className="h-4 w-4" />
+                </button>
               </div>
 
               {userName && (
@@ -409,13 +387,9 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                     }`}
                     aria-expanded={rolePickerOpen}
                   >
-                    <svg className="h-3.5 w-3.5 shrink-0 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
-                    </svg>
+                    <Code2 className="h-3.5 w-3.5 shrink-0 text-violet-500" strokeWidth={1.9} />
                     <span className="flex-1 text-left">{previewRole ? `Görünüm: ${activePreview?.label}` : "Rol Görünümü"}</span>
-                    <svg className={`h-3 w-3 shrink-0 transition-transform ${rolePickerOpen ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="6 9 12 15 18 9"/>
-                    </svg>
+                    <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${rolePickerOpen ? "rotate-180" : ""}`} strokeWidth={2} />
                   </button>
                   {rolePickerOpen && (
                   <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
@@ -444,9 +418,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                           }}
                           className="mt-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-500 transition hover:bg-slate-50 hover:text-slate-900"
                         >
-                          <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                          </svg>
+                          <X className="h-3.5 w-3.5" />
                           Önizlemeyi kapat
                         </button>
                       )}
@@ -465,8 +437,8 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                       {group.items.map((it) => {
                         const active = isActive(it.href);
                         return (
-                        <Link key={it.href} href={it.href} onClick={() => setMobileOpen(false)} aria-current={active ? "page" : undefined} className={`grid h-11 grid-cols-[40px_minmax(0,1fr)] items-center gap-x-3 rounded-xl px-3 text-sm font-bold transition ${active ? "bg-gradient-to-r from-primary/14 via-primary/10 to-transparent text-primary ring-1 ring-primary/15" : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"}`}>
-                          <span className={active ? NAV_ICON_ACTIVE : NAV_ICON_BASE}>{ICONS[it.icon]}</span>
+                        <Link key={it.href} href={it.href} onClick={() => setMobileOpen(false)} aria-current={active ? "page" : undefined} className={`grid h-11 grid-cols-[32px_minmax(0,1fr)] items-center gap-x-3 rounded-lg px-3 text-sm font-bold transition ${active ? "bg-primary-50 text-primary shadow-[inset_3px_0_0_rgb(var(--app-primary))]" : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"}`}>
+                          <IconFrame icon={ICONS[it.icon]} active={active} />
                           <span className="truncate">{it.label}</span>
                         </Link>
                         );
@@ -484,7 +456,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                   }}
                   className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-500 transition hover:bg-red-50 hover:text-red-600"
                 >
-                  {ICONS.logout}
+                  <LogOut className="h-4 w-4" strokeWidth={1.9} />
                   <span>Oturumu Kapat</span>
                 </button>
               </div>
@@ -494,7 +466,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
       )}
       <div className="relative hidden h-screen w-[72px] shrink-0 md:block">
       <aside
-        className={`absolute inset-y-0 left-0 z-40 h-screen ${w} flex-col border-r border-slate-200 bg-white shadow-[1px_0_0_rgb(15_23_42/0.08)] transition-[width] duration-200 ease-out md:flex`}
+        className={`absolute inset-y-0 left-0 z-40 h-screen ${w} flex-col border-r border-slate-200 bg-white shadow-[2px_0_14px_rgb(15_23_42/0.035)] transition-[width] duration-200 ease-out md:flex`}
         onMouseEnter={() => setDesktopHovered(true)}
         onMouseLeave={() => { setDesktopHovered(false); setRolePickerOpen(false); }}
         onFocusCapture={() => setDesktopHovered(true)}
@@ -547,15 +519,11 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                 }`}
                 aria-expanded={rolePickerOpen}
               >
-                  <svg className="h-3.5 w-3.5 shrink-0 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
-                  </svg>
+                  <Code2 className="h-3.5 w-3.5 shrink-0 text-violet-500" strokeWidth={1.9} />
                   <span className="flex-1 text-left">
                     {previewRole ? `Görünüm: ${activePreview?.label}` : "Rol Görünümü"}
                   </span>
-                  <svg className={`h-3 w-3 shrink-0 transition-transform ${rolePickerOpen ? "rotate-180" : ""}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="6 9 12 15 18 9"/>
-                  </svg>
+                  <ChevronDown className={`h-3.5 w-3.5 shrink-0 transition-transform ${rolePickerOpen ? "rotate-180" : ""}`} strokeWidth={2} />
                 </button>
               {rolePickerOpen && (
               <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-xl border border-slate-200 bg-white p-1.5 shadow-xl">
@@ -583,9 +551,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                         onClick={() => handlePreviewRole(null)}
                         className="mt-0.5 flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50 hover:text-slate-900 transition"
                       >
-                        <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                          <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                        </svg>
+                        <X className="h-3.5 w-3.5" />
                         Önizlemeyi kapat
                       </button>
                     )}
@@ -604,9 +570,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                 title="Rol Görünümü"
                 aria-expanded={rolePickerOpen}
               >
-                <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
-                </svg>
+                <Code2 className="h-4 w-4" strokeWidth={1.9} />
               </button>
               {/* Collapsed tooltip ile mini picker */}
               {rolePickerOpen && (
@@ -631,9 +595,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                       onClick={() => handlePreviewRole(null)}
                       className="mt-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-slate-500 hover:bg-slate-50 hover:text-slate-900 transition"
                     >
-                      <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                      </svg>
+                      <X className="h-3.5 w-3.5" />
                       Kapat
                     </button>
                   )}
@@ -666,18 +628,15 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                     onMouseEnter={() => router.prefetch(item.href)}
                     aria-current={active ? "page" : undefined}
                     className={
-                      "relative h-12 rounded-2xl px-3 text-sm font-bold transition-all duration-150 " +
+                      "relative h-11 rounded-lg px-3 text-sm font-bold transition-all duration-150 " +
                       (collapsed ? NAV_ITEM_CLOSED : NAV_ITEM_OPEN) + " " +
                       (active
-                        ? "bg-gradient-to-r from-primary/14 via-primary/10 to-transparent text-primary ring-1 ring-primary/15"
+                        ? "bg-primary-50 text-primary shadow-[inset_3px_0_0_rgb(var(--app-primary))]"
                         : "text-slate-700 hover:bg-slate-50 hover:text-slate-950") +
                       " focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-primary/70"
                     }
                   >
-                    {active && <span className="absolute left-0 top-2 bottom-2 w-1.5 rounded-r-full bg-gradient-to-b from-primary to-primary/60" aria-hidden="true" />}
-                    <span className={active ? NAV_ICON_ACTIVE : `${NAV_ICON_BASE} ${ICON_TONES[item.icon] ?? "text-slate-500"}`}>
-                      {ICONS[item.icon]}
-                    </span>
+                    <IconFrame icon={ICONS[item.icon]} active={active} />
                     {!collapsed && (
                       <span className={`${NAV_LABEL_BASE} ${NAV_LABEL_OPEN} font-bold`}>
                         {item.label}
@@ -717,9 +676,9 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
               await fetch("/api/auth/logout", { method: "POST" });
               window.location.href = "/giris";
             }}
-            className={`grid h-12 w-full rounded-2xl px-3 text-slate-500 transition hover:bg-red-50 hover:text-red-600 ${collapsed ? "grid-cols-[40px] justify-items-center" : "grid-cols-[40px_minmax(0,1fr)] gap-x-3 text-sm font-bold"}`}
+            className={`grid h-11 w-full rounded-lg px-3 text-slate-500 transition hover:bg-red-50 hover:text-red-600 ${collapsed ? "grid-cols-[32px] justify-items-center" : "grid-cols-[32px_minmax(0,1fr)] gap-x-3 text-sm font-bold"}`}
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-red-100 bg-red-50 text-red-500 transition-colors group-hover:border-red-200 group-hover:bg-red-100">{ICONS.logout}</span>
+            <IconFrame icon={LogOut} className="border-red-100 bg-red-50 text-red-500 group-hover:border-red-200 group-hover:bg-red-100" />
             {!collapsed && <span className={`${NAV_LABEL_BASE} ${NAV_LABEL_OPEN} text-left`}>Oturumu Kapat</span>}
           </button>
           {collapsed && (

@@ -3,21 +3,34 @@ import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
+function requireEnv(name: string) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} environment variable is required.`);
+  }
+  return value;
+}
+
 async function main() {
-  const hash = await bcrypt.hash("10711453", 10);
+  const hash = await bcrypt.hash(requireEnv("SUPERADMIN_PASSWORD"), 10);
+  const identityNo = process.env.SUPERADMIN_IDENTITY || "";
+  const fullName = process.env.SUPERADMIN_FULL_NAME || "";
+  if (!identityNo || !fullName) {
+    throw new Error("SUPERADMIN_IDENTITY ve SUPERADMIN_FULL_NAME ayarlayın.");
+  }
   const legacyUser = await prisma.user.findUnique({
-    where: { identityNo: "99999999999" },
+    where: { identityNo },
   });
   const requestedUser = await prisma.user.findUnique({
-    where: { identityNo: "11509380760" },
+    where: { identityNo },
   });
 
   const user = legacyUser && (!requestedUser || requestedUser.id === legacyUser.id)
     ? await prisma.user.update({
         where: { id: legacyUser.id },
         data: {
-          identityNo: "11509380760",
-          fullName: "Ahmet Gulden",
+          identityNo,
+          fullName,
           role: "SUPERADMIN",
           institutionId: null,
           passwordHash: hash,
@@ -25,17 +38,17 @@ async function main() {
         },
       })
     : await prisma.user.upsert({
-        where: { identityNo: "11509380760" },
+        where: { identityNo },
         update: {
-          fullName: "Ahmet Gulden",
+          fullName,
           role: "SUPERADMIN",
           institutionId: null,
           passwordHash: hash,
           isActive: true,
         },
         create: {
-          identityNo: "11509380760",
-          fullName: "Ahmet Gulden",
+          identityNo,
+          fullName,
           role: "SUPERADMIN",
           institutionId: null,
           passwordHash: hash,

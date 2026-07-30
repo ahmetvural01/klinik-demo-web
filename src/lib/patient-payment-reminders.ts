@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { sendSms } from "@/lib/sms";
 import { resolveSmsTemplate } from "@/lib/sms-templates";
+import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 
 // Hastanın taksit/ödeme vadesi yaklaştığında veya geciktiğinde SMS hatırlatması
 // — süperadmin'in kurumlara gönderdiği fatura hatırlatmasından (billing-reminders.ts)
@@ -89,15 +89,6 @@ export async function runPatientPaymentReminderSweep(): Promise<{
         continue;
       }
 
-      const reservation = await prisma.institution.updateMany({
-        where: { id: institution.id, smsBalance: { gte: 1 } },
-        data: { smsBalance: { decrement: 1 } },
-      });
-      if (reservation.count === 0) {
-        skippedNoBalance += 1;
-        continue;
-      }
-
       const isOverdue = taksit.status === "GECIKTI" || taksit.vadeDate < now;
       const institutionName = setting.institutionName || institution.name;
       const institutionPhone = setting.institutionPhone || institution.phone || "";
@@ -122,15 +113,25 @@ export async function runPatientPaymentReminderSweep(): Promise<{
           })
         : fallbackMessage;
 
-      const result = await sendSms(patient.phone, message);
+      const result = await dispatchPatientMessage({
+        institutionId: institution.id,
+        patientId: patient.id,
+        eventType: "PAYMENT_REMINDER",
+        purpose: "SERVICE",
+        templateCode: isOverdue ? "ODEME_GECIKTI" : "ODEME_YAKLASIYOR",
+        message,
+        idempotencyKey: `payment-reminder:${taksit.id}:${now.toISOString().slice(0, 10)}`,
+      });
 
       if (result.success) {
         sent += 1;
         remindedPatientIdsThisRun.add(patient.id);
         await prisma.taksitReminderLog.create({ data: { taksitId: taksit.id, sentTo: patient.phone, status: "SENT" } });
+      } else if (result.suppressed) {
+        skippedNoBalance += 1;
+        await prisma.taksitReminderLog.create({ data: { taksitId: taksit.id, sentTo: patient.phone, status: "FAILED", errorDetail: result.reason } });
       } else {
         failed += 1;
-        await prisma.institution.update({ where: { id: institution.id }, data: { smsBalance: { increment: 1 } } });
         await prisma.taksitReminderLog.create({ data: { taksitId: taksit.id, sentTo: patient.phone, status: "FAILED", errorDetail: result.error } });
       }
     }

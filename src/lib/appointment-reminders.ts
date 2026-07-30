@@ -1,7 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { sendSms } from "@/lib/sms";
 import { resolveSmsTemplate } from "@/lib/sms-templates";
-import { sendWhatsapp } from "@/lib/whatsapp";
+import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 
 const APPOINTMENT_REMINDER_PREFIX = "[APPT_REMINDER]";
 const MAX_ATTEMPTS = 3;
@@ -150,75 +149,48 @@ export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
         })
       : fallbackMessage;
 
-    let channel: "WHATSAPP" | "SMS" | null = null;
-    let providerMessageId: string | undefined;
-    let error = "";
+    // Kanal seçimi, hasta SMS izni, bakiye rezervasyonu/iadesi ve idempotency
+    // artık tek merkezden yönetiliyor (bkz. src/lib/notification-dispatch.ts).
+    const result = await dispatchPatientMessage({
+      institutionId,
+      patientId: appointment.patient.id,
+      eventType: "APPOINTMENT_REMINDER",
+      purpose: "SERVICE",
+      templateCode: "HATIRLATMA",
+      message,
+      idempotencyKey: `appt-reminder:${reminder.id}`,
+      whatsappTemplate: {
+        bodyParameters: [appointment.patient.fullName, dateText, appointment.doctor.fullName],
+      },
+    });
 
-    if (context.institution.whatsappEnabled) {
-      const result = await sendWhatsapp(appointment.patient.phone, message, {
-        institutionId,
-        patientId: appointment.patient.id,
-        appointmentId: appointment.id,
-        countryCode: appointment.patient.phoneCountryCode,
-        template: {
-          bodyParameters: [
-            appointment.patient.fullName,
-            dateText,
-            appointment.doctor.fullName,
-          ],
-        },
-      });
-      if (result.success) {
-        channel = "WHATSAPP";
-        providerMessageId = result.providerMessageId;
-      } else {
-        error = result.error || result.providerRaw || "WhatsApp gönderimi başarısız.";
-      }
-    }
-
-    if (!channel && context.settings?.smsEnabled) {
-      const reservation = await prisma.institution.updateMany({
-        where: { id: institutionId, smsBalance: { gte: 1 } },
-        data: { smsBalance: { decrement: 1 } },
-      });
-      if (reservation.count) {
-        const result = await sendSms(appointment.patient.phone, message);
-        if (result.success) {
-          channel = "SMS";
-          providerMessageId = result.providerMessageId;
-        } else {
-          error = result.error || result.providerRaw || "SMS gönderimi başarısız.";
-          await prisma.institution.update({
-            where: { id: institutionId },
-            data: { smsBalance: { increment: 1 } },
-          });
-        }
-      } else {
-        error = error
-          ? `${error} SMS bakiyesi yetersiz.`
-          : "SMS bakiyesi yetersiz.";
-      }
-    }
-
-    if (channel) {
+    if (result.success) {
       sent += 1;
-      if (channel === "WHATSAPP") sentWhatsapp += 1;
+      if (result.channel === "WHATSAPP") sentWhatsapp += 1;
       else sentSms += 1;
       await prisma.reminder.update({
         where: { id: reminder.id },
         data: {
           status: "TAMAMLANDI",
           nextAttemptAt: null,
-          lastChannel: channel,
-          lastError: providerMessageId ? `Sağlayıcı mesaj kimliği: ${providerMessageId}` : null,
+          lastChannel: result.channel,
+          lastError: result.providerMessageId ? `Sağlayıcı mesaj kimliği: ${result.providerMessageId}` : null,
         },
+      });
+    } else if (result.suppressed) {
+      // İzin yok / kurum kapatmış / bakiye yetersiz — tekrar denemek sonucu
+      // değiştirmeyeceği için doğrudan tamamlandı sayılır (dead-letter'a düşmez).
+      skipped += 1;
+      await prisma.reminder.update({
+        where: { id: reminder.id },
+        data: { status: "TAMAMLANDI", nextAttemptAt: null, lastError: result.reason || null },
       });
     } else {
       failed += 1;
       await markFailure(
         reminder.id,
         reminder.attemptCount + 1,
-        error || "Etkin bir bildirim kanalı bulunamadı.",
+        result.error || "Etkin bir bildirim kanalı bulunamadı.",
       );
     }
   }

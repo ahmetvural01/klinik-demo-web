@@ -4,16 +4,29 @@ const bcrypt = require("bcryptjs");
 
 const prisma = new PrismaClient();
 
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} environment variable is required for seeding.`);
+  }
+  return value;
+}
+
 async function main() {
   try {
     console.log("📊 Seed başlıyor...");
+    const institutionName = process.env.DEMO_INSTITUTION_NAME || "demo-klinik";
+    const institutionEmail = process.env.DEMO_INSTITUTION_EMAIL || "demo@local.test";
+    const institutionWebsite = process.env.DEMO_INSTITUTION_WEBSITE || "www.demo.local";
+    const demoAdminIdentity = process.env.DEMO_ADMIN_IDENTITY || "00000000000";
+    const demoAdminFullName = process.env.DEMO_ADMIN_FULL_NAME || "Demo Kullanici";
     
     // 1. Kurum oluştur
     const inst = await prisma.institution.create({
       data: {
         id: require("crypto").randomUUID(),
-        name: "whitedental",
-        email: "info@whitedental.com",
+        name: institutionName,
+        email: institutionEmail,
         phone: "05306375370",
         address: "Cukurova / Adana",
         subscriptionPlan: "PROFESYONEL",
@@ -24,13 +37,13 @@ async function main() {
     console.log(`✓ Kurum oluşturuldu: ${inst.name}`);
 
     // 2. Admin kullanıcı oluştur
-    const hash = await bcrypt.hash("10711453", 10);
+    const hash = await bcrypt.hash(requireEnv("DEMO_ADMIN_PASSWORD"), 10);
     const user = await prisma.user.create({
       data: {
         id: require("crypto").randomUUID(),
-        identityNo: "10000000001",
+        identityNo: demoAdminIdentity,
         institutionId: inst.id,
-        fullName: "Klinik Yoneticisi",
+        fullName: demoAdminFullName,
         role: "YONETICI",
         passwordHash: hash,
         isActive: true,
@@ -46,7 +59,7 @@ async function main() {
         institutionName: "Adana White Dental Clinic",
         institutionAddress: "Cukurova / Adana",
         institutionPhone: "05306375370",
-        institutionWebsite: "www.adanawhitedental.com",
+        institutionWebsite,
         openingTime: "08:30",
         closingTime: "23:59",
         appointmentDuration: 15,
@@ -56,9 +69,9 @@ async function main() {
 
     console.log("\n✅ Seed başarılı!");
     console.log("📝 Giriş bilgileri:");
-    console.log("   Kurum: whitedental");
-    console.log("   TC: 10000000001");
-    console.log("   Şifre: 10711453");
+    console.log(`   Kurum: ${institutionName}`);
+    console.log(`   TC: ${demoAdminIdentity}`);
+    console.log("   Şifre: DEMO_ADMIN_PASSWORD");
 
   } catch (error) {
     console.error("❌ Seed hatası:", error.message);

@@ -243,7 +243,7 @@ export function themeCssVars(pkg: ThemePackage) {
     ...rampVars("slate", v.slate),
     ...rampVars("primary", v.primaryRamp),
     ...rampVars("accent", v.accentRamp),
-    "--font-sans": pkg.fontSans,
-    "--font-display": pkg.fontDisplay || pkg.fontSans,
+    "--font-sans": `var(--font-manrope), ${pkg.fontSans}`,
+    "--font-display": `var(--font-jakarta), var(--font-manrope), ${pkg.fontDisplay || pkg.fontSans}`,
   } as Record<string, string>;
 }

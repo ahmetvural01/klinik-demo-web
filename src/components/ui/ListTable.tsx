@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { TableRowsSkeleton } from "@/components/ui/ListSkeleton";
 import { ListPager, type ListPagerProps } from "@/components/ui/ListPager";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 export interface ListTableColumn<T> {
   key: string;
@@ -49,11 +50,11 @@ export function ListTable<T>({
   const tableMinWidth = columns.length >= 6 ? "min-w-[820px]" : columns.length >= 4 ? "min-w-[680px]" : "";
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] shadow-[0_10px_26px_rgba(15,23,42,0.04)]">
+    <div className="ui-surface overflow-hidden">
       <div className="overflow-x-auto">
         <table className={`${tableMinWidth} w-full`}>
           <thead>
-            <tr className="border-b border-slate-100/80 bg-slate-50/90">
+            <tr className="border-b border-slate-200 bg-slate-50/80">
               {columns.map((col) => (
                 <th
                   key={col.key}
@@ -71,13 +72,13 @@ export function ListTable<T>({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100/90">
+          <tbody className="divide-y divide-slate-100">
             {loading && rows.length === 0 ? (
               <TableRowsSkeleton rows={skeletonRows} columns={columns.length} />
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={columns.length} className="px-4 py-14 text-center text-sm text-slate-400">
-                  {emptyText}
+                <td colSpan={columns.length}>
+                  <EmptyState title={emptyText} compact />
                 </td>
               </tr>
             ) : (
@@ -94,7 +95,7 @@ export function ListTable<T>({
                       onRowClick(row);
                     }
                   } : undefined}
-                  className={`group transition hover:bg-slate-50/80 ${onRowClick ? "cursor-pointer focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/30" : ""}`}
+                  className={`group transition-[background-color,box-shadow] duration-150 hover:bg-primary/[0.045] ${onRowClick ? "cursor-pointer focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25" : ""}`}
                 >
                   {columns.map((col) => (
                     <td
@@ -103,7 +104,7 @@ export function ListTable<T>({
                         "px-3 py-2.5 sm:px-4",
                         ALIGN_CLASS[col.align || "left"],
                         hasStickyActions && (col.key === "islem" || col.key === "actions")
-                          ? "md:sticky md:right-0 md:z-10 md:bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] md:shadow-[-5px_0_8px_-8px_rgb(15_23_42/0.35)] md:group-hover:bg-slate-50/80"
+                          ? "md:sticky md:right-0 md:z-10 md:bg-white md:shadow-[-5px_0_8px_-8px_rgb(15_23_42/0.35)] md:group-hover:bg-primary/[0.035]"
                           : "",
                         col.cellClassName || "",
                       ].filter(Boolean).join(" ")}

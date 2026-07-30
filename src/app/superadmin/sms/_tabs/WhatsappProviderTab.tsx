@@ -100,8 +100,8 @@ export default function WhatsappProviderTab() {
   };
 
   const submit = async () => {
-    if (!form.code.trim() || !form.name.trim()) {
-      showToastSafe({ title: "Eksik alan", message: "Kod ve ad zorunlu", type: "error" });
+    if (!form.code.trim() || !form.name.trim() || !form.institutionId.trim()) {
+      showToastSafe({ title: "Eksik alan", message: "Kod, ad ve kurum zorunlu", type: "error" });
       return;
     }
     setSaving(true);
@@ -177,8 +177,10 @@ export default function WhatsappProviderTab() {
     <section className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-slate-500">
-          WhatsApp, SMS bakiyesi tüketmeyen paralel bir bildirim kanalıdır. Henüz hiçbir kliniğe açık değildir —
-          klinik bazında etkinleştirme Kurumlar &gt; Kurum Detayı ekranından yapılır.
+          WhatsApp, SMS bakiyesi tüketmeyen paralel bir bildirim kanalıdır. Bir klinik için modülü açmak
+          Kurumlar &gt; Kurum Detayı ekranından yapılır — açıldıktan sonra klinik kendi Meta hesabını
+          Ayarlar &gt; SMS &gt; WhatsApp Ayarları&apos;ndan kendisi bağlayabilir. Buradaki liste; kliniğin kendi
+          yapamadığı durumlarda destek amaçlı manuel tanımlama içindir.
         </p>
         <Button icon={PlusCircle} size="sm" onClick={openCreate}>Yeni Sağlayıcı</Button>
       </div>
@@ -237,9 +239,9 @@ export default function WhatsappProviderTab() {
           <FormField label="Ad" required>
             <input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Meta WhatsApp Cloud API" />
           </FormField>
-          <FormField label="Kurum" hint="Gelen mesajların doğru kliniğe bağlanması için Meta sağlayıcısında zorunludur.">
-            <select className={inputClass} value={form.institutionId} onChange={(e) => setForm({ ...form, institutionId: e.target.value })}>
-              <option value="">Platform geneli / yalnızca gönderim</option>
+          <FormField label="Kurum" required hint="Her sağlayıcı tek bir kliniğe aittir — platform genelinde paylaşılan sağlayıcı desteklenmez, mesajlar her zaman kliniğin kendi numarasından gider.">
+            <select className={inputClass} value={form.institutionId} disabled={!!editing} onChange={(e) => setForm({ ...form, institutionId: e.target.value })}>
+              <option value="">Kurum seçin</option>
               {institutions.map((institution) => (
                 <option key={institution.id} value={institution.id}>{institution.name}</option>
               ))}

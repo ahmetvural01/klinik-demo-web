@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useState } from "react";
 
 type SearchOption = {
   id: string;
@@ -26,6 +26,14 @@ export function SearchSelect({
   emptyText?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const listboxId = useId();
+
+  const selectOption = (option: SearchOption) => {
+    onSelect(option);
+    setOpen(false);
+    setActiveIndex(-1);
+  };
 
   return (
     <div className="relative">
@@ -34,28 +42,50 @@ export function SearchSelect({
         onChange={(event) => {
           onQueryChange(event.target.value);
           setOpen(true);
+          setActiveIndex(-1);
         }}
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            setOpen(false);
+            setActiveIndex(-1);
+          } else if (event.key === "ArrowDown") {
+            event.preventDefault();
+            setOpen(true);
+            setActiveIndex((current) => Math.min(options.length - 1, current + 1));
+          } else if (event.key === "ArrowUp") {
+            event.preventDefault();
+            setActiveIndex((current) => Math.max(0, current - 1));
+          } else if (event.key === "Enter" && open && activeIndex >= 0 && options[activeIndex]) {
+            event.preventDefault();
+            selectOption(options[activeIndex]);
+          }
+        }}
         placeholder={placeholder}
         autoComplete="off"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls={listboxId}
+        aria-activedescendant={activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
         className={className}
       />
       {open && (
-        <div className="absolute left-0 right-0 top-full z-40 mt-2 max-h-56 overflow-y-auto rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] py-1 shadow-[0_18px_36px_rgba(15,23,42,0.12)]">
+        <div id={listboxId} role="listbox" className="absolute left-0 right-0 top-full z-40 mt-1 max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-[var(--shadow-floating)]">
           {options.length === 0 ? (
             <p className="px-3 py-2 text-xs text-slate-400">{emptyText || "Sonuç bulunamadı"}</p>
           ) : (
-            options.map((option) => (
+            options.map((option, index) => (
               <button
                 key={option.id}
+                id={`${listboxId}-${index}`}
                 type="button"
+                role="option"
+                aria-selected={index === activeIndex}
                 onMouseDown={(event) => event.preventDefault()}
-                onClick={() => {
-                  onSelect(option);
-                  setOpen(false);
-                }}
-                className="block w-full px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-primary/5"
+                onMouseEnter={() => setActiveIndex(index)}
+                onClick={() => selectOption(option)}
+                className={`block w-full px-3 py-2 text-left text-sm text-slate-700 transition-colors ${index === activeIndex ? "bg-primary/5" : "hover:bg-slate-50"}`}
               >
                 <span className="block truncate font-medium">{option.label}</span>
                 {option.meta && <span className="block truncate text-xs text-slate-400">{option.meta}</span>}

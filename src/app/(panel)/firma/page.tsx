@@ -1,11 +1,12 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import { Eye, Plus, Download } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Plus, Download } from "lucide-react";
 import { downloadCsv } from "@/lib/csv-export";
 import { useSlashFocus } from "@/lib/use-slash-focus";
 import { showToastSafe } from "@/lib/toast-client";
-import { Button, IconButton } from "@/components/ui/Button";
+import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { FormField, inputErrorClass } from "@/components/ui/FormField";
@@ -38,6 +39,7 @@ const FIRMA_KATEGORILERI: Record<string, string> = {
 };
 
 export default function FirmaPage() {
+  const router = useRouter();
   const [firmas, setFirmas] = useState<Firma[]>(() => {
     if (typeof window === "undefined") return [];
     try {
@@ -239,7 +241,6 @@ export default function FirmaPage() {
       align: "right",
       render: (f) => (
         <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-          <IconButton icon={Eye} title="Detay" href={`/firma-detay?id=${f.id}`} />
           {f.kategori === "LAB" ? (
             <Button variant="secondary" size="sm" href={`/lab?new=1&labName=${encodeURIComponent(f.name)}`}>Laboratuvar İşi Oluştur</Button>
           ) : (
@@ -252,7 +253,7 @@ export default function FirmaPage() {
 
   return (
     <div className="space-y-3">
-      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+      <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-lg font-black text-slate-900">Satın Alma</h1>
@@ -288,6 +289,8 @@ export default function FirmaPage() {
         rowKey={(f) => f.id}
         loading={loading}
         emptyText="Firma bulunamadı"
+        onRowClick={(firma) => router.push(`/firma-detay?id=${firma.id}`)}
+        getRowAriaLabel={(firma) => `${firma.name} firma detayını aç`}
       />
 
       <Modal

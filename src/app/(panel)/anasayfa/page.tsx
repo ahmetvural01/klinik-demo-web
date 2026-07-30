@@ -4,6 +4,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { CalendarDays, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { confirmDialog } from "@/lib/confirm-client";
 import { cachedGet } from "@/lib/client-cache";
 
@@ -593,7 +594,7 @@ export default function AnasayfaPage() {
     <div className="space-y-4 pb-2">
 
       {/* ── HEADER ────────────────────────────── */}
-      <div className="overflow-hidden rounded-2xl border border-primary/10 bg-[linear-gradient(135deg,rgba(13,125,111,0.08)_0%,rgba(255,255,255,0.94)_44%,rgba(37,99,235,0.06)_100%)] px-4 py-4 shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
+      <div className="ui-surface overflow-hidden border-primary/15 bg-primary-50/35 px-4 py-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
             <p className="text-[11px] font-extrabold uppercase tracking-[0.18em] text-primary/70">Klinik Yönetim Paneli</p>
@@ -625,7 +626,7 @@ export default function AnasayfaPage() {
           <Link
             key={item.id}
             href={item.href}
-            className={`relative min-w-[150px] overflow-hidden rounded-2xl border px-5 py-4 transition hover:-translate-y-0.5 hover:shadow-[0_12px_28px_rgba(15,23,42,0.08)] ${idx === 0 ? "border-primary/15 bg-[linear-gradient(135deg,rgba(13,125,111,0.12)_0%,rgba(255,255,255,0.96)_100%)]" : "border-amber-200/70 bg-[linear-gradient(135deg,rgba(245,158,11,0.14)_0%,rgba(255,255,255,0.96)_100%)]"}`}
+            className={`ui-interactive relative min-w-[150px] overflow-hidden rounded-lg border px-5 py-4 ${idx === 0 ? "border-primary/15 bg-primary-50/60" : "border-amber-200/70 bg-amber-50/65"}`}
           >
             <span className={`absolute inset-x-0 top-0 h-1 ${idx === 0 ? "bg-primary" : "bg-amber-500"}`} />
             <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">{item.label}</p>
@@ -635,7 +636,7 @@ export default function AnasayfaPage() {
       </div>
 
       {canSeeInstallments && (installmentAgenda.overdue.length > 0 || installmentAgenda.upcoming.length > 0) && (
-        <div className="rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.98)_100%)] shadow-[0_10px_28px_rgba(15,23,42,0.04)]">
+        <div className="ui-surface">
           <div className="flex items-center justify-between border-b border-slate-100/80 px-5 py-3">
             <div>
               <h2 className="text-sm font-bold text-slate-800">Taksit Takvimi</h2>
@@ -689,9 +690,9 @@ export default function AnasayfaPage() {
         {/* LEFT: Appointments */}
         <div className="xl:col-span-2 space-y-3">
           {/* Tarih nav */}
-          <div className="flex items-center justify-between rounded-2xl border border-slate-100 bg-white px-5 py-3 shadow-sm">
+          <div className="ui-surface flex items-center justify-between px-5 py-3">
             <button aria-label="Önceki gün" onClick={() => setDateOffset(d => d - 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50">
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+              <ChevronLeft className="h-4 w-4" />
             </button>
             <div className="text-center">
               <p className="text-sm font-bold text-slate-800">{dateLabel}</p>
@@ -701,18 +702,18 @@ export default function AnasayfaPage() {
               {Math.abs(dateOffset) > 1 && <span className="text-[11px] text-slate-400">{Math.abs(dateOffset)} gün {dateOffset > 0 ? "sonra" : "önce"}</span>}
             </div>
             <button aria-label="Sonraki gün" onClick={() => setDateOffset(d => d + 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50">
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+              <ChevronRight className="h-4 w-4" />
             </button>
           </div>
 
           {/* Timeline */}
-          <div className="overflow-hidden rounded-2xl border border-slate-100 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.98)_100%)] shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
-            <div className="flex items-center justify-between border-b border-slate-50 px-5 py-3">
+          <div className="ui-surface overflow-hidden">
+            <div className="flex flex-col gap-2 border-b border-slate-100 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-bold text-slate-800">Randevu Takvimi</h2>
                 <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">{apptLoading ? "..." : `${todayTotal} randevu`}</span>
               </div>
-              <div className="flex items-center gap-3 text-[11px] text-slate-500">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate-500">
                 <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-400" />Bekliyor/Geldi: {todayWaiting}</span>
                 <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-blue-400" />Tamamlandı: {todayDone}</span>
                 <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-400" />İptal: {todayCancel}</span>
@@ -720,7 +721,7 @@ export default function AnasayfaPage() {
             </div>
             {appts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-slate-300">
-                <svg className="mb-3 h-12 w-12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                <CalendarDays className="mb-3 h-11 w-11" strokeWidth={1.25} />
                 <p className="text-sm text-slate-400">Bu gün için randevu yok</p>
                 <Link href="/randevu" className="mt-3 rounded-lg bg-primary px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-primary-strong">Randevu Ekle</Link>
               </div>
@@ -758,7 +759,7 @@ export default function AnasayfaPage() {
         </div>
 
         {/* RIGHT: tek panelde "Bugün" — Aksiyon Merkezi + Duyurular birleşik */}
-        <div className="overflow-hidden rounded-2xl border border-slate-100 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+        <div className="ui-surface overflow-hidden">
           <div className="flex items-center justify-between border-b border-slate-50 px-4 py-3">
             <h3 className="text-sm font-bold text-slate-800">Bugün Dikkat Gerekenler</h3>
             {hasHomeTasks && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">{homeTasks.length}</span>}
@@ -802,7 +803,7 @@ export default function AnasayfaPage() {
                 <p className="flex-1 text-xs leading-relaxed text-slate-700">{a.text}</p>
                 {annRole === "YONETICI" && (
                   <button onClick={() => deleteAnn(a.id)} className="shrink-0 rounded p-0.5 text-slate-300 transition hover:text-red-400">
-                    <svg className="h-3 w-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+                    <X className="h-3.5 w-3.5" />
                   </button>
                 )}
               </div>
@@ -820,7 +821,7 @@ export default function AnasayfaPage() {
       {/* ── BOTTOM ────────────────────────────── */}
       <div className="grid gap-5">
         {/* Chat */}
-        {canSeeInternalChat && <div className="flex flex-col overflow-hidden rounded-2xl border border-slate-100 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(248,250,252,0.98)_100%)] shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+        {canSeeInternalChat && <div className="ui-surface flex flex-col overflow-hidden">
           <div className="flex items-center justify-between border-b border-slate-50 px-4 py-3">
             <h3 className="text-sm font-bold text-slate-800">Klinik İçi Mesajlar</h3>
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">{messages.length}</span>

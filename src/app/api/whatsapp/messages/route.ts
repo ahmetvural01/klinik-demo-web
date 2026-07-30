@@ -182,6 +182,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Mesaj 4096 karakterden uzun olamaz." }, { status: 400 });
   }
 
+  // Canlı sohbet yanıtı dispatchPatientMessage'ın olay/şablon mimarisine
+  // uymuyor (serbest metin, anlık, tek seferlik) ama yetki ve izin
+  // kontrollerinden muaf DEĞİLDİR: SuperAdmin'in WhatsApp yetkisi kapalıysa
+  // kliniğin sağlayıcısı olsa bile mesaj gönderilemez.
+  const institution = await prisma.institution.findUnique({
+    where: { id: auth.user.institutionId },
+    select: { whatsappEnabled: true },
+  });
+  if (!institution?.whatsappEnabled) {
+    return NextResponse.json({ message: "WhatsApp modülü kliniğiniz için açık değil." }, { status: 403 });
+  }
+
   const patient = await prisma.patient.findFirst({
     where: {
       id: body.patientId,
@@ -228,6 +240,10 @@ export async function POST(request: NextRequest) {
     countryCode: patient.phoneCountryCode,
   });
   if (!result.success) {
+    // sendWhatsapp() her denemeyi (başarılı/başarısız) WhatsappMessage'a zaten
+    // kaydediyor — burada ayrıca audit log'a da yazılır ki "kim, ne zaman,
+    // hangi hastaya göndermeye çalıştı" personel bazında da izlenebilsin.
+    await writeAudit(auth.user.id, "WHATSAPP_REPLY_FAILED", `Hasta: ${patient.id} · Hata: ${result.error || result.providerRaw || "bilinmeyen hata"}`);
     return NextResponse.json({ message: result.error || "WhatsApp mesajı gönderilemedi." }, { status: 503 });
   }
   await writeAudit(auth.user.id, "WHATSAPP_REPLY", `Hasta: ${patient.id} · Mesaj: ${result.providerMessageId || "-"}`);

@@ -22,6 +22,8 @@ const PUBLIC_PREFIXES = [
   "/api/system/health",
   "/randevu-al",
   "/api/public/booking",
+  "/sms-onay",
+  "/api/public/sms-consent",
 ];
 
 // Rol bazlı sayfa erişim haritası

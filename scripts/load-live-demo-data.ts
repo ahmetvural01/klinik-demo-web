@@ -6,6 +6,11 @@ const PASSWORD = process.env.LIVE_DEMO_PASSWORD || "";
 if (!PASSWORD) {
   throw new Error("LIVE_DEMO_PASSWORD ortam değişkeni zorunludur.");
 }
+const DEMO_INSTITUTION_NAME = process.env.DEMO_INSTITUTION_NAME || "demo-klinik";
+const DEMO_INSTITUTION_ADDRESS = process.env.DEMO_INSTITUTION_ADDRESS || "Demo Adres";
+const DEMO_INSTITUTION_PHONE = process.env.DEMO_INSTITUTION_PHONE || "0000 000 0000";
+const DEMO_INSTITUTION_WEBSITE = process.env.DEMO_INSTITUTION_WEBSITE || "www.demo.local";
+const DEMO_ADMIN_IDENTITY = process.env.DEMO_ADMIN_IDENTITY || "00000000000";
 
 function dec(value: number | string) {
   return new Prisma.Decimal(value);
@@ -101,11 +106,11 @@ async function cleanupOldVisibleDemoPrefixes(institutionId: string) {
 async function upsertStaff(institutionId: string) {
   const passwordHash = await bcrypt.hash(PASSWORD, 10);
   const rows = [
-    { identityNo: "10000000011", fullName: "Dr. Elif Karaca", role: Role.DOKTOR, email: "elif.karaca@whitedental.local", genelYuzde: 40, kkYuzde: 35, maasYuzde: 30 },
-    { identityNo: "10000000012", fullName: "Dr. Mert Aydın", role: Role.DOKTOR, email: "mert.aydin@whitedental.local", genelYuzde: 42, kkYuzde: 36, maasYuzde: 30 },
-    { identityNo: "10000000013", fullName: "Derya Aslan", role: Role.ASISTAN, email: "derya.aslan@whitedental.local" },
-    { identityNo: "10000000014", fullName: "Sibel Yalçın", role: Role.BANKO, email: "sibel.yalcin@whitedental.local" },
-    { identityNo: "10000000015", fullName: "Hakan Demir", role: Role.MUHASEBE, email: "hakan.demir@whitedental.local" },
+    { identityNo: "00000000011", fullName: "Demo Doktor 1", role: Role.DOKTOR, email: "doctor1@demo.local", genelYuzde: 40, kkYuzde: 35, maasYuzde: 30 },
+    { identityNo: "00000000012", fullName: "Demo Doktor 2", role: Role.DOKTOR, email: "doctor2@demo.local", genelYuzde: 42, kkYuzde: 36, maasYuzde: 30 },
+    { identityNo: "00000000013", fullName: "Demo Asistan", role: Role.ASISTAN, email: "assistant@demo.local" },
+    { identityNo: "00000000014", fullName: "Demo Banko", role: Role.BANKO, email: "frontdesk@demo.local" },
+    { identityNo: "00000000015", fullName: "Demo Muhasebe", role: Role.MUHASEBE, email: "finance@demo.local" },
   ];
 
   const users: Record<string, Awaited<ReturnType<typeof prisma.user.upsert>>> = {};
@@ -144,7 +149,7 @@ async function upsertStaff(institutionId: string) {
   }
 
   const manager = await prisma.user.update({
-    where: { institutionId_identityNo: { institutionId, identityNo: "10000000001" } },
+    where: { institutionId_identityNo: { institutionId, identityNo: DEMO_ADMIN_IDENTITY } },
     data: { passwordHash, isActive: true },
   });
   users.manager = manager;
@@ -156,9 +161,9 @@ async function upsertSettings(institutionId: string, institutionName: string) {
     where: { institutionId },
     update: {
       institutionName,
-      institutionAddress: "Çukurova / Adana",
-      institutionPhone: "0530 637 5370",
-      institutionWebsite: "www.adanawhitedental.com",
+      institutionAddress: DEMO_INSTITUTION_ADDRESS,
+      institutionPhone: DEMO_INSTITUTION_PHONE,
+      institutionWebsite: DEMO_INSTITUTION_WEBSITE,
       openingTime: "09:00",
       closingTime: "18:30",
       appointmentDuration: 30,
@@ -171,9 +176,9 @@ async function upsertSettings(institutionId: string, institutionName: string) {
     create: {
       institutionId,
       institutionName,
-      institutionAddress: "Çukurova / Adana",
-      institutionPhone: "0530 637 5370",
-      institutionWebsite: "www.adanawhitedental.com",
+      institutionAddress: DEMO_INSTITUTION_ADDRESS,
+      institutionPhone: DEMO_INSTITUTION_PHONE,
+      institutionWebsite: DEMO_INSTITUTION_WEBSITE,
       openingTime: "09:00",
       closingTime: "18:30",
       appointmentDuration: 30,
@@ -931,9 +936,9 @@ async function upsertOtherModules(institutionId: string, users: Record<string, A
 
 async function main() {
   const institution = await prisma.institution.findFirst({
-    where: { name: { contains: "whitedental", mode: "insensitive" } },
+    where: { name: { contains: DEMO_INSTITUTION_NAME, mode: "insensitive" } },
   });
-  if (!institution) throw new Error("whitedental kurumu bulunamadı.");
+  if (!institution) throw new Error("Demo kurumu bulunamadı.");
 
   await cleanupOldVisibleDemoPrefixes(institution.id);
   await upsertSettings(institution.id, institution.name);

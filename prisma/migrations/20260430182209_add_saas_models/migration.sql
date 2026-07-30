@@ -136,7 +136,7 @@ CREATE TABLE "Prescription" (
 
 -- Seed default institution and backfill foreign keys for existing rows
 INSERT INTO "Institution" ("id", "name", "email", "createdAt", "updatedAt")
-SELECT 'inst-default', 'whitedental', 'info@whitedental.local', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
+SELECT 'inst-default', 'demo-klinik', 'demo@local.test', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 WHERE NOT EXISTS (SELECT 1 FROM "Institution");
 
 UPDATE "User"

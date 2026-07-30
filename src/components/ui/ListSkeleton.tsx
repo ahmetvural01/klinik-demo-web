@@ -4,7 +4,7 @@ export function ListRowSkeleton({ rows = 5 }: { rows?: number }) {
       {Array.from({ length: rows }).map((_, index) => (
         <div
           key={index}
-          className="h-14 rounded-xl bg-[linear-gradient(90deg,rgba(241,245,249,0.8)_0%,rgba(226,232,240,0.95)_50%,rgba(241,245,249,0.8)_100%)] bg-[length:200%_100%] animate-pulse"
+          className="h-14 animate-pulse rounded-lg bg-slate-100"
         />
       ))}
     </div>
@@ -19,7 +19,7 @@ export function TableRowsSkeleton({ rows = 6, columns = 5 }: { rows?: number; co
           {Array.from({ length: columns }).map((_, columnIndex) => (
             <td key={columnIndex} className="px-4 py-3">
               <div
-                className="h-4 rounded bg-[linear-gradient(90deg,rgba(241,245,249,0.8)_0%,rgba(226,232,240,0.95)_50%,rgba(241,245,249,0.8)_100%)] bg-[length:200%_100%] animate-pulse"
+                className="h-4 animate-pulse rounded bg-slate-100"
               />
             </td>
           ))}

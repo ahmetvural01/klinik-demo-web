@@ -1894,10 +1894,10 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
 
   return (
     <section className="randevu-page space-y-2">
-      <div className="randevu-toolbar sticky top-0 z-20 flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] px-2 py-2 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
-        <button onClick={() => nav(-1)} aria-label="Önceki tarih aralığı" className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 text-lg leading-none hover:bg-primary/[0.05]">‹</button>
-        <span className="max-w-full truncate rounded-xl border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-bold text-slate-800 shadow-[0_4px_14px_rgba(15,23,42,0.04)]">{navLabel()}</span>
-        <button onClick={() => nav(1)} aria-label="Sonraki tarih aralığı" className="flex h-8 w-8 items-center justify-center rounded-xl border border-slate-200 text-lg leading-none hover:bg-primary/[0.05]">›</button>
+      <div className="randevu-toolbar sticky top-0 z-20 flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-2 shadow-sm">
+        <button onClick={() => nav(-1)} aria-label="Önceki tarih aralığı" className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-lg leading-none hover:bg-primary/[0.05]">‹</button>
+        <span className="max-w-full truncate rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-bold text-slate-800 shadow-sm">{navLabel()}</span>
+        <button onClick={() => nav(1)} aria-label="Sonraki tarih aralığı" className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-lg leading-none hover:bg-primary/[0.05]">›</button>
 
         <div className="mx-1 hidden h-6 w-px bg-slate-200 sm:block" />
 
@@ -1905,47 +1905,47 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
           <button
             key={mode}
             onClick={() => setView(mode)}
-            className={"h-8 rounded-xl px-2.5 text-sm font-semibold transition-colors " + (view === mode ? "bg-primary text-white shadow-sm shadow-primary/20" : "bg-slate-100 text-slate-700 hover:bg-primary/[0.08]")}
+            className={"h-8 rounded-lg px-2.5 text-sm font-semibold transition-colors " + (view === mode ? "bg-primary text-white shadow-sm" : "bg-slate-100 text-slate-700 hover:bg-primary/[0.08]")}
           >
             {mode === "GUN" ? "Gün" : mode === "HAFTA" ? "Hafta" : mode === "AY" ? "Ay" : "Ajanda"}
           </button>
         ))}
 
-        <select className="h-8 min-w-[170px] rounded-xl border border-slate-200 px-2 text-sm focus:border-primary focus:outline-none" value={doctorId} onChange={e => setDoctorId(e.target.value)}>
+        <select className="h-8 min-w-[170px] rounded-lg border border-slate-200 px-2 text-sm focus:border-primary focus:outline-none" value={doctorId} onChange={e => setDoctorId(e.target.value)}>
           <option value="">Tüm Doktorlar</option>
           {staff.map(s => <option key={s.id} value={s.id}>{s.fullName}</option>)}
         </select>
 
-        <span className="ml-auto rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">
+        <span className="ml-auto rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700">
           {appointments.length} kayıt
         </span>
         {doctorBlocks.length > 0 && (
-          <span className="rounded-full border border-orange-200 bg-orange-50 px-2 py-1 text-xs font-bold text-orange-700">
+          <span className="rounded-md border border-orange-200 bg-orange-50 px-2 py-1 text-xs font-bold text-orange-700">
             {doctorBlocks.length} kapalı zaman
           </span>
         )}
 
-        <button onClick={() => setShowForm(true)} disabled={!canCreateAppointments} className="h-8 rounded-xl bg-primary px-3 text-sm font-semibold text-white shadow-sm shadow-primary/20 disabled:cursor-not-allowed disabled:opacity-50">Yeni Randevu</button>
+        <button onClick={() => setShowForm(true)} disabled={!canCreateAppointments} className="h-8 rounded-lg bg-primary px-3 text-sm font-semibold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50">Yeni Randevu</button>
         {canCreateAppointments && (
-          <button onClick={() => { setBlockSubmitError(null); setShowBlockModal(true); }} className="h-8 rounded-xl border border-orange-300 bg-orange-50 px-3 text-sm font-semibold text-orange-700 hover:bg-orange-100">Zamanı Kapat</button>
+          <button onClick={() => { setBlockSubmitError(null); setShowBlockModal(true); }} className="h-8 rounded-lg border border-orange-300 bg-orange-50 px-3 text-sm font-semibold text-orange-700 hover:bg-orange-100">Zamanı Kapat</button>
         )}
-        <button onClick={() => setShowWaitlistModal(true)} className="relative h-8 rounded-xl border border-purple-300 bg-purple-50 px-3 text-sm font-semibold text-purple-700 hover:bg-purple-100">
-          Bekleme Listesi
+        <button onClick={() => setShowWaitlistModal(true)} className="relative h-8 rounded-lg border border-purple-300 bg-purple-50 px-3 text-sm font-semibold text-purple-700 hover:bg-purple-100" title="Randevu bekleme listesini aç">
+          Bekleme
           {activeWaitlist.length > 0 && (
             <span className="ml-1.5 rounded-full bg-purple-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{activeWaitlist.length}</span>
           )}
         </button>
-        <button onClick={() => setShowBookingRequestsModal(true)} className="relative h-8 rounded-xl border border-cyan-300 bg-cyan-50 px-3 text-sm font-semibold text-cyan-700 hover:bg-cyan-100">
-          Online Randevu Talepleri
+        <button onClick={() => setShowBookingRequestsModal(true)} className="relative h-8 rounded-lg border border-cyan-300 bg-cyan-50 px-3 text-sm font-semibold text-cyan-700 hover:bg-cyan-100" title="Online randevu taleplerini aç">
+          Online Talepler
           {bookingRequests.length > 0 && (
             <span className="ml-1.5 rounded-full bg-cyan-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{bookingRequests.length}</span>
           )}
         </button>
         <details className="relative">
-          <summary className="flex h-8 cursor-pointer list-none items-center rounded-xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-primary/[0.04]">
+          <summary className="flex h-8 cursor-pointer list-none items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-primary/[0.04]">
             Dışa Aktar
           </summary>
-          <div className="absolute right-0 top-full z-20 mt-2 w-40 overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-[0_18px_36px_rgba(15,23,42,0.12)]">
+          <div className="absolute right-0 top-full z-20 mt-2 w-40 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
             <button
               onClick={(event) => {
                 printReport();
@@ -2229,26 +2229,23 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
         </div>
       )}
       {loading && (
-        <div className="mb-3 flex items-center gap-2 text-sm text-slate-500">
-          <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          Randevular yükleniyor…
-        </div>
+        <span className="sr-only" role="status" aria-live="polite">Randevular güncelleniyor</span>
       )}
       <div aria-busy={loading}>
       {view === "GUN" && workingDayIndexes.has(date.getDay()) && (
-        <div className="overflow-auto rounded-xl border bg-white">
+        <div className="max-h-[calc(100dvh-12rem)] overflow-auto rounded-lg border border-slate-200 bg-white shadow-[var(--shadow-surface)]">
           <table className="min-w-[980px] border-collapse text-xs">
-            <thead className="sticky top-0 z-10 bg-gray-100">
+            <thead className="sticky top-0 z-20 bg-slate-50">
               <tr>
-                <th className="border px-2 py-2 text-left text-gray-500 w-16">Saat</th>
+                <th className="calendar-time-heading sticky left-0 z-30 w-20 border border-slate-200 bg-slate-50 px-3 py-3 text-left">Saat</th>
                 {doctors.length === 0 ? <th className="border px-2 py-2 text-gray-400">Doktor bulunamadı</th> :
-                  doctors.map(d => <th key={d.id} className="border px-2 py-2 text-center text-gray-700 font-semibold min-w-36">{d.fullName}</th>)}
+                  doctors.map(d => <th key={d.id} className="calendar-doctor-heading min-w-40 border border-slate-200 bg-slate-50 px-3 py-3 text-center">{d.fullName}</th>)}
               </tr>
             </thead>
             <tbody>
               {gunSlotTimes.map(slot => (
                 <tr key={slot} className="hover:bg-gray-50">
-                  <td className="border px-2 py-1 text-gray-400 font-mono align-top whitespace-nowrap">{slot}</td>
+                  <td className="calendar-time-cell sticky left-0 z-10 whitespace-nowrap border border-slate-200 bg-white px-3 py-1.5 align-top font-mono">{slot}</td>
                   {doctors.map(d => {
                     const slotAppts = getApptForSlot(d.id, slot);
                     const continuingAppts = getContinuingApptForSlot(d.id, slot, date);
@@ -2324,11 +2321,11 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
       )}
 
       {view === "HAFTA" && (
-        <div className="overflow-auto rounded-xl border bg-white">
+        <div className="max-h-[calc(100dvh-12rem)] overflow-auto rounded-lg border border-slate-200 bg-white shadow-[var(--shadow-surface)]">
           <table className="min-w-[980px] border-collapse text-xs">
-              <thead className="sticky top-0 z-10 bg-gray-100">
+              <thead className="sticky top-0 z-20 bg-slate-50">
                 <tr>
-                <th className="border px-2 py-2 text-left text-gray-500 w-16">Saat</th>
+                <th className="calendar-time-heading sticky left-0 z-30 w-20 border border-slate-200 bg-slate-50 px-3 py-3 text-left">Saat</th>
                 {weekDays.map((d, i) => {
                   const isToday = d.toDateString() === new Date().toDateString();
                   const isWorkday = workingDayIndexes.has(d.getDay());
@@ -2336,7 +2333,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                   return (
                     <th key={i} onClick={() => { if (canOpenDay) { setDate(d); setView("GUN"); } }}
                       title={canOpenDay ? undefined : "Klinik için tatil günü — görüntülenecek bir şey yok"}
-                      className={"border px-2 py-2 text-center min-w-28 " + (canOpenDay ? "cursor-pointer hover:bg-primary/10 " : "cursor-not-allowed opacity-40 ") + (isToday ? "bg-primary/20 text-primary font-bold" : "text-gray-700")}>
+                      className={"min-w-28 border border-slate-200 bg-slate-50 px-3 py-3 text-center text-sm font-bold " + (canOpenDay ? "cursor-pointer hover:bg-primary/10 " : "cursor-not-allowed opacity-40 ") + (isToday ? "text-primary" : "text-slate-800")}>
                       {TR_DAYS_BY_JS_INDEX[d.getDay()]}<br /><span className="text-sm">{d.getDate()}</span>
                     </th>
                   );
@@ -2346,7 +2343,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
             <tbody>
               {slotTimes.map(slot => (
                 <tr key={slot} className="hover:bg-gray-50">
-                  <td className="border px-2 py-1 text-gray-400 font-mono align-top whitespace-nowrap">{slot}</td>
+                  <td className="calendar-time-cell sticky left-0 z-10 whitespace-nowrap border border-slate-200 bg-white px-3 py-1.5 align-top font-mono">{slot}</td>
                   {weekDays.map((d, i) => {
                     const slotAppts = getApptForSlot(doctorId || null, slot, d);
                     const continuingAppts = getContinuingApptForSlot(doctorId || null, slot, d);

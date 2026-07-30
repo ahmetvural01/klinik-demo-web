@@ -38,14 +38,19 @@ export function BillingStatusBanner() {
 
   if (status.daysUntilDue !== null && status.daysUntilDue <= APPROACHING_WARNING_DAYS) {
     const dueLabel = status.nextDueDate ? new Date(status.nextDueDate).toLocaleDateString("tr-TR") : "";
+    const timingLabel =
+      status.daysUntilDue < 0
+        ? `Ödeme tarihi ${Math.abs(status.daysUntilDue)} gün önce geçti.`
+        : status.daysUntilDue === 0
+          ? "Ödeme süreniz bugün doluyor."
+          : `Ödeme süreniz ${status.daysUntilDue} gün içinde doluyor.`;
+
     return (
       <div className="flex items-start gap-2.5 border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
         <p>
-          <span className="font-bold">
-            {status.daysUntilDue === 0 ? "Ödeme süreniz bugün doluyor." : `Ödeme süreniz ${status.daysUntilDue} gün içinde doluyor`}
-          </span>
-          {dueLabel ? ` (${dueLabel}).` : "."} Kesintisiz kullanım için lütfen ödemenizi zamanında tamamlayın.
+          <span className="font-bold">{timingLabel}</span>
+          {dueLabel ? ` Son ödeme tarihi: ${dueLabel}.` : ""} Kesintisiz kullanım için lütfen ödemenizi tamamlayın.
         </p>
       </div>
     );

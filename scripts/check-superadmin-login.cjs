@@ -2,9 +2,22 @@ const { PrismaClient } = require("@prisma/client");
 const bcrypt = require("bcryptjs");
 const prisma = new PrismaClient();
 
+function requireEnv(name) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} environment variable is required.`);
+  }
+  return value;
+}
+
 (async () => {
+  const identityNo = process.env.SUPERADMIN_IDENTITY || process.env.SUPERADMIN_LOGIN_IDENTITY;
+  const fullName = process.env.SUPERADMIN_FULL_NAME || "";
+  if (!identityNo || !fullName) {
+    throw new Error("SUPERADMIN_IDENTITY, SUPERADMIN_LOGIN_IDENTITY veya SUPERADMIN_FULL_NAME ayarlayın.");
+  }
   const u = await prisma.user.findUnique({
-    where: { identityNo: "11509380760" },
+    where: { identityNo },
     select: {
       id: true,
       fullName: true,
@@ -22,7 +35,7 @@ const prisma = new PrismaClient();
     return;
   }
 
-  const ok = await bcrypt.compare("10711453", u.passwordHash);
+  const ok = await bcrypt.compare(requireEnv("SUPERADMIN_PASSWORD"), u.passwordHash);
   console.log(
     JSON.stringify(
       {

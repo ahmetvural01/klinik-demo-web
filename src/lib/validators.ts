@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { getLocalPhoneError, normalizeLocalPhone } from "@/lib/phone-number";
 
 const emptyToUndefined = (value: unknown) => (value === "" || value === null ? undefined : value);
 const emptyToNull = (value: unknown) => (value === "" || value === undefined ? null : value);
@@ -31,7 +32,7 @@ export const TC_NO_MESSAGE = "TC kimlik numarası 11 haneli rakamdan oluşmalıd
 // bulunabileceğinden (geriye dönük uyumluluk) her iki biçim de kabul edilir;
 // gönderim (SMS) tarafında zaten src/lib/sms.ts normalizePhone() ikisini de
 // +90'a çeviriyor.
-export const PHONE_REGEX = /^(0?5\d{9})$/;
+export const PHONE_REGEX = /^5\d{9}$/;
 export const PHONE_MESSAGE = "Telefon numarası 5XX XXX XX XX formatında (10 haneli, 5 ile başlayan) olmalıdır";
 
 export function formatZodError(error: z.ZodError) {
@@ -87,13 +88,17 @@ export const patientSchema = z.object({
     if (!data.tcNo || !TC_NO_REGEX.test(data.tcNo)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tcNo"], message: TC_NO_MESSAGE });
     }
-    if (data.phoneCountryCode === "+90" && !PHONE_REGEX.test(data.phone)) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["phone"], message: PHONE_MESSAGE });
-    }
-  } else if (!/^\d{4,15}$/.test(data.phone)) {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["phone"], message: "Telefon numarası 4-15 haneli rakamdan oluşmalıdır" });
   }
-});
+
+  const normalizedPhone = normalizeLocalPhone(data.phone, data.phoneCountryCode);
+  const phoneError = getLocalPhoneError(normalizedPhone, data.phoneCountryCode);
+  if (phoneError) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["phone"], message: phoneError });
+  }
+}).transform((data) => ({
+  ...data,
+  phone: normalizeLocalPhone(data.phone, data.phoneCountryCode),
+}));
 
 export const appointmentSchema = z.object({
   patientId: z.string().min(1),

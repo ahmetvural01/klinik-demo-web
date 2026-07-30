@@ -7,6 +7,11 @@ const chromePath =
   process.env.CHROME_PATH ||
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const outputDir = path.resolve("tmp", "visual-audit");
+const visualPassword = process.env.VISUAL_PASSWORD || process.env.DEMO_ADMIN_PASSWORD;
+
+if (!visualPassword) {
+  throw new Error("VISUAL_PASSWORD veya DEMO_ADMIN_PASSWORD ayarlayın.");
+}
 
 const viewports = [
   { name: "desktop", width: 1440, height: 900 },
@@ -44,9 +49,9 @@ try {
   const authContext = await browser.newContext({ locale: "tr-TR" });
   const login = await authContext.request.post(`${baseUrl}/api/auth/login`, {
     data: {
-      institution: process.env.VISUAL_INSTITUTION || "whitedental",
-      identityNo: process.env.VISUAL_IDENTITY || "10000000001",
-      password: process.env.VISUAL_PASSWORD || "10711453",
+      institution: process.env.VISUAL_INSTITUTION || process.env.DEMO_INSTITUTION_NAME || "demo-klinik",
+      identityNo: process.env.VISUAL_IDENTITY || process.env.DEMO_ADMIN_IDENTITY || "00000000000",
+      password: visualPassword,
       rememberMe: false,
     },
   });

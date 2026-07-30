@@ -32,7 +32,17 @@ export function PhoneCountrySelect({ value, onChange, className = "" }: PhoneCou
       setOpen(false);
     };
     document.addEventListener("pointerdown", onPointerDown);
-    return () => document.removeEventListener("pointerdown", onPointerDown);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      setQuery("");
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [open]);
 
   useEffect(() => {
@@ -64,16 +74,16 @@ export function PhoneCountrySelect({ value, onChange, className = "" }: PhoneCou
         onClick={() => setOpen((current) => !current)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        className="flex h-11 w-full items-center gap-2 border-0 border-r border-slate-200 bg-[linear-gradient(180deg,rgba(249,252,251,0.98)_0%,rgba(255,255,255,0.98)_100%)] px-3 text-left text-sm font-semibold text-slate-700 outline-none transition hover:bg-primary/[0.04] focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-primary/20"
+        className="flex h-10 w-full items-center gap-2 border-0 border-r border-slate-200 bg-slate-50 px-3 text-left text-sm font-semibold text-slate-700 outline-none transition hover:bg-primary/[0.04] focus-visible:bg-white focus-visible:ring-2 focus-visible:ring-primary/20"
       >
         <span aria-hidden="true" className={`fi fi-${selected.iso} shrink-0 rounded-[1px]`} />
         <span className="min-w-0 flex-1 truncate">{selected.code}</span>
         <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && typeof document !== "undefined" && createPortal(
-        <div data-phone-country-picker className="fixed z-[330] overflow-hidden rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] shadow-[0_18px_36px_rgba(15,23,42,0.12)]" style={{ left: position.left, top: position.top, width: position.width }}>
-          <div className="border-b border-slate-100/80 p-2">
-            <label className="flex h-9 items-center gap-2 rounded-xl bg-slate-50/80 px-2.5 text-slate-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15">
+        <div data-phone-country-picker className="fixed z-[330] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[var(--shadow-floating)]" style={{ left: position.left, top: position.top, width: position.width }}>
+          <div className="border-b border-slate-100 p-2">
+            <label className="flex h-9 items-center gap-2 rounded-lg bg-slate-50 px-2.5 text-slate-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15">
               <Search className="h-4 w-4" />
               <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Ülke veya kod ara" className="h-full min-w-0 flex-1 border-0 bg-transparent p-0 text-sm outline-none" />
             </label>
@@ -86,7 +96,7 @@ export function PhoneCountrySelect({ value, onChange, className = "" }: PhoneCou
                 role="option"
                 aria-selected={item.code === value}
                 onClick={() => { onChange(item.code); setOpen(false); setQuery(""); }}
-                className={`flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition ${item.code === value ? "bg-primary/10 text-primary" : "text-slate-700 hover:bg-primary/[0.05]"}`}
+                className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition ${item.code === value ? "bg-primary/10 text-primary" : "text-slate-700 hover:bg-slate-50"}`}
               >
                 <span aria-hidden="true" className={`fi fi-${item.iso} shrink-0 rounded-[1px]`} />
                 <span className="min-w-0 flex-1 truncate font-medium">{item.name}</span>

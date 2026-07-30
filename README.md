@@ -94,9 +94,8 @@ KlinikSistem benzeri tum ana modulleri iceren modern full-stack klinik paneli.
 
 ## Demo Giris
 
-- Kurum: whitedental
-- Kimlik: 11509380760
-- Sifre: 10711453
+- Kurum ve kimlik demo seed ortam değişkenlerinden gelir.
+- Sifre: SUPERADMIN_PASSWORD veya DEMO_ADMIN_PASSWORD ortam degiskeniyle belirlenir
 
 Hızlı yerel demo: uygulama çalışırken giriş sayfasındaki "Demo başlat" butonuna tıklayın. Bu buton lokal ortamda `npm run prisma:seed` çalıştırır ve demo verilerini yükler (dev-only).
 

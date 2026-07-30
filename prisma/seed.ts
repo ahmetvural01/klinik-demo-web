@@ -3,20 +3,38 @@ import { PrismaClient, Role } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+function requireEnv(name: string) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} environment variable is required for seeding.`);
+  }
+  return value;
+}
+
 async function main() {
-  const adminPass = await bcrypt.hash("10711453", 10);
+  const adminPass = await bcrypt.hash(requireEnv("DEMO_ADMIN_PASSWORD"), 10);
+  const superadminPass = await bcrypt.hash(requireEnv("SUPERADMIN_PASSWORD"), 10);
+  const demoInstitutionName = process.env.DEMO_INSTITUTION_NAME || "demo-klinik";
+  const demoInstitutionEmail = process.env.DEMO_INSTITUTION_EMAIL || "demo@local.test";
+  const demoInstitutionWebsite = process.env.DEMO_INSTITUTION_WEBSITE || "www.demo.local";
+  const demoAdminIdentity = process.env.DEMO_ADMIN_IDENTITY || "00000000000";
+  const demoAdminFullName = process.env.DEMO_ADMIN_FULL_NAME || "Demo Kullanici";
+  const superadminIdentityNo = process.env.SUPERADMIN_IDENTITY || "00000000001";
+  const superadminFullName = process.env.SUPERADMIN_FULL_NAME || "Demo Superadmin";
+  const requestedSuperadminIdentityNo = process.env.SUPERADMIN_LOGIN_IDENTITY || superadminIdentityNo;
+  const requestedSuperadminFullName = process.env.SUPERADMIN_LOGIN_FULL_NAME || superadminFullName;
 
   // Create or update Institution first. Name and email are both unique in the schema,
   // so seed must tolerate either one already existing in a fresh/demo database.
   const existingInstitution = await prisma.institution.findFirst({
-    where: { OR: [{ email: "info@whitedental.com" }, { name: "whitedental" }] },
+    where: { OR: [{ email: demoInstitutionEmail }, { name: demoInstitutionName }] },
   });
   const institution = existingInstitution
     ? await prisma.institution.update({
         where: { id: existingInstitution.id },
         data: {
-          name: "whitedental",
-          email: "info@whitedental.com",
+          name: demoInstitutionName,
+          email: demoInstitutionEmail,
           phone: "05306375370",
           address: "Cukurova / Adana",
           subscriptionPlan: "PROFESYONEL",
@@ -25,8 +43,8 @@ async function main() {
       })
     : await prisma.institution.create({
         data: {
-          name: "whitedental",
-          email: "info@whitedental.com",
+          name: demoInstitutionName,
+          email: demoInstitutionEmail,
           phone: "05306375370",
           address: "Cukurova / Adana",
           subscriptionPlan: "PROFESYONEL",
@@ -38,15 +56,15 @@ async function main() {
   const admin = await prisma.user.upsert({
     where: {
       institutionId_identityNo: {
-        identityNo: "10000000001",
+        identityNo: demoAdminIdentity,
         institutionId: institution.id
       }
     },
     update: {},
     create: {
-      identityNo: "10000000001",
+      identityNo: demoAdminIdentity,
       institutionId: institution.id,
-      fullName: "Klinik Yoneticisi",
+      fullName: demoAdminFullName,
       role: Role.YONETICI,
       passwordHash: adminPass,
       isActive: true,
@@ -67,7 +85,7 @@ async function main() {
       institutionName: "Adana White Dental Clinic",
       institutionAddress: "Cukurova / Adana",
       institutionPhone: "05306375370",
-      institutionWebsite: "www.adanawhitedental.com",
+      institutionWebsite: demoInstitutionWebsite,
       openingTime: "08:30",
       closingTime: "23:59",
       appointmentDuration: 15
@@ -78,43 +96,41 @@ async function main() {
   // Not: identityNo artık sadece kurum içinde benzersiz (bkz. schema notu), bu yüzden
   // institutionId=null olan superadmin hesapları için upsert yerine findFirst+create/update
   // kullanılıyor (compound unique key non-null institutionId gerektiriyor).
-  const systemSuperadminPass = await bcrypt.hash("superadmin123", 10);
   const existingSystemSuperadmin = await prisma.user.findFirst({
-    where: { identityNo: "99999999999", role: Role.SUPERADMIN },
+    where: { identityNo: superadminIdentityNo, role: Role.SUPERADMIN },
   });
   const systemSuperadmin = existingSystemSuperadmin
     ? await prisma.user.update({
         where: { id: existingSystemSuperadmin.id },
-        data: { fullName: "Sistem Yonetici", role: Role.SUPERADMIN, institutionId: null, isActive: true },
+        data: { fullName: superadminFullName, role: Role.SUPERADMIN, institutionId: null, passwordHash: superadminPass, isActive: true },
       })
     : await prisma.user.create({
         data: {
-          identityNo: "99999999999",
-          fullName: "Sistem Yonetici",
+          identityNo: superadminIdentityNo,
+          fullName: superadminFullName,
           role: Role.SUPERADMIN,
           institutionId: null,
-          passwordHash: systemSuperadminPass,
+          passwordHash: superadminPass,
           isActive: true,
         },
       });
 
   // Requested superadmin account
-  const ahmetSuperadminPass = await bcrypt.hash("10711453", 10);
   const existingAhmetSuperadmin = await prisma.user.findFirst({
-    where: { identityNo: "11509380760", role: Role.SUPERADMIN },
+    where: { identityNo: requestedSuperadminIdentityNo, role: Role.SUPERADMIN },
   });
   const ahmetSuperadmin = existingAhmetSuperadmin
     ? await prisma.user.update({
         where: { id: existingAhmetSuperadmin.id },
-        data: { fullName: "Ahmet Gulden", role: Role.SUPERADMIN, institutionId: null, passwordHash: ahmetSuperadminPass, isActive: true },
+        data: { fullName: requestedSuperadminFullName, role: Role.SUPERADMIN, institutionId: null, passwordHash: superadminPass, isActive: true },
       })
     : await prisma.user.create({
         data: {
-          identityNo: "11509380760",
-          fullName: "Ahmet Gulden",
+          identityNo: requestedSuperadminIdentityNo,
+          fullName: requestedSuperadminFullName,
           role: Role.SUPERADMIN,
           institutionId: null,
-          passwordHash: ahmetSuperadminPass,
+          passwordHash: superadminPass,
           isActive: true,
         },
       });

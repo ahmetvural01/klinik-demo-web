@@ -30,6 +30,11 @@ function normalizeSettingsPayload(body: Record<string, unknown>) {
   delete data.id;
   delete data.institutionId;
   delete data.updatedAt;
+  // Institution tablosunda tutulur, Setting'in parçası değil — PUT gövdesine
+  // sızarsa Prisma "bilinmeyen alan" hatası verir.
+  delete data.whatsappEnabled;
+  delete data.institutionSlug;
+  delete data.appUrl;
   return data;
 }
 
@@ -57,12 +62,16 @@ export async function GET() {
       prisma.setting.findUnique({ where: { institutionId: auth.user.institutionId } }),
       prisma.institution.findUnique({
         where: { id: auth.user.institutionId },
-        select: { name: true, email: true, phone: true, address: true, taxNo: true, registryNo: true, website: true, logo: true },
+        select: { name: true, email: true, phone: true, address: true, taxNo: true, registryNo: true, website: true, logo: true, whatsappEnabled: true },
       }),
     ]);
     return NextResponse.json({
       ...settings,
       institutionSlug: institution?.name || "",
+      whatsappEnabled: institution?.whatsappEnabled ?? false,
+      // SMS onay bağlantılarının (/sms-onay/[token]) hangi adresten üretildiği
+      // — SMS Ayarları ekranında "Onay bağlantısı çalışma durumu" için.
+      appUrl: process.env.APP_URL || "",
       institutionName: settings?.institutionName || institution?.name || "",
       institutionPhone: settings?.institutionPhone || institution?.phone || "",
       institutionEmail: institution?.email || "",

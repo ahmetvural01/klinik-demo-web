@@ -13,10 +13,16 @@ type ConnMetric = {
 const BASE_URL = process.env.LOADTEST_BASE_URL || "http://localhost:3001";
 const USERS = Number(process.env.LOADTEST_USERS || "240");
 const DURATION_SEC = Number(process.env.LOADTEST_DURATION_SEC || "45");
+const LOADTEST_PASSWORD = process.env.LOADTEST_PASSWORD || process.env.DEMO_ADMIN_PASSWORD;
+
+if (!LOADTEST_PASSWORD) {
+  throw new Error("LOADTEST_PASSWORD veya DEMO_ADMIN_PASSWORD ayarlayın.");
+}
+
 const LOGIN_BODY = {
-  institution: process.env.LOADTEST_INSTITUTION || "whitedental",
-  identityNo: process.env.LOADTEST_IDENTITY || "11509380760",
-  password: process.env.LOADTEST_PASSWORD || "10711453",
+  institution: process.env.LOADTEST_INSTITUTION || process.env.DEMO_INSTITUTION_NAME || "demo-klinik",
+  identityNo: process.env.LOADTEST_IDENTITY || process.env.SUPERADMIN_LOGIN_IDENTITY || process.env.DEMO_ADMIN_IDENTITY || "00000000000",
+  password: LOADTEST_PASSWORD,
 };
 
 function percentile(values: number[], p: number) {

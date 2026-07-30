@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { EmptyState } from "@/components/ui/EmptyState";
 import {
   ColumnDef,
   SortingState,
@@ -45,7 +46,7 @@ export function ProfessionalDataTable<TData>({
   const rows = table.getRowModel().rows;
 
   return (
-    <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] shadow-[0_10px_26px_rgba(15,23,42,0.04)]">
+    <div className="ui-surface overflow-hidden">
       <div className="overflow-x-auto">
         <table className="min-w-[760px] w-full text-sm">
           <thead className="sticky top-0 z-10">
@@ -67,9 +68,11 @@ export function ProfessionalDataTable<TData>({
                       >
                         {flexRender(header.column.columnDef.header, header.getContext())}
                         {header.column.getCanSort() && (
-                          <span className="text-[10px] text-slate-400">
-                            {header.column.getIsSorted() === "asc" ? "▲" : header.column.getIsSorted() === "desc" ? "▼" : "↕"}
-                          </span>
+                          header.column.getIsSorted() === "asc"
+                            ? <ArrowUp className="h-3 w-3 text-primary" />
+                            : header.column.getIsSorted() === "desc"
+                              ? <ArrowDown className="h-3 w-3 text-primary" />
+                              : <ArrowUpDown className="h-3 w-3 text-slate-400" />
                         )}
                       </button>
                     )}
@@ -78,11 +81,11 @@ export function ProfessionalDataTable<TData>({
               </tr>
             ))}
           </thead>
-          <tbody className="divide-y divide-slate-100/90">
+          <tbody className="divide-y divide-slate-100">
             {rows.length === 0 ? (
               <tr>
-                <td colSpan={table.getAllLeafColumns().length} className="py-12 text-center text-sm text-slate-400">
-                  {emptyText}
+                <td colSpan={table.getAllLeafColumns().length}>
+                  <EmptyState title={emptyText} compact />
                 </td>
               </tr>
             ) : (
@@ -99,13 +102,13 @@ export function ProfessionalDataTable<TData>({
                       onRowClick(row.original);
                     }
                   } : undefined}
-                  className={`group transition hover:bg-slate-50/80 ${onRowClick ? "cursor-pointer focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/30" : ""}`}
+                  className={`group transition-colors hover:bg-primary/[0.045] ${onRowClick ? "cursor-pointer focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25" : ""}`}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <td
                       key={cell.id}
                       className={`px-3 py-2.5 sm:px-4 ${
-                        cell.column.id === "actions" ? "md:sticky md:right-0 md:z-10 md:bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] md:shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.08)] md:group-hover:bg-slate-50/80" : ""
+                        cell.column.id === "actions" ? "md:sticky md:right-0 md:z-10 md:bg-white md:shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.08)] md:group-hover:bg-primary/[0.035]" : ""
                       }`}
                     >
                       {flexRender(cell.column.columnDef.cell, cell.getContext())}
@@ -128,7 +131,7 @@ export function ProfessionalDataTable<TData>({
               type="button"
               onClick={() => table.previousPage()}
               disabled={!table.getCanPreviousPage()}
-              className="inline-flex items-center gap-1 rounded-xl border border-primary/15 bg-primary/[0.04] px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-primary/25 hover:bg-primary/[0.08] disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-40"
             >
               <ChevronLeft className="h-4 w-4" />
               Önceki
@@ -137,7 +140,7 @@ export function ProfessionalDataTable<TData>({
               type="button"
               onClick={() => table.nextPage()}
               disabled={!table.getCanNextPage()}
-              className="inline-flex items-center gap-1 rounded-xl border border-primary/15 bg-primary/[0.04] px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-primary/25 hover:bg-primary/[0.08] disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-40"
             >
               Sonraki
               <ChevronRight className="h-4 w-4" />

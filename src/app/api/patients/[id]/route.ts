@@ -162,6 +162,21 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
       toothChart: true,
       createdAt: true,
       updatedAt: true,
+      smsPreference: {
+        select: {
+          status: true,
+          firstConsentAt: true,
+          lastRejectionAt: true,
+          lastRequestSentAt: true,
+          lastRequestAttemptAt: true,
+          lastRequestError: true,
+        },
+      },
+      smsConsentTokens: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { purpose: true, expiresAt: true, usedAt: true, resultStatus: true },
+      },
       appointments: {
         select: {
           id: true,
@@ -341,7 +356,6 @@ export async function PUT(request: NextRequest, props: Params) {
   if (!parsed.success) {
     return NextResponse.json({ message: "Geçersiz hasta verisi", errors: parsed.error.errors }, { status: 400 });
   }
-
   // POST'ta zaten yakalanan P2002 (mükerrer TC No) burada hiç yakalanmıyordu —
   // bir kaydı düzenlerken TC no yanlışlıkla başka bir hastayla çakışırsa ham
   // Prisma hatası kullanıcıya sızıyordu (bkz. denetim raporu).

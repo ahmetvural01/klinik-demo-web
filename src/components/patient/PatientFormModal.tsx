@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, FileText, Info, ShieldAlert, UserRound, WalletCards } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, FileText, Info, ShieldAlert, UserRound, WalletCards } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { FormField, FormSection, FormErrorBanner, inputErrorClass } from "@/components/ui/FormField";
 import { PhoneCountrySelect } from "@/components/ui/PhoneCountrySelect";
+import { isValidTurkishIdentityNumber } from "@/lib/tc-kimlik";
+import { getLocalPhoneDigitLimit, getLocalPhoneError, limitLocalPhoneInput, normalizeLocalPhone } from "@/lib/phone-number";
 
 type PatientFormState = {
   tcNo: string;
@@ -99,6 +101,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [duplicates, setDuplicates] = useState<DuplicatePatient[]>([]);
+  const initialTcNoRef = useRef("");
 
   useEffect(() => {
     if (!open) return;
@@ -106,6 +109,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
     setFieldErrors({});
     setDuplicates([]);
     if (!patientId) {
+      initialTcNoRef.current = "";
       setForm(INITIAL_FORM);
       return;
     }
@@ -114,10 +118,11 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
       .then(async (res) => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body?.message || "Hasta bilgileri alınamadı");
+        initialTcNoRef.current = body.tcNo || "";
         setForm({
           tcNo: body.tcNo || "", isForeigner: body.isForeigner || false,
           phoneCountryCode: body.phoneCountryCode || "+90", fullName: body.fullName || "",
-          phone: body.phone === "***" ? "" : body.phone || "", profession: body.profession || "",
+          phone: body.phone === "***" ? "" : normalizeLocalPhone(body.phone || "", body.phoneCountryCode || "+90"), profession: body.profession || "",
           preferredContactChannel: body.preferredContactChannel || "SMS",
           whatsappConsent: Boolean(body.whatsappOptInAt && !body.whatsappOptOutAt),
           communicationConsentSource: body.communicationConsentSource || "",
@@ -155,6 +160,22 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
       [form.surgeries, form.medications, form.otherDiseases].filter((v) => String(v || "").trim()).length,
     [form],
   );
+  const tcNoStructureValid = useMemo(
+    () => !form.isForeigner && isValidTurkishIdentityNumber(form.tcNo),
+    [form.isForeigner, form.tcNo],
+  );
+  const tcNoChanged = !isEdit || form.tcNo !== initialTcNoRef.current;
+  const tcNoStructureWarning = !form.isForeigner &&
+    form.tcNo.length === 11 &&
+    !tcNoStructureValid &&
+    tcNoChanged
+      ? "Numara yapısal kontrolden geçmedi. Kayıt yapılabilir; TC kimlik numarasını hastadan yeniden teyit edin."
+      : undefined;
+  const hasLegacyTcNo = isEdit &&
+    !form.isForeigner &&
+    form.tcNo.length === 11 &&
+    !tcNoStructureValid &&
+    !tcNoChanged;
 
   function setField<K extends keyof PatientFormState>(field: K, value: PatientFormState[K]) {
     setForm((current) => ({ ...current, [field]: value }));
@@ -172,13 +193,11 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
     if (!hidePhoneField) {
       if (!form.isForeigner) {
         if (!/^\d{11}$/.test(form.tcNo)) errors.tcNo = "TC Kimlik No 11 haneli rakamdan oluşmalıdır.";
-        if (!/^\d{4,15}$/.test(form.phone)) errors.phone = "Telefon 4-15 haneli rakamdan oluşmalıdır.";
-        if (form.phoneCountryCode === "+90" && !/^5\d{9}$/.test(form.phone)) errors.phone = "Türkiye cep telefonu 5 ile başlayan 10 haneli numara olmalıdır.";
-      } else if (!/^\d{4,15}$/.test(form.phone)) {
-        errors.phone = "Telefon 4-15 haneli rakamdan oluşmalıdır.";
       }
-    } else if (!form.isForeigner && !/^\d{11}$/.test(form.tcNo)) {
-      errors.tcNo = "TC Kimlik No 11 haneli rakamdan oluşmalıdır.";
+      const phoneError = getLocalPhoneError(form.phone, form.phoneCountryCode);
+      if (phoneError) errors.phone = phoneError;
+    } else if (!form.isForeigner) {
+      if (!/^\d{11}$/.test(form.tcNo)) errors.tcNo = "TC Kimlik No 11 haneli rakamdan oluşmalıdır.";
     }
     if (!form.gender) errors.gender = "Cinsiyet seçimi zorunludur.";
     if (form.birthDate && Number.isNaN(new Date(form.birthDate).getTime())) errors.birthDate = "Geçerli bir doğum tarihi girin.";
@@ -244,10 +263,10 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
     >
       {loading ? (
         <div className="space-y-4" aria-busy="true" aria-label="Hasta bilgileri hazırlanıyor">
-          <div className="h-10 rounded-2xl bg-[linear-gradient(90deg,rgba(241,245,249,0.8)_0%,rgba(226,232,240,0.95)_50%,rgba(241,245,249,0.8)_100%)] bg-[length:200%_100%] animate-pulse" />
+          <div className="h-10 animate-pulse rounded-lg bg-slate-100" />
           <div className="grid gap-4 md:grid-cols-2">
-            <div className="h-20 rounded-2xl bg-[linear-gradient(90deg,rgba(241,245,249,0.8)_0%,rgba(226,232,240,0.95)_50%,rgba(241,245,249,0.8)_100%)] bg-[length:200%_100%] animate-pulse" />
-            <div className="h-20 rounded-2xl bg-[linear-gradient(90deg,rgba(241,245,249,0.8)_0%,rgba(226,232,240,0.95)_50%,rgba(241,245,249,0.8)_100%)] bg-[length:200%_100%] animate-pulse" />
+            <div className="h-20 animate-pulse rounded-lg bg-slate-100" />
+            <div className="h-20 animate-pulse rounded-lg bg-slate-100" />
           </div>
         </div>
       ) : (
@@ -261,7 +280,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
                   <p className="mt-1 text-amber-800">Yeni kayıt açmadan önce aynı hastanın daha önce eklenip eklenmediğini kontrol edin.</p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {duplicates.map((p) => (
-                      <span key={p.id} className="rounded-2xl border border-amber-200 bg-white px-3 py-2 text-xs font-bold text-amber-900">
+                      <span key={p.id} className="rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs font-bold text-amber-900">
                         {p.fullName} {p.tcNo ? `· ${p.tcNo}` : ""} {p.phone ? `· ${p.phone}` : ""}
                       </span>
                     ))}
@@ -272,7 +291,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
           )}
           <FormErrorBanner message={error} />
 
-          <div className="rounded-2xl border border-slate-200/80 bg-slate-50/80 p-3">
+          <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
             <div className="flex flex-wrap gap-2" aria-label="Hasta kayıt bölümleri">
               {FORM_SECTIONS.map((section) => (
                 <button
@@ -299,26 +318,47 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
               </div>
               <FormField label={form.isForeigner ? "Pasaport / Kimlik No" : "TC Kimlik No"} required={!form.isForeigner} error={fieldErrors.tcNo}>
                 <input
-                  className={`h-10 w-full rounded-2xl border px-3 text-sm font-mono outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.tcNo))}`}
+                  className={`h-10 w-full rounded-lg border px-3 text-sm font-mono outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.tcNo))}`}
                   placeholder={form.isForeigner ? "Opsiyonel" : "11 haneli TC No"}
                   inputMode={form.isForeigner ? "text" : "numeric"}
                   maxLength={form.isForeigner ? undefined : 11}
                   value={form.tcNo}
                   onChange={(e) => setField("tcNo", form.isForeigner ? e.target.value.trim() : e.target.value.replace(/\D/g, "").slice(0, 11))}
                 />
+                {tcNoStructureValid && (
+                  <p className="mt-1.5 flex items-center gap-1.5 text-xs font-semibold text-emerald-700">
+                    <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
+                    Kontrol basamakları doğrulandı
+                    <Info
+                      className="h-3.5 w-3.5 cursor-help text-slate-400"
+                      aria-label="Bu kontrol kişi bilgilerinin NVİ kayıtlarıyla eşleştiği anlamına gelmez."
+                    />
+                  </p>
+                )}
+                {tcNoStructureWarning && (
+                  <p className="mt-1.5 flex items-start gap-1.5 text-xs font-medium text-amber-700">
+                    <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    {tcNoStructureWarning}
+                  </p>
+                )}
+                {hasLegacyTcNo && (
+                  <p className="mt-1.5 text-xs font-medium text-amber-700">
+                    Eski kayıttaki numara yapısal kontrolden geçmiyor. Numara değiştirilmedikçe diğer bilgiler güncellenebilir.
+                  </p>
+                )}
               </FormField>
               <FormField label="Ad Soyad" required error={fieldErrors.fullName}>
-                <input className={`h-10 w-full rounded-2xl border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.fullName))}`} placeholder="Ad Soyad" value={form.fullName} onChange={(e) => setField("fullName", e.target.value)} />
+                <input className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.fullName))}`} placeholder="Ad Soyad" value={form.fullName} onChange={(e) => setField("fullName", e.target.value)} />
               </FormField>
               <FormField label="Cinsiyet" required error={fieldErrors.gender}>
-                <select className={`h-10 w-full rounded-2xl border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.gender))}`} value={form.gender} onChange={(e) => setField("gender", e.target.value)}>
+                <select className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.gender))}`} value={form.gender} onChange={(e) => setField("gender", e.target.value)}>
                   <option value="">Seçiniz</option>
                   <option value="ERKEK">Erkek</option>
                   <option value="KADIN">Kadın</option>
                 </select>
               </FormField>
               <FormField label="Doğum Tarihi" error={fieldErrors.birthDate}>
-                <input type="date" className={`h-10 w-full rounded-2xl border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.birthDate))}`} value={form.birthDate} onChange={(e) => setField("birthDate", e.target.value)} />
+                <input type="date" className={`h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(Boolean(fieldErrors.birthDate))}`} value={form.birthDate} onChange={(e) => setField("birthDate", e.target.value)} />
               </FormField>
             </div>
             </FormSection>
@@ -329,69 +369,49 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
             <div className="grid gap-4 md:grid-cols-2">
               {!hidePhoneField && (
                 <FormField label="Telefon" required error={fieldErrors.phone}>
-                  <div className={`flex overflow-visible rounded-2xl border bg-white transition focus-within:ring-2 ${inputErrorClass(Boolean(fieldErrors.phone))}`}>
-                    <PhoneCountrySelect value={form.phoneCountryCode} onChange={(value) => setField("phoneCountryCode", value)} className="w-[132px] shrink-0" />
-                    <input className="h-10 min-w-0 flex-1 border-0 bg-transparent px-3 text-sm font-mono outline-none" placeholder="Telefon numarası" inputMode="numeric" value={form.phone} onChange={(e) => setField("phone", e.target.value.replace(/\D/g, "").slice(0, 15))} />
+                  <div className={`flex overflow-visible rounded-lg border bg-white transition focus-within:ring-2 ${inputErrorClass(Boolean(fieldErrors.phone))}`}>
+                    <PhoneCountrySelect
+                      value={form.phoneCountryCode}
+                      onChange={(value) => {
+                        setForm((current) => ({
+                          ...current,
+                          phoneCountryCode: value,
+                          phone: limitLocalPhoneInput(current.phone, value),
+                        }));
+                        setFieldErrors((current) => {
+                          if (!current.phone) return current;
+                          const next = { ...current };
+                          delete next.phone;
+                          return next;
+                        });
+                      }}
+                      className="w-[132px] shrink-0"
+                    />
+                    <input
+                      className="h-10 min-w-0 flex-1 border-0 bg-transparent px-3 text-sm font-mono outline-none"
+                      placeholder={form.phoneCountryCode === "+90" ? "5XX XXX XX XX" : "Telefon numarası"}
+                      inputMode="numeric"
+                      maxLength={getLocalPhoneDigitLimit(form.phoneCountryCode)}
+                      value={form.phone}
+                      onChange={(e) => setField("phone", limitLocalPhoneInput(e.target.value, form.phoneCountryCode))}
+                    />
                   </div>
                 </FormField>
               )}
-              <FormField label="Tercih Edilen İletişim Kanalı">
-                <select
-                  className="h-10 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
-                  value={form.preferredContactChannel}
-                  onChange={(e) => setField("preferredContactChannel", e.target.value as PatientFormState["preferredContactChannel"])}
-                >
-                  <option value="SMS">SMS</option>
-                  <option value="WHATSAPP" disabled={!form.whatsappConsent}>WhatsApp</option>
-                  <option value="TELEFON">Telefon araması</option>
-                  <option value="EPOSTA">E-posta</option>
-                  <option value="ILETISIM_YOK">Bilgilendirme istemiyor</option>
-                </select>
-              </FormField>
-              {!hidePhoneField && (
-                <div className="md:col-span-2 rounded-2xl border border-emerald-200 bg-emerald-50/70 p-3">
-                  <label className="flex cursor-pointer items-start gap-3">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5 h-4 w-4 accent-emerald-600"
-                      checked={form.whatsappConsent}
-                      onChange={(e) => {
-                        const checked = e.target.checked;
-                        setForm((current) => ({
-                          ...current,
-                          whatsappConsent: checked,
-                          preferredContactChannel:
-                            !checked && current.preferredContactChannel === "WHATSAPP"
-                              ? "SMS"
-                              : current.preferredContactChannel,
-                          communicationConsentSource: checked ? "Hasta kayıt formu" : "",
-                        }));
-                      }}
-                    />
-                    <span>
-                      <span className="block text-sm font-bold text-emerald-900">WhatsApp bilgilendirme izni</span>
-                      <span className="mt-1 block text-xs leading-5 text-emerald-800">
-                        Hasta, randevu ve klinik bilgilendirmelerinin bu numaraya WhatsApp üzerinden gönderilmesini kabul etti.
-                        İzin daha sonra geri alınabilir.
-                      </span>
-                    </span>
-                  </label>
-                </div>
-              )}
               <FormField label="Anlaşmalı Kurum">
-                <input className="h-10 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Kurum adı" value={form.insurance} onChange={(e) => setField("insurance", e.target.value)} />
+                <input className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Kurum adı" value={form.insurance} onChange={(e) => setField("insurance", e.target.value)} />
               </FormField>
               <FormField label="Referans Eden Kişi">
-                <input className="h-10 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Örn. Mehmet Yılmaz" value={form.referrer} onChange={(e) => setField("referrer", e.target.value)} />
+                <input className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Örn. Mehmet Yılmaz" value={form.referrer} onChange={(e) => setField("referrer", e.target.value)} />
               </FormField>
               <FormField label="Meslek">
-                <input className="h-10 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Örn. Öğretmen, mühendis" value={form.profession} onChange={(e) => setField("profession", e.target.value)} />
+                <input className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Örn. Öğretmen, mühendis" value={form.profession} onChange={(e) => setField("profession", e.target.value)} />
               </FormField>
               <FormField label="İndirim Oranı (%)">
-                <input type="number" min={0} max={100} className="h-10 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" value={form.discountRate} onChange={(e) => setField("discountRate", Math.min(100, Math.max(0, Number(e.target.value || 0))))} />
+                <input type="number" min={0} max={100} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" value={form.discountRate} onChange={(e) => setField("discountRate", Math.min(100, Math.max(0, Number(e.target.value || 0))))} />
               </FormField>
               <FormField label="Adres">
-                <textarea rows={2} className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Adres" value={form.address} onChange={(e) => setField("address", e.target.value)} />
+                <textarea rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Adres" value={form.address} onChange={(e) => setField("address", e.target.value)} />
               </FormField>
             </div>
             </FormSection>
@@ -401,12 +421,12 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
             <FormSection icon={ShieldAlert} title="Medikal Anamnez" description="Tedavi ve reçete öncesi görülecek klinik risk bilgileri.">
             <div className="grid gap-4 md:grid-cols-2">
               <FormField label="Kan Grubu">
-                <select className="h-10 w-full rounded-2xl border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" value={form.bloodType} onChange={(e) => setField("bloodType", e.target.value)}>
+                <select className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" value={form.bloodType} onChange={(e) => setField("bloodType", e.target.value)}>
                   <option value="">Bilinmiyor</option>
                   {["A+", "A-", "B+", "B-", "AB+", "AB-", "0+", "0-"].map((bt) => <option key={bt} value={bt}>{bt}</option>)}
                 </select>
               </FormField>
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
                 <div className="flex gap-2">
                   <Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
                   <p>İşaretlenen riskler hasta kartında uyarı olarak gösterilir.</p>
@@ -416,7 +436,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
                 <p className="mb-2 text-sm font-bold text-slate-700">Sağlık Durumu</p>
                 <div className="grid gap-2 md:grid-cols-2">
                   {HEALTH_FLAGS.map(([field, label, description]) => (
-                    <label key={field} className={`flex cursor-pointer items-start gap-3 rounded-2xl border px-3 py-3 transition ${form[field] ? "border-red-200 bg-red-50" : "border-slate-200 hover:bg-slate-50"}`}>
+                    <label key={field} className={`flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-3 transition ${form[field] ? "border-red-200 bg-red-50" : "border-slate-200 hover:bg-slate-50"}`}>
                       <input type="checkbox" className="mt-1 accent-primary" checked={Boolean(form[field])} onChange={(e) => setField(field, e.target.checked)} />
                       <span>
                         <span className="block text-sm font-bold text-slate-800">{label}</span>
@@ -428,17 +448,17 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
               </div>
               {form.hasContagiousDisease && (
                 <FormField label="Bulaşıcı Hastalık Detayı">
-                  <textarea rows={2} className="w-full rounded-2xl border border-red-200 bg-red-50/50 px-3 py-2 text-sm outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-200" placeholder="Hangi bulaşıcı hastalık? (ör. Hepatit B, Tüberküloz)" value={form.contagiousDiseaseNote} onChange={(e) => setField("contagiousDiseaseNote", e.target.value)} />
+                  <textarea rows={2} className="w-full rounded-lg border border-red-200 bg-red-50/50 px-3 py-2 text-sm outline-none transition focus:border-red-400 focus:ring-2 focus:ring-red-200" placeholder="Hangi bulaşıcı hastalık? (ör. Hepatit B, Tüberküloz)" value={form.contagiousDiseaseNote} onChange={(e) => setField("contagiousDiseaseNote", e.target.value)} />
                 </FormField>
               )}
               <FormField label="Geçirdiği Ameliyatlar">
-                <textarea rows={2} className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Varsa operasyon öyküsü" value={form.surgeries} onChange={(e) => setField("surgeries", e.target.value)} />
+                <textarea rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Varsa operasyon öyküsü" value={form.surgeries} onChange={(e) => setField("surgeries", e.target.value)} />
               </FormField>
               <FormField label="Kullandığı İlaçlar">
-                <textarea rows={2} className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Düzenli ilaçlar" value={form.medications} onChange={(e) => setField("medications", e.target.value)} />
+                <textarea rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Düzenli ilaçlar" value={form.medications} onChange={(e) => setField("medications", e.target.value)} />
               </FormField>
               <FormField label="Diğer Hastalıklar / Klinik Not">
-                <textarea rows={2} className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Ek hastalık veya tedavi öncesi bilinmesi gerekenler" value={form.otherDiseases} onChange={(e) => setField("otherDiseases", e.target.value)} />
+                <textarea rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Ek hastalık veya tedavi öncesi bilinmesi gerekenler" value={form.otherDiseases} onChange={(e) => setField("otherDiseases", e.target.value)} />
               </FormField>
             </div>
             </FormSection>
@@ -446,7 +466,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
 
           <div id="patient-form-not">
             <FormSection icon={FileText} title="Hasta Notu" description="Banko ve klinik ekip tarafından görülecek genel notlar.">
-            <textarea rows={3} className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Hasta notu" value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
+            <textarea rows={3} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Hasta notu" value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
             </FormSection>
           </div>
 

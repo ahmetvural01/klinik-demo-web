@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/prisma";
-import { sendSms } from "@/lib/sms";
 import { resolveSmsTemplate } from "@/lib/sms-templates";
+import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 
 // Doğum günü olan hastalara otomatik kutlama SMS'i — klinik Ayarlar > SMS
 // ekranından açıp kapatabilir (Setting.birthdaySmsEnabled). Yılda bir kez
@@ -70,15 +70,6 @@ export async function runBirthdaySmsSweep(): Promise<{
         continue;
       }
 
-      const reservation = await prisma.institution.updateMany({
-        where: { id: institution.id, smsBalance: { gte: 1 } },
-        data: { smsBalance: { decrement: 1 } },
-      });
-      if (reservation.count === 0) {
-        skippedNoBalance += 1;
-        continue;
-      }
-
       const institutionName = setting.institutionName || institution.name;
       const institutionPhone = setting.institutionPhone || institution.phone || "";
       const smsTemplate = await resolveSmsTemplate(institution.id, "DOGUM_GUNU");
@@ -91,14 +82,24 @@ export async function runBirthdaySmsSweep(): Promise<{
           })
         : fallbackMessage;
 
-      const result = await sendSms(patient.phone, message);
+      const result = await dispatchPatientMessage({
+        institutionId: institution.id,
+        patientId: patient.id,
+        eventType: "BIRTHDAY_GREETING",
+        purpose: "GREETING",
+        templateCode: "DOGUM_GUNU",
+        message,
+        idempotencyKey: `birthday:${patient.id}:${year}`,
+      });
 
       if (result.success) {
         sent += 1;
         await prisma.birthdaySmsLog.create({ data: { patientId: patient.id, year, sentTo: patient.phone, status: "SENT" } });
+      } else if (result.suppressed) {
+        skippedNoBalance += 1;
+        await prisma.birthdaySmsLog.create({ data: { patientId: patient.id, year, sentTo: patient.phone, status: "FAILED", errorDetail: result.reason } });
       } else {
         failed += 1;
-        await prisma.institution.update({ where: { id: institution.id }, data: { smsBalance: { increment: 1 } } });
         await prisma.birthdaySmsLog.create({ data: { patientId: patient.id, year, sentTo: patient.phone, status: "FAILED", errorDetail: result.error } });
       }
     }

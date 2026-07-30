@@ -463,7 +463,7 @@ async function main() {
   console.log("Demo paket yukleme tamamlandi.");
   console.log(`Marker: ${MARKER}`);
   console.log(`Kurum: ${institution.name}`);
-  console.log("Demo kullanici sifresi: 10711453");
+  console.log("Demo kullanici sifresi: DEMO_ADMIN_PASSWORD ortam degiskeninden gelir");
 }
 
 async function upsertAppointmentByMarker(args: {

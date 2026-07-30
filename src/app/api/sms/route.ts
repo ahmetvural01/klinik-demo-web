@@ -1,10 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
-import { sendSms } from "@/lib/sms";
+import { dispatchPatientMessage, type NotificationEventType } from "@/lib/notification-dispatch";
 import { metricIncrement, metricObserve } from "@/lib/metrics";
 import { enqueueSmsDispatchJob } from "@/lib/sms-jobs";
 import { resolveSmsTemplate } from "@/lib/sms-templates";
+
+const EVENT_TYPE_BY_SMS_TYPE: Record<string, NotificationEventType> = {
+  BILGI: "APPOINTMENT_INFO",
+  HATIRLATMA: "APPOINTMENT_REMINDER",
+  ANKET: "TREATMENT_SURVEY",
+};
 
 function renderTemplate(template: string, vars: Record<string, string>) {
   return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
@@ -91,11 +97,6 @@ export async function POST(request: NextRequest) {
     prisma.institution.findUnique({ where: { id: auth.user.institutionId } }),
   ]);
 
-  if (!settings?.smsEnabled) {
-    metricIncrement("api_errors_total");
-    return NextResponse.json({ message: "SMS servisi pasif durumda" }, { status: 400 });
-  }
-
   if (!institution) {
     metricIncrement("api_errors_total");
     return NextResponse.json({ message: "Klinik bulunamadı." }, { status: 404 });
@@ -107,7 +108,7 @@ export async function POST(request: NextRequest) {
       doctor: { institutionId: auth.user.institutionId },
     },
     include: {
-      patient: { select: { fullName: true, phone: true } },
+      patient: { select: { id: true, fullName: true, phone: true, phoneCountryCode: true } },
       doctor: { select: { fullName: true } },
     },
   });
@@ -118,13 +119,9 @@ export async function POST(request: NextRequest) {
   }
 
   if (dispatchMode === "queue") {
-    if (institution.smsBalance < appointments.length) {
-      metricIncrement("api_errors_total");
-      return NextResponse.json({
-        message: `Yetersiz SMS kredisi. Gerekli: ${appointments.length}, Mevcut: ${institution.smsBalance}`,
-      }, { status: 400 });
-    }
-
+    // Bakiye yetersizse artık tamamı reddedilmez — her alıcı için ayrı ayrı
+    // rezervasyon yapılır (bkz. sms-jobs.ts), bu yüzden burada yalnızca kuyruğa
+    // alınır; yetersiz bakiye kadarı SUPPRESSED olarak raporlanır.
     const queued = await enqueueSmsDispatchJob({
       institutionId: auth.user.institutionId,
       userId: auth.user.id,
@@ -145,25 +142,19 @@ export async function POST(request: NextRequest) {
     }, { status: 202 });
   }
 
-  const reservation = await prisma.institution.updateMany({
-    where: { id: institution.id, smsBalance: { gte: appointments.length } },
-    data: { smsBalance: { decrement: appointments.length } },
-  });
-
-  if (reservation.count === 0) {
-    const fresh = await prisma.institution.findUnique({ where: { id: institution.id }, select: { smsBalance: true } });
-    metricIncrement("api_errors_total");
-    return NextResponse.json({
-      message: `Yetersiz SMS kredisi. Gerekli: ${appointments.length}, Mevcut: ${fresh?.smsBalance ?? institution.smsBalance}`,
-    }, { status: 400 });
-  }
-
+  // Bakiye rezervasyonu artık her alıcı için dispatchPatientMessage içinde
+  // ayrı ayrı atomik yapılıyor (bkz. src/lib/notification-dispatch.ts) —
+  // toplu bakiye yetersizse hepsi reddedilmek yerine yetenen kadarı gönderilir.
   const updateData: Record<string, boolean> = {};
   if (smsType === "BILGI") updateData.smsInfo = true;
   else if (smsType === "HATIRLATMA") updateData.smsReminder = true;
   else if (smsType === "ANKET") updateData.smsSurvey = true;
 
   const smsTemplate = await resolveSmsTemplate(auth.user.institutionId, smsType);
+  // Bu isteğe özgü — aynı personel aynı randevu için "gönder"e tekrar basarsa
+  // (ör. ilk seferinde gitmediğini düşündüğü için) bu gerçek bir yeni gönderim
+  // sayılmalı, kalıcı olarak tekilleştirilmemeli.
+  const requestBatchId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   let sent = 0;
   const failedRecipients: { appointmentId: string; phone: string; reason: string }[] = [];
@@ -173,8 +164,8 @@ export async function POST(request: NextRequest) {
     const chunk = appointments.slice(i, i + batchSize);
     const chunkResults = await Promise.all(chunk.map(async (appt) => {
       const dateText = new Date(appt.startAt).toLocaleString("tr-TR");
-      const institutionName = settings.institutionName || institution.name;
-      const institutionPhone = settings.institutionPhone || institution.phone || "";
+      const institutionName = settings?.institutionName || institution.name;
+      const institutionPhone = settings?.institutionPhone || institution.phone || "";
       const fallbackMessage = smsType === "BILGI"
         ? `${institutionName}: Sayın ${appt.patient.fullName}, randevunuz oluşturuldu. Tarih: ${dateText}.`
         : smsType === "HATIRLATMA"
@@ -188,44 +179,48 @@ export async function POST(request: NextRequest) {
             patientName: appt.patient.fullName,
             doctorName: appt.doctor.fullName,
             dateTime: dateText,
-            surveyLink: settings.reviewLink || "",
+            surveyLink: settings?.reviewLink || "",
           })
         : fallbackMessage;
 
-      const sendResult = await sendSms(appt.patient.phone, message);
-      return { appt, sendResult };
+      const result = await dispatchPatientMessage({
+        institutionId: auth.user.institutionId!,
+        patientId: appt.patient.id,
+        eventType: EVENT_TYPE_BY_SMS_TYPE[smsType] || "MANUAL_SMS",
+        purpose: "SERVICE",
+        templateCode: smsType,
+        message,
+        idempotencyKey: `manual-sms:${smsType}:${appt.id}:${requestBatchId}`,
+        actorId: auth.user.id,
+        whatsappTemplate: {
+          bodyParameters: [appt.patient.fullName, dateText, appt.doctor.fullName],
+        },
+      });
+      return { appt, result };
     }));
 
-    for (const { appt, sendResult } of chunkResults) {
-      if (sendResult.success) {
+    for (const { appt, result } of chunkResults) {
+      if (result.success) {
         sent += 1;
         await prisma.appointment.update({ where: { id: appt.id }, data: updateData });
         await writeAudit(
           auth.user.id,
-          `SMS_${smsType}`,
-          `${appt.patient.fullName} (${appt.patient.phone}) - ProviderMsgId: ${sendResult.providerMessageId || "-"}`,
+          `${result.channel}_${smsType}`,
+          `${appt.patient.fullName} (${appt.patient.phone}) - ProviderMsgId: ${result.providerMessageId || "-"}`,
         );
       } else {
         failedRecipients.push({
           appointmentId: appt.id,
           phone: appt.patient.phone,
-          reason: sendResult.error || sendResult.providerRaw,
+          reason: result.reason || result.error || "Bilinmeyen hata",
         });
         await writeAudit(
           auth.user.id,
           `SMS_${smsType}_FAILED`,
-          `${appt.patient.fullName} (${appt.patient.phone}) - ${sendResult.error || sendResult.providerRaw}`,
+          `${appt.patient.fullName} (${appt.patient.phone}) - ${result.reason || result.error || "Bilinmeyen hata"}`,
         );
       }
     }
-  }
-
-  const failed = appointments.length - sent;
-  if (failed > 0) {
-    await prisma.institution.update({
-      where: { id: institution.id },
-      data: { smsBalance: { increment: failed } },
-    });
   }
 
   const refreshedInstitution = await prisma.institution.findUnique({ where: { id: institution.id } });

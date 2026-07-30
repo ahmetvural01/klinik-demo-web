@@ -4,6 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { formatZodError, patientSchema } from "@/lib/validators";
 import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { sendSmsConsentRequest } from "@/lib/sms-consent";
+import { listPatientIdsForDerivedBucket } from "@/lib/sms-consent-stats";
+
+const SMS_CONSENT_FILTERS = new Set(["ENABLED", "DISABLED", "PENDING", "EXPIRED", "SEND_FAILED"]);
 
 const SORT_FIELDS = new Set(["fullName", "tcNo", "phone", "gender", "birthDate", "insurance", "profession", "createdAt", "updatedAt"]);
 
@@ -27,6 +31,8 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
     const sortBy = SORT_FIELDS.has(sortByParam) ? sortByParam : "createdAt";
     const sortDir = request.nextUrl.searchParams.get("sortDir") === "asc" ? "asc" : "desc";
     const doctorId = (request.nextUrl.searchParams.get("doctorId") || "").trim();
+    const smsConsentParam = (request.nextUrl.searchParams.get("smsConsent") || "").trim().toUpperCase();
+    const smsConsentFilter = SMS_CONSENT_FILTERS.has(smsConsentParam) ? smsConsentParam : "";
     const includeSummary = request.nextUrl.searchParams.get("summary") !== "false";
 
     const tenantWhere: Prisma.PatientWhereInput = {
@@ -58,6 +64,18 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
           { appointments: { some: { doctorId } } },
         ],
       });
+    }
+    if (smsConsentFilter === "ENABLED" || smsConsentFilter === "DISABLED") {
+      filters.push({ smsPreference: { status: smsConsentFilter } });
+    } else if (smsConsentFilter && auth.user.institutionId) {
+      // PENDING/EXPIRED/SEND_FAILED türetilmiş durumlardır (bkz.
+      // src/lib/sms-consent-stats.ts) — doğrudan bir DB alanı değildir, bu
+      // yüzden önce eşleşen hasta kimlikleri hesaplanır.
+      const matchedIds = await listPatientIdsForDerivedBucket(
+        auth.user.institutionId,
+        smsConsentFilter as "PENDING" | "EXPIRED" | "SEND_FAILED",
+      );
+      filters.push({ id: { in: matchedIds.length > 0 ? matchedIds : ["__none__"] } });
     }
 
     const where: Prisma.PatientWhereInput = filters.length ? { AND: [tenantWhere, ...filters] } : tenantWhere;
@@ -148,7 +166,6 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ message: "Hasta bilgileri geçersiz", errors: formatZodError(parsed.error) }, { status: 400 });
   }
-
   try {
     const { whatsappConsent, ...patientData } = parsed.data;
     const patient = await prisma.patient.create({
@@ -165,6 +182,22 @@ export async function POST(request: NextRequest) {
     });
 
     await writeAudit(auth.user.id, "PATIENT_CREATE", `${patient.fullName} eklendi`);
+
+    if (patient.institutionId) {
+      // Hasta oluşturulduğu anda SMS izin süreci otomatik başlar (bkz.
+      // docs/ILETISIM-MIMARISI-RAPORU.md §1.1) — best-effort: gönderim
+      // başarısız olsa bile hasta kaydı geri alınmaz.
+      try {
+        await sendSmsConsentRequest({
+          institutionId: patient.institutionId,
+          patientId: patient.id,
+          actorId: auth.user.id,
+        });
+      } catch (consentError) {
+        console.error("[patients POST] SMS izin isteği gönderilemedi:", consentError);
+      }
+    }
+
     return NextResponse.json(patient, { status: 201 });
   } catch (error) {
     console.error("[patients POST] failed:", error);

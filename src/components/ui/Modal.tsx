@@ -3,7 +3,7 @@
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useEscapeClose, backdropClose } from "@/lib/use-modal-dismiss";
 
 export type ModalSize = "sm" | "md" | "lg" | "xl";
@@ -38,33 +38,87 @@ export function Modal({
 }: ModalProps) {
   useEscapeClose(onClose, open);
   const [mounted, setMounted] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  const descriptionId = useId();
 
   useEffect(() => {
     setMounted(true);
     return () => setMounted(false);
   }, []);
 
+  useEffect(() => {
+    if (!open) return;
+    const previousActiveElement = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    const frame = window.requestAnimationFrame(() => {
+      const dialog = dialogRef.current;
+      const preferred = dialog?.querySelector<HTMLElement>("[data-autofocus], input:not([disabled]), select:not([disabled]), textarea:not([disabled])");
+      (preferred || dialog)?.focus();
+    });
+
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => !element.hasAttribute("hidden") && element.getClientRects().length > 0);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", trapFocus);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", trapFocus);
+      document.body.style.overflow = previousOverflow;
+      previousActiveElement?.focus();
+    };
+  }, [open]);
+
   if (!open || !mounted) return null;
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[300] flex items-end justify-center bg-slate-950/55 px-2 pb-2 pt-3 backdrop-blur-[8px] sm:items-center sm:px-4 sm:py-4"
+      className="ui-modal-backdrop fixed inset-0 z-[300] flex items-end justify-center bg-slate-950/45 px-2 pb-2 pt-3 backdrop-blur-[3px] sm:items-center sm:px-4 sm:py-4"
       role="dialog"
       aria-modal="true"
-      aria-labelledby="modal-title"
+      aria-labelledby={titleId}
+      aria-describedby={description ? descriptionId : undefined}
       {...(closeOnBackdrop ? backdropClose(onClose) : {})}
     >
-      <div className={`flex max-h-[calc(100dvh-20px)] w-full flex-col rounded-t-[1.25rem] border border-white/70 bg-[rgb(var(--app-surface))] shadow-[0_30px_80px_rgba(15,23,42,0.22)] sm:max-h-[calc(100dvh-32px)] sm:rounded-[1.25rem] ${SIZE_CLASS[size]}`}>
-        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100/80 px-4 py-4 sm:px-5">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className={`ui-modal-panel flex max-h-[calc(100dvh-20px)] w-full flex-col rounded-t-xl border border-slate-200 bg-[rgb(var(--app-surface))] shadow-[var(--shadow-floating)] outline-none sm:max-h-[calc(100dvh-32px)] sm:rounded-lg ${SIZE_CLASS[size]}`}
+      >
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-100 px-4 py-4 sm:px-5">
           <div className="min-w-0">
-            <h2 id="modal-title" className="font-display text-base font-extrabold tracking-tight text-slate-900">{title}</h2>
-            {description && <p className="mt-1 text-xs leading-5 text-slate-500">{description}</p>}
+            <h2 id={titleId} className="font-display text-base font-bold text-slate-900">{title}</h2>
+            {description && <p id={descriptionId} className="mt-1 text-xs leading-5 text-slate-500">{description}</p>}
           </div>
           <button
             type="button"
             onClick={onClose}
             aria-label="Kapat"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-transparent text-slate-500 transition hover:border-slate-200 hover:bg-slate-50 hover:text-slate-700"
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-transparent text-slate-500 transition hover:border-slate-200 hover:bg-slate-50 hover:text-slate-800"
           >
             <X className="h-4 w-4" />
           </button>
@@ -72,13 +126,13 @@ export function Modal({
         <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto px-4 py-4 sm:px-5">
           {children}
           {footer && (
-            <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-slate-100/80 pt-3 sm:hidden">
+            <div className="mt-5 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3 sm:hidden">
               {footer}
             </div>
           )}
         </div>
         {footer && (
-          <div className="hidden shrink-0 flex-wrap justify-end gap-2 border-t border-slate-100/80 bg-slate-50/70 px-4 py-3 sm:flex sm:px-5">
+          <div className="hidden shrink-0 flex-wrap justify-end gap-2 border-t border-slate-100 bg-slate-50/70 px-4 py-3 sm:flex sm:px-5">
             {footer}
           </div>
         )}

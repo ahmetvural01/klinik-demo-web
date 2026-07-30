@@ -1799,7 +1799,7 @@ export default function MuhasebePage() {
       </Modal>
 
       {activeTab === "defter" && (
-        <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+        <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center">
             <div className="flex w-fit gap-1 rounded-lg bg-slate-100 p-1">
               {([
@@ -1856,7 +1856,26 @@ export default function MuhasebePage() {
                 {ledgerRows.length === 0 ? (
                   <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
                 ) : pagedLedgerRows.map((row) => (
-                  <tr key={row.id} className="hover:bg-slate-50">
+                  <tr
+                    key={row.id}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${row.label} kaydını düzenle`}
+                    onClick={(event) => {
+                      if ((event.target as HTMLElement).closest("button, a")) return;
+                      row.type === "TAHSILAT"
+                        ? startEditPayment(row.source as Payment)
+                        : startEditExpense(row.source as Expense);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      row.type === "TAHSILAT"
+                        ? startEditPayment(row.source as Payment)
+                        : startEditExpense(row.source as Expense);
+                    }}
+                    className="cursor-pointer transition-colors hover:bg-primary/[0.035] focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25"
+                  >
                     <td className="whitespace-nowrap px-4 py-3 text-slate-500">{fmtDate(row.date)}</td>
                     <td className="px-4 py-3">
                       <Badge tone={row.type === "TAHSILAT" ? "success" : "critical"}>{row.label}</Badge>
@@ -1867,7 +1886,7 @@ export default function MuhasebePage() {
                     <td className="px-4 py-3 text-slate-600">{row.method}</td>
                     <td className={`px-4 py-3 text-right font-black ${row.tone}`}>{row.sign}{fmt(row.amount)}</td>
                     <td className="px-4 py-3 text-right">
-                      <div className="flex justify-end gap-1">
+                      <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
                         <IconButton
                           icon={Pencil}
                           title="Düzenle"
@@ -1899,7 +1918,7 @@ export default function MuhasebePage() {
       {activeTab === "alacak" && (
         <div className="space-y-4">
           {/* Alt sekme: Tüm Bakiyeler / Taksitli Planlar */}
-          <div className="flex w-fit gap-1 rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
+          <div className="flex w-fit gap-1 rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm">
             <button onClick={() => setAlacakView("bakiye")}
               className={`rounded-xl px-4 py-2 text-sm font-bold transition ${alacakView === "bakiye" ? "bg-primary text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"}`}>
               Tüm Bakiyeler
@@ -1916,7 +1935,7 @@ export default function MuhasebePage() {
       {alacakView === "taksit" && (
         <div className="space-y-4">
           {/* KPI */}
-          <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm sm:grid-cols-4 sm:divide-y-0">
+          <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm sm:grid-cols-4 sm:divide-y-0">
             {[
               { label: "Toplam Kalan",  value: fmt(taksitKPIs.toplamKalan), color: "text-primary"    },
               { label: "Bekleyen",      value: String(taksitKPIs.bekleyen), color: "text-amber-700"   },
@@ -1944,7 +1963,7 @@ export default function MuhasebePage() {
             const totalCount = buckets.reduce((s, b) => s + b.count, 0);
             if (totalCount === 0) return null;
             return (
-              <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
                 <p className="mb-3 text-sm font-black text-slate-800">Alacak Yaşlandırma Tablosu</p>
                 <div className="mb-2 flex h-4 overflow-hidden rounded-full">
                   {buckets.map(b => b.amount > 0 && <div key={b.label} className={`${b.color} transition-all`} style={{ width: `${(b.amount / totalAmt) * 100}%` }} />)}
@@ -1964,7 +1983,7 @@ export default function MuhasebePage() {
           })()}
 
           {/* Sub-tabs */}
-          <div className="flex flex-wrap gap-1 rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
+          <div className="flex flex-wrap gap-1 rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm">
             {([
               { key: "liste",      label: "Plan Listesi" },
               { key: "olustur",    label: "Yeni Plan" },
@@ -2003,7 +2022,7 @@ export default function MuhasebePage() {
                           const bek    = plan.taksitler.filter(t => t.status === "BEKLIYOR").length;
                           return (
                             <div key={plan.id} onClick={() => { setSelectedPlan(plan); loadPlanDetail(plan.id); }}
-                              className={`cursor-pointer rounded-2xl border p-4 transition-all ${selectedPlan?.id === plan.id ? "border-primary/40 bg-primary/10" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                              className={`cursor-pointer rounded-lg border p-4 transition-all ${selectedPlan?.id === plan.id ? "border-primary/40 bg-primary/10" : "border-slate-200 bg-white hover:border-slate-300"}`}>
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex flex-wrap items-center gap-2">
@@ -2043,7 +2062,7 @@ export default function MuhasebePage() {
               {/* Plan Detay */}
               {planDetail && (
                 <div className="min-w-0">
-                  <div className="sticky top-4 space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="sticky top-4 space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
                     <div className="flex items-center justify-between">
                       <h3 className="text-sm font-black text-slate-900">Taksit Detayı</h3>
                       <button onClick={() => { setSelectedPlan(null); setPlanDetail(null); }} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100" aria-label="Detayı kapat">
@@ -2085,7 +2104,7 @@ export default function MuhasebePage() {
 
           {/* Yeni Plan Oluştur */}
           {taksitSubTab === "olustur" && (
-            <div className="max-w-lg space-y-4 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="max-w-lg space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
               <h2 className="text-sm font-black text-slate-800">Yeni Taksit Planı</h2>
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
@@ -2259,7 +2278,7 @@ export default function MuhasebePage() {
           </div>
 
           {/* Özet KPI */}
-          <div className="grid grid-cols-3 divide-x divide-slate-100 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+          <div className="grid grid-cols-3 divide-x divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
             <div className="p-4">
               <p className="text-xs font-bold uppercase text-slate-500">Toplam Alacak</p>
               <p className="mt-1 text-xl font-black text-violet-700">{fmt(alacakTotal)}</p>
@@ -2279,7 +2298,7 @@ export default function MuhasebePage() {
             : alacakError
               ? <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-6 text-sm font-semibold text-red-700">{alacakError}</div>
             : (
-              <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+              <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
                 <table className="w-full text-xs">
                   <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                     <th className="px-4 py-3 text-left">Hasta</th>
@@ -2392,7 +2411,7 @@ export default function MuhasebePage() {
           </div>
           {!selectedDoctor
             ? (
-                <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+                <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
                   <div className="border-b border-slate-100 px-5 py-4">
                     <h3 className="text-sm font-black text-slate-900">Genel Bakış — Bu Ay</h3>
                     <p className="mt-0.5 text-xs text-slate-500">Tüm doktorların içinde bulunulan aya ait hakedilen/ödenen/kalan özeti. Detay için bir doktora tıklayın.</p>
@@ -2436,7 +2455,7 @@ export default function MuhasebePage() {
             : (
                 <div className="space-y-4">
                   {doctorFinance && (
-                    <div className="grid divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+                    <div className="grid divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm sm:grid-cols-3 sm:divide-x sm:divide-y-0">
                       {[
                         { label: "Bu Ay Ciro (ay başından bugüne)", value: fmt(Number(doctorFinance.totalTreatments) || 0), tone: "text-primary"      },
                         { label: "Tahsil Edilen",                     value: fmt(Number(doctorFinance.received) || 0),        tone: "text-emerald-700" },
@@ -2458,7 +2477,7 @@ export default function MuhasebePage() {
                   />
 
                   {doctorFinance && Array.isArray(doctorFinance.topExaminations) && (doctorFinance.topExaminations as { type: string; count: number }[]).length > 0 && (
-                    <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+                    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
                       <div className="border-b border-slate-100 px-5 py-4">
                         <h3 className="text-sm font-black text-slate-900">En Çok Yapılan Tedaviler</h3>
                       </div>

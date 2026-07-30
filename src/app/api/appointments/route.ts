@@ -2,8 +2,7 @@
 import { prisma } from "@/lib/prisma";
 import { appointmentSchema, formatZodError } from "@/lib/validators";
 import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
-import { sendSms } from "@/lib/sms";
-import { sendWhatsapp } from "@/lib/whatsapp";
+import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 import { turkeyDayRangeUtc, turkeyDayBeforeStartUtc } from "@/lib/tz";
 import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
@@ -72,67 +71,44 @@ async function sendAppointmentInfoSms(params: {
       })
     : fallbackMessage;
 
-  // WhatsApp kanalı açıksa SMS bakiyesi hiç kontrol edilmeden önce denenir —
-  // başarılı olursa aşağıdaki SMS-özel rezervasyon/iade akışına hiç girilmez
-  // (bkz. src/lib/notify.ts).
-  if (institution.whatsappEnabled) {
-    const waResult = await sendWhatsapp(appointment.patient.phone, message, {
-      institutionId: params.institutionId,
-      patientId: appointment.patient.id,
-      appointmentId: appointment.id,
-      countryCode: appointment.patient.phoneCountryCode,
-      template: {
-        bodyParameters: [
-          appointment.patient.fullName,
-          dateText,
-          appointment.doctor.fullName,
-        ],
-      },
-    });
-    if (waResult.success) {
-      await writeAudit(
-        params.createdByUserId,
-        "WHATSAPP_BILGI_AUTO",
-        `Hasta: ${appointment.patient.id} - ProviderMsgId: ${waResult.providerMessageId || "-"}`
-      );
-      return { status: "sent", message: "Bilgilendirme WhatsApp mesajı gönderildi." };
-    }
-    // WhatsApp denendi ama başarısız oldu (ör. sağlayıcı henüz ayarlanmamış)
-    // — hastaya bilgilendirme hiç gitmemesindense aşağıdaki SMS akışına düşülür.
-  }
-
-  if (!settings?.smsEnabled) return { status: "skipped", message: "Kurum SMS gönderimi kapalı." };
-
-  // Bakiyeyi atomik olarak rezerve et — düz "smsBalance <= 0" kontrolü ile ayrı bir
-  // decrement arasında yarış durumu olursa bakiye eksiye düşebilir.
-  const reservation = await prisma.institution.updateMany({
-    where: { id: institution.id, smsBalance: { gte: 1 } },
-    data: { smsBalance: { decrement: 1 } },
+  // Kanal seçimi (WhatsApp/SMS), hasta SMS izni, bakiye rezervasyonu/iadesi
+  // ve idempotency artık tek merkezden yönetiliyor (bkz. src/lib/notification-dispatch.ts).
+  const result = await dispatchPatientMessage({
+    institutionId: params.institutionId,
+    patientId: appointment.patient.id,
+    eventType: "APPOINTMENT_INFO",
+    purpose: "SERVICE",
+    templateCode: "BILGI",
+    message,
+    idempotencyKey: `appt-info:${appointment.id}`,
+    actorId: params.createdByUserId,
+    whatsappTemplate: {
+      bodyParameters: [appointment.patient.fullName, dateText, appointment.doctor.fullName],
+    },
   });
-  if (reservation.count === 0) return { status: "failed", message: "SMS bakiyesi yetersiz." };
 
-  const sendResult = await sendSms(appointment.patient.phone, message);
-  if (sendResult.success) {
+  if (result.success) {
     await writeAudit(
       params.createdByUserId,
-      "SMS_BILGI_AUTO",
-      `${appointment.patient.fullName} (${appointment.patient.phone}) - ProviderMsgId: ${sendResult.providerMessageId || "-"}`
+      result.channel === "WHATSAPP" ? "WHATSAPP_BILGI_AUTO" : "SMS_BILGI_AUTO",
+      `Hasta: ${appointment.patient.id} - Kanal: ${result.channel} - ProviderMsgId: ${result.providerMessageId || "-"}`
     );
-    return { status: "sent", message: "Bilgilendirme SMS'i gönderildi." };
+    return {
+      status: "sent",
+      message: result.channel === "WHATSAPP" ? "Bilgilendirme WhatsApp mesajı gönderildi." : "Bilgilendirme SMS'i gönderildi.",
+    };
   }
 
-  // Gönderim başarısız oldu — rezerve edilen krediyi iade et, aksi halde kullanılmayan
-  // bir SMS için kurum bakiyesi haksız yere düşmüş olur.
-  await prisma.institution.update({
-    where: { id: institution.id },
-    data: { smsBalance: { increment: 1 } },
-  });
+  if (result.suppressed) {
+    return { status: "skipped", message: result.reason || "Bildirim gönderilmedi." };
+  }
+
   await writeAudit(
       params.createdByUserId,
       "SMS_BILGI_AUTO_FAILED",
-      `${appointment.patient.fullName} (${appointment.patient.phone}) - ${sendResult.error || sendResult.providerRaw}`
+      `${appointment.patient.fullName} (${appointment.patient.phone}) - ${result.error || "Bilinmeyen hata"}`
   );
-  return { status: "failed", message: sendResult.error || "Bilgilendirme SMS'i gönderilemedi." };
+  return { status: "failed", message: result.error || "Bilgilendirme SMS'i gönderilemedi." };
 }
 
 async function scheduleAppointmentReminder(appointment: { id: string; patientId: string; startAt: Date; smsReminder: boolean }) {

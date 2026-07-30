@@ -7,20 +7,49 @@ import { Badge } from "@/components/ui/Badge";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { FormField } from "@/components/ui/FormField";
 import { getAuditActionLabel } from "@/lib/audit-labels";
+import { SMS_CONSENT_MESSAGE_TEMPLATE } from "@/lib/sms-consent-copy";
 import BulkSendTab from "./_tabs/BulkSendTab";
 import TemplatesTab from "./_tabs/TemplatesTab";
 import WhatsappMessagesTab from "./_tabs/WhatsappMessagesTab";
+import WhatsappSettingsTab from "./_tabs/WhatsappSettingsTab";
 
 type SmsSettings = {
   smsEnabled: boolean;
-  smsDefaultInfo: boolean;
-  smsDefaultReminder: boolean;
-  smsDefaultSurvey: boolean;
   paymentReminderSmsEnabled: boolean;
   paymentReminderWindowDays: number;
   reviewLink: string;
   birthdaySmsEnabled: boolean;
+  defaultNotificationChannel: "SMS" | "WHATSAPP";
+  whatsappEnabled: boolean;
+  institutionName: string;
+  appUrl: string;
 };
+
+const DEFAULT_SMS_SETTINGS: SmsSettings = {
+  smsEnabled: true,
+  paymentReminderSmsEnabled: false,
+  paymentReminderWindowDays: 3,
+  reviewLink: "",
+  birthdaySmsEnabled: false,
+  defaultNotificationChannel: "SMS",
+  whatsappEnabled: false,
+  institutionName: "",
+  appUrl: "",
+};
+
+function parseSmsSettings(data: Record<string, unknown> | null): SmsSettings {
+  return {
+    smsEnabled: data?.smsEnabled !== undefined ? Boolean(data.smsEnabled) : true,
+    paymentReminderSmsEnabled: Boolean(data?.paymentReminderSmsEnabled),
+    paymentReminderWindowDays: Number(data?.paymentReminderWindowDays) || 3,
+    reviewLink: typeof data?.reviewLink === "string" ? data.reviewLink : "",
+    birthdaySmsEnabled: Boolean(data?.birthdaySmsEnabled),
+    defaultNotificationChannel: data?.defaultNotificationChannel === "WHATSAPP" ? "WHATSAPP" : "SMS",
+    whatsappEnabled: Boolean(data?.whatsappEnabled),
+    institutionName: typeof data?.institutionName === "string" ? data.institutionName : "",
+    appUrl: typeof data?.appUrl === "string" ? data.appUrl : "",
+  };
+}
 
 type SmsLog = {
   id: string;
@@ -136,17 +165,55 @@ function groupSmsLogs(items: SmsLog[]): SmsLogRow[] {
   return rows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 }
 
+type ConsentSummary = { ENABLED: number; DISABLED: number; PENDING: number; EXPIRED: number; SEND_FAILED: number };
+
+const CONSENT_SUMMARY_ITEMS: { key: keyof ConsentSummary; label: string; tone: "success" | "warning" | "neutral" | "critical" }[] = [
+  { key: "ENABLED", label: "Onaylandı", tone: "success" },
+  { key: "PENDING", label: "Onay Bekliyor", tone: "warning" },
+  { key: "DISABLED", label: "Reddedildi", tone: "neutral" },
+  { key: "EXPIRED", label: "Süresi Doldu", tone: "critical" },
+  { key: "SEND_FAILED", label: "İzin SMS'i Gönderilemedi", tone: "critical" },
+];
+
+function ConsentSummaryCard() {
+  const [summary, setSummary] = useState<ConsentSummary | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("/api/sms/consent-summary")
+      .then((r) => r.json())
+      .then((d) => setSummary(d?.summary || null))
+      .catch(() => setSummary(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+      <div className="mb-3">
+        <h3 className="text-sm font-black text-slate-900">SMS İzin Durumu Özeti</h3>
+        <p className="mt-0.5 text-xs text-slate-500">
+          Bir sayıya tıklayarak o durumdaki hastaları Hastalar listesinde görebilirsiniz. Toplu yeniden
+          gönderim burada yapılmaz — tekrar gönderim hasta kartından, tek tek yapılır.
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+        {CONSENT_SUMMARY_ITEMS.map((item) => (
+          <a
+            key={item.key}
+            href={`/hasta?smsConsent=${item.key}`}
+            className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-center transition hover:border-primary/30 hover:bg-white"
+          >
+            <span className="block text-lg font-black text-slate-900">{loading ? "…" : (summary?.[item.key] ?? 0)}</span>
+            <span className="mt-0.5 block text-[11px] font-bold uppercase text-slate-500">{item.label}</span>
+          </a>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
-  const [settings, setSettings] = useState<SmsSettings>({
-    smsEnabled: true,
-    smsDefaultInfo: true,
-    smsDefaultReminder: false,
-    smsDefaultSurvey: false,
-    paymentReminderSmsEnabled: false,
-    paymentReminderWindowDays: 3,
-    reviewLink: "",
-    birthdaySmsEnabled: false,
-  });
+  const [settings, setSettings] = useState<SmsSettings>(DEFAULT_SMS_SETTINGS);
   const [logs, setLogs] = useState<SmsLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -166,18 +233,7 @@ function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
       const settingsData = await settingsRes.json().catch(() => null);
       const logsData = await logsRes.json().catch(() => null);
 
-      if (settingsData) {
-        setSettings({
-          smsEnabled: settingsData.smsEnabled !== undefined ? settingsData.smsEnabled : true,
-          smsDefaultInfo: settingsData.smsDefaultInfo !== undefined ? settingsData.smsDefaultInfo : true,
-          smsDefaultReminder: settingsData.smsDefaultReminder !== undefined ? settingsData.smsDefaultReminder : false,
-          smsDefaultSurvey: settingsData.smsDefaultSurvey !== undefined ? settingsData.smsDefaultSurvey : false,
-          paymentReminderSmsEnabled: settingsData.paymentReminderSmsEnabled !== undefined ? settingsData.paymentReminderSmsEnabled : false,
-          paymentReminderWindowDays: settingsData.paymentReminderWindowDays || 3,
-          reviewLink: settingsData.reviewLink || "",
-          birthdaySmsEnabled: settingsData.birthdaySmsEnabled !== undefined ? settingsData.birthdaySmsEnabled : false,
-        });
-      }
+      if (settingsData) setSettings(parseSmsSettings(settingsData));
       setLogs(Array.isArray(logsData?.logs) ? logsData.logs.filter((log: SmsLog) => isSmsDeliveryAction(log.action)) : []);
     } catch {
       showToast("error", "SMS kayıtları yüklenemedi");
@@ -264,6 +320,8 @@ function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
         </div>
       </div>
 
+      <ConsentSummaryCard />
+
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
           <input
@@ -298,17 +356,11 @@ function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
   );
 }
 
-function SmsSettingsPanel() {
-  const [settings, setSettings] = useState<SmsSettings>({
-    smsEnabled: true,
-    smsDefaultInfo: true,
-    smsDefaultReminder: false,
-    smsDefaultSurvey: false,
-    paymentReminderSmsEnabled: false,
-    paymentReminderWindowDays: 3,
-    reviewLink: "",
-    birthdaySmsEnabled: false,
-  });
+type WhatsappProviderStatus = "DISABLED" | "NO_PROVIDER" | "INACTIVE" | "ACTIVE";
+
+function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWhatsappSettings: () => void; onGoToRecords: () => void }) {
+  const [settings, setSettings] = useState<SmsSettings>(DEFAULT_SMS_SETTINGS);
+  const [waStatus, setWaStatus] = useState<WhatsappProviderStatus>("DISABLED");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -322,16 +374,17 @@ function SmsSettingsPanel() {
       const res = await fetch("/api/settings");
       const data = await res.json().catch(() => null);
       if (!res.ok || !data) throw new Error();
-      setSettings({
-        smsEnabled: data.smsEnabled !== undefined ? data.smsEnabled : true,
-        smsDefaultInfo: data.smsDefaultInfo !== undefined ? data.smsDefaultInfo : true,
-        smsDefaultReminder: data.smsDefaultReminder !== undefined ? data.smsDefaultReminder : false,
-        smsDefaultSurvey: data.smsDefaultSurvey !== undefined ? data.smsDefaultSurvey : false,
-        paymentReminderSmsEnabled: data.paymentReminderSmsEnabled !== undefined ? data.paymentReminderSmsEnabled : false,
-        paymentReminderWindowDays: data.paymentReminderWindowDays || 3,
-        reviewLink: data.reviewLink || "",
-        birthdaySmsEnabled: data.birthdaySmsEnabled !== undefined ? data.birthdaySmsEnabled : false,
-      });
+      const parsed = parseSmsSettings(data);
+      setSettings(parsed);
+
+      if (parsed.whatsappEnabled) {
+        const providerRes = await fetch("/api/whatsapp/provider");
+        const providerData = await providerRes.json().catch(() => null);
+        if (!providerData?.provider) setWaStatus("NO_PROVIDER");
+        else setWaStatus(providerData.provider.isActive ? "ACTIVE" : "INACTIVE");
+      } else {
+        setWaStatus("DISABLED");
+      }
     } catch {
       showToast("error", "SMS ayarları yüklenemedi");
     } finally {
@@ -358,14 +411,22 @@ function SmsSettingsPanel() {
     }
   };
 
-  const toggleItems: { key: keyof Pick<SmsSettings, "smsEnabled" | "smsDefaultInfo" | "smsDefaultReminder" | "smsDefaultSurvey" | "paymentReminderSmsEnabled" | "birthdaySmsEnabled">; label: string; hint: string }[] = [
-    { key: "smsEnabled", label: "SMS gönderimi aktif", hint: "Kapalıysa otomatik ve manuel SMS gönderimleri durdurulur." },
-    { key: "smsDefaultInfo", label: "Randevu bilgilendirme varsayılan açık", hint: "Yeni randevu oluştururken bilgilendirme seçeneği otomatik işaretlenir." },
-    { key: "smsDefaultReminder", label: "Randevu hatırlatma varsayılan açık", hint: "Yeni randevularda hatırlatma görevi otomatik planlanır." },
-    { key: "smsDefaultSurvey", label: "Değerlendirme SMS'i varsayılan açık", hint: "Randevu sonrası değerlendirme mesajı akışını varsayılan açar." },
-    { key: "paymentReminderSmsEnabled", label: "Ödeme hatırlatmaları aktif", hint: "Vadesi yaklaşan veya geciken ödemelerde otomatik SMS akışı kullanılır." },
-    { key: "birthdaySmsEnabled", label: "Doğum günü mesajları aktif", hint: "Doğum günü olan hastalara otomatik kutlama mesajı gönderilir." },
+  const toggleItems: { key: keyof Pick<SmsSettings, "smsEnabled" | "paymentReminderSmsEnabled" | "birthdaySmsEnabled">; label: string; hint: string }[] = [
+    { key: "smsEnabled", label: "SMS sistemi aktif", hint: "Kapalıysa otomatik ve manuel bütün SMS gönderimleri durdurulur (WhatsApp bundan etkilenmez)." },
+    { key: "paymentReminderSmsEnabled", label: "Ödeme hatırlatma ayarları aktif", hint: "Vadesi yaklaşan veya geciken taksitlerde otomatik hatırlatma gönderilir." },
+    { key: "birthdaySmsEnabled", label: "Doğum günü ve özel gün ayarları aktif", hint: "Doğum günü olan hastalara otomatik kutlama mesajı gönderilir. Bayram/özel gün mesajları Toplu Gönderim'den manuel gönderilir." },
   ];
+
+  const waStatusBadge: Record<WhatsappProviderStatus, { tone: "success" | "warning" | "neutral" | "critical"; label: string }> = {
+    DISABLED: { tone: "neutral", label: "Kapalı" },
+    NO_PROVIDER: { tone: "warning", label: "Açık, bağlantı tanımlı değil" },
+    INACTIVE: { tone: "warning", label: "Açık, bağlantı pasif" },
+    ACTIVE: { tone: "success", label: "Açık ve aktif" },
+  };
+
+  const previewMessage = SMS_CONSENT_MESSAGE_TEMPLATE
+    .replace("{{institutionName}}", settings.institutionName || "Kliniğiniz")
+    .replace("{{link}}", `${settings.appUrl || "https://uygulamanız.com"}/sms-onay/xxxxxxxx`);
 
   return (
     <section className="space-y-4" aria-busy={loading}>
@@ -373,7 +434,7 @@ function SmsSettingsPanel() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-lg font-black text-slate-900">SMS Ayarları</h1>
-            <p className="mt-1 text-sm text-slate-500">SMS gönderim tercihleri, otomatik mesajlar ve değerlendirme bağlantısı.</p>
+            <p className="mt-1 text-sm text-slate-500">SMS gönderim tercihleri, izin akışı ve WhatsApp bağlantı durumu.</p>
           </div>
           <Badge tone={settings.smsEnabled ? "success" : "critical"} size="md">
             {settings.smsEnabled ? "SMS aktif" : "SMS pasif"}
@@ -400,6 +461,84 @@ function SmsSettingsPanel() {
               </span>
             </label>
           ))}
+        </div>
+        <p className="mt-3 rounded-xl bg-slate-50 px-3 py-2.5 text-xs text-slate-500">
+          <strong className="font-bold text-slate-600">Randevu bilgilendirme, hatırlatma ve değerlendirme SMS&apos;leri</strong> kurum
+          genelinde bir varsayılana bağlı değildir — personel bunları her randevu için ayrı ayrı işaretler
+          (Randevu ekranındaki SMS onay kutuları). Buradaki ayarlar yalnızca ödeme hatırlatma ve doğum
+          günü/özel gün gibi otomatik taramaları kapsar.
+        </p>
+      </div>
+
+      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <p className="mb-1 text-sm font-bold text-slate-800">SMS Onay Metni Önizlemesi</p>
+        <p className="mb-3 text-xs text-slate-500">
+          Bu metin sabittir, klinikler değiştiremez — yalnızca klinik adı ve bağlantı otomatik doldurulur.
+          Hasta oluşturulduğunda otomatik gönderilir.
+        </p>
+        <div className="rounded-xl bg-slate-50 px-3 py-2.5 font-mono text-xs leading-relaxed text-slate-700">
+          {previewMessage}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-bold text-slate-500">Onay bağlantısının çalışma durumu:</span>
+          {settings.appUrl ? (
+            <Badge tone="success" size="sm">Yapılandırıldı ({settings.appUrl})</Badge>
+          ) : (
+            <Badge tone="critical" size="sm">APP_URL tanımlı değil — bağlantılar çalışmaz</Badge>
+          )}
+        </div>
+      </div>
+
+      {settings.whatsappEnabled && (
+        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+          <p className="mb-3 text-sm font-bold text-slate-800">Varsayılan Bildirim Kanalı</p>
+          <p className="mb-3 text-xs text-slate-500">
+            Randevu oluşturma, hatırlatma, ödeme hatırlatma ve değerlendirme
+            SMS&apos;lerinin hangi kanaldan gideceğini belirler. WhatsApp seçiliyken, WhatsApp izni
+            olmayan hastalar için otomatik olarak SMS&apos;e düşülür.
+          </p>
+          <div className="flex flex-wrap gap-3">
+            {(["SMS", "WHATSAPP"] as const).map((channel) => (
+              <label
+                key={channel}
+                className={`flex cursor-pointer items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition ${
+                  settings.defaultNotificationChannel === channel
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="defaultNotificationChannel"
+                  className="h-4 w-4 accent-primary"
+                  checked={settings.defaultNotificationChannel === channel}
+                  onChange={() => setSettings({ ...settings, defaultNotificationChannel: channel })}
+                />
+                {channel === "SMS" ? "SMS" : "WhatsApp"}
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-bold text-slate-800">WhatsApp Bağlantı Durumu</p>
+            <p className="mt-0.5 text-xs text-slate-500">
+              {settings.whatsappEnabled
+                ? "Sağlayıcı bağlantı testi ve tam ayarlar WhatsApp Ayarları sekmesindedir."
+                : "Bu özelliği açmak için sistem yöneticinizle iletişime geçin."}
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Badge tone={waStatusBadge[waStatus].tone} size="md">{waStatusBadge[waStatus].label}</Badge>
+            {settings.whatsappEnabled && (
+              <Button variant="secondary" size="sm" onClick={onGoToWhatsappSettings}>
+                {waStatus === "ACTIVE" ? "Bağlantıyı Yönet / Test Et" : "WhatsApp Ayarlarına Git"}
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -430,6 +569,24 @@ function SmsSettingsPanel() {
         </div>
       </div>
 
+      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <p className="mb-2 text-sm font-bold text-slate-800">Gönderim Başarısızlıklarının Açıklaması</p>
+        <ul className="space-y-1.5 text-xs text-slate-600">
+          <li><strong className="font-bold text-slate-700">Hastanın SMS iletişim izni bulunmuyor</strong> — hasta henüz ONAYLIYORUM dememiş, reddetmiş ya da izin bağlantısı hiç gönderilememiş.</li>
+          <li><strong className="font-bold text-slate-700">SMS bakiyesi yetersiz</strong> — kurumun SMS kredisi tükenmiş, Süperadmin&apos;den paket satın alınmalı.</li>
+          <li><strong className="font-bold text-slate-700">Kurum SMS gönderimini kapatmış</strong> — yukarıdaki &quot;SMS sistemi aktif&quot; anahtarı kapalı.</li>
+          <li><strong className="font-bold text-slate-700">WhatsApp denendi, başarısız oldu</strong> — sağlayıcı tanımlı değil/pasif ya da bağlantı hatası; sistem otomatik olarak SMS&apos;e düşer, bu düşüş kayıtta belirtilir.</li>
+          <li>Geçersiz telefon numarası içeren gönderimler sağlayıcı tarafından reddedilir ve kayıtlarda hata mesajıyla görünür.</li>
+        </ul>
+        <button
+          type="button"
+          onClick={onGoToRecords}
+          className="mt-2 text-xs font-bold text-primary hover:underline"
+        >
+          Detaylı kayıtlar için Kayıtlar sekmesine bakın →
+        </button>
+      </div>
+
       <div className="flex flex-wrap justify-end gap-2">
         <Button variant="secondary" onClick={() => void load()} disabled={saving}>
           Yenile
@@ -443,7 +600,7 @@ function SmsSettingsPanel() {
 }
 
 export default function SmsPage() {
-  type SmsTab = "kayitlar" | "whatsapp" | "ayarlar" | "sablonlar" | "toplu";
+  type SmsTab = "kayitlar" | "whatsapp" | "whatsapp-ayarlar" | "ayarlar" | "sablonlar" | "toplu";
   const [tab, setTab] = useState<SmsTab>("kayitlar");
   const [mountedTabs, setMountedTabs] = useState<Set<SmsTab>>(() => new Set(["kayitlar"]));
 
@@ -469,6 +626,9 @@ export default function SmsPage() {
         <Button variant={tab === "whatsapp" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("whatsapp")}>
           WhatsApp
         </Button>
+        <Button variant={tab === "whatsapp-ayarlar" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("whatsapp-ayarlar")}>
+          WhatsApp Ayarları
+        </Button>
         <Button variant={tab === "sablonlar" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("sablonlar")}>
           Şablonlar
         </Button>
@@ -480,8 +640,9 @@ export default function SmsPage() {
           Gönderim'deki seçili hasta listesi gibi girilmiş verinin, kullanıcı
           başka bir sekmeye bakıp geri döndüğünde kaybolmaması için. */}
       {mountedTabs.has("kayitlar") && <div className={tab === "kayitlar" ? "" : "hidden"}><SmsManagement onGoToSettings={() => activateTab("ayarlar")} /></div>}
-      {mountedTabs.has("ayarlar") && <div className={tab === "ayarlar" ? "" : "hidden"}><SmsSettingsPanel /></div>}
+      {mountedTabs.has("ayarlar") && <div className={tab === "ayarlar" ? "" : "hidden"}><SmsSettingsPanel onGoToWhatsappSettings={() => activateTab("whatsapp-ayarlar")} onGoToRecords={() => activateTab("kayitlar")} /></div>}
       {mountedTabs.has("whatsapp") && <div className={tab === "whatsapp" ? "" : "hidden"}><WhatsappMessagesTab /></div>}
+      {mountedTabs.has("whatsapp-ayarlar") && <div className={tab === "whatsapp-ayarlar" ? "" : "hidden"}><WhatsappSettingsTab /></div>}
       {mountedTabs.has("toplu") && <div className={tab === "toplu" ? "" : "hidden"}><BulkSendTab /></div>}
       {mountedTabs.has("sablonlar") && <div className={tab === "sablonlar" ? "" : "hidden"}><TemplatesTab /></div>}
     </div>

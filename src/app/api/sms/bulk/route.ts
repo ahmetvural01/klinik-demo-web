@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
-import { sendSms } from "@/lib/sms";
+import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 
 function renderTemplate(template: string, vars: Record<string, string>) {
   return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
@@ -33,9 +33,6 @@ export async function POST(request: NextRequest) {
     prisma.institution.findUnique({ where: { id: auth.user.institutionId } }),
   ]);
 
-  if (!settings?.smsEnabled) {
-    return NextResponse.json({ message: "SMS servisi pasif durumda" }, { status: 400 });
-  }
   if (!institution) {
     return NextResponse.json({ message: "Klinik bulunamadı." }, { status: 404 });
   }
@@ -64,19 +61,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Secili hastalarin hicbirinin telefon numarasi yok" }, { status: 400 });
   }
 
-  const reservation = await prisma.institution.updateMany({
-    where: { id: institution.id, smsBalance: { gte: withPhone.length } },
-    data: { smsBalance: { decrement: withPhone.length } },
-  });
-
-  if (reservation.count === 0) {
-    return NextResponse.json({
-      message: `Yetersiz SMS kredisi. Gerekli: ${withPhone.length}, Mevcut: ${institution.smsBalance}`,
-    }, { status: 400 });
-  }
-
-  const institutionName = settings.institutionName || institution.name;
-  const institutionPhone = settings.institutionPhone || institution.phone || "";
+  const institutionName = settings?.institutionName || institution.name;
+  const institutionPhone = settings?.institutionPhone || institution.phone || "";
 
   let sent = 0;
   const failedRecipients: { patientId: string; phone: string; reason: string }[] = [];
@@ -91,41 +77,46 @@ export async function POST(request: NextRequest) {
         institutionPhone,
         patientName: patient.fullName,
       });
-      const sendResult = await sendSms(patient.phone, message);
-      return { patient, sendResult };
+      const result = await dispatchPatientMessage({
+        institutionId: institution.id,
+        patientId: patient.id,
+        eventType: "BULK_SMS",
+        purpose: "SERVICE",
+        templateCode: "TOPLU",
+        message,
+        // Her toplu gönderim personelin o anki bilinçli eylemidir — aynı hasta
+        // başka bir toplu gönderimde tekrar seçilebilir, bu yüzden anahtar
+        // paket kimliğine bağlı (kalıcı olarak tekilleştirilmez).
+        idempotencyKey: `bulk-sms:${packageId}:${patient.id}`,
+        actorId: auth.user.id,
+      });
+      return { patient, result };
     }));
 
-    for (const { patient, sendResult } of chunkResults) {
-      if (sendResult.success) {
+    for (const { patient, result } of chunkResults) {
+      if (result.success) {
         sent += 1;
         await writeAudit(
           auth.user.id,
-          "SMS_TOPLU",
-          `[Paket:${packageId}] ${patient.fullName} (${patient.phone}) - ProviderMsgId: ${sendResult.providerMessageId || "-"}`
+          `${result.channel}_TOPLU`,
+          `[Paket:${packageId}] ${patient.fullName} (${patient.phone}) - ProviderMsgId: ${result.providerMessageId || "-"}`
         );
       } else {
         failedRecipients.push({
           patientId: patient.id,
           phone: patient.phone,
-          reason: sendResult.error || sendResult.providerRaw,
+          reason: result.reason || result.error || "Bilinmeyen hata",
         });
         await writeAudit(
           auth.user.id,
           "SMS_TOPLU_FAILED",
-          `[Paket:${packageId}] ${patient.fullName} (${patient.phone}) - ${sendResult.error || sendResult.providerRaw}`
+          `[Paket:${packageId}] ${patient.fullName} (${patient.phone}) - ${result.reason || result.error || "Bilinmeyen hata"}`
         );
       }
     }
   }
 
   const failed = failedRecipients.length;
-  if (failed > 0) {
-    await prisma.institution.update({
-      where: { id: institution.id },
-      data: { smsBalance: { increment: failed } },
-    });
-  }
-
   const refreshedInstitution = await prisma.institution.findUnique({ where: { id: institution.id } });
 
   return NextResponse.json({

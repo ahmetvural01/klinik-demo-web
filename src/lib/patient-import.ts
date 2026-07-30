@@ -1,5 +1,6 @@
 import ExcelJS from "exceljs";
 import { PHONE_REGEX } from "@/lib/validators";
+import { normalizeLocalPhone } from "@/lib/phone-number";
 
 // Klinik geçmiş verilerini (hasta + ödeme + tedavi + reçete geçmişi) toplu
 // aktarma şablonu ve ayrıştırıcısı. Süperadmin bu şablonu klinik için indirir,
@@ -62,7 +63,7 @@ const TREATMENT_STATUS_MAP: Record<string, string> = {
 export const PATIENT_COLUMNS = [
   { key: "tcNo", header: "TC Kimlik No*", required: true, width: 16, textFormat: true },
   { key: "fullName", header: "Ad Soyad*", required: true, width: 24 },
-  { key: "phone", header: "Telefon* (0XXXXXXXXXX)", required: true, width: 18, textFormat: true },
+  { key: "phone", header: "Telefon* (5XXXXXXXXX)", required: true, width: 18, textFormat: true },
   { key: "gender", header: "Cinsiyet*", required: true, width: 12, list: GENDER_OPTIONS as unknown as string[] },
   { key: "birthDate", header: "Doğum Tarihi (GG.AA.YYYY)", required: false, width: 16 },
   { key: "address", header: "Adres", required: false, width: 28 },
@@ -467,11 +468,9 @@ export async function parseImportWorkbook(buffer: Buffer): Promise<ImportParseRe
 
       if (!/^\d{11}$/.test(tcNo)) errors.push("TC Kimlik No 11 haneli sayı olmalı");
       if (fullName.length < 3) errors.push("Ad Soyad zorunlu (en az 3 karakter)");
-      const normalizedPhone = phone.replace(/\s+/g, "");
-      // Önceden yalnızca "0 ile başlayan 11 hane" kontrol ediliyordu — sabit
-      // hat gibi geçerli olmayan numaralar bile kabul ediliyordu, oysa elle
-      // hasta ekleme aynı PHONE_REGEX (gerçek cep telefonu formatı) ile
-      // doğrulanıyor (bkz. denetim raporu — tutarsız doğrulama).
+      const normalizedPhone = normalizeLocalPhone(phone, "+90");
+      // Elle kayıt ve Excel aktarımı aynı kanonik +90 telefon biçimini kullanır.
+      // Eski 05XX biçimi içe aktarım sırasında güvenle 5XX biçimine çevrilir.
       if (!PHONE_REGEX.test(normalizedPhone)) errors.push("Telefon 5XX XXX XX XX formatında (cep telefonu) olmalı");
 
       const genderRaw = normalizeTrKey(cellText(get("gender")));

@@ -3,30 +3,43 @@ import { PrismaClient, Role } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
+function requireEnv(name: string) {
+  const value = process.env[name];
+  if (!value) {
+    throw new Error(`${name} environment variable is required for seeding.`);
+  }
+  return value;
+}
+
 async function main() {
-  const adminPass = await bcrypt.hash("10711453", 10);
+  const adminPass = await bcrypt.hash(requireEnv("DEMO_ADMIN_PASSWORD"), 10);
+  const institutionName = process.env.DEMO_INSTITUTION_NAME || "demo-klinik";
+  const institutionEmail = process.env.DEMO_INSTITUTION_EMAIL || "demo@local.test";
+  const institutionWebsite = process.env.DEMO_INSTITUTION_WEBSITE || "www.demo.local";
+  const demoAdminIdentity = process.env.DEMO_ADMIN_IDENTITY || "00000000000";
+  const demoAdminFullName = process.env.DEMO_ADMIN_FULL_NAME || "Demo Kullanici";
 
   // Create Institution
   const institution = await prisma.institution.create({
     data: {
-      name: "whitedental",
-      email: "info@whitedental.com",
+        name: institutionName,
+        email: institutionEmail,
       phone: "05306375370",
       address: "Cukurova / Adana",
       subscriptionPlan: "PROFESYONEL",
       smsBalance: 100,
       isActive: true
     }
-  }).catch(() => prisma.institution.findFirst({ where: { email: "info@whitedental.com" } }));
+  }).catch(() => prisma.institution.findFirst({ where: { email: institutionEmail } }));
 
   if (!institution) throw new Error("Institution creation failed");
 
   // Create Admin User
   const admin = await prisma.user.create({
     data: {
-      identityNo: "10000000001",
+      identityNo: demoAdminIdentity,
       institutionId: institution.id,
-      fullName: "Klinik Yoneticisi",
+      fullName: demoAdminFullName,
       role: Role.YONETICI,
       passwordHash: adminPass,
       isActive: true,
@@ -46,7 +59,7 @@ async function main() {
       institutionName: "Adana White Dental Clinic",
       institutionAddress: "Cukurova / Adana",
       institutionPhone: "05306375370",
-      institutionWebsite: "www.adanawhitedental.com",
+      institutionWebsite,
       openingTime: "08:30",
       closingTime: "23:59",
       appointmentDuration: 15
@@ -56,7 +69,7 @@ async function main() {
   console.log("✓ Seed completed successfully");
   console.log(`  Institution: ${institution.name}`);
   console.log(`  Admin: ${admin?.fullName || "N/A"}`);
-  console.log(`  Login: whitedental / 10000000001 / 10711453`);
+  console.log(`  Login: ${institutionName} / ${demoAdminIdentity} / DEMO_ADMIN_PASSWORD`);
 }
 
 main()

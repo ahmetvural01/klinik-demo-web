@@ -75,7 +75,7 @@ export async function getBillingStatus(institutionId: string): Promise<BillingSt
 
   return {
     nextDueDate: dueDate ? dueDate.toISOString() : null,
-    daysUntilDue: daysUntilDue !== null && daysUntilDue >= 0 ? daysUntilDue : (daysUntilDue !== null ? 0 : null),
+    daysUntilDue,
     isRestricted,
     restrictedNote: isRestricted ? (institution?.serviceNote || null) : null,
   };

@@ -331,20 +331,26 @@ export async function sendWhatsapp(
     }
   }
 
+  if (!options.institutionId) {
+    return {
+      success: false,
+      providerRaw: "NO_INSTITUTION",
+      error: "WhatsApp gönderimi bir kuruma bağlı olmadan yapılamaz.",
+    };
+  }
+
+  // Platform genelinde paylaşılan bir WhatsApp sağlayıcısı yok — her klinik
+  // yalnızca kendi bağladığı sağlayıcıyı kullanır, mesaj hiçbir zaman ortak bir
+  // numaradan gitmez (bkz. docs/ILETISIM-MIMARISI-RAPORU.md §3).
   const providers = await prisma.whatsappProviderConfig.findMany({
-    where: {
-      isActive: true,
-      ...(options.institutionId
-        ? { OR: [{ institutionId: options.institutionId }, { institutionId: null }] }
-        : {}),
-    },
-    orderBy: [{ institutionId: "desc" }, { priority: "asc" }, { createdAt: "asc" }],
+    where: { isActive: true, institutionId: options.institutionId },
+    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
   });
   if (providers.length === 0) {
     return {
       success: false,
       providerRaw: "NO_ACTIVE_PROVIDER",
-      error: "Aktif bir WhatsApp sağlayıcısı tanımlı değil.",
+      error: "Bu klinik için aktif bir WhatsApp sağlayıcısı tanımlı değil.",
     };
   }
 

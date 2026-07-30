@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, useRef } from "react";
+import { Download, List as ListIcon, Pencil, Plus } from "lucide-react";
 import { OdontogramSelector, ToothStatus as TSType, TOOTH_STATUS_LABELS } from "@/components/ToothChart";
 import { PatientConsentPanel } from "@/components/PatientConsentPanel";
 import { SearchSelect } from "@/components/ui/SearchSelect";
@@ -23,6 +24,7 @@ import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 import { addPdfSection, createPdfDoc, pdfSafeText } from "@/lib/pdf-export";
 import { cachedGet } from "@/lib/client-cache";
 import { PatientFormModal } from "@/components/patient/PatientFormModal";
+import { Badge } from "@/components/ui/Badge";
 
 type PatientDocument = {
   id: string;
@@ -100,6 +102,24 @@ type Patient = {
   hasContagiousDisease: boolean; contagiousDiseaseNote?: string | null;
   appointments: Appt[]; examinations: Exam[]; payments: Pay[];
   prescriptions: Rx[]; labOrders: LabOrder[]; taksitPlanlari: TaksitPlan[];
+  smsPreference?: SmsPreference | null;
+  smsConsentTokens?: SmsConsentTokenLite[];
+};
+// Bkz. docs/ILETISIM-MIMARISI-RAPORU.md §1.5 — hasta kartındaki SMS İzin
+// Durumu kartı. EXPIRED alanı DB'de tutulmaz, aşağıda türetilir.
+type SmsPreference = {
+  status: "PENDING" | "ENABLED" | "DISABLED" | "EXPIRED";
+  firstConsentAt?: string | null;
+  lastRejectionAt?: string | null;
+  lastRequestSentAt?: string | null;
+  lastRequestAttemptAt?: string | null;
+  lastRequestError?: string | null;
+};
+type SmsConsentTokenLite = {
+  purpose: "INITIAL" | "RESEND";
+  expiresAt: string;
+  usedAt?: string | null;
+  resultStatus?: "PENDING" | "ENABLED" | "DISABLED" | "EXPIRED" | null;
 };
 type Appt = { id: string; startAt: string; endAt: string; type: string; status: string; doctor?: { fullName: string } };
 type Exam = { id: string; treatmentName: string; toothNo?: string | null; amount: string | number; status: string; diagnosedAt: string; doctorId: string; doctor?: { id: string; fullName: string } };
@@ -447,7 +467,7 @@ function LabDentalChart({ selected, onChange }: { selected: number[]; onChange: 
   };
 
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white p-3 shadow-sm">
+    <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
       <div className="mb-2.5 flex flex-wrap gap-1.5">
         {[
           { label: "Üst Çene", group: [...UPPER_RIGHT, ...UPPER_LEFT] },
@@ -564,6 +584,21 @@ export default function HastaDetayContent() {
   const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const showToast = (type: "success" | "error", text: string) => {
     setToast({ type, text }); setTimeout(() => setToast(null), 3500);
+  };
+  const [smsConsentResending, setSmsConsentResending] = useState(false);
+  const resendSmsConsent = async () => {
+    setSmsConsentResending(true);
+    try {
+      const res = await fetch(`/api/patients/${id}/sms-consent/resend`, { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) { showToast("error", body?.message || "SMS izin bağlantısı gönderilemedi"); return; }
+      showToast("success", "SMS izin bağlantısı tekrar gönderildi");
+      void load();
+    } catch {
+      showToast("error", "Bağlantı hatası, lütfen tekrar deneyin");
+    } finally {
+      setSmsConsentResending(false);
+    }
   };
 
   // Recete
@@ -762,18 +797,38 @@ export default function HastaDetayContent() {
   const closeActionMenu = () => {
     if (actionMenuRef.current) actionMenuRef.current.open = false;
   };
+  const closeMoreMenu = () => {
+    if (moreMenuRef.current) moreMenuRef.current.open = false;
+  };
 
   useEffect(() => {
     const closeOnOutsidePointer = (event: PointerEvent) => {
-      const menu = actionMenuRef.current;
-      if (!menu?.open) return;
-      if (event.target instanceof Node && !menu.contains(event.target)) {
-        menu.open = false;
+      if (!(event.target instanceof Node)) return;
+
+      for (const menu of [actionMenuRef.current, moreMenuRef.current]) {
+        if (menu?.open && !menu.contains(event.target)) {
+          menu.open = false;
+        }
       }
     };
 
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+
+      const openMenu = [actionMenuRef.current, moreMenuRef.current].find((menu) => menu?.open);
+      if (!openMenu) return;
+
+      event.preventDefault();
+      openMenu.open = false;
+      openMenu.querySelector<HTMLElement>("summary")?.focus();
+    };
+
     document.addEventListener("pointerdown", closeOnOutsidePointer);
-    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
   }, []);
 
   const visibleTabKeys = new Set(visibleTabItems.map((item) => item.key));
@@ -2748,9 +2803,9 @@ export default function HastaDetayContent() {
         </div>
       )}
 
-      <div className="rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
+      <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="flex min-w-0 basis-full items-center gap-3 sm:basis-auto sm:flex-1">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-base font-bold text-white">
             {data.fullName.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase()}
           </div>
@@ -2769,12 +2824,13 @@ export default function HastaDetayContent() {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
           <details ref={actionMenuRef} className="relative">
-            <summary className="cursor-pointer list-none rounded-xl bg-slate-950 px-3 py-2 text-sm font-bold text-white transition hover:bg-slate-800">
+            <summary className="inline-flex h-10 cursor-pointer list-none items-center gap-2 rounded-xl bg-slate-950 px-3 text-sm font-bold text-white transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2">
+              <Plus className="h-4 w-4" aria-hidden="true" />
               İşlem Ekle
             </summary>
-            <div className="absolute right-0 z-30 mt-2 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+            <div className="absolute right-0 z-30 mt-2 w-48 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
               {canOpenTab("tedavi") && (
                 <button
                   type="button"
@@ -2837,23 +2893,36 @@ export default function HastaDetayContent() {
             type="button"
             onClick={() => setExportModalOpen(true)}
             title="Hasta dosyasını seçili içeriklerle PDF veya Excel olarak dışa aktar"
-            className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+            aria-label="Hasta dosyasını dışa aktar"
+            className="inline-flex h-10 w-10 items-center justify-center gap-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 sm:w-auto sm:px-3"
           >
-            Dışa Aktar
+            <Download className="h-4 w-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Dışa Aktar</span>
           </button>
           {canEditPatient && (
             <button
               type="button"
               onClick={() => setShowEditModal(true)}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+              title="Hasta bilgilerini düzenle"
+              aria-label="Hasta bilgilerini düzenle"
+              className="inline-flex h-10 w-10 items-center justify-center gap-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 sm:w-auto sm:px-3"
             >
-              Düzenle
+              <Pencil className="h-4 w-4" aria-hidden="true" />
+              <span className="hidden sm:inline">Düzenle</span>
             </button>
           )}
-          <Link href="/hasta" className="rounded-xl border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-600 transition hover:bg-slate-50">Hasta Listesi</Link>
+          <Link
+            href="/hasta"
+            title="Hasta listesine dön"
+            aria-label="Hasta listesine dön"
+            className="inline-flex h-10 w-10 items-center justify-center gap-2 rounded-xl border border-slate-200 text-sm font-semibold text-slate-600 transition hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 sm:w-auto sm:px-3"
+          >
+            <ListIcon className="h-4 w-4" aria-hidden="true" />
+            <span className="hidden sm:inline">Hasta Listesi</span>
+          </Link>
         </div>
         </div>
-        <div className="mt-3 grid gap-2 border-t border-slate-100 pt-3 sm:grid-cols-4">
+        <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-100 pt-3 sm:grid-cols-4">
           <button onClick={() => canOpenTab("randevular") && selectTab("randevular")} className="rounded-lg bg-slate-50 px-3 py-2 text-left text-xs text-slate-500 hover:bg-slate-100">
             <span className="block font-bold uppercase">Randevu</span><span className="text-sm font-black text-slate-900">{data.appointments.length}</span>
           </button>
@@ -2869,7 +2938,7 @@ export default function HastaDetayContent() {
         </div>
       </div>
 
-      <div className="sticky top-0 z-20 flex items-center justify-between gap-2 rounded-2xl border border-slate-100 bg-white p-1.5 shadow-sm">
+      <div className="sticky top-0 z-20 flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm">
         <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
           {primaryTabs.map((tabKey) => (
             <button
@@ -2887,14 +2956,14 @@ export default function HastaDetayContent() {
             <summary className={"cursor-pointer list-none rounded-xl px-4 py-2 text-sm font-black transition-colors " + (isMoreTabActive ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900")}>
               Diğer
             </summary>
-            <div className="absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+            <div className="absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
               {moreTabs.map((tabKey) => (
                 <button
                   key={tabKey}
                   type="button"
                   onClick={() => {
                     selectTab(tabKey);
-                    if (moreMenuRef.current) moreMenuRef.current.open = false;
+                    closeMoreMenu();
                   }}
                   className={"block w-full px-3 py-2 text-left text-sm font-semibold transition-colors " + (tab === tabKey ? "bg-slate-50 text-slate-950" : "text-slate-700 hover:bg-slate-50")}
                 >
@@ -2909,7 +2978,7 @@ export default function HastaDetayContent() {
       {tab === "bilgi" && (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-4">
-            <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+            <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
               <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
                 <div>
                   <h3 className="text-base font-black text-slate-900">Açık İşler</h3>
@@ -2937,7 +3006,7 @@ export default function HastaDetayContent() {
               )}
             </div>
 
-            <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+            <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
                   <h3 className="text-base font-black text-slate-900">Hasta Notu</h3>
@@ -2979,7 +3048,7 @@ export default function HastaDetayContent() {
           </div>
 
           <aside className="space-y-4">
-            <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+            <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <h3 className="text-base font-black text-slate-900">Hasta Profili</h3>
                 {canEditPatient && (
@@ -3029,6 +3098,94 @@ export default function HastaDetayContent() {
                 Finans detayı için Ödeme sekmesine git →
               </button>
             </div>
+
+            {(() => {
+              const pref = data.smsPreference;
+              const latestToken = data.smsConsentTokens?.[0] || null;
+              const now = Date.now();
+              // EXPIRED DB'de ayrı bir durum olarak tutulmaz — hasta hiç yanıt
+              // vermeden en son token'ın süresi dolduysa burada türetilir
+              // (bkz. docs/ILETISIM-MIMARISI-RAPORU.md §1.4).
+              const displayStatus: SmsPreference["status"] =
+                pref?.status === "PENDING" && latestToken && !latestToken.usedAt && new Date(latestToken.expiresAt).getTime() < now
+                  ? "EXPIRED"
+                  : pref?.status || "PENDING";
+              const STATUS_LABEL: Record<SmsPreference["status"], string> = {
+                PENDING: "Onay Bekliyor",
+                ENABLED: "Onaylandı",
+                DISABLED: "Reddedildi",
+                EXPIRED: "Süresi Doldu",
+              };
+              const STATUS_TONE: Record<SmsPreference["status"], "warning" | "success" | "neutral" | "critical"> = {
+                PENDING: "warning",
+                ENABLED: "success",
+                DISABLED: "neutral",
+                EXPIRED: "critical",
+              };
+              const tokenStateLabel = !latestToken
+                ? "—"
+                : latestToken.usedAt
+                ? "Kullanıldı"
+                : new Date(latestToken.expiresAt).getTime() < now
+                ? "Süresi Doldu"
+                : "Aktif";
+              const dateText = (value?: string | null) => value ? new Date(value).toLocaleString("tr-TR") : "—";
+              // Gönderilmemiş bir SMS'in "hastaya ulaşmış, cevap bekleniyor" gibi
+              // görünmesini önler — lastRequestError yalnızca son deneme
+              // başarısız/bastırılmışsa dolu kalır (başarılı göndermede temizlenir,
+              // bkz. src/lib/sms-consent.ts).
+              const sendFailed = pref?.status === "PENDING" && Boolean(pref?.lastRequestError);
+
+              return (
+                <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <h3 className="text-base font-black text-slate-900">SMS İzin Durumu</h3>
+                    <Badge tone={STATUS_TONE[displayStatus]} solid>{STATUS_LABEL[displayStatus]}</Badge>
+                  </div>
+                  {sendFailed && (
+                    <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5">
+                      <p className="text-xs font-black text-red-700">Onay SMS&apos;i gönderilemedi</p>
+                      <p className="mt-0.5 text-xs text-red-600">{pref?.lastRequestError}</p>
+                      <p className="mt-0.5 text-[11px] text-red-500">Son deneme: {dateText(pref?.lastRequestAttemptAt)}</p>
+                    </div>
+                  )}
+                  <dl className="space-y-2 text-sm">
+                    <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
+                      <dt className="text-xs font-bold uppercase text-slate-400">İlk Onay</dt>
+                      <dd className="min-w-0 truncate font-semibold text-slate-800">{dateText(pref?.firstConsentAt)}</dd>
+                    </div>
+                    <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
+                      <dt className="text-xs font-bold uppercase text-slate-400">Son Ret</dt>
+                      <dd className="min-w-0 truncate font-semibold text-slate-800">{dateText(pref?.lastRejectionAt)}</dd>
+                    </div>
+                    <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
+                      <dt className="text-xs font-bold uppercase text-slate-400">Son Gönderim</dt>
+                      <dd className="min-w-0 truncate font-semibold text-slate-800">{dateText(pref?.lastRequestSentAt)}</dd>
+                    </div>
+                    <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
+                      <dt className="text-xs font-bold uppercase text-slate-400">Bağlantı</dt>
+                      <dd className="min-w-0 truncate font-semibold text-slate-800">
+                        {latestToken ? (latestToken.purpose === "RESEND" ? "Tekrar Gönderim" : "İlk SMS") : "—"}
+                      </dd>
+                    </div>
+                    <div className="grid grid-cols-[120px_minmax(0,1fr)] gap-2">
+                      <dt className="text-xs font-bold uppercase text-slate-400">Token Durumu</dt>
+                      <dd className="min-w-0 truncate font-semibold text-slate-800">{tokenStateLabel}</dd>
+                    </div>
+                  </dl>
+                  {canEditPatient && (
+                    <button
+                      type="button"
+                      onClick={resendSmsConsent}
+                      disabled={smsConsentResending}
+                      className="mt-4 w-full rounded-xl border border-slate-200 px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {smsConsentResending ? "Gönderiliyor..." : "SMS Onayını Tekrar Gönder"}
+                    </button>
+                  )}
+                </div>
+              );
+            })()}
           </aside>
         </div>
       )}
@@ -3226,7 +3383,7 @@ export default function HastaDetayContent() {
             </div>
           )}
           {currentUserRole === "ASISTAN" ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
+          <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
             Yeni muayene/tedavi eklemek için doktor yetkisi gereklidir. Mevcut kayıtları aşağıdaki listede görüntüleyebilirsiniz.
           </div>
           ) : (
@@ -3234,11 +3391,11 @@ export default function HastaDetayContent() {
             <h3 className="text-lg font-bold text-slate-900">Muayene/Tedavi Oluştur</h3>
             <p className="mb-4 mt-1 text-sm text-slate-500">Doktor ve tedavi seçin. Diş şemasından tıkladığınız dişler otomatik olarak muayene listesine aktarılır.</p>
 
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/80 px-3 py-2">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
               <div className="text-xs text-slate-600">
                 Fiyat kaynağı: <span className="font-semibold text-slate-900">{activePriceList === "custom" ? "Özel fiyat listesi" : "TDB 2026 tarifesi"}</span>
               </div>
-              <div className="panel-tabbar rounded-2xl border-slate-200 bg-white p-1">
+              <div className="panel-tabbar rounded-lg border-slate-200 bg-white p-1">
                 <button
                   type="button"
                   onClick={() => void saveActivePriceList("standard")}
@@ -3257,18 +3414,18 @@ export default function HastaDetayContent() {
             </div>
 
             <div className="mb-4 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-3">
-              <div className="flex items-center overflow-hidden rounded-2xl border border-slate-200 bg-white">
+              <div className="flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
                 <span className="shrink-0 bg-primary px-3 py-2 text-sm font-semibold text-white">Hasta</span>
                 <input value={data?.fullName || ""} readOnly className="flex-1 border-none px-3 py-2 text-sm outline-none" />
               </div>
-              <div className="flex items-center overflow-hidden rounded-2xl border border-slate-200 bg-white">
+              <div className="flex items-center overflow-hidden rounded-lg border border-slate-200 bg-white">
                 <span className="shrink-0 bg-primary px-3 py-2 text-sm font-semibold text-white">Doktor</span>
                 <select className="flex-1 border-none px-3 py-2 text-sm outline-none" value={treatDoctorId} onChange={e => setTreatDoctorId(e.target.value)}>
                   <option value="">Doktor seçin...</option>
                   {doctorOptions.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
                 </select>
               </div>
-              <div className="relative flex items-center overflow-visible rounded-2xl border border-slate-200 bg-white">
+              <div className="relative flex items-center overflow-visible rounded-lg border border-slate-200 bg-white">
                 <span className="shrink-0 bg-primary px-3 py-2 text-sm font-semibold text-white">Tedavi</span>
                 <input
                   value={treatmentQuery}
@@ -3290,7 +3447,7 @@ export default function HastaDetayContent() {
                   className="min-w-0 flex-1 border-none px-3 py-2 text-sm outline-none"
                 />
                 {treatmentDropdownOpen && (
-                  <div className="absolute left-16 right-0 top-full z-50 mt-2 max-h-80 overflow-auto rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] py-1 shadow-[0_18px_36px_rgba(15,23,42,0.12)]">
+                  <div className="absolute left-16 right-0 top-full z-50 mt-2 max-h-80 overflow-auto rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
                     {filteredTreatmentPool.length === 0 ? (
                       <div className="px-3 py-3 text-sm text-slate-400">Tedavi bulunamadı</div>
                     ) : (
@@ -3333,7 +3490,7 @@ export default function HastaDetayContent() {
                 {treatSelectedTeeth.length > 0 && <button className="text-xs text-slate-500 hover:text-red-600" onClick={() => setTreatSelectedTeeth([])}>Seçimi Temizle</button>}
               </div>
 
-              <div className="mb-3 flex flex-wrap gap-2 rounded-2xl border border-slate-100 bg-slate-50/80 p-2">
+              <div className="mb-3 flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-slate-50/80 p-2">
                 {[
                   {
                     label: "Üst Çene",
@@ -3694,7 +3851,7 @@ export default function HastaDetayContent() {
 
       {tab === "odeme" && (
         <div className="space-y-4">
-          <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm sm:grid-cols-4 sm:divide-y-0">
+          <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm sm:grid-cols-4 sm:divide-y-0">
             <div className="p-3 text-center"><p className="text-xs text-slate-500">Brüt Tedavi</p><p className="font-bold text-slate-900">{totalCharged.toFixed(2)} TL</p></div>
             <div className="p-3 text-center"><p className="text-xs text-slate-500">İndirim</p><p className="font-bold text-orange-600">%{data.discountRate}</p></div>
             <div className="p-3 text-center"><p className="text-xs text-slate-500">İndirimli Tutar</p><p className="font-bold text-primary">{discountedTotal.toFixed(2)} TL</p></div>
@@ -4261,7 +4418,7 @@ export default function HastaDetayContent() {
         <div className="space-y-4">
           <PatientConsentPanel patientId={data.id} patientName={data.fullName} patientTcNo={data.tcNo} />
 
-          <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h3 className="font-semibold text-slate-900">Belge / Röntgen Yükle</h3>
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">JPG, PNG, WEBP, PDF · 15MB</span>
@@ -4520,7 +4677,7 @@ export default function HastaDetayContent() {
       {labDetailAction && labOrderDetail && (
         <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/40 p-4 backdrop-blur-sm" onClick={closeLabDetailAction}>
           <div
-            className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white shadow-2xl ring-1 ring-black/5"
+            className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-lg bg-white shadow-lg ring-1 ring-black/5"
             onClick={(e) => e.stopPropagation()}
             role="dialog"
             aria-modal="true"

@@ -10,7 +10,6 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  Eye,
   Filter,
   Pencil,
   Phone,
@@ -136,10 +135,11 @@ function HastaContent() {
   const [userRole, setUserRole] = useState(() => readCachedAuthRole());
   const [showQuickCreate, setShowQuickCreate] = useState(false);
   const [editPatientId, setEditPatientId] = useState<string | null>(null);
+  const [smsConsentFilter, setSmsConsentFilter] = useState(searchParams.get("smsConsent") || "");
 
   const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
   const canDeletePatients = userRole === "SUPERADMIN" || userRole === "YONETICI";
-  const activeFilterCount = [doctorId].filter(Boolean).length;
+  const activeFilterCount = [doctorId, smsConsentFilter].filter(Boolean).length;
 
   useEffect(() => {
     if (searchParams.get("yeni") === "1") setShowQuickCreate(true);
@@ -206,6 +206,7 @@ function HastaContent() {
       sortDir,
     });
     if (doctorId) params.set("doctorId", doctorId);
+    if (smsConsentFilter) params.set("smsConsent", smsConsentFilter);
     if (summaryLoadedRef.current && !force) params.set("summary", "false");
 
     try {
@@ -226,7 +227,7 @@ function HastaContent() {
     } finally {
       setLoading(false);
     }
-  }, [debouncedQuery, doctorId, page, pageSize, sortDir, sortKey]);
+  }, [debouncedQuery, doctorId, smsConsentFilter, page, pageSize, sortDir, sortKey]);
 
   useEffect(() => {
     void load();
@@ -280,7 +281,17 @@ function HastaContent() {
     setQuery("");
     setDebouncedQuery("");
     setDoctorId("");
+    setSmsConsentFilter("");
     setPage(1);
+    if (searchParams.get("smsConsent")) window.history.replaceState(null, "", "/hasta");
+  };
+
+  const SMS_CONSENT_FILTER_LABELS: Record<string, string> = {
+    ENABLED: "SMS İzni: Onaylandı",
+    DISABLED: "SMS İzni: Reddedildi",
+    PENDING: "SMS İzni: Onay Bekliyor",
+    EXPIRED: "SMS İzni: Süresi Doldu",
+    SEND_FAILED: "SMS İzni: Onay SMS'i Gönderilemedi",
   };
 
   const SortButton = ({ col, label }: { col: SortKey; label: string }) => (
@@ -307,7 +318,7 @@ function HastaContent() {
 
   return (
     <section className="space-y-4">
-      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+      <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <div>
             <h1 className="text-lg font-black text-slate-900">Hastalar</h1>
@@ -331,7 +342,7 @@ function HastaContent() {
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] p-3 shadow-[0_10px_24px_rgba(15,23,42,0.04)]">
+      <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
         <div className="grid gap-2 xl:grid-cols-[1fr_auto] xl:items-center">
           <div className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_160px]">
             <label className="relative block">
@@ -342,7 +353,7 @@ function HastaContent() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Ad, TC, telefon, kurum/sigorta veya referans kişi ile ara... ( / )"
-                className="h-10 w-full rounded-2xl border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/20"
+                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/20"
               />
             </label>
             <select
@@ -352,7 +363,7 @@ function HastaContent() {
                 setPage(1);
               }}
               aria-label="Doktor filtresi"
-              className="h-10 rounded-2xl border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
             >
               <option value="">Tüm doktorlar</option>
               {doctors.map((d) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
@@ -360,7 +371,7 @@ function HastaContent() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex h-10 items-center gap-2 rounded-2xl border border-slate-200 px-3 text-sm text-slate-500">
+            <div className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm text-slate-500">
               <Filter className="h-4 w-4" />
               {activeFilterCount} filtre
             </div>
@@ -368,7 +379,7 @@ function HastaContent() {
               <button
                 type="button"
                 onClick={resetFilters}
-                className="inline-flex h-10 items-center gap-1 rounded-2xl border border-slate-200 px-3 text-sm font-semibold text-slate-600 hover:bg-primary/[0.04]"
+                className="inline-flex h-10 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-600 hover:bg-primary/[0.04]"
               >
                 <X className="h-4 w-4" />
                 Temizle
@@ -378,9 +389,25 @@ function HastaContent() {
         </div>
       </div>
 
+      {smsConsentFilter && (
+        <div className="flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-bold text-primary">
+            {SMS_CONSENT_FILTER_LABELS[smsConsentFilter] || smsConsentFilter}
+            <button
+              type="button"
+              onClick={() => { setSmsConsentFilter(""); setPage(1); window.history.replaceState(null, "", "/hasta"); }}
+              className="ml-0.5 rounded-full p-0.5 hover:bg-primary/10"
+              aria-label="SMS izin filtresini kaldır"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          </span>
+        </div>
+      )}
+
       {error && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</p>}
 
-      <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98)_0%,rgba(249,252,251,0.98)_100%)] shadow-[0_10px_24px_rgba(15,23,42,0.04)]" aria-busy={loading}>
+      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" aria-busy={loading}>
         <div className="divide-y divide-slate-100 md:hidden">
           {loading && patients.length === 0 ? (
             <ListRowSkeleton rows={6} />
@@ -391,7 +418,20 @@ function HastaContent() {
               const age = calculateAge(patient.birthDate);
               const riskFlag = hasMedicalRisk(patient);
               return (
-                <div key={patient.id} className="p-4">
+                <div
+                  key={patient.id}
+                  role="link"
+                  tabIndex={0}
+                  aria-label={`${patient.fullName} hasta kartını aç`}
+                  onClick={(event) => {
+                    if ((event.target as HTMLElement).closest("button, a")) return;
+                    router.push(`/hasta-detay?id=${patient.id}`);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") router.push(`/hasta-detay?id=${patient.id}`);
+                  }}
+                  className="cursor-pointer p-4 transition-colors hover:bg-primary/[0.035] focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25"
+                >
                   <div className="flex items-start gap-3">
                     <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-black text-primary">
                       {patientInitials(patient.fullName)}
@@ -417,8 +457,7 @@ function HastaContent() {
                     {patient.hasContagiousDisease && <span className="rounded-full bg-red-600 px-2 py-0.5 text-xs font-black text-white" title={patient.contagiousDiseaseNote || undefined}>⚠ Bulaşıcı Hastalık</span>}
                     {riskFlag && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Medikal uyarı</span>}
                   </div>
-                  <div className={`mt-4 grid gap-2 ${canDeletePatients ? "grid-cols-3" : "grid-cols-2"}`}>
-                    <Link href={`/hasta-detay?id=${patient.id}`} className="rounded-lg bg-primary px-3 py-2 text-center text-sm font-bold text-white">Kart</Link>
+                  <div className={`mt-4 grid gap-2 ${canDeletePatients ? "grid-cols-2" : "grid-cols-1"}`}>
                     <button type="button" onClick={() => setEditPatientId(patient.id)} className="rounded-lg border border-slate-200 px-3 py-2 text-center text-sm font-semibold text-slate-700">Düzenle</button>
                     {canDeletePatients && <button type="button" onClick={() => remove(patient.id)} className="rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-600">Sil</button>}
                   </div>
@@ -468,7 +507,20 @@ function HastaContent() {
                 const age = calculateAge(patient.birthDate);
                 const riskFlag = hasMedicalRisk(patient);
                 return (
-                  <tr key={patient.id} className="transition hover:bg-slate-50/80">
+                  <tr
+                    key={patient.id}
+                    role="link"
+                    tabIndex={0}
+                    aria-label={`${patient.fullName} hasta kartını aç`}
+                    onClick={(event) => {
+                      if ((event.target as HTMLElement).closest("button, a")) return;
+                      router.push(`/hasta-detay?id=${patient.id}`);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") router.push(`/hasta-detay?id=${patient.id}`);
+                    }}
+                    className="cursor-pointer transition-colors hover:bg-primary/[0.035] focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25"
+                  >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
                         <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-black text-primary">
@@ -505,9 +557,6 @@ function HastaContent() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
-                        <Link href={`/hasta-detay?id=${patient.id}`} title="Hasta kartını aç" className="rounded-lg bg-primary/10 p-2 text-primary transition hover:bg-primary hover:text-white">
-                          <Eye className="h-4 w-4" />
-                        </Link>
                         <button type="button" onClick={() => setEditPatientId(patient.id)} title="Düzenle" className="rounded-lg bg-slate-100 p-2 text-slate-600 transition hover:bg-slate-200">
                           <Pencil className="h-4 w-4" />
                         </button>

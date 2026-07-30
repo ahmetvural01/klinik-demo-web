@@ -1,4 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
+import { IconFrame } from "@/components/ui/IconFrame";
 
 export interface FormFieldProps {
   label: string;
@@ -15,7 +16,7 @@ export interface FormFieldProps {
 export function FormField({ label, htmlFor, required, error, hint, children }: FormFieldProps) {
   return (
     <label htmlFor={htmlFor} className="block">
-      <span className="mb-1.5 block text-[11px] font-extrabold uppercase tracking-[0.12em] text-slate-500">
+      <span className="mb-1.5 block text-xs font-semibold text-slate-700">
         {label}
         {required && <span className="text-red-500"> *</span>}
       </span>
@@ -44,11 +45,9 @@ export interface FormSectionProps {
 
 export function FormSection({ icon: Icon, title, description, children }: FormSectionProps) {
   return (
-    <section className="rounded-2xl border border-slate-200/80 bg-white p-5 shadow-[0_10px_26px_rgba(15,23,42,0.04)]">
+    <section className="ui-surface p-4 sm:p-5">
       <div className="mb-4 flex items-start gap-3 border-b border-slate-100/80 pb-3">
-        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary shadow-[0_6px_16px_rgba(13,125,111,0.08)]">
-          <Icon className="h-4 w-4" />
-        </span>
+        <IconFrame icon={Icon} active size="lg" />
         <div>
           <h2 className="text-sm font-extrabold text-slate-900">{title}</h2>
           {description && <p className="mt-0.5 text-xs leading-5 text-slate-500">{description}</p>}
@@ -62,7 +61,7 @@ export function FormSection({ icon: Icon, title, description, children }: FormSe
 export function FormErrorBanner({ message }: { message?: string | null }) {
   if (!message) return null;
   return (
-    <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 shadow-[0_8px_20px_rgba(220,38,38,0.06)]">
+    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
       {message}
     </div>
   );

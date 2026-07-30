@@ -224,8 +224,8 @@ Login API:
 
 ```powershell
 $body = @{
-  institution = "whitedental"
-  identityNo = "10000000001"
+  institution = $env:DEMO_INSTITUTION_NAME
+  identityNo = $env:DEMO_ADMIN_IDENTITY
   password = "<demo-password>"
   rememberMe = $false
 } | ConvertTo-Json

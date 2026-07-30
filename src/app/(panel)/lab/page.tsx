@@ -1452,16 +1452,6 @@ export default function LabPage() {
         );
       },
     },
-    {
-      key: "action",
-      header: "İşlem",
-      align: "right",
-      render: (order) => (
-        <Button size="sm" variant="secondary" onClick={() => openOrderDetail(order)}>
-          Detay
-        </Button>
-      ),
-    },
   ];
 
   return (
@@ -1549,7 +1539,7 @@ export default function LabPage() {
 
       {/* ── List ── */}
       {loadError ? (
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
           <div className="flex min-h-40 flex-col items-center justify-center gap-3 px-6 py-8 text-center">
             <p className="text-sm font-semibold text-slate-800">Laboratuvar verileri yüklenemedi</p>
             <p className="text-sm text-slate-500">{loadError}</p>
