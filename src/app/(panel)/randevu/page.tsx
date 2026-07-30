@@ -2319,6 +2319,16 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                             {outsideHours && slotAppts.length === 0 && (
                               <p className="truncate text-[9px] font-semibold text-slate-400">Mesai dışı</p>
                             )}
+                            {/* Birden fazla randevu aynı saate yığılınca (çakışma onayıyla oluşturulmuş),
+                                satır uzayıp altındaki sonraki saatlerle görsel olarak iç içe geçebiliyor —
+                                hepsinin AYNI saatte olduğunu netleştirmek için bir grup etiketi ekleniyor
+                                (bkz. kullanıcı geri bildirimi: "09:15'e üç hasta yazınca 09:30'a
+                                yazamıyormuşuz gibi görünüyor"). */}
+                            {slotAppts.length > 1 && (
+                              <p className="mb-0.5 truncate rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-800">
+                                ⚠ {slotAppts.length} randevu aynı saatte ({slot})
+                              </p>
+                            )}
                             {slotAppts.map(a => apptBlock(a, canCreateAppointments))}
                             {slotAppts.length === 0 ? (
                               outsideHours ? (
@@ -2427,6 +2437,11 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                           <>
                             {doctorOutsideHours && slotAppts.length === 0 && (
                               <p className="truncate text-[9px] font-semibold text-slate-400">Mesai dışı</p>
+                            )}
+                            {slotAppts.length > 1 && (
+                              <p className="mb-0.5 truncate rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-800">
+                                ⚠ {slotAppts.length} randevu aynı saatte ({slot})
+                              </p>
                             )}
                             {slotAppts.map(a => apptBlock(a, canCreateAppointments))}
                             {slotAppts.length === 0 ? (
