@@ -110,7 +110,7 @@ export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
       || appointment.doctor.institutionId !== institutionId
       || !appointment.smsReminder
       || appointment.startAt <= now
-      || ["IPTAL", "GELMEDI"].includes(appointment.status)
+      || ["IPTAL", "GELMEDI", "TAMAMLANDI"].includes(appointment.status)
     ) {
       skipped += 1;
       await prisma.reminder.update({

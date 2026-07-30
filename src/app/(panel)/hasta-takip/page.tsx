@@ -8,6 +8,7 @@ import {
   getFollowUpMeta,
   parseAppointmentNote,
 } from "@/lib/appointment-follow-up";
+import { getDisplayAppointmentStatus } from "@/lib/appointment-status";
 import { Plus } from "lucide-react";
 import { useToast } from "@/components/ui/ToastProvider";
 import { cachedGet } from "@/lib/client-cache";
@@ -110,9 +111,13 @@ type FollowItem = {
   };
 };
 
+// getDisplayAppointmentStatus'un döndüğü değerlerle anahtarlanır (bkz.
+// src/lib/appointment-status.ts) — ham "GELDI" artık "Bekliyor" (hasta geldi)
+// olarak gösterilir, ham "BEKLIYOR" ise "Planlandı".
 const STATUS_LABELS: Record<string, string> = {
+  PLANLANDI: "Planlandı",
   BEKLIYOR: "Bekliyor",
-  GELDI: "Geldi",
+  TAMAMLANDI: "Tamamlandı",
   GELMEDI: "Gelmedi",
   IPTAL: "İptal",
 };
@@ -654,7 +659,7 @@ export default function HastaTakipPage() {
           doctorName: a.doctor?.fullName || "Doktor atanmamis",
           type: followType,
           followUpLabel: FOLLOW_LABELS[followType] || getFollowUpMeta(parsed.followUp).label,
-          statusLabel: STATUS_LABELS[a.status] || a.status,
+          statusLabel: STATUS_LABELS[getDisplayAppointmentStatus(a.status, a.startAt)] || a.status,
           note: parsed.detail || "Randevu notu bulunmuyor.",
           isOpen: true,
           priority: ageDays > 7 ? 3 : ageDays > 3 ? 2 : 1,

@@ -322,9 +322,9 @@ export function Topbar({ user }: Props) {
     };
   }, [showWaiting, showAlerts]);
 
-  // Banko bir hastayı "Geldi" işaretlediğinde, diğer katlarda/odalarda
-  // çalışan doktor/asistanlar sayfayı yenilemeden fark edebilsin diye,
-  // bekleme listesine yeni giren her hasta için bir toast bildirimi
+  // Banko bir hastayı "Bekliyor" (geldi) işaretlediğinde, diğer katlarda/
+  // odalarda çalışan doktor/asistanlar sayfayı yenilemeden fark edebilsin
+  // diye, bekleme listesine yeni giren her hasta için bir toast bildirimi
   // gösteriyoruz (ilk yüklemede zaten bekleyenler için değil, sadece
   // bu oturum açıkken sonradan eklenenler için).
   const seenWaitingIdsRef = useRef<Set<string> | null>(null);
@@ -523,10 +523,11 @@ export function Topbar({ user }: Props) {
           </div>
         )}
 
-        {/* Bekleme odası — hasta "Geldi" işaretlendiğinde sayfa/kat farkı
-            olmadan tüm klinik personeli bunu hemen görebilsin diye,
+        {/* Bekleme odası — hasta "Bekliyor" (geldi) işaretlendiğinde sayfa/kat
+            farkı olmadan tüm klinik personeli bunu hemen görebilsin diye,
             uygulamanın her ekranında görünen topbar'a bağımsız bir gösterge
-            olarak eklendi (bkz. Randevu ekranındaki "Geldi" işaretlemesi). */}
+            olarak eklendi (bkz. Randevu ekranındaki "Bekliyor" işaretlemesi,
+            ham durum hâlâ GELDI — bkz. src/lib/appointment-status.ts). */}
         {pageConfig.showAlerts && canSeeWaiting && <div className="relative hidden sm:block" ref={waitingRef}>
           <Tooltip label="Bekleyen hastalar" side="bottom">
             <button

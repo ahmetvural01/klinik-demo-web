@@ -26,8 +26,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       select: { id: true, status: true },
     });
     if (!appointment) return NextResponse.json({ message: "Randevu bulunamadı" }, { status: 404 });
-    if (appointment.status !== "GELDI") {
-      return NextResponse.json({ message: "Paket seansı yalnızca hasta geldi olarak işaretlenmiş randevuda kullanılabilir." }, { status: 400 });
+    if (!["GELDI", "TAMAMLANDI"].includes(appointment.status)) {
+      return NextResponse.json({ message: "Paket seansı yalnızca hasta geldi/bekliyor veya tamamlandı olarak işaretlenmiş randevuda kullanılabilir." }, { status: 400 });
     }
     const existingUsage = await prisma.patientPackageUsage.findFirst({ where: { patientPackageId: id, appointmentId }, select: { id: true } });
     if (existingUsage) {

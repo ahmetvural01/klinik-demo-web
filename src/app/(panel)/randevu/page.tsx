@@ -62,13 +62,13 @@ type UpcomingAppointment = {
 const STATUS_COLORS: Record<string, string> = {
   PLANLANDI: "bg-sky-50 border-l-4 border-sky-400",
   BEKLIYOR: "bg-yellow-50 border-l-4 border-yellow-400",
-  GELDI: "bg-green-50 border-l-4 border-green-500",
+  TAMAMLANDI: "bg-green-50 border-l-4 border-green-500",
   GELMEDI: "bg-red-50 border-l-4 border-red-500",
   IPTAL: "bg-gray-100 border-l-4 border-gray-400",
 };
 
 const STATUS_LABELS: Record<string, string> = {
-  PLANLANDI: "Planlandı", BEKLIYOR: "Bekliyor", GELDI: "Geldi", GELMEDI: "Gelmedi", IPTAL: "İptal"
+  PLANLANDI: "Planlandı", BEKLIYOR: "Bekliyor", TAMAMLANDI: "Tamamlandı", GELMEDI: "Gelmedi", IPTAL: "İptal"
 };
 
 function toLocalInput(date: Date) {
@@ -250,7 +250,7 @@ export default function RandevuPage() {
   const [followUpStatus, setFollowUpStatus] = useState<FollowUpKey>("YOK");
   const [followUpNote, setFollowUpNote] = useState("");
   const [detailSaving, setDetailSaving] = useState(false);
-  const [agendaStatusFilter, setAgendaStatusFilter] = useState<"ALL" | "BEKLIYOR" | "GELDI" | "GELMEDI" | "IPTAL">("ALL");
+  const [agendaStatusFilter, setAgendaStatusFilter] = useState<"ALL" | "BEKLIYOR" | "GELDI" | "TAMAMLANDI" | "GELMEDI" | "IPTAL">("ALL");
   const [upcomingSearch, setUpcomingSearch] = useState("");
   const [upcomingLoading, setUpcomingLoading] = useState(false);
   const [upcomingResults, setUpcomingResults] = useState<UpcomingAppointment[]>([]);
@@ -1459,15 +1459,20 @@ export default function RandevuPage() {
     }
     const esc = (v: string) => v.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 
+    // Ham durum anahtarları değişmedi (DB'de hâlâ BEKLIYOR/GELDI/TAMAMLANDI/
+    // GELMEDI/IPTAL) ama ekrandaki anlamları değişti — bkz. src/lib/appointment-status.ts:
+    // ham BEKLIYOR artık "Planlandı" (mavi), ham GELDI artık "Bekliyor" (sarı,
+    // hasta geldi/bekliyor), TAMAMLANDI (yeşil) yeni bir gerçek durum.
     const statusStyle: Record<string, string> = {
-      BEKLIYOR: "background:#FEF3C7;color:#92400E;font-weight:600;",
-      GELDI:    "background:#D1FAE5;color:#065F46;font-weight:600;",
-      GELMEDI:  "background:#FEE2E2;color:#991B1B;font-weight:600;",
-      IPTAL:    "background:#F1F5F9;color:#475569;font-weight:600;",
+      BEKLIYOR:   "background:#DBEAFE;color:#1E40AF;font-weight:600;",
+      GELDI:      "background:#FEF3C7;color:#92400E;font-weight:600;",
+      TAMAMLANDI: "background:#D1FAE5;color:#065F46;font-weight:600;",
+      GELMEDI:    "background:#FEE2E2;color:#991B1B;font-weight:600;",
+      IPTAL:      "background:#F1F5F9;color:#475569;font-weight:600;",
     };
 
     const now = new Date();
-    const statusCounts = { BEKLIYOR: 0, GELDI: 0, GELMEDI: 0, IPTAL: 0 };
+    const statusCounts = { BEKLIYOR: 0, GELDI: 0, TAMAMLANDI: 0, GELMEDI: 0, IPTAL: 0 };
     appointments.forEach((a) => { if (a.status in statusCounts) (statusCounts as Record<string, number>)[a.status]++; });
 
     const doctor = doctorId ? (staff.find((s) => s.id === doctorId)?.fullName || "Tüm Doktorlar") : "Tüm Doktorlar";
@@ -1521,16 +1526,19 @@ export default function RandevuPage() {
     <td colspan="2" style="background:#EEF2FF;padding:6px 16px;font-size:12px;border:1px solid #E2E8F0;color:#3730A3;">
       Toplam: <b>${reportRows.length}</b>
     </td>
-    <td colspan="2" style="background:#FEF3C7;padding:6px 16px;font-size:12px;border:1px solid #E2E8F0;color:#92400E;">
-      Bekliyor: <b>${statusCounts.BEKLIYOR}</b>
+    <td style="background:#DBEAFE;padding:6px 16px;font-size:12px;border:1px solid #E2E8F0;color:#1E40AF;">
+      Planlandı: <b>${statusCounts.BEKLIYOR}</b>
     </td>
-    <td colspan="2" style="background:#D1FAE5;padding:6px 16px;font-size:12px;border:1px solid #E2E8F0;color:#065F46;">
-      Geldi: <b>${statusCounts.GELDI}</b>
+    <td style="background:#FEF3C7;padding:6px 16px;font-size:12px;border:1px solid #E2E8F0;color:#92400E;">
+      Bekliyor: <b>${statusCounts.GELDI}</b>
+    </td>
+    <td style="background:#D1FAE5;padding:6px 16px;font-size:12px;border:1px solid #E2E8F0;color:#065F46;">
+      Tamamlandı: <b>${statusCounts.TAMAMLANDI}</b>
     </td>
     <td style="background:#FEE2E2;padding:6px 16px;font-size:12px;border:1px solid #E2E8F0;color:#991B1B;">
       Gelmedi: <b>${statusCounts.GELMEDI}</b>
     </td>
-    <td style="background:#F1F5F9;padding:6px 16px;font-size:12px;border:1px solid #E2E8F0;color:#475569;">
+    <td colspan="2" style="background:#F1F5F9;padding:6px 16px;font-size:12px;border:1px solid #E2E8F0;color:#475569;">
       İptal: <b>${statusCounts.IPTAL}</b>
     </td>
   </tr>
@@ -1582,13 +1590,14 @@ export default function RandevuPage() {
     const doctor = doctorId ? (staff.find((s) => s.id === doctorId)?.fullName || "Tüm Doktorlar") : "Tüm Doktorlar";
 
     const statusStyle: Record<string, string> = {
-      BEKLIYOR: "background:#FEF3C7;color:#92400E;",
-      GELDI:    "background:#D1FAE5;color:#065F46;",
-      GELMEDI:  "background:#FEE2E2;color:#991B1B;",
-      IPTAL:    "background:#F1F5F9;color:#475569;",
+      BEKLIYOR:   "background:#DBEAFE;color:#1E40AF;",
+      GELDI:      "background:#FEF3C7;color:#92400E;",
+      TAMAMLANDI: "background:#D1FAE5;color:#065F46;",
+      GELMEDI:    "background:#FEE2E2;color:#991B1B;",
+      IPTAL:      "background:#F1F5F9;color:#475569;",
     };
 
-    const statusCounts = { BEKLIYOR: 0, GELDI: 0, GELMEDI: 0, IPTAL: 0 };
+    const statusCounts = { BEKLIYOR: 0, GELDI: 0, TAMAMLANDI: 0, GELMEDI: 0, IPTAL: 0 };
     appointments.forEach((a) => { if (a.status in statusCounts) (statusCounts as Record<string, number>)[a.status]++; });
 
     const rowsHtml = reportRows.length
@@ -1639,8 +1648,9 @@ export default function RandevuPage() {
     .stats { display: flex; gap: 10px; margin-bottom: 14px; }
     .stat-box { flex: 1; padding: 8px 12px; border-radius: 6px; border: 1px solid; }
     .stat-total { background: #EEF2FF; border-color: #C7D2FE; color: #3730A3; }
+    .stat-plan  { background: #DBEAFE; border-color: #BFDBFE; color: #1E40AF; }
     .stat-bek   { background: #FEF3C7; border-color: #FDE68A; color: #92400E; }
-    .stat-gel   { background: #D1FAE5; border-color: #A7F3D0; color: #065F46; }
+    .stat-tam   { background: #D1FAE5; border-color: #A7F3D0; color: #065F46; }
     .stat-gel2  { background: #FEE2E2; border-color: #FECACA; color: #991B1B; }
     .stat-iptal { background: #F1F5F9; border-color: #CBD5E1; color: #475569; }
     .stat-num  { font-size: 20px; font-weight: 800; }
@@ -1686,13 +1696,17 @@ export default function RandevuPage() {
       <div class="stat-num">${reportRows.length}</div>
       <div class="stat-lbl">Toplam</div>
     </div>
-    <div class="stat-box stat-bek">
+    <div class="stat-box stat-plan">
       <div class="stat-num">${statusCounts.BEKLIYOR}</div>
+      <div class="stat-lbl">Planlandı</div>
+    </div>
+    <div class="stat-box stat-bek">
+      <div class="stat-num">${statusCounts.GELDI}</div>
       <div class="stat-lbl">Bekliyor</div>
     </div>
-    <div class="stat-box stat-gel">
-      <div class="stat-num">${statusCounts.GELDI}</div>
-      <div class="stat-lbl">Geldi</div>
+    <div class="stat-box stat-tam">
+      <div class="stat-num">${statusCounts.TAMAMLANDI}</div>
+      <div class="stat-lbl">Tamamlandı</div>
     </div>
     <div class="stat-box stat-gel2">
       <div class="stat-num">${statusCounts.GELMEDI}</div>
@@ -2506,14 +2520,15 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
           <div className="mb-2 flex flex-wrap gap-1">
             {[
               { key: "ALL", label: "Tümü" },
-              { key: "BEKLIYOR", label: "Bekliyor" },
-              { key: "GELDI", label: "Geldi" },
+              { key: "BEKLIYOR", label: "Planlandı" },
+              { key: "GELDI", label: "Bekliyor" },
+              { key: "TAMAMLANDI", label: "Tamamlandı" },
               { key: "GELMEDI", label: "Gelmedi" },
               { key: "IPTAL", label: "İptal" },
             ].map((chip) => (
               <button
                 key={chip.key}
-                onClick={() => setAgendaStatusFilter(chip.key as "ALL" | "BEKLIYOR" | "GELDI" | "GELMEDI" | "IPTAL")}
+                onClick={() => setAgendaStatusFilter(chip.key as "ALL" | "BEKLIYOR" | "GELDI" | "TAMAMLANDI" | "GELMEDI" | "IPTAL")}
                 className={"rounded-full px-3 py-1 text-xs font-semibold " + (agendaStatusFilter === chip.key ? "bg-primary text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200")}
               >
                 {chip.label}
@@ -2542,7 +2557,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                 {parsed.detail && <p className="text-xs text-gray-400 mt-0.5">{parsed.detail}</p>}
                 {parsed.followUp !== "YOK" && <p className={"mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold " + meta.badge}>{meta.label}</p>}
               </div>
-              <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + (displayStatus==="GELDI"?"bg-green-100 text-green-700":displayStatus==="GELMEDI"?"bg-red-100 text-red-700":displayStatus==="IPTAL"?"bg-gray-200 text-gray-600":displayStatus==="PLANLANDI"?"bg-sky-100 text-sky-700":"bg-yellow-100 text-yellow-700")}>
+              <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + (displayStatus==="TAMAMLANDI"?"bg-green-100 text-green-700":displayStatus==="GELMEDI"?"bg-red-100 text-red-700":displayStatus==="IPTAL"?"bg-gray-200 text-gray-600":displayStatus==="PLANLANDI"?"bg-sky-100 text-sky-700":"bg-yellow-100 text-yellow-700")}>
                 {stale && <span title="Geçmiş tarihli, durum işaretlenmemiş">⚠ </span>}
                 {STATUS_LABELS[displayStatus] || a.status}
               </span>
@@ -2888,10 +2903,10 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
               <>
                 <div className="mb-1 flex justify-end">
                   <Badge
-                    tone={selectedAppt.status === "GELDI" ? "success" : selectedAppt.status === "GELMEDI" || selectedAppt.status === "IPTAL" ? "critical" : detailDisplayStatus === "PLANLANDI" ? "info" : "warning"}
+                    tone={detailDisplayStatus === "TAMAMLANDI" ? "success" : detailDisplayStatus === "GELMEDI" || detailDisplayStatus === "IPTAL" ? "critical" : detailDisplayStatus === "PLANLANDI" ? "info" : "warning"}
                     solid
                   >
-                    {detailStale ? "⚠ Bekliyor · Geçmiş" : STATUS_LABELS[detailDisplayStatus] || selectedAppt.status}
+                    {detailStale ? "⚠ Planlandı · Geçmiş" : STATUS_LABELS[detailDisplayStatus] || selectedAppt.status}
                   </Badge>
                 </div>
                 <div className="space-y-2 text-sm">
@@ -2912,20 +2927,29 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                 <div className="mt-4">
                   <p className="text-xs text-gray-500 mb-2 font-semibold">Durum Güncelle:</p>
                   {!detailCanMarkNoShow && (
-                    <p className="mb-2 text-xs text-sky-700">Hasta erken gelmiş olabilir, &quot;Geldi&quot; her zaman işaretlenebilir — &quot;Gelmedi&quot; ise randevu saati geçtikten sonra işaretlenebilir.</p>
+                    <p className="mb-2 text-xs text-sky-700">Hasta erken gelmiş olabilir, &quot;Bekliyor&quot; (hasta geldi) her zaman işaretlenebilir — &quot;Gelmedi&quot; ise randevu saati geçtikten sonra işaretlenebilir.</p>
                   )}
                   <div className="flex flex-wrap gap-2">
-                    {[{v:"BEKLIYOR",l:"Bekliyor",c:"bg-yellow-100 text-yellow-700"},{v:"GELDI",l:"Geldi",c:"bg-green-100 text-green-700"},{v:"GELMEDI",l:"Gelmedi",c:"bg-red-100 text-red-700"},{v:"IPTAL",l:"İptal",c:"bg-gray-200 text-gray-700"}].map(s => {
-                      // İptal edilmiş bir randevu geldi/gelmedi olarak işaretlenemez —
-                      // önce "Bekliyor"a alınıp yeniden açılmalı (bkz. denetim raporu Tema 5).
-                      // Hasta erken gelebileceği için "Geldi" randevu saatinden bağımsız
-                      // her zaman işaretlenebilir; yalnızca "Gelmedi" randevu saati
-                      // geçmeden anlamsızdır (bkz. kullanıcı geri bildirimi).
+                    {[
+                      {v:"BEKLIYOR",l:"Planlandı",c:"bg-sky-100 text-sky-700"},
+                      {v:"GELDI",l:"Bekliyor",c:"bg-yellow-100 text-yellow-700"},
+                      {v:"TAMAMLANDI",l:"Tamamlandı",c:"bg-green-100 text-green-700"},
+                      {v:"GELMEDI",l:"Gelmedi",c:"bg-red-100 text-red-700"},
+                      {v:"IPTAL",l:"İptal",c:"bg-gray-200 text-gray-700"},
+                    ].map(s => {
+                      // İptal edilmiş bir randevu Bekliyor/Tamamlandı/Gelmedi olarak
+                      // işaretlenemez — önce "Planlandı"ya alınıp yeniden açılmalı
+                      // (bkz. denetim raporu Tema 5). Hasta erken gelebileceği için
+                      // "Bekliyor" (hasta geldi) randevu saatinden bağımsız her zaman
+                      // işaretlenebilir; yalnızca "Gelmedi" randevu saati geçmeden
+                      // anlamsızdır. "Tamamlandı" da (aynı gün tedavi/ödeme
+                      // otomatik tetikler ama) her zaman manuel işaretlenebilir
+                      // (bkz. kullanıcı geri bildirimi).
                       const futureBlock = !detailCanMarkNoShow && s.v === "GELMEDI";
-                      const disabled = (selectedAppt.status === "IPTAL" && (s.v === "GELDI" || s.v === "GELMEDI")) || futureBlock;
+                      const disabled = (selectedAppt.status === "IPTAL" && (s.v === "GELDI" || s.v === "GELMEDI" || s.v === "TAMAMLANDI")) || futureBlock;
                       return (
                         <button key={s.v} onClick={() => updateStatus(selectedAppt.id, s.v)} disabled={disabled}
-                          title={futureBlock ? "Randevu saati henüz gelmedi" : disabled ? "İptal edilmiş randevu önce 'Bekliyor'a alınmalı" : undefined}
+                          title={futureBlock ? "Randevu saati henüz gelmedi" : disabled ? "İptal edilmiş randevu önce 'Planlandı'ya alınmalı" : undefined}
                           className={"rounded-full px-3 py-1 text-sm font-semibold " + s.c + (selectedAppt.status===s.v?" ring-2 ring-gray-400":"") + (disabled ? " opacity-40 cursor-not-allowed" : "")}>
                           {s.l}
                         </button>
@@ -2954,7 +2978,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                     size="sm"
                     onClick={openEditMode}
                     disabled={selectedAppt.status === "IPTAL"}
-                    title={selectedAppt.status === "IPTAL" ? "İptal edilmiş randevu düzenlenemez — önce 'Bekliyor'a alın" : undefined}
+                    title={selectedAppt.status === "IPTAL" ? "İptal edilmiş randevu düzenlenemez — önce 'Planlandı'ya alın" : undefined}
                   >
                     Düzenle
                   </Button>

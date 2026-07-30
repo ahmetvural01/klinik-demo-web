@@ -4,6 +4,7 @@ import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { createIntegratedPayment, toPublicPayment } from "@/lib/payment-ledger";
 import { formatZodError, paymentSchema } from "@/lib/validators";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
+import { turkeyDateKey, turkeyDayRangeUtc } from "@/lib/tz";
 
 const METHOD_LABELS: Record<string, string> = {
   NAKIT: "Nakit",
@@ -128,6 +129,32 @@ export async function POST(request: NextRequest) {
       { isolationLevel: "Serializable" }
     );
 
+    // Aynı gün bu hasta+doktor için "Planlandı" veya "Bekliyor" (geldi, bekleme
+    // salonunda) durumundaki randevu(lar), tahsilat alınınca otomatik
+    // "Tamamlandı" olur — tedavi yapılıp ödeme alındıktan sonra randevunun
+    // ekranda hâlâ bekleniyor görünmesi kafa karıştırıcıdır (bkz. kullanıcı
+    // geri bildirimi). İptal/gelmedi/zaten tamamlanmış randevulara dokunulmaz;
+    // bu adım best-effort'tur, başarısız olsa da ödeme akışını kırmaz.
+    let autoCompletedAppointments = 0;
+    if (patientId && doctorId) {
+      try {
+        const dayKey = turkeyDateKey(payment.createdAt);
+        const { start, end } = turkeyDayRangeUtc(dayKey);
+        const result = await prisma.appointment.updateMany({
+          where: {
+            patientId,
+            doctorId,
+            startAt: { gte: start, lte: end },
+            status: { in: ["BEKLIYOR", "GELDI"] },
+          },
+          data: { status: "TAMAMLANDI" },
+        });
+        autoCompletedAppointments = result.count;
+      } catch {
+        // otomatik tamamlama başarısız olsa da ödeme akışını kırmamalı.
+      }
+    }
+
     const auditNote = [
       `${auth.user.fullName || "Personel"} tarafından tahsilat kaydedildi.`,
       `Hasta: ${relatedPatient?.fullName || payment.patient?.fullName || "Genel tahsilat"}`,
@@ -137,9 +164,10 @@ export async function POST(request: NextRequest) {
       `POS: ${posInfo?.name || "-"}`,
       description ? `Açıklama: ${description}` : "",
       taksitInfo?.updatedCount ? `Taksit entegrasyonu: ${taksitInfo.updatedCount} taksit otomatik güncellendi` : "Taksit entegrasyonu: değişiklik yok",
+      autoCompletedAppointments > 0 ? `Aynı gün ${autoCompletedAppointments} randevu otomatik "Tamamlandı" işaretlendi` : "",
     ].filter(Boolean).join("\n");
     await writeAudit(auth.user.id, "PAYMENT_CREATE", auditNote);
-    return NextResponse.json({ ...toPublicPayment(payment), taksitInfo }, { status: 201 });
+    return NextResponse.json({ ...toPublicPayment(payment), taksitInfo, autoCompletedAppointments }, { status: 201 });
   } catch (e) {
     if (
       e &&

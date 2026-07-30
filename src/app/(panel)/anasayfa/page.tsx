@@ -22,12 +22,17 @@ type SmsLogLite = { id: string; action: string; createdAt: string };
 
 const MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
 
+// GELDI ham durumu artık ekranda "Bekliyor" (hasta geldi, bekleme salonunda)
+// olarak gösterilir — bkz. src/lib/appointment-status.ts. Bu obje
+// getDisplayAppointmentStatus'un DÖNDÜĞÜ değerlerle (PLANLANDI/BEKLIYOR/
+// TAMAMLANDI/GELMEDI/IPTAL) anahtarlanır, ham "GELDI" hiçbir zaman anahtar
+// olarak gelmez.
 const STATUS_CFG: Record<string, { label: string; dot: string; bg: string; text: string }> = {
   PLANLANDI:  { label: "Planlandı",  dot: "bg-sky-400",     bg: "bg-sky-50",     text: "text-sky-700" },
   BEKLIYOR:   { label: "Bekliyor",   dot: "bg-amber-400",   bg: "bg-amber-50",   text: "text-amber-700" },
-  GELDI:      { label: "Geldi",      dot: "bg-emerald-400", bg: "bg-emerald-50", text: "text-emerald-700" },
-  IPTAL:      { label: "İptal",      dot: "bg-red-400",     bg: "bg-red-50",     text: "text-red-600" },
   TAMAMLANDI: { label: "Tamamlandı", dot: "bg-blue-400",    bg: "bg-blue-50",    text: "text-blue-700" },
+  GELMEDI:    { label: "Gelmedi",    dot: "bg-red-400",     bg: "bg-red-50",     text: "text-red-600" },
+  IPTAL:      { label: "İptal",      dot: "bg-gray-400",    bg: "bg-gray-50",    text: "text-gray-600" },
 };
 
 const TYPE_CFG: Record<string, { label: string; cls: string }> = {

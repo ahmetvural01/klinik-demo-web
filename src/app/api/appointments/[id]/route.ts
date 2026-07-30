@@ -18,7 +18,7 @@ async function syncAppointmentReminder(appointment: {
 }) {
   const note = `${APPT_REMINDER_PREFIX}:${appointment.id}`;
 
-  if (!appointment.smsReminder || ["IPTAL", "GELMEDI"].includes(appointment.status)) {
+  if (!appointment.smsReminder || ["IPTAL", "GELMEDI", "TAMAMLANDI"].includes(appointment.status)) {
     await prisma.reminder.updateMany({
       where: { note, status: "AKTIF", planId: null },
       data: { status: "TAMAMLANDI" },
@@ -87,10 +87,15 @@ function appointmentTenantWhere(id: string, role: string, institutionId: string 
   };
 }
 
+// Bu etiketler ekranda gösterilen anlamla birebir aynıdır (bkz.
+// src/lib/appointment-status.ts): ham GELDI artık "Bekliyor" (hasta geldi,
+// bekleme salonunda) anlamına gelir, ham BEKLIYOR ise henüz check-in
+// yapılmamış "Planlandı" durumudur.
 const APPOINTMENT_STATUS_LABELS: Record<string, string> = {
-  BEKLIYOR: "Bekliyor",
+  BEKLIYOR: "Planlandı",
   ONAYLANDI: "Onaylandı",
-  GELDI: "Geldi",
+  GELDI: "Bekliyor",
+  TAMAMLANDI: "Tamamlandı",
   GELMEDI: "Gelmedi",
   IPTAL: "İptal",
 };
