@@ -59,9 +59,22 @@ export const GET = withApiTiming("taksit-plani", async function GET(req: NextReq
     const planStatuses = new Set(["AKTIF", "DEVAM_EDIYOR", "TAMAMLANDI", "IPTAL"]);
     const taksitStatuses = new Set(["BEKLIYOR", "ODENDI", "GECIKTI", "IPTAL"]);
 
+    const todayStart = turkeyTodayStartUtc();
+    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
+
+    // Vadesi geçmiş BEKLIYOR taksitler yalnızca /api/taksit-plani/mark-gecikti
+    // çalıştıktan SONRA DB'de gerçekten "GECIKTI" olur — bu asenkron/fire-and-forget
+    // çağrılır (bkz. muhasebe/page.tsx), yani bu endpoint'e gelen bir istek o iş
+    // bitmeden önce çalışabilir ve gerçekten gecikmiş bir taksidi "Bekliyor"
+    // olarak gösterebilirdi (bkz. denetim raporu). Bu yüzden "GECIKTI" hem filtre
+    // hem de dönen veri seviyesinde DB'deki ham değere değil, canlı türetilmiş
+    // duruma göre hesaplanır.
+    const overdueTaksitWhere = { status: "BEKLIYOR", vadeDate: { lt: todayStart } };
     if (status && status !== "HEPSI") {
       if (planStatuses.has(status)) {
         baseWhere.status = status;
+      } else if (status === "GECIKTI") {
+        baseWhere.taksitler = { some: { OR: [{ status: "GECIKTI" }, overdueTaksitWhere] } };
       } else if (taksitStatuses.has(status)) {
         baseWhere.taksitler = { some: { status } };
       }
@@ -77,9 +90,6 @@ export const GET = withApiTiming("taksit-plani", async function GET(req: NextReq
         }
       : {};
     const listWhere = q ? { AND: [baseWhere, searchWhere] } : baseWhere;
-
-    const todayStart = turkeyTodayStartUtc();
-    const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
 
     const [total, plans, geciktenPlanIds, kalanAgg, bekleyen, bugunVade, aging4Rows, aging5Rows] = await Promise.all([
       (prisma as any).taksitPlan.count({ where: listWhere }),
@@ -101,7 +111,7 @@ export const GET = withApiTiming("taksit-plani", async function GET(req: NextReq
         take,
       }),
       (prisma as any).taksit.findMany({
-        where: { plan: baseWhere, status: "GECIKTI" },
+        where: { plan: baseWhere, OR: [{ status: "GECIKTI" }, overdueTaksitWhere] },
         select: { planId: true },
         distinct: ["planId"],
         take: 20000,
@@ -110,7 +120,10 @@ export const GET = withApiTiming("taksit-plani", async function GET(req: NextReq
         _sum: { kalan: true },
         where: { plan: { ...baseWhere, status: { notIn: ["TAMAMLANDI", "IPTAL"] } } },
       }),
-      (prisma as any).taksit.count({ where: { plan: baseWhere, status: "BEKLIYOR" } }),
+      // "Bekleyen" vadesi henüz gelmemiş taksitleri sayar — vadesi geçmiş ama
+      // henüz GECIKTI'ye çevrilmemiş taksitler burada değil, "geciken"de sayılır
+      // (yukarıdaki not).
+      (prisma as any).taksit.count({ where: { plan: baseWhere, status: "BEKLIYOR", vadeDate: { gte: todayStart } } }),
       (prisma as any).taksit.count({
         where: { plan: baseWhere, status: "BEKLIYOR", vadeDate: { gte: todayStart, lte: todayEnd } },
       }),
@@ -127,12 +140,20 @@ export const GET = withApiTiming("taksit-plani", async function GET(req: NextReq
     ]);
 
     const hidePhone = shouldHidePatientPhone(user.role);
-    const items = hidePhone
-      ? plans.map((p: any) => ({
-          ...p,
-          patient: p.patient ? { ...p.patient, phone: "***" } : p.patient,
-        }))
-      : plans;
+    const withLiveTaksitStatus = (p: any) => ({
+      ...p,
+      taksitler: (p.taksitler || []).map((t: any) =>
+        t.status === "BEKLIYOR" && new Date(t.vadeDate).getTime() < todayStart.getTime()
+          ? { ...t, status: "GECIKTI" }
+          : t
+      ),
+    });
+    const items = plans.map((p: any) => {
+      const withStatus = withLiveTaksitStatus(p);
+      return hidePhone
+        ? { ...withStatus, patient: withStatus.patient ? { ...withStatus.patient, phone: "***" } : withStatus.patient }
+        : withStatus;
+    });
 
     return NextResponse.json({
       items,

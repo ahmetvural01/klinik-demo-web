@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { turkeyTodayStartUtc } from "@/lib/tz";
 
 function taksitPlanTenantWhere(id: string, institutionId: string | null | undefined, role: string) {
   return {
@@ -33,13 +34,27 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       }
     });
     if (!plan) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
+
+    // Vadesi geçmiş BEKLIYOR taksitler yalnızca mark-gecikti tarandıktan sonra
+    // DB'de gerçekten GECIKTI olur (bkz. /api/taksit-plani/route.ts aynı not) —
+    // burada da canlı türetilmiş durum döndürülür.
+    const todayStart = turkeyTodayStartUtc();
+    const planWithLiveStatus = {
+      ...plan,
+      taksitler: (plan.taksitler || []).map((t: any) =>
+        t.status === "BEKLIYOR" && new Date(t.vadeDate).getTime() < todayStart.getTime()
+          ? { ...t, status: "GECIKTI" }
+          : t
+      ),
+    };
+
     const hidePhone = shouldHidePatientPhone(user.role);
     const result = hidePhone
       ? {
-          ...plan,
-          patient: plan.patient ? { ...plan.patient, phone: "***" } : plan.patient,
+          ...planWithLiveStatus,
+          patient: planWithLiveStatus.patient ? { ...planWithLiveStatus.patient, phone: "***" } : planWithLiveStatus.patient,
         }
-      : plan;
+      : planWithLiveStatus;
     return NextResponse.json(result);
   } catch (e) {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });

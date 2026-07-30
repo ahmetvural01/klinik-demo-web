@@ -107,6 +107,30 @@ const TAKSIT_STATUS_TONE: Record<string, BadgeTone> = {
   ODENDI: "success",
   GECIKTI: "critical",
 };
+// TAKSIT_STATUS_TONE ile aynı ham enum değerlerini (TaksitPlanStatus/TaksitStatus)
+// okunaklı Türkçe etikete çevirir — daha önce rozet metni doğrudan ham enum
+// değerini ("DEVAM_EDIYOR" gibi) gösteriyordu.
+const TAKSIT_STATUS_LABELS: Record<string, string> = {
+  AKTIF: "Aktif",
+  DEVAM_EDIYOR: "Devam Ediyor",
+  TAMAMLANDI: "Tamamlandı",
+  IPTAL: "İptal",
+  BEKLIYOR: "Bekliyor",
+  ODENDI: "Ödendi",
+  GECIKTI: "Gecikti",
+};
+const REMINDER_STATUS_TONE: Record<string, BadgeTone> = {
+  AKTIF: "warning",
+  GONDERILIYOR: "info",
+  TAMAMLANDI: "success",
+  BASARISIZ: "critical",
+};
+const REMINDER_STATUS_LABELS: Record<string, string> = {
+  AKTIF: "Aktif",
+  GONDERILIYOR: "Gönderiliyor",
+  TAMAMLANDI: "Tamamlandı",
+  BASARISIZ: "Başarısız",
+};
 
 const INP = "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none";
 const MUHASEBE_CACHE_KEY = "muhasebe:page:v1";
@@ -2029,7 +2053,7 @@ export default function MuhasebePage() {
                                   <div className="flex flex-wrap items-center gap-2">
                                     <span className="text-sm font-black text-slate-900">{plan.patient.fullName}</span>
                                     {plan.baslik && <span className="rounded-lg bg-slate-100 px-2 py-1 text-xs text-slate-600">{plan.baslik}</span>}
-                                    <Badge tone={TAKSIT_STATUS_TONE[plan.status] ?? "neutral"}>{plan.status}</Badge>
+                                    <Badge tone={TAKSIT_STATUS_TONE[plan.status] ?? "neutral"}>{TAKSIT_STATUS_LABELS[plan.status] || plan.status}</Badge>
                                   </div>
                                   <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
                                     <span>Dr: {plan.doctor.fullName}</span>
@@ -2082,7 +2106,7 @@ export default function MuhasebePage() {
                         <div key={t.id} className={`rounded-xl border p-3 text-xs ${t.status === "GECIKTI" ? "border-red-200 bg-red-50" : "border-slate-100 bg-slate-50"}`}>
                           <div className="flex items-center justify-between">
                             <span className="font-semibold text-slate-700">#{t.siraNo} — {fmtDate(t.vadeDate)}</span>
-                            <Badge tone={TAKSIT_STATUS_TONE[t.status] ?? "neutral"}>{t.status}</Badge>
+                            <Badge tone={TAKSIT_STATUS_TONE[t.status] ?? "neutral"}>{TAKSIT_STATUS_LABELS[t.status] || t.status}</Badge>
                           </div>
                           <div className="mt-0.5 flex justify-between text-slate-500">
                             <span>Tutar: {fmt(t.tutar)}</span>
@@ -2185,7 +2209,7 @@ export default function MuhasebePage() {
                             <div className="mt-1 flex flex-wrap gap-3 text-xs text-slate-500">
                               {r.patient && <span>Hasta: {r.patient.fullName}</span>}
                               <span>Tarih: {fmtDate(r.reminderDate)}</span>
-                              <Badge tone={r.status === "AKTIF" ? "warning" : "success"} size="sm">{r.status}</Badge>
+                              <Badge tone={REMINDER_STATUS_TONE[r.status] || "neutral"} size="sm">{REMINDER_STATUS_LABELS[r.status] || r.status}</Badge>
                             </div>
                           </div>
                           {r.status === "AKTIF" && (

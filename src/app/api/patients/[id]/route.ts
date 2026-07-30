@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { patientSchema } from "@/lib/validators";
 import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { turkeyTodayStartUtc } from "@/lib/tz";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -260,6 +261,21 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
   if (!patient) {
     return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });
   }
+
+  // Vadesi geçmiş BEKLIYOR taksitler yalnızca /api/taksit-plani/mark-gecikti
+  // tarandıktan SONRA DB'de gerçekten GECIKTI olur (bkz. o route'taki aynı not
+  // ve /api/taksit-plani/route.ts) — hasta kartındaki taksit listesi de aynı
+  // canlı türetilmiş durumu göstermeli, aksi halde iki ekran aynı taksit için
+  // farklı durum gösterebilir.
+  const todayStart = turkeyTodayStartUtc();
+  (patient as any).taksitPlanlari = ((patient as any).taksitPlanlari || []).map((plan: any) => ({
+    ...plan,
+    taksitler: (plan.taksitler || []).map((t: any) =>
+      t.status === "BEKLIYOR" && new Date(t.vadeDate).getTime() < todayStart.getTime()
+        ? { ...t, status: "GECIKTI" }
+        : t
+    ),
+  }));
 
   if (
     patient.institutionId
