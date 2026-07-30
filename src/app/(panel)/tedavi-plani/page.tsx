@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { SearchSelect } from "@/components/ui/SearchSelect";
+import { showToastSafe } from "@/lib/toast-client";
 
 type PlanStatus = "PLANLANDI" | "DEVAM_EDIYOR" | "TAMAMLANDI" | "IPTAL";
 type StepStatus = "BEKLIYOR" | "YAPILDI" | "IPTAL";
@@ -127,13 +128,23 @@ export default function TedaviPlaniPage() {
 
   async function updateStatus(planId: string, status: string) {
     if (status === "IPTAL" && !(await confirmDialog({ message: "Bu tedavi planı iptal edilsin mi?", danger: true, confirmText: "İptal Et" }))) return;
-    await fetch(`/api/treatment-plans/${planId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }).catch(() => {});
+    const res = await fetch(`/api/treatment-plans/${planId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }).catch(() => null);
+    if (!res?.ok) {
+      const data = await res?.json().catch(() => null);
+      showToastSafe({ message: data?.error || "Durum güncellenemedi", type: "error" });
+      return;
+    }
     fetchPlans();
     setSelected(s => s ? { ...s, status: status as PlanStatus } : null);
   }
 
   async function updateStep(planId: string, stepId: string, status: StepStatus) {
-    await fetch(`/api/treatment-plans/${planId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stepUpdates: [{ id: stepId, status }] }) }).catch(() => {});
+    const res = await fetch(`/api/treatment-plans/${planId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stepUpdates: [{ id: stepId, status }] }) }).catch(() => null);
+    if (!res?.ok) {
+      const data = await res?.json().catch(() => null);
+      showToastSafe({ message: data?.error || "Adım güncellenemedi", type: "error" });
+      return;
+    }
     setSelected(s => {
       if (!s) return null;
       return { ...s, steps: s.steps.map(st => st.id === stepId ? { ...st, status } : st) };

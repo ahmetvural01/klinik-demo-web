@@ -1,6 +1,7 @@
 import { runDueInvoiceReminderSweep } from "@/lib/billing-reminders";
 import { runPatientPaymentReminderSweep } from "@/lib/patient-payment-reminders";
 import { runBirthdaySmsSweep } from "@/lib/birthday-reminders";
+import { runCelebrationDaySmsSweep } from "@/lib/celebration-sms";
 import { runAppointmentReminderSweep } from "@/lib/appointment-reminders";
 
 // Render'da tek, sürekli çalışan bir Node süreci olarak barındırıyoruz
@@ -54,6 +55,19 @@ async function runBirthdaySweepSafely() {
   }
 }
 
+async function runCelebrationDaySweepSafely() {
+  try {
+    const result = await runCelebrationDaySmsSweep();
+    if (result.checked > 0) {
+      console.log(
+        `[scheduler] Kutlama günü SMS taraması: ${result.daysChecked} gün, ${result.institutionsChecked} kurum, ${result.checked} hasta kontrol edildi, ${result.sent} SMS gönderildi, ${result.failed} başarısız, ${result.skippedAlreadySent} bu yıl zaten gönderilmiş, ${result.skippedNoBalance} SMS bakiyesi yetersiz.`
+      );
+    }
+  } catch (error) {
+    console.error("[scheduler] Kutlama günü SMS taraması başarısız:", error);
+  }
+}
+
 async function runAppointmentSweepSafely() {
   try {
     const result = await runAppointmentReminderSweep();
@@ -77,15 +91,17 @@ export function startBillingReminderScheduler() {
     void runBillingSweepSafely();
     void runPatientReminderSweepSafely();
     void runBirthdaySweepSafely();
+    void runCelebrationDaySweepSafely();
     setInterval(() => {
       void runBillingSweepSafely();
       void runPatientReminderSweepSafely();
       void runBirthdaySweepSafely();
+      void runCelebrationDaySweepSafely();
     }, SWEEP_INTERVAL_MS);
     setInterval(() => {
       void runAppointmentSweepSafely();
     }, APPOINTMENT_SWEEP_INTERVAL_MS);
   }, FIRST_RUN_DELAY_MS);
 
-  console.log("[scheduler] Randevu, fatura, taksit ve doğum günü zamanlayıcıları başlatıldı.");
+  console.log("[scheduler] Randevu, fatura, taksit, doğum günü ve kutlama günü zamanlayıcıları başlatıldı.");
 }

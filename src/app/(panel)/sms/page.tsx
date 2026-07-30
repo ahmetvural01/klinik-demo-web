@@ -10,6 +10,7 @@ import { getAuditActionLabel } from "@/lib/audit-labels";
 import { SMS_CONSENT_MESSAGE_TEMPLATE } from "@/lib/sms-consent-copy";
 import BulkSendTab from "./_tabs/BulkSendTab";
 import TemplatesTab from "./_tabs/TemplatesTab";
+import CelebrationDaysTab from "./_tabs/CelebrationDaysTab";
 import WhatsappMessagesTab from "./_tabs/WhatsappMessagesTab";
 import WhatsappSettingsTab from "./_tabs/WhatsappSettingsTab";
 
@@ -414,7 +415,7 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
   const toggleItems: { key: keyof Pick<SmsSettings, "smsEnabled" | "paymentReminderSmsEnabled" | "birthdaySmsEnabled">; label: string; hint: string }[] = [
     { key: "smsEnabled", label: "SMS sistemi aktif", hint: "Kapalıysa otomatik ve manuel bütün SMS gönderimleri durdurulur (WhatsApp bundan etkilenmez)." },
     { key: "paymentReminderSmsEnabled", label: "Ödeme hatırlatma ayarları aktif", hint: "Vadesi yaklaşan veya geciken taksitlerde otomatik hatırlatma gönderilir." },
-    { key: "birthdaySmsEnabled", label: "Doğum günü ve özel gün ayarları aktif", hint: "Doğum günü olan hastalara otomatik kutlama mesajı gönderilir. Bayram/özel gün mesajları Toplu Gönderim'den manuel gönderilir." },
+    { key: "birthdaySmsEnabled", label: "Doğum günü ayarları aktif", hint: "Doğum günü olan hastalara otomatik kutlama mesajı gönderilir. Meslek günü/resmi bayram gibi diğer kutlamalar ayrı ayrı Kutlama Günleri sekmesinden açılır." },
   ];
 
   const waStatusBadge: Record<WhatsappProviderStatus, { tone: "success" | "warning" | "neutral" | "critical"; label: string }> = {
@@ -521,26 +522,22 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
         </div>
       )}
 
-      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-bold text-slate-800">WhatsApp Bağlantı Durumu</p>
-            <p className="mt-0.5 text-xs text-slate-500">
-              {settings.whatsappEnabled
-                ? "Sağlayıcı bağlantı testi ve tam ayarlar WhatsApp Ayarları sekmesindedir."
-                : "Bu özelliği açmak için sistem yöneticinizle iletişime geçin."}
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Badge tone={waStatusBadge[waStatus].tone} size="md">{waStatusBadge[waStatus].label}</Badge>
-            {settings.whatsappEnabled && (
+      {settings.whatsappEnabled && (
+        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-bold text-slate-800">WhatsApp Bağlantı Durumu</p>
+              <p className="mt-0.5 text-xs text-slate-500">Sağlayıcı bağlantı testi ve tam ayarlar WhatsApp Ayarları sekmesindedir.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge tone={waStatusBadge[waStatus].tone} size="md">{waStatusBadge[waStatus].label}</Badge>
               <Button variant="secondary" size="sm" onClick={onGoToWhatsappSettings}>
                 {waStatus === "ACTIVE" ? "Bağlantıyı Yönet / Test Et" : "WhatsApp Ayarlarına Git"}
               </Button>
-            )}
+            </div>
           </div>
         </div>
-      </div>
+      )}
 
       <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
         <div className="grid gap-4 md:grid-cols-2">
@@ -600,9 +597,22 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
 }
 
 export default function SmsPage() {
-  type SmsTab = "kayitlar" | "whatsapp" | "whatsapp-ayarlar" | "ayarlar" | "sablonlar" | "toplu";
+  type SmsTab = "kayitlar" | "whatsapp" | "whatsapp-ayarlar" | "ayarlar" | "sablonlar" | "kutlama-gunleri" | "toplu";
   const [tab, setTab] = useState<SmsTab>("kayitlar");
   const [mountedTabs, setMountedTabs] = useState<Set<SmsTab>>(() => new Set(["kayitlar"]));
+  // WhatsApp sekmeleri, SuperAdmin kliniğe modülü açmadıkça hiç görünmez —
+  // yalnızca "kapalı" bir ekran göstermek bile yanıltıcıydı: personel var
+  // olmayan bir özelliğe tıklayıp boş/işlevsiz bir sekmeyle karşılaşıyordu
+  // (bkz. kullanıcı geri bildirimi). null = henüz yüklenmedi (sekmeler
+  // yanıp sönmesin diye bu sırada da gösterilmez).
+  const [whatsappEnabled, setWhatsappEnabled] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((d) => setWhatsappEnabled(Boolean(d?.whatsappEnabled)))
+      .catch(() => setWhatsappEnabled(false));
+  }, []);
 
   const activateTab = useCallback((nextTab: SmsTab) => {
     setMountedTabs((current) => {
@@ -623,14 +633,21 @@ export default function SmsPage() {
         <Button variant={tab === "ayarlar" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("ayarlar")}>
           Ayarlar
         </Button>
-        <Button variant={tab === "whatsapp" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("whatsapp")}>
-          WhatsApp
-        </Button>
-        <Button variant={tab === "whatsapp-ayarlar" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("whatsapp-ayarlar")}>
-          WhatsApp Ayarları
-        </Button>
+        {whatsappEnabled && (
+          <>
+            <Button variant={tab === "whatsapp" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("whatsapp")}>
+              WhatsApp
+            </Button>
+            <Button variant={tab === "whatsapp-ayarlar" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("whatsapp-ayarlar")}>
+              WhatsApp Ayarları
+            </Button>
+          </>
+        )}
         <Button variant={tab === "sablonlar" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("sablonlar")}>
           Şablonlar
+        </Button>
+        <Button variant={tab === "kutlama-gunleri" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("kutlama-gunleri")}>
+          Kutlama Günleri
         </Button>
         <Button variant={tab === "toplu" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("toplu")}>
           Toplu Gönderim
@@ -641,10 +658,11 @@ export default function SmsPage() {
           başka bir sekmeye bakıp geri döndüğünde kaybolmaması için. */}
       {mountedTabs.has("kayitlar") && <div className={tab === "kayitlar" ? "" : "hidden"}><SmsManagement onGoToSettings={() => activateTab("ayarlar")} /></div>}
       {mountedTabs.has("ayarlar") && <div className={tab === "ayarlar" ? "" : "hidden"}><SmsSettingsPanel onGoToWhatsappSettings={() => activateTab("whatsapp-ayarlar")} onGoToRecords={() => activateTab("kayitlar")} /></div>}
-      {mountedTabs.has("whatsapp") && <div className={tab === "whatsapp" ? "" : "hidden"}><WhatsappMessagesTab /></div>}
-      {mountedTabs.has("whatsapp-ayarlar") && <div className={tab === "whatsapp-ayarlar" ? "" : "hidden"}><WhatsappSettingsTab /></div>}
+      {whatsappEnabled && mountedTabs.has("whatsapp") && <div className={tab === "whatsapp" ? "" : "hidden"}><WhatsappMessagesTab /></div>}
+      {whatsappEnabled && mountedTabs.has("whatsapp-ayarlar") && <div className={tab === "whatsapp-ayarlar" ? "" : "hidden"}><WhatsappSettingsTab /></div>}
       {mountedTabs.has("toplu") && <div className={tab === "toplu" ? "" : "hidden"}><BulkSendTab /></div>}
       {mountedTabs.has("sablonlar") && <div className={tab === "sablonlar" ? "" : "hidden"}><TemplatesTab /></div>}
+      {mountedTabs.has("kutlama-gunleri") && <div className={tab === "kutlama-gunleri" ? "" : "hidden"}><CelebrationDaysTab /></div>}
     </div>
   );
 }

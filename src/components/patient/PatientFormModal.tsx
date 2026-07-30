@@ -8,6 +8,7 @@ import { FormField, FormSection, FormErrorBanner, inputErrorClass } from "@/comp
 import { PhoneCountrySelect } from "@/components/ui/PhoneCountrySelect";
 import { isValidTurkishIdentityNumber } from "@/lib/tc-kimlik";
 import { getLocalPhoneDigitLimit, getLocalPhoneError, limitLocalPhoneInput, normalizeLocalPhone } from "@/lib/phone-number";
+import { PROFESSIONS } from "@/lib/professions";
 
 type PatientFormState = {
   tcNo: string;
@@ -405,7 +406,19 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
                 <input className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Örn. Mehmet Yılmaz" value={form.referrer} onChange={(e) => setField("referrer", e.target.value)} />
               </FormField>
               <FormField label="Meslek">
-                <input className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Örn. Öğretmen, mühendis" value={form.profession} onChange={(e) => setField("profession", e.target.value)} />
+                <select
+                  className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  value={form.profession}
+                  onChange={(e) => setField("profession", e.target.value)}
+                >
+                  <option value="">Seçilmedi</option>
+                  {form.profession && !(PROFESSIONS as readonly string[]).includes(form.profession) && (
+                    <option value={form.profession}>{form.profession} (eski kayıt)</option>
+                  )}
+                  {PROFESSIONS.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
               </FormField>
               <FormField label="İndirim Oranı (%)">
                 <input type="number" min={0} max={100} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" value={form.discountRate} onChange={(e) => setField("discountRate", Math.min(100, Math.max(0, Number(e.target.value || 0))))} />

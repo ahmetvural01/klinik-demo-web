@@ -14,6 +14,7 @@ export const SMS_PLACEHOLDERS: SmsPlaceholder[] = [
   { token: "daysLate", label: "Gecikme Gün Sayısı", sample: "5" },
   { token: "institutionPhone", label: "Klinik Telefonu", sample: "0322 123 45 67" },
   { token: "surveyLink", label: "Değerlendirme Bağlantısı", sample: "https://g.page/r/xxxx/review" },
+  { token: "title", label: "Kutlama Günü Adı", sample: "Tıp Bayramı" },
 ];
 
 // overrides verilirse (ör. gerçek klinik adı/telefonu), örnek değer yerine

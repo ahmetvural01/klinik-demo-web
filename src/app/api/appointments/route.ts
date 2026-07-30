@@ -255,6 +255,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Geçersiz randevu verisi", errors: formatZodError(parsed.error) }, { status: 400 });
   }
 
+  // Doktor çakışması artık sert bir engel değil, bilinçli bir onaydır — personel
+  // aynı doktoru aynı saatte (ör. iki koltuk arasında geçiş yaparken) başka bir
+  // hastaya da atayabilmeli. Tedavi alanı/ünite ve hasta çakışmaları ise fiziksel
+  // olarak imkânsız olduğu için hâlâ kesin engellenir (bkz. kullanıcı kararı).
+  const overrideDoctorConflict = body?.overrideConflict === true;
+
   const eligibleDoctor = await isEligibleAppointmentDoctor(parsed.data.doctorId, auth.user.institutionId);
   if (!eligibleDoctor) {
     return NextResponse.json({ message: "Seçilen personel randevu doktoru olarak kullanılamaz." }, { status: 400 });
@@ -320,12 +326,13 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  if (conflict) {
+  if (conflict && !overrideDoctorConflict) {
     const cs = conflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
     const ce = conflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
     return NextResponse.json({
-      message: `Bu doktorun ${cs}–${ce} saatleri arası randevusu mevcut (${conflict.patient?.fullName ?? "—"})`,
+      message: `Bu doktorun ${cs}–${ce} saatleri arası randevusu mevcut (${conflict.patient?.fullName ?? "—"}). Yine de oluşturmak istiyor musunuz?`,
       conflictId: conflict.id,
+      requiresConfirmation: true,
     }, { status: 409 });
   }
 
@@ -386,7 +393,7 @@ export async function POST(request: NextRequest) {
     // altında çakışan iki eşzamanlı işlemden biri P2034 ile başarısız olur
     // (bkz. denetim raporu — çift randevu yarış koşulu).
     const appointment = await prisma.$transaction(async (tx) => {
-      const doctorConflictRecheck = await tx.appointment.findFirst({
+      const doctorConflictRecheck = overrideDoctorConflict ? null : await tx.appointment.findFirst({
         where: {
           doctorId: parsed.data.doctorId,
           status: { notIn: ["IPTAL", "GELMEDI"] },
@@ -446,7 +453,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${appointment.patient.fullName} için randevu${appointment.clinicUnit ? ` · Tedavi alanı: ${appointment.clinicUnit.name}` : ""}`);
+    await writeAudit(auth.user.id, "APPOINTMENT_CREATE", `${appointment.patient.fullName} için randevu${appointment.clinicUnit ? ` · Tedavi alanı: ${appointment.clinicUnit.name}` : ""}${conflict && overrideDoctorConflict ? " · Doktor çakışması onaylanarak oluşturuldu" : ""}`);
     return NextResponse.json({
       ...appointment,
       smsStatus: {

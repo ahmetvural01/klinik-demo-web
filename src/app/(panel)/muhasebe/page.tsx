@@ -1786,6 +1786,7 @@ export default function MuhasebePage() {
                   <Badge tone={item.isActive ? "success" : "neutral"}>{item.isActive ? "Aktif" : "Pasif"}</Badge>
                   <button
                     onClick={async () => {
+                      if (item.isActive && !(await confirmDialog({ message: `"${item.name}" gider türü kaldırılsın mı? Yeni giderlerde seçilemez.`, danger: true, confirmText: "Kaldır" }))) return;
                       await fetch(`/api/gider-kategorileri/${item.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: !item.isActive }) });
                       loadGiderKats();
                     }}

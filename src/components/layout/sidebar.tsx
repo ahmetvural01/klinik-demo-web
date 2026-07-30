@@ -338,7 +338,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
     <div>
       {mobileOpen && (
         <div
-          className="fixed inset-0 z-50 bg-black/40 md:hidden"
+          className="fixed inset-0 z-[170] bg-black/40 md:hidden"
           onPointerDown={(event) => {
             if (event.target === event.currentTarget) setMobileOpen(false);
           }}

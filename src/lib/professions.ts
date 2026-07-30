@@ -1,0 +1,40 @@
+// Hasta formundaki "Meslek" alanı artık serbest metin değil, bu sabit
+// listeden seçilir — mesleklere özel kutlama günleri (bkz. CelebrationDay,
+// src/lib/celebration-sms.ts) hastanın meslek alanıyla TAM eşleşme yapar,
+// bu yüzden yazım farklılıklarına (Dr./Doktor/doktor) açık serbest metin
+// güvenilir bir eşleştirme sağlamaz.
+export const PROFESSIONS = [
+  "Doktor",
+  "Diş Hekimi",
+  "Eczacı",
+  "Hemşire",
+  "Veteriner Hekim",
+  "Öğretmen",
+  "Akademisyen",
+  "Avukat",
+  "Hakim/Savcı",
+  "Mali Müşavir/Muhasebeci",
+  "Mühendis",
+  "Mimar",
+  "Bilişimci/Yazılımcı",
+  "Gazeteci",
+  "Polis",
+  "Asker",
+  "Memur",
+  "Öğrenci",
+  "Esnaf/Tüccar",
+  "Çiftçi",
+  "Şoför",
+  "İşçi",
+  "Sanatçı",
+  "Sporcu",
+  "Emlakçı",
+  "Berber/Kuaför",
+  "Aşçı/Şef",
+  "Ev Hanımı",
+  "Emekli",
+  "Serbest Meslek",
+  "Diğer",
+] as const;
+
+export type Profession = (typeof PROFESSIONS)[number];

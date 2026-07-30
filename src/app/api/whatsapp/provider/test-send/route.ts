@@ -3,7 +3,7 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { testWhatsappProviderSend } from "@/lib/whatsapp";
 
-const PROVIDER_CODE = "META_CLOUD";
+const PROVIDER_CODE = "TWILIO";
 
 // Kliniğin kendi bağlantısını test etmesi — providerId istemciden alınmaz,
 // yalnızca kendi kurumunun kaydı sorgulanır (IDOR'a kapalı).

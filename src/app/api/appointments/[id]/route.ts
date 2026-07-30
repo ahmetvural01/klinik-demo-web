@@ -190,6 +190,11 @@ export async function PUT(request: NextRequest, props: Params) {
     return NextResponse.json({ message: "Geçersiz randevu verisi" }, { status: 400 });
   }
 
+  // Doktor çakışması artık sert bir engel değil, bilinçli bir onaydır (bkz.
+  // POST /api/appointments üzerindeki aynı not) — tedavi alanı/hasta
+  // çakışmaları fiziksel olarak imkânsız olduğu için hâlâ kesin engellenir.
+  const overrideDoctorConflict = body?.overrideConflict === true;
+
   const eligibleDoctor = await isEligibleAppointmentDoctor(parsed.data.doctorId, auth.user.institutionId, auth.user.role);
   if (!eligibleDoctor) {
     return NextResponse.json({ message: "Seçilen personel randevu doktoru olarak kullanılamaz." }, { status: 400 });
@@ -267,7 +272,8 @@ export async function PUT(request: NextRequest, props: Params) {
     }
   }
 
-  if (timeChanged || doctorChanged) {
+  let conflictOverridden = false;
+  if ((timeChanged || doctorChanged) && !overrideDoctorConflict) {
     const conflict = await prisma.appointment.findFirst({
       where: {
         id: { not: params.id },
@@ -281,11 +287,18 @@ export async function PUT(request: NextRequest, props: Params) {
       const cs = conflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
       const ce = conflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
       return NextResponse.json({
-        message: `Bu doktorun ${cs}–${ce} arası randevusu mevcut (${conflict.patient?.fullName ?? "—"})`,
+        message: `Bu doktorun ${cs}–${ce} arası randevusu mevcut (${conflict.patient?.fullName ?? "—"}). Yine de taşımak istiyor musunuz?`,
         conflictId: conflict.id,
+        requiresConfirmation: true,
       }, { status: 409 });
     }
+  } else if ((timeChanged || doctorChanged) && overrideDoctorConflict) {
+    conflictOverridden = true;
+  }
 
+  // Doktor bloke saati (izin/mola vb.) çakışma onayından bağımsız — fiziksel
+  // olarak doktor o saatte hiç müsait değildir, override edilemez.
+  if (timeChanged || doctorChanged) {
     const blockConflict = await findDoctorBlockConflict(parsed.data.doctorId, newStart, newEnd);
     if (blockConflict) {
       return NextResponse.json({
@@ -300,7 +313,7 @@ export async function PUT(request: NextRequest, props: Params) {
     // anda iki kullanıcı randevuyu taşıdığında hem doktor hem seçili ünite
     // tekrar sorgulanır. Böylece ekran boş görünse bile çift atama oluşmaz.
     appointment = await prisma.$transaction(async (tx) => {
-      if (timeChanged || doctorChanged) {
+      if ((timeChanged || doctorChanged) && !overrideDoctorConflict) {
         const doctorConflictRecheck = await tx.appointment.findFirst({
           where: {
             id: { not: params.id },
@@ -383,6 +396,7 @@ export async function PUT(request: NextRequest, props: Params) {
     `${auth.user.fullName || "Personel"} tarafından ${appointment.patient.fullName} randevusu güncellendi.`,
     `Değişiklik öncesi: ${beforeParts.length > 0 ? beforeParts.join(" | ") : "Alan değişikliği yok"}`,
     `Değişiklik sonrası: ${afterParts.length > 0 ? afterParts.join(" | ") : "Alan değişikliği yok"}`,
+    ...(conflictOverridden ? ["Doktor çakışması onaylanarak taşındı."] : []),
   ].join("\n");
 
   await writeAudit(auth.user.id, "APPOINTMENT_UPDATE", detail);

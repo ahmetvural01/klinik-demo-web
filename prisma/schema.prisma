@@ -70,6 +70,7 @@ model Institution {
   packageDefinitions  PackageDefinition[]
   patientPackages     PatientPackage[]
   clinicUnits         ClinicUnit[]
+  celebrationDaySettings CelebrationDaySetting[]
 }
 
 // Klinik içindeki fiziksel çalışma alanı (ünit, oda veya koltuk). Randevuya
@@ -617,6 +618,7 @@ model Patient {
   waitlistEntries            Waitlist[]
   whatsappMessages           WhatsappMessage[]
   birthdaySmsLogs            BirthdaySmsLog[]
+  celebrationSmsLogs         CelebrationSmsLog[]
   packages                   PatientPackage[]
   accessLogs                 PatientAccessLog[]
   smsPreference              PatientSmsPreference?
@@ -1414,6 +1416,56 @@ model BirthdaySmsLog {
   patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
 
   @@unique([patientId, year])
+}
+
+// Süperadmin'in yönettiği, sistem geneli meslek/resmi gün kutlama kataloğu
+// (ör. Tıp Bayramı, Öğretmenler Günü, Yılbaşı). targetProfessions boşsa
+// (resmi bayram gibi) tüm hastalara, doluysa yalnızca listede meslek alanı
+// eşleşen hastalara gönderilir (bkz. src/lib/professions.ts — meslek artık
+// hasta formunda sabit bir listeden seçilir, bu yüzden tam eşleşme güvenilirdir).
+// Klinikler bu kataloğun her satırını CelebrationDaySetting ile ayrı ayrı
+// açar/kapatır — varsayılan kapalı (bkz. Setting.birthdaySmsEnabled felsefesi:
+// SMS bakiyesi tükettiği için bilinçli açılmalı).
+model CelebrationDay {
+  id                String                  @id @default(cuid())
+  code              String                  @unique
+  title             String
+  month             Int
+  day               Int
+  targetProfessions String[]                @default([])
+  messageTemplate   String
+  isActive          Boolean                 @default(true)
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
+  settings          CelebrationDaySetting[]
+}
+
+model CelebrationDaySetting {
+  id              String         @id @default(cuid())
+  institutionId   String
+  celebrationCode String
+  enabled         Boolean        @default(false)
+  updatedAt       DateTime       @updatedAt
+  institution     Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  celebrationDay  CelebrationDay @relation(fields: [celebrationCode], references: [code], onDelete: Cascade)
+
+  @@unique([institutionId, celebrationCode])
+}
+
+// BirthdaySmsLog ile aynı desen — yılda-bir-kez gönderim garantisi
+// @@unique([patientId, celebrationCode, year]) ile DB seviyesinde sağlanır.
+model CelebrationSmsLog {
+  id              String   @id @default(cuid())
+  patientId       String
+  celebrationCode String
+  year            Int
+  sentTo          String
+  status          String
+  errorDetail     String?
+  sentAt          DateTime @default(now())
+  patient         Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+
+  @@unique([patientId, celebrationCode, year])
 }
 
 // Hastanın kliniğe SMS ile iletişim kurulmasına verdiği güncel iznin anlık

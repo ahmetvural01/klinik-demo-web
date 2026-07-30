@@ -267,7 +267,15 @@ export default function ProfilPage() {
                 {photoSaving ? "Kaydediliyor…" : "Fotoğraf Değiştir"}
               </Button>
               {profile.photoUrl && (
-                <Button variant="danger" size="sm" onClick={() => void savePhoto("")} disabled={photoSaving}>
+                <Button
+                  variant="danger"
+                  size="sm"
+                  onClick={async () => {
+                    if (!(await confirmDialog({ message: "Profil fotoğrafınız kaldırılsın mı?", danger: true, confirmText: "Kaldır" }))) return;
+                    void savePhoto("");
+                  }}
+                  disabled={photoSaving}
+                >
                   Kaldır
                 </Button>
               )}

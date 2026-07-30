@@ -249,6 +249,7 @@ export default function WhatsappProviderTab() {
           </FormField>
           <FormField label="Sağlayıcı Türü" required>
             <select className={inputClass} value={form.providerType} onChange={(e) => setForm({ ...form, providerType: e.target.value })}>
+              <option value="TWILIO">Twilio WhatsApp API</option>
               <option value="META_CLOUD">Meta WhatsApp Cloud API</option>
               <option value="CUSTOM">Özel HTTP sağlayıcısı</option>
               <option value="MOCK">Test sağlayıcısı</option>
@@ -268,16 +269,16 @@ export default function WhatsappProviderTab() {
               <input className={inputClass} value={form.sendUrl} onChange={(e) => setForm({ ...form, sendUrl: e.target.value })} placeholder="https://graph.facebook.com/v20.0/{{phoneNumberId}}/messages" />
             </FormField>
           </div>}
-          <FormField label="Kullanıcı Adı">
-            <input className={inputClass} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+          <FormField label={form.providerType === "TWILIO" ? "Twilio Account SID" : "Kullanıcı Adı"}>
+            <input className={inputClass} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder={form.providerType === "TWILIO" ? "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" : undefined} />
           </FormField>
-          <FormField label="Gönderici / Numara Kimliği">
-            <input className={inputClass} value={form.sender} onChange={(e) => setForm({ ...form, sender: e.target.value })} placeholder="+90 5xx xxx xx xx" />
+          <FormField label={form.providerType === "TWILIO" ? "WhatsApp Numarası" : "Gönderici / Numara Kimliği"}>
+            <input className={inputClass} value={form.sender} onChange={(e) => setForm({ ...form, sender: e.target.value })} placeholder={form.providerType === "TWILIO" ? "+14155238886" : "+90 5xx xxx xx xx"} />
           </FormField>
           <FormField label="Şifre" hint={editing ? "Değiştirmek istemiyorsanız boş bırakın" : undefined}>
             <input type="password" className={inputClass} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="••••••••" />
           </FormField>
-          <FormField label="API Anahtarı / Erişim Token" hint={editing ? "Değiştirmek istemiyorsanız boş bırakın" : undefined}>
+          <FormField label={form.providerType === "TWILIO" ? "Twilio Auth Token" : "API Anahtarı / Erişim Token"} hint={editing ? "Değiştirmek istemiyorsanız boş bırakın" : undefined}>
             <input type="password" className={inputClass} value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder="••••••••" />
           </FormField>
           {form.providerType === "META_CLOUD" && (

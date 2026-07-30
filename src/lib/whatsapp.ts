@@ -209,6 +209,73 @@ async function sendWithMetaProvider(
   };
 }
 
+async function sendWithTwilioProvider(
+  provider: ProviderConfig,
+  phone: string,
+  message: string,
+): Promise<WhatsappSendResult> {
+  const accountSid = provider.username?.trim();
+  const authToken = decryptField(provider.apiKey || "");
+  const from = provider.sender?.trim();
+
+  if (!accountSid || !authToken || !from) {
+    return {
+      success: false,
+      providerRaw: "TWILIO_CONFIG_MISSING",
+      error: "Twilio için Account SID, Auth Token ve WhatsApp numarası zorunludur.",
+      providerCode: provider.code,
+    };
+  }
+
+  const sendUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+  const toFormatted = `whatsapp:+${phone}`;
+  const fromDigits = from.replace(/^whatsapp:/, "");
+  const fromFormatted = `whatsapp:${fromDigits.startsWith("+") ? fromDigits : `+${fromDigits}`}`;
+
+  const params = new URLSearchParams({ To: toFormatted, From: fromFormatted, Body: message });
+  const auth = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
+
+  try {
+    const response = await fetch(sendUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: params.toString(),
+      signal: AbortSignal.timeout(12_000),
+    });
+    const raw = await response.text();
+
+    try {
+      const parsed = JSON.parse(raw) as { sid?: string; message?: string; code?: number };
+      if (response.ok && parsed.sid) {
+        return { success: true, providerMessageId: parsed.sid, providerRaw: raw, providerCode: provider.code };
+      }
+      return {
+        success: false,
+        providerRaw: raw,
+        error: parsed.message || `Twilio WhatsApp API HTTP ${response.status}`,
+        providerCode: provider.code,
+      };
+    } catch {
+      return {
+        success: response.ok,
+        providerRaw: raw,
+        error: response.ok ? undefined : `Twilio WhatsApp API HTTP ${response.status}`,
+        providerCode: provider.code,
+      };
+    }
+  } catch (error) {
+    return {
+      success: false,
+      providerRaw: "TWILIO_REQUEST_ERROR",
+      error: error instanceof Error ? error.message : "Twilio WhatsApp API'sine erişilemedi.",
+      providerCode: provider.code,
+    };
+  }
+}
+
 async function sendWithCustomProvider(
   provider: ProviderConfig,
   phone: string,
@@ -272,6 +339,9 @@ async function sendWithProvider(
   }
   if (provider.providerType === "META_CLOUD") {
     return sendWithMetaProvider(provider, phone, message, options);
+  }
+  if (provider.providerType === "TWILIO") {
+    return sendWithTwilioProvider(provider, phone, message);
   }
   return sendWithCustomProvider(provider, phone, message);
 }

@@ -7,6 +7,7 @@ import Link from "next/link";
 import { CalendarDays, ChevronLeft, ChevronRight, X } from "lucide-react";
 import { confirmDialog } from "@/lib/confirm-client";
 import { cachedGet } from "@/lib/client-cache";
+import { getDisplayAppointmentStatus } from "@/lib/appointment-status";
 
 type ApptStatus = "BEKLIYOR" | "GELDI" | "IPTAL" | "TAMAMLANDI" | string;
 type Appt = { id: string; startAt: string; endAt: string; status: ApptStatus; patient: { fullName: string }; doctor: { fullName: string }; type: string };
@@ -22,6 +23,7 @@ type SmsLogLite = { id: string; action: string; createdAt: string };
 const MONTHS = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
 
 const STATUS_CFG: Record<string, { label: string; dot: string; bg: string; text: string }> = {
+  PLANLANDI:  { label: "Planlandı",  dot: "bg-sky-400",     bg: "bg-sky-50",     text: "text-sky-700" },
   BEKLIYOR:   { label: "Bekliyor",   dot: "bg-amber-400",   bg: "bg-amber-50",   text: "text-amber-700" },
   GELDI:      { label: "Geldi",      dot: "bg-emerald-400", bg: "bg-emerald-50", text: "text-emerald-700" },
   IPTAL:      { label: "İptal",      dot: "bg-red-400",     bg: "bg-red-50",     text: "text-red-600" },
@@ -728,7 +730,7 @@ export default function AnasayfaPage() {
             ) : (
               <div className="divide-y divide-slate-50">
                 {[...appts].sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime()).map(appt => {
-                  const cfg = STATUS_CFG[appt.status] || STATUS_CFG.BEKLIYOR;
+                  const cfg = STATUS_CFG[getDisplayAppointmentStatus(appt.status, appt.startAt)] || STATUS_CFG.BEKLIYOR;
                   const tCfg = TYPE_CFG[appt.type] || TYPE_CFG.STANDART;
                   return (
                     <div key={appt.id} className="flex items-center gap-4 px-5 py-3 transition hover:bg-slate-50/80">

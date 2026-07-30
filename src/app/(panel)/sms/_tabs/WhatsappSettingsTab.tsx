@@ -10,35 +10,28 @@ import { showToastSafe } from "@/lib/toast-client";
 
 type Provider = {
   id: string;
-  name: string;
   isActive: boolean;
-  sender: string | null;
-  phoneNumberId: string | null;
-  businessAccountId: string | null;
-  apiVersion: string;
-  appointmentTemplateName: string | null;
-  appointmentTemplateLanguage: string;
-  hasApiKey: boolean;
+  accountSid: string | null;
+  whatsappNumber: string | null;
+  hasAuthToken: boolean;
   updatedAt: string;
 };
 
 const inputClass = "w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20";
 
 const emptyForm = {
-  sender: "",
-  phoneNumberId: "",
-  businessAccountId: "",
-  apiKey: "",
-  apiVersion: "v23.0",
-  appointmentTemplateName: "",
-  appointmentTemplateLanguage: "tr",
+  accountSid: "",
+  authToken: "",
+  whatsappNumber: "",
   isActive: true,
 };
 
-// Klinik kendi Meta WhatsApp Business bağlantısını buradan tanımlar — süperadmin
-// yalnızca modülü açar (bkz. docs/ILETISIM-MIMARISI-RAPORU.md §3). Kliniğin
-// numarası doğrudan Meta'dan gider, platform genelinde paylaşılan bir numara
-// yoktur.
+// Klinik kendi WhatsApp bağlantısını buradan tanımlar — süperadmin yalnızca
+// modülü açar (bkz. docs/ILETISIM-MIMARISI-RAPORU.md §3). Bilinçli olarak
+// Meta Cloud API'nin teknik alanları (phoneNumberId, businessAccountId vb.)
+// yerine Twilio üzerinden gidilir: klinik yalnızca Twilio konsolundan
+// kopyaladığı 3 basit değeri girer. Bu, SMS tarafında zaten kullanılan
+// Twilio Account SID/Auth Token deseniyle tutarlıdır (bkz. src/lib/sms.ts).
 export default function WhatsappSettingsTab() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [provider, setProvider] = useState<Provider | null>(null);
@@ -64,13 +57,9 @@ export default function WhatsappSettingsTab() {
         if (data?.provider) {
           setProvider(data.provider);
           setForm({
-            sender: data.provider.sender || "",
-            phoneNumberId: data.provider.phoneNumberId || "",
-            businessAccountId: data.provider.businessAccountId || "",
-            apiKey: "",
-            apiVersion: data.provider.apiVersion || "v23.0",
-            appointmentTemplateName: data.provider.appointmentTemplateName || "",
-            appointmentTemplateLanguage: data.provider.appointmentTemplateLanguage || "tr",
+            accountSid: data.provider.accountSid || "",
+            authToken: "",
+            whatsappNumber: data.provider.whatsappNumber || "",
             isActive: data.provider.isActive,
           });
         }
@@ -85,12 +74,16 @@ export default function WhatsappSettingsTab() {
   useEffect(() => { void load(); }, [load]);
 
   const save = async () => {
-    if (!form.phoneNumberId.trim()) {
-      showToastSafe({ message: "Telefon Numarası Kimliği zorunlu", type: "error" });
+    if (!form.accountSid.trim()) {
+      showToastSafe({ message: "Twilio Account SID zorunlu", type: "error" });
       return;
     }
-    if (!provider && !form.apiKey.trim()) {
-      showToastSafe({ message: "Erişim Token'ı zorunlu", type: "error" });
+    if (!form.whatsappNumber.trim()) {
+      showToastSafe({ message: "WhatsApp numarası zorunlu", type: "error" });
+      return;
+    }
+    if (!provider && !form.authToken.trim()) {
+      showToastSafe({ message: "Twilio Auth Token zorunlu", type: "error" });
       return;
     }
     setSaving(true);
@@ -157,7 +150,7 @@ export default function WhatsappSettingsTab() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-lg font-black text-slate-900">WhatsApp Ayarları</h1>
-            <p className="mt-1 text-sm text-slate-500">Kendi Meta Business hesabınızı bağlayın — mesajlarınız kendi numaranızdan gider.</p>
+            <p className="mt-1 text-sm text-slate-500">Kendi Twilio hesabınızı bağlayın — mesajlarınız kendi WhatsApp numaranızdan gider.</p>
           </div>
           {provider && (
             <Badge tone={provider.isActive ? "success" : "neutral"} size="md">
@@ -167,28 +160,59 @@ export default function WhatsappSettingsTab() {
         </div>
       </div>
 
+      <div className="rounded-2xl border border-primary/15 bg-primary/5 p-4 text-xs leading-relaxed text-slate-600">
+        <p className="font-bold text-slate-700">Nasıl bağlanırım? (özet)</p>
+        <ol className="mt-1.5 list-decimal space-y-1 pl-4">
+          <li><a href="https://www.twilio.com/try-twilio" target="_blank" rel="noreferrer" className="font-semibold text-primary hover:underline">twilio.com</a> üzerinden ücretsiz bir hesap açın (birkaç dakika sürer).</li>
+          <li>Twilio Console ana sayfasında <strong>Account SID</strong> ve <strong>Auth Token</strong> değerlerini kopyalayın.</li>
+          <li>Twilio&apos;nun WhatsApp Sandbox&apos;ı ile hemen ücretsiz test edin, gerçek numaranız için Twilio&apos;nun WhatsApp Gönderici başvurusunu tamamlayın.</li>
+          <li>Aşağıya bu 3 bilgiyi girip kaydedin — teknik bir şey yapmanıza gerek yok.</li>
+        </ol>
+        <details className="mt-3 border-t border-primary/15 pt-3">
+          <summary className="cursor-pointer font-bold text-primary hover:underline">Adım adım detaylı rehber (resimsiz, açıklamalı)</summary>
+          <div className="mt-3 space-y-3">
+            <div>
+              <p className="font-bold text-slate-700">1) Twilio hesabı açın</p>
+              <p className="mt-1"><a href="https://www.twilio.com/try-twilio" target="_blank" rel="noreferrer" className="font-semibold text-primary hover:underline">twilio.com/try-twilio</a> adresine gidin, e-posta ve telefon numaranızla ücretsiz kayıt olun. Kayıt sırasında sorulan &quot;ne için kullanacaksınız&quot; gibi sorularda herhangi bir seçenek işaretlemeniz yeterli, panele girişinizi etkilemez.</p>
+            </div>
+            <div>
+              <p className="font-bold text-slate-700">2) Account SID ve Auth Token&apos;ı bulun</p>
+              <p className="mt-1">Twilio Console&apos;a (console.twilio.com) giriş yaptığınızda ana sayfanın en üstünde &quot;Account Info&quot; kutucuğunda <strong>Account SID</strong> ve <strong>Auth Token</strong> yazar (Auth Token gizlidir, yanındaki göz simgesine tıklayınca görünür). İkisini de kopyalayıp bir kenara not edin — bu bilgiler şifreniz gibidir, kimseyle paylaşmayın.</p>
+            </div>
+            <div>
+              <p className="font-bold text-slate-700">3) Ücretsiz Sandbox ile hemen test edin</p>
+              <p className="mt-1">Twilio Console&apos;da sol menüden <strong>Messaging &gt; Try it out &gt; Send a WhatsApp message</strong> yolunu izleyin. Size özel bir Twilio WhatsApp numarası (genelde +1 415 523 8886) ve &quot;join kelime-kelime&quot; şeklinde bir kod gösterilir. Test etmek istediğiniz telefondan (kendi cep telefonunuzdan) o numaraya WhatsApp&apos;tan bu kodu gönderin — bu adım olmadan Sandbox size mesaj gönderemez, her test numarasının bu katılma mesajını bir kere göndermesi gerekir.</p>
+            </div>
+            <div>
+              <p className="font-bold text-slate-700">4) Panelde bağlantıyı tanımlayın</p>
+              <p className="mt-1">Az önce kopyaladığınız Account SID, Auth Token ve Sandbox numarasını (ör. +14155238886) aşağıdaki forma girip <strong>Kaydet</strong>&apos;e basın. Ardından <strong>Bağlantıyı Test Et</strong> ile kendi telefonunuza bir deneme mesajı gönderin.</p>
+            </div>
+            <div>
+              <p className="font-bold text-slate-700">5) Gerçek/onaylı numaraya geçiş (Sandbox&apos;tan çıkış)</p>
+              <p className="mt-1">Sandbox yalnızca test amaçlıdır: yalnızca &quot;join&quot; mesajı gönderen numaralara ulaşır ve üstünde Twilio ile paylaşılan ortak bir numaradır. Gerçek hastalarınıza kesintisiz mesaj gönderebilmek için Twilio Console&apos;da <strong>Messaging &gt; Senders &gt; WhatsApp senders</strong> bölümünden kendi numaranız (yeni bir Twilio numarası veya mevcut işletme numaranız) için WhatsApp Business başvurusu yapmanız gerekir. Twilio bu başvuruda sizi adım adım yönlendirir; onay süreci Meta (WhatsApp) tarafında birkaç gün sürebilir. Onaylandığında yalnızca yukarıdaki <strong>WhatsApp Numarası</strong> alanını yeni onaylı numarayla güncellemeniz yeterlidir, başka hiçbir ayar değişmez.</p>
+            </div>
+            <div>
+              <p className="font-bold text-slate-700">Sık karşılaşılan sorunlar</p>
+              <ul className="mt-1 list-disc space-y-1 pl-4">
+                <li><strong>&quot;Bağlantıyı Test Et&quot; hata veriyor:</strong> Account SID/Auth Token&apos;ı yanlış kopyalamış olabilirsiniz (baştaki/sondaki boşluklara dikkat edin) ya da test ettiğiniz numara Sandbox&apos;a &quot;join&quot; mesajı göndermemiştir.</li>
+                <li><strong>Hastalara mesaj gitmiyor ama size test mesajı gidiyor:</strong> Sandbox kullanıyorsanız bu normaldir — Sandbox yalnızca &quot;join&quot; mesajı gönderen numaralara ulaşır. Gerçek hastalara ulaşmak için 5. adımdaki onaylı numaraya geçiş gerekir.</li>
+                <li><strong>Twilio hesabımda bakiye/kredi kartı istiyor:</strong> Ücretsiz deneme kredisi Sandbox testleri için genelde yeterlidir; onaylı numaraya geçtikten sonra gönderilen her mesaj Twilio tarafından ayrıca ücretlendirilir (bu, kliniğinizin panel içi SMS bakiyesinden ayrı, doğrudan Twilio&apos;ya ödenen bir ücrettir).</li>
+              </ul>
+            </div>
+          </div>
+        </details>
+      </div>
+
       <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
         <div className="grid gap-4 md:grid-cols-2">
-          <FormField label="Telefon Numarası Kimliği" required hint="Meta Business Suite &gt; WhatsApp &gt; API Kurulumu ekranından alınır.">
-            <input className={inputClass} value={form.phoneNumberId} onChange={(e) => setForm({ ...form, phoneNumberId: e.target.value })} placeholder="123456789012345" />
+          <FormField label="Twilio Account SID" required hint="Twilio Console ana sayfasından kopyalanır.">
+            <input className={inputClass} value={form.accountSid} onChange={(e) => setForm({ ...form, accountSid: e.target.value })} placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" />
           </FormField>
-          <FormField label="WhatsApp Business Hesap Kimliği">
-            <input className={inputClass} value={form.businessAccountId} onChange={(e) => setForm({ ...form, businessAccountId: e.target.value })} />
+          <FormField label="Twilio Auth Token" required={!provider} hint={provider ? "Değiştirmek istemiyorsanız boş bırakın" : "Twilio Console ana sayfasından kopyalanır."}>
+            <input type="password" className={inputClass} value={form.authToken} onChange={(e) => setForm({ ...form, authToken: e.target.value })} placeholder="••••••••" />
           </FormField>
-          <FormField label="Erişim Token'ı" required={!provider} hint={provider ? "Değiştirmek istemiyorsanız boş bırakın" : "Meta Business Suite'ten alınan kalıcı erişim anahtarı"}>
-            <input type="password" className={inputClass} value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder="••••••••" />
-          </FormField>
-          <FormField label="Görünen Gönderici Adı">
-            <input className={inputClass} value={form.sender} onChange={(e) => setForm({ ...form, sender: e.target.value })} placeholder="Klinik adı" />
-          </FormField>
-          <FormField label="Graph API Sürümü">
-            <input className={inputClass} value={form.apiVersion} onChange={(e) => setForm({ ...form, apiVersion: e.target.value })} placeholder="v23.0" />
-          </FormField>
-          <FormField label="Randevu Şablon Adı" hint="Meta'da onaylı bir şablon kullanıyorsanız">
-            <input className={inputClass} value={form.appointmentTemplateName} onChange={(e) => setForm({ ...form, appointmentTemplateName: e.target.value })} />
-          </FormField>
-          <FormField label="Şablon Dili">
-            <input className={inputClass} value={form.appointmentTemplateLanguage} onChange={(e) => setForm({ ...form, appointmentTemplateLanguage: e.target.value })} placeholder="tr" />
+          <FormField label="WhatsApp Numarası" required hint="Twilio Sandbox numarası veya onaylı kendi numaranız — ülke koduyla, ör. +14155238886">
+            <input className={inputClass} value={form.whatsappNumber} onChange={(e) => setForm({ ...form, whatsappNumber: e.target.value })} placeholder="+14155238886" />
           </FormField>
         </div>
 

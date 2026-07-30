@@ -78,25 +78,6 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     );
   }
 
-  // Adımı olmayan (veya bu istekle tümü silinen) bir plan "Tamamlandı"
-  // işaretlenebiliyordu — 0 TL/0 işlemli bir plan tamamlanmış tedavi
-  // raporlarında/istatistiklerinde görünüp sessizce yanıltıcı veri üretiyordu
-  // (bkz. denetim raporu).
-  if (status === "TAMAMLANDI" && existing.status !== "TAMAMLANDI") {
-    const remainingStepCount = await (prisma as any).treatmentStep.count({
-      where: {
-        planId: params.id,
-        ...(stepDeletes && Array.isArray(stepDeletes) && stepDeletes.length > 0 ? { id: { notIn: stepDeletes } } : {}),
-      },
-    });
-    if (remainingStepCount === 0) {
-      return NextResponse.json(
-        { error: "Adımı olmayan bir tedavi planı \"Tamamlandı\" olarak işaretlenemez." },
-        { status: 400 }
-      );
-    }
-  }
-
   if (stepDeletes && Array.isArray(stepDeletes) && stepDeletes.length > 0) {
     // Payment modeli doğrudan bir tedavi planına bağlı değil (planId FK'sı
     // yok), bu yüzden adım silindiğinde toplam tutar (totalCost) hastanın bu
@@ -143,6 +124,30 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
           doneAt: su.status === "YAPILDI" ? new Date() : null,
         },
       });
+    }
+  }
+
+  // Bir plan "Tamamlandı" işaretlenmeden önce (adım silme/güncellemeleri bu
+  // istekte uygulandıktan SONRA) kalan tüm adımların fiilen "Yapıldı" olması
+  // gerekir — aksi halde 0 adımlı VEYA hâlâ bekleyen adımları olan bir plan
+  // "Tamamlandı" görünüp raporlarda sessizce yanıltıcı veri üretiyordu
+  // (bkz. denetim raporu).
+  if (status === "TAMAMLANDI" && existing.status !== "TAMAMLANDI") {
+    const remainingSteps = await (prisma as any).treatmentStep.findMany({
+      where: { planId: params.id },
+      select: { status: true },
+    });
+    if (remainingSteps.length === 0) {
+      return NextResponse.json(
+        { error: "Adımı olmayan bir tedavi planı \"Tamamlandı\" olarak işaretlenemez." },
+        { status: 400 }
+      );
+    }
+    if (remainingSteps.some((s: { status: string }) => s.status !== "YAPILDI")) {
+      return NextResponse.json(
+        { error: "Bekleyen adımları olan bir tedavi planı \"Tamamlandı\" olarak işaretlenemez. Önce tüm adımları \"Yapıldı\" olarak işaretleyin." },
+        { status: 400 }
+      );
     }
   }
 

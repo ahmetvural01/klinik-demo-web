@@ -25,6 +25,7 @@ import { addPdfSection, createPdfDoc, pdfSafeText } from "@/lib/pdf-export";
 import { cachedGet } from "@/lib/client-cache";
 import { PatientFormModal } from "@/components/patient/PatientFormModal";
 import { Badge } from "@/components/ui/Badge";
+import { getDisplayAppointmentStatus } from "@/lib/appointment-status";
 
 type PatientDocument = {
   id: string;
@@ -252,6 +253,7 @@ const TAKSIT_ITEM_STATUS_LABELS: Record<string, string> = {
 };
 
 const APPOINTMENT_STATUS_LABELS: Record<string, string> = {
+  PLANLANDI: "Planlandı",
   BEKLIYOR: "Bekliyor",
   GELDI: "Geldi",
   GELMEDI: "Gelmedi",
@@ -2556,7 +2558,7 @@ export default function HastaDetayContent() {
           dateTimeText(a.endAt),
           ...(exportHideDoctor ? [] : [a.doctor?.fullName || "-"]),
           a.type || "-",
-          APPOINTMENT_STATUS_LABELS[a.status || ""] || a.status || "-",
+          APPOINTMENT_STATUS_LABELS[getDisplayAppointmentStatus(a.status || "", a.startAt)] || a.status || "-",
           a.note || "-",
         ]),
       },
@@ -2938,7 +2940,7 @@ export default function HastaDetayContent() {
         </div>
       </div>
 
-      <div className="sticky top-0 z-20 flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm">
+      <div className="sticky top-0 z-40 flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm">
         <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
           {primaryTabs.map((tabKey) => (
             <button
@@ -3219,7 +3221,15 @@ export default function HastaDetayContent() {
                   <td className="px-3 py-2">{new Date(a.startAt).toLocaleString("tr-TR")}</td>
                   <td className="px-3 py-2">{a.doctor?.fullName || "-"}</td>
                   <td className="px-3 py-2"><span className={"rounded-full px-2 py-0.5 text-xs " + (a.type==="ACIL"?"bg-red-100 text-red-700":a.type==="KONTROL"?"bg-yellow-100 text-yellow-700":"bg-primary/10 text-primary")}>{a.type}</span></td>
-                  <td className="px-3 py-2"><span className={"rounded-full px-2 py-0.5 text-xs " + (a.status==="GELDI"?"bg-green-100 text-green-700":a.status==="GELMEDI"?"bg-red-100 text-red-700":a.status==="IPTAL"?"bg-gray-200 text-gray-600":"bg-yellow-100 text-yellow-700")}>{APPOINTMENT_STATUS_LABELS[a.status || ""] || a.status || "Bekliyor"}</span></td>
+                  {(() => {
+                    const displayStatus = getDisplayAppointmentStatus(a.status || "", a.startAt);
+                    const cls = displayStatus === "GELDI" ? "bg-green-100 text-green-700"
+                      : displayStatus === "GELMEDI" ? "bg-red-100 text-red-700"
+                      : displayStatus === "IPTAL" ? "bg-gray-200 text-gray-600"
+                      : displayStatus === "PLANLANDI" ? "bg-sky-100 text-sky-700"
+                      : "bg-yellow-100 text-yellow-700";
+                    return <td className="px-3 py-2"><span className={"rounded-full px-2 py-0.5 text-xs " + cls}>{APPOINTMENT_STATUS_LABELS[displayStatus] || a.status || "Bekliyor"}</span></td>;
+                  })()}
                 </tr>
               ))}
             </tbody>
