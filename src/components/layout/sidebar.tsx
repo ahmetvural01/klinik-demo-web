@@ -466,7 +466,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
       )}
       <div className="relative hidden h-screen w-[72px] shrink-0 md:block">
       <aside
-        className={`absolute inset-y-0 left-0 z-40 h-screen ${w} flex-col border-r border-slate-200 bg-white shadow-[2px_0_14px_rgb(15_23_42/0.035)] transition-[width] duration-200 ease-out md:flex`}
+        className={`absolute inset-y-0 left-0 z-40 h-screen ${w} flex-col border-r border-slate-200/80 bg-gradient-to-b from-white via-white to-slate-50/60 shadow-[4px_0_24px_rgb(15_23_42/0.05),1px_0_0_rgb(15_23_42/0.03)] transition-[width] duration-200 ease-out md:flex`}
         onMouseEnter={() => setDesktopHovered(true)}
         onMouseLeave={() => { setDesktopHovered(false); setRolePickerOpen(false); }}
         onFocusCapture={() => setDesktopHovered(true)}

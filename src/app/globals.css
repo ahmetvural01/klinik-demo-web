@@ -59,13 +59,13 @@
   --color-accent-950: 73 35 19;
   --font-sans: var(--font-manrope), "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-display: var(--font-jakarta), var(--font-manrope), "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-  --radius-control: 0.5rem;
-  --radius-surface: 0.5rem;
-  --shadow-rest: 0 1px 2px rgb(15 23 42 / 0.045), 0 6px 18px rgb(15 23 42 / 0.025);
-  --shadow-surface: 0 1px 2px rgb(15 23 42 / 0.05), 0 10px 28px rgb(15 23 42 / 0.045);
-  --shadow-raised: 0 2px 5px rgb(15 23 42 / 0.07), 0 14px 34px rgb(15 23 42 / 0.075);
-  --shadow-popover: 0 8px 24px rgb(15 23 42 / 0.12), 0 2px 6px rgb(15 23 42 / 0.06);
-  --shadow-floating: 0 24px 64px rgb(15 23 42 / 0.18), 0 4px 12px rgb(15 23 42 / 0.08);
+  --radius-control: 0.75rem;
+  --radius-surface: 1.25rem;
+  --shadow-rest: 0 1px 2px rgb(15 23 42 / 0.06), 0 10px 24px rgb(15 23 42 / 0.06);
+  --shadow-surface: 0 2px 5px rgb(15 23 42 / 0.07), 0 16px 40px rgb(15 23 42 / 0.10);
+  --shadow-raised: 0 4px 10px rgb(15 23 42 / 0.09), 0 24px 52px rgb(15 23 42 / 0.14);
+  --shadow-popover: 0 12px 32px rgb(15 23 42 / 0.16), 0 4px 10px rgb(15 23 42 / 0.09);
+  --shadow-floating: 0 32px 80px rgb(15 23 42 / 0.24), 0 8px 20px rgb(15 23 42 / 0.11);
   --ease-product: cubic-bezier(0.2, 0, 0, 1);
 }
 
@@ -152,16 +152,18 @@ body {
   justify-content: center;
   flex: none;
   border: 1px solid rgb(var(--color-slate-200));
-  border-radius: 0.5rem;
+  border-radius: 0.75rem;
   background: rgb(var(--color-slate-50));
   color: rgb(var(--color-slate-600));
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.72), 0 1px 2px rgb(15 23 42 / 0.05);
+  transition: border-color 140ms var(--ease-product), background-color 140ms var(--ease-product), box-shadow 140ms var(--ease-product), transform 140ms var(--ease-product);
 }
 
 .ui-icon-frame[data-active="true"] {
-  border-color: rgb(var(--app-primary) / 0.22);
-  background: rgb(var(--color-primary-50));
+  border-color: rgb(var(--app-primary) / 0.28);
+  background: linear-gradient(180deg, rgb(var(--color-primary-100)), rgb(var(--color-primary-50)));
   color: rgb(var(--app-primary));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5), 0 2px 8px rgb(var(--app-primary) / 0.18);
 }
 
 .ui-tooltip {

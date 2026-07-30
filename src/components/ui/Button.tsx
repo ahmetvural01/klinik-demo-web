@@ -11,9 +11,9 @@ export type ButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 export type ButtonSize = "sm" | "md";
 
 const VARIANT_CLASS: Record<ButtonVariant, string> = {
-  primary: "border border-primary bg-primary text-white shadow-[var(--shadow-rest)] hover:border-primary-strong hover:bg-primary-strong hover:shadow-[var(--shadow-surface)] font-bold disabled:opacity-55",
+  primary: "border border-primary bg-gradient-to-b from-primary to-primary-strong text-white shadow-[0_1px_1px_rgb(255_255_255/0.16)_inset,var(--shadow-surface)] hover:brightness-[1.05] hover:shadow-[0_1px_1px_rgb(255_255_255/0.16)_inset,var(--shadow-raised)] font-bold disabled:opacity-55",
   secondary: "border border-slate-200 bg-white text-slate-700 shadow-[var(--shadow-rest)] hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900 hover:shadow-[var(--shadow-surface)] font-semibold disabled:opacity-55",
-  danger: "border border-red-600 bg-red-600 text-white shadow-[var(--shadow-rest)] hover:border-red-700 hover:bg-red-700 hover:shadow-[var(--shadow-surface)] font-bold disabled:opacity-55",
+  danger: "border border-red-600 bg-gradient-to-b from-red-600 to-red-700 text-white shadow-[0_1px_1px_rgb(255_255_255/0.16)_inset,var(--shadow-surface)] hover:brightness-[1.05] hover:shadow-[0_1px_1px_rgb(255_255_255/0.16)_inset,var(--shadow-raised)] font-bold disabled:opacity-55",
   ghost: "border border-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-semibold disabled:opacity-40",
 };
 

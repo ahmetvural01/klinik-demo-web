@@ -693,7 +693,7 @@ export function Topbar({ user }: Props) {
               // eslint-disable-next-line @next/next/no-img-element
               <img src={user.photoUrl} alt={displayName} className="h-full w-full object-cover" />
             ) : (
-              <span className="flex h-full w-full items-center justify-center bg-primary text-xs font-bold text-white">{initials}</span>
+              <span className="flex h-full w-full items-center justify-center bg-gradient-to-br from-primary to-primary-strong text-xs font-bold text-white">{initials}</span>
             )}
             <span className="absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-500" />
           </a>

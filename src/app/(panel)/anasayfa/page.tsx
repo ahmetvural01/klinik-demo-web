@@ -633,11 +633,14 @@ export default function AnasayfaPage() {
           <Link
             key={item.id}
             href={item.href}
-            className={`ui-interactive relative min-w-[150px] overflow-hidden rounded-lg border px-5 py-4 ${idx === 0 ? "border-primary/15 bg-primary-50/60" : "border-amber-200/70 bg-amber-50/65"}`}
+            className={`ui-interactive group relative min-w-[150px] overflow-hidden rounded-2xl border px-5 py-4 shadow-sm ${idx === 0 ? "border-primary/15 bg-gradient-to-br from-primary-50 via-white to-white" : "border-amber-200/70 bg-gradient-to-br from-amber-50 via-white to-white"}`}
           >
-            <span className={`absolute inset-x-0 top-0 h-1 ${idx === 0 ? "bg-primary" : "bg-amber-500"}`} />
-            <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">{item.label}</p>
-            <p className={`mt-1 text-[2rem] font-extrabold tabular-nums leading-none ${summaryValueClass[item.tone]}`}>{item.value}</p>
+            <span
+              aria-hidden="true"
+              className={`pointer-events-none absolute -right-6 -top-6 h-24 w-24 rounded-full blur-2xl transition-opacity duration-200 group-hover:opacity-80 ${idx === 0 ? "bg-primary/15" : "bg-amber-400/20"}`}
+            />
+            <p className="relative text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">{item.label}</p>
+            <p className={`relative mt-1 text-[2.25rem] font-extrabold tabular-nums leading-none ${summaryValueClass[item.tone]}`}>{item.value}</p>
           </Link>
         ))}
       </div>

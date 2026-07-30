@@ -60,10 +60,32 @@ const config = {
         sans: ["var(--font-sans)", "ui-sans-serif", "system-ui", "-apple-system", "BlinkMacSystemFont", "Segoe UI", "sans-serif"],
         display: ["var(--font-display)", "var(--font-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
       },
+      // Tailwind'in varsayılan sert/jenerik gölgeleri (binlerce yerde
+      // `shadow-sm` vb. olarak kullanılıyor) yerine, daha yumuşak, daha
+      // "yüzen" ve hafif renk tonlu premium bir gölge ölçeğiyle EZİLİYOR —
+      // tek bir değişiklik tüm uygulamada aynı anda kart/panel derinliğini
+      // modernize eder (bkz. kullanıcı geri bildirimi: "demode hissettiriyor").
       boxShadow: {
         card: "0 1px 3px 0 rgb(0 0 0 / 0.07), 0 1px 2px -1px rgb(0 0 0 / 0.07)",
         "card-md": "0 4px 6px -1px rgb(0 0 0 / 0.08), 0 2px 4px -2px rgb(0 0 0 / 0.08)",
         "card-lg": "0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.08)",
+        sm: "0 1px 2px rgb(15 23 42 / 0.05), 0 3px 8px rgb(15 23 42 / 0.05)",
+        DEFAULT: "0 1px 3px rgb(15 23 42 / 0.06), 0 6px 16px rgb(15 23 42 / 0.07)",
+        md: "0 2px 4px rgb(15 23 42 / 0.06), 0 12px 28px rgb(15 23 42 / 0.09)",
+        lg: "0 4px 8px rgb(15 23 42 / 0.07), 0 20px 40px rgb(15 23 42 / 0.11)",
+        xl: "0 8px 16px rgb(15 23 42 / 0.08), 0 30px 60px rgb(15 23 42 / 0.14)",
+        "2xl": "0 16px 32px rgb(15 23 42 / 0.10), 0 40px 80px rgb(15 23 42 / 0.18)",
+      },
+      // Aynı mantık köşe yarıçapı için: `rounded-lg`/`rounded-xl`/`rounded-2xl`
+      // uygulama genelinde yüzlerce yerde kullanılıyor — ölçeği büyütmek
+      // sert/kutu gibi hissettiren köşeleri tek seferde yumuşak/premium hale
+      // getirir (buton/input/rozet `rounded-lg`, kartların çoğu `rounded-2xl`
+      // kullanıyor).
+      borderRadius: {
+        lg: "0.75rem",
+        xl: "1rem",
+        "2xl": "1.25rem",
+        "3xl": "1.75rem",
       },
     }
   },
