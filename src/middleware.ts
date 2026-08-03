@@ -6,6 +6,7 @@ import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 import { parseRolePreview, ROLE_PREVIEW_COOKIE } from "@/lib/role-preview";
 
 const TOKEN_NAME = "klinik_token";
+const GHOST_TOKEN_NAME = "klinik_ghost_token";
 
 const PUBLIC_PREFIXES = [
   "/",
@@ -26,57 +27,44 @@ const PUBLIC_PREFIXES = [
   "/api/public/sms-consent",
 ];
 
-// Rol bazlı sayfa erişim haritası
-// Her rol için erişilemeyen sayfa prefix'leri
-// ÖNEMLİ: bu liste ile src/lib/role-permissions.ts'teki DB tabanlı yetki matrisi
-// (Süperadmin > Rol Yetkileri ekranı) ÇAKIŞMAMALI — bir modül için burada "engelli"
-// yazıp orada "izinli" göstermek, süperadminin ekrandan açtığı bir yetkinin sessizce
-// çalışmaması anlamına gelir (bkz. stock/taksit-plani/lab/reçete için yaşanan gerçek
-// hata). Burada sadece Rol Yetkileri ekranında YÖNETİLMEYEN alanlar (finans/rapor/
-// personel/ayar gibi rol bazında değil, sabit iş kuralı olarak kapatılan sayfalar)
-// listelenmelidir.
-const ROLE_DENIED_PAGES: Record<string, string[]> = {
-  DOKTOR: [
-    "/muhasebe", "/kasa", "/gider", "/firma", "/firma-detay",
-    "/rapor", "/personel", "/personel-ekle", "/ayar", "/log",
-    "/fiyat", "/sms", "/dashboard",
-  ],
-  ASISTAN: [
-    "/muhasebe", "/kasa", "/gider", "/firma", "/firma-detay",
-    "/rapor", "/personel", "/personel-ekle", "/ayar", "/log",
-    "/fiyat", "/sms", "/finans", "/muayene", "/dashboard",
-  ],
-  BANKO: [
-    "/gider", "/firma", "/firma-detay", "/rapor",
-    "/personel", "/personel-ekle", "/ayar", "/log",
-    "/fiyat", "/finans", "/tedavi-plani",
-    "/muayene", "/dashboard",
-  ],
-  MUHASEBE: [
-    "/personel", "/personel-ekle", "/ayar", "/log",
-    "/fiyat", "/sms",
-    "/randevu", "/hasta", "/hasta-detay", "/hasta-ekle",
-    "/hasta-takip", "/tedavi-plani", "/muayene",
-    "/recete", "/dashboard",
-  ],
-};
-
-// API rol kısıtlamaları: hangi API prefix'leri hangi roller için yasak.
-// Aynı uyarı burada da geçerli — stock/installments/lab/prescriptions/staff artık
-// tamamen Rol Yetkileri ekranındaki (DB) yetki matrisi tarafından yönetiliyor,
-// burada TEKRAR sabit kodlanmamalı.
-const API_ROLE_DENIED: Record<string, string[]> = {
-  DOKTOR:   ["/api/gider", "/api/firma", "/api/purchases", "/api/kasa", "/api/muhasebe", "/api/reports", "/api/settings", "/api/logs", "/api/sms", "/api/prices"],
-  ASISTAN:  ["/api/gider", "/api/firma", "/api/purchases", "/api/kasa", "/api/muhasebe", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/sms"],
-  // NOT: /api/examinations ASISTAN için izinli — requireAuth("examinations:read") ile GET, requireAuth("examinations:write") ile POST kontrolü yapılır
-  BANKO:    ["/api/gider", "/api/firma", "/api/purchases", "/api/muhasebe/trend", "/api/reports", "/api/settings", "/api/logs", "/api/finance", "/api/prices", "/api/treatment-plans", "/api/examinations"],
-  MUHASEBE: ["/api/settings", "/api/logs", "/api/sms", "/api/prices", "/api/appointments", "/api/patients", "/api/examinations", "/api/treatment-plans", "/api/prescriptions"],
-};
+// Rol bazlı modül erişimi (DOKTOR/ASİSTAN/BANKO/MUHASEBE gibi klinik rollerinin
+// hangi sayfa/API'ye erişebileceği) BURADA sabit kodlanmaz — tamamen
+// src/lib/role-permissions.ts + role-permission-store.ts (Süperadmin > Rol
+// Yetkileri ekranı) tarafından, her API route'undaki requireAuth(permission)
+// çağrısıyla yönetilir. Önceden burada da sabit bir DOKTOR/ASİSTAN/BANKO/
+// MUHASEBE sayfa/API engel listesi vardı; bu liste DB'deki yetki matrisiyle
+// çakışabiliyordu (ör. MUHASEBE'ye Rol Yetkileri ekranından appointments:read
+// verilse bile middleware /api/appointments'ı sabit olarak 403'lüyordu — bkz.
+// denetim raporu). Middleware'de yalnızca GERÇEKTEN değiştirilemez, rol
+// bazında değil sabit güvenlik kuralları kalır: oturum doğrulama, public/
+// private rota ayrımı ve süperadmin'in kendi modül erişim kısıtlaması
+// (superadmin-modules.ts — bu platform operatörünün KENDİ hesabına uygulanan
+// ayrı bir mekanizma, klinik rol yetkileriyle ilgisi yok). Sayfa/API bazlı
+// asıl yetki reddi artık her zaman requireAuth() içinden, Türkçe ve anlaşılır
+// bir mesajla (`{"message": "Bu işlem için yetkiniz yok."}`, 403) döner.
 
 function isPublicPath(pathname: string) {
   if (pathname === "/") return true;
   if (pathname === "/superadmin") return true;
   return PUBLIC_PREFIXES.some((p) => p !== "/" && p !== "/superadmin" && pathname.startsWith(p));
+}
+
+function isSuperadminSurfacePath(pathname: string) {
+  return (
+    pathname.startsWith("/superadmin") ||
+    pathname.startsWith("/api/superadmin") ||
+    pathname.startsWith("/api/auth/superadmin")
+  );
+}
+
+// src/lib/auth.ts'teki readAuthToken() ghost/klinik_token seçimini rotaya
+// göre yapabilmek için pathname'e ihtiyaç duyuyor (Route Handler'lara
+// pathname doğrudan verilmiyor) — bu yüzden istek buradan geçerken bir
+// header olarak taşınır. Her NextResponse.next() çağrısında uygulanmalı.
+function withPathnameHeader(request: NextRequest, pathname: string) {
+  const headers = new Headers(request.headers);
+  headers.set("x-pathname", pathname);
+  return NextResponse.next({ request: { headers } });
 }
 
 export async function middleware(request: NextRequest) {
@@ -102,10 +90,16 @@ export async function middleware(request: NextRequest) {
   }
 
   if (isPublicPath(pathname)) {
-    return NextResponse.next();
+    return withPathnameHeader(request, pathname);
   }
 
-  const token = request.cookies.get(TOKEN_NAME)?.value;
+  // Ghost (süperadmin gizli klinik girişi) ayrı bir çerezde taşınır ve
+  // yalnızca KLİNİK yüzeyinde (süperadmin rotaları HARİÇ) önceliklidir —
+  // böylece süperadmin'in kendi /superadmin sekmesi, başka bir sekmede
+  // açılan ghost oturumundan etkilenmez (bkz. src/lib/auth.ts notu).
+  const token = !isSuperadminSurfacePath(pathname)
+    ? (request.cookies.get(GHOST_TOKEN_NAME)?.value || request.cookies.get(TOKEN_NAME)?.value)
+    : request.cookies.get(TOKEN_NAME)?.value;
 
   if (!token) {
     metricIncrement("auth_failures_total");
@@ -160,24 +154,11 @@ export async function middleware(request: NextRequest) {
       }
     }
 
-    // Rol bazlı sayfa & API erişim kontrolü (SUPERADMIN ve YONETICI hariç)
-    const role = effectiveRole;
-    if (role && role !== "SUPERADMIN" && role !== "YONETICI") {
-      // Sayfa erişim kontrolü
-      if (!pathname.startsWith("/api/")) {
-        const denied = ROLE_DENIED_PAGES[role] ?? [];
-        if (denied.some(p => pathname === p || pathname.startsWith(p + "/"))) {
-          return NextResponse.redirect(new URL("/yetkisiz", request.url));
-        }
-      }
-      // API erişim kontrolü
-      if (pathname.startsWith("/api/") && !pathname.startsWith("/api/auth/")) {
-        const deniedApis = API_ROLE_DENIED[role] ?? [];
-        if (deniedApis.some(p => pathname === p || pathname.startsWith(p + "/"))) {
-          return NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 });
-        }
-      }
-    }
+    // Rol bazlı sayfa/API yetkilendirmesi artık BURADA yapılmaz — her API
+    // route'u kendi requireAuth(permission) çağrısıyla DB tabanlı yetki
+    // matrisine göre karar verir (bkz. yukarıdaki not). Sayfa linki zaten
+    // yalnızca yetkili roller için menüde görünür; doğrudan URL ile girilirse
+    // sayfanın kendi veri çağrıları aynı requireAuth() kontrolünden 403 alır.
 
   } catch {
     metricIncrement("auth_failures_total");
@@ -186,10 +167,11 @@ export async function middleware(request: NextRequest) {
     }
     const response = NextResponse.redirect(new URL("/klinik/giris", request.url));
     response.cookies.delete(TOKEN_NAME);
+    response.cookies.delete(GHOST_TOKEN_NAME);
     return response;
   }
 
-  return NextResponse.next();
+  return withPathnameHeader(request, pathname);
 }
 
 export const config = {

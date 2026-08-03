@@ -43,7 +43,7 @@ export default function PackagesTab() {
     }
     setSaving(true);
     try {
-      await fetch("/api/superadmin/sms-packages", {
+      const res = await fetch("/api/superadmin/sms-packages", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -52,12 +52,17 @@ export default function PackagesTab() {
           price: parseFloat(form.price),
         }),
       });
-      showToastSafe({ title: "Kaydedildi", message: "SMS paketi oluşturuldu", type: "success" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToastSafe({ title: "Hata", message: err.message || "Paket kaydedilemedi", type: "error" });
+        return;
+      }
+      showToastSafe({ title: "Kaydedildi", message: "SMS paketi oluşturuldu", type: "success", icon: "sms" });
       setShowForm(false);
       setForm({ name: "", smsCount: "", price: "" });
       load();
     } catch {
-      showToastSafe({ title: "Hata", message: "Paket kaydedilemedi", type: "error" });
+      showToastSafe({ title: "Hata", message: "Bağlantı hatası — paket kaydedilemedi. Lütfen tekrar deneyin.", type: "error" });
     } finally {
       setSaving(false);
     }
@@ -65,15 +70,20 @@ export default function PackagesTab() {
 
   const toggleActive = async (id: string, current: boolean) => {
     try {
-      await fetch(`/api/superadmin/sms-packages/${id}`, {
+      const res = await fetch(`/api/superadmin/sms-packages/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ isActive: !current }),
       });
-      showToastSafe({ title: current ? "Pasife alındı" : "Aktif edildi", message: "Paket durumu güncellendi", type: "success" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToastSafe({ title: "Hata", message: err.message || "Durum güncellenemedi", type: "error" });
+        return;
+      }
+      showToastSafe({ title: current ? "Pasife alındı" : "Aktif edildi", message: "Paket durumu güncellendi", type: "success", icon: "sms" });
       load();
     } catch {
-      showToastSafe({ title: "Hata", message: "Durum güncellenemedi", type: "error" });
+      showToastSafe({ title: "Hata", message: "Bağlantı hatası — durum güncellenemedi. Lütfen tekrar deneyin.", type: "error" });
     }
   };
 

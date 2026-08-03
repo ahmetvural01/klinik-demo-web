@@ -4,9 +4,16 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { CalendarDays, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+
+const CalendarEmptyIcon = createSceneIllustration("randevu", 160);
+import { ModuleIcon, type ModuleKey } from "@/components/ui/ModuleIcon";
+import { CountUp } from "@/components/ui/CountUp";
+import { StatusFeedback } from "@/components/ui/StatusFeedback";
 import { confirmDialog } from "@/lib/confirm-client";
 import { cachedGet } from "@/lib/client-cache";
+import { showToastSafe } from "@/lib/toast-client";
 import { getDisplayAppointmentStatus } from "@/lib/appointment-status";
 
 type ApptStatus = "BEKLIYOR" | "GELDI" | "IPTAL" | "TAMAMLANDI" | string;
@@ -121,6 +128,7 @@ export default function AnasayfaPage() {
   const [messages, setMessages] = useState<Msg[]>([]);
   const [msgText, setMsgText] = useState("");
   const [msgLoading, setMsgLoading] = useState(false);
+  const [annSaving, setAnnSaving] = useState(false);
   const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
   const [editingMsgText, setEditingMsgText] = useState("");
   const [currentUserId, setCurrentUserId] = useState("");
@@ -353,7 +361,7 @@ export default function AnasayfaPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     void loadMessages();
-    fetch("/api/announcements").then(r => r.json()).then(d => setAnnouncements(Array.isArray(d) ? d : [])).catch(() => {});
+    fetch("/api/announcements").then(r => (r.ok ? r.json() : [])).then(d => setAnnouncements(Array.isArray(d) ? d : [])).catch(() => {});
     cachedGet<{ role?: string; id?: string }>("/api/auth/me", 60_000).then(d => {
       baseRoleRef.current = d?.role || "";
       const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
@@ -377,10 +385,15 @@ export default function AnasayfaPage() {
       }
     };
 
+    // Sekme arka plandayken bu iki zamanlayıcı da çalışmaya devam edip
+    // gereksiz istek atıyordu (bkz. denetim raporu) — visibilitychange zaten
+    // sekme tekrar görünür olunca ayrıca yeniliyor (yukarıda onVisibility).
     const msgTimer = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       void loadMessages();
     }, 30000);
     const panelTimer = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       const activeRole = (typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null) || annRoleRef.current;
       if (activeRole) void loadRolePanels(activeRole);
     }, 120000);
@@ -426,8 +439,11 @@ export default function AnasayfaPage() {
         if (annRoleRef.current) void loadRolePanels(annRoleRef.current);
 
         fetch("/api/appointments?date=" + dateStr)
-          .then((r) => r.json())
-          .then((d) => setAppts(Array.isArray(d) ? d : (d.appointments || [])))
+          .then(async (r) => {
+            if (!r.ok) return; // geçici hata — ekrandaki mevcut randevu listesi olduğu gibi kalsın, yanlışlıkla boşaltılmasın
+            const d = await r.json().catch(() => null);
+            if (d) setAppts(Array.isArray(d) ? d : (d.appointments || []));
+          })
           .catch(() => {});
       }, 350);
     };
@@ -444,16 +460,23 @@ export default function AnasayfaPage() {
   }, [messages]);
 
   const sendMessage = async () => {
-    if (!msgText.trim()) return;
+    if (!msgText.trim() || msgLoading) return;
     setMsgLoading(true);
-    const res = await fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: msgText }) });
-    if (res.ok) {
+    try {
+      const res = await fetch("/api/messages", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: msgText }) });
+      if (!res.ok) {
+        showToastSafe({ title: "Hata", message: "Mesaj gönderilemedi", type: "error" });
+        return;
+      }
       const msg = await res.json();
       setMessages(prev => [...prev, msg]);
       setMsgText("");
       markMessagesSeen([...(messages || []), msg]);
+    } catch {
+      showToastSafe({ title: "Hata", message: "Bağlantı hatası — mesaj gönderilemedi.", type: "error" });
+    } finally {
+      setMsgLoading(false);
     }
-    setMsgLoading(false);
   };
 
   const beginEditMessage = (msg: Msg) => {
@@ -468,45 +491,76 @@ export default function AnasayfaPage() {
 
   const saveEditMessage = async () => {
     if (!editingMsgId || !editingMsgText.trim()) return;
-    const res = await fetch(`/api/messages/${editingMsgId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: editingMsgText }),
-    });
-    if (!res.ok) return;
-    const updated = await res.json();
-    setMessages((prev) => prev.map((m) => (m.id === editingMsgId ? updated : m)));
-    setEditingMsgId(null);
-    setEditingMsgText("");
+    try {
+      const res = await fetch(`/api/messages/${editingMsgId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: editingMsgText }),
+      });
+      if (!res.ok) {
+        showToastSafe({ title: "Hata", message: "Mesaj güncellenemedi", type: "error" });
+        return;
+      }
+      const updated = await res.json();
+      setMessages((prev) => prev.map((m) => (m.id === editingMsgId ? updated : m)));
+      setEditingMsgId(null);
+      setEditingMsgText("");
+    } catch {
+      showToastSafe({ title: "Hata", message: "Bağlantı hatası — mesaj güncellenemedi.", type: "error" });
+    }
   };
 
   const deleteMessage = async (id: string) => {
     const ok = await confirmDialog({ message: "Mesaj silinsin mi?", danger: true, confirmText: "Sil" });
     if (!ok) return;
-    const res = await fetch(`/api/messages/${id}`, { method: "DELETE" });
-    if (!res.ok) return;
-    setMessages((prev) => prev.filter((m) => m.id !== id));
-    if (editingMsgId === id) {
-      setEditingMsgId(null);
-      setEditingMsgText("");
+    try {
+      const res = await fetch(`/api/messages/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        showToastSafe({ title: "Hata", message: "Mesaj silinemedi", type: "error" });
+        return;
+      }
+      setMessages((prev) => prev.filter((m) => m.id !== id));
+      if (editingMsgId === id) {
+        setEditingMsgId(null);
+        setEditingMsgText("");
+      }
+    } catch {
+      showToastSafe({ title: "Hata", message: "Bağlantı hatası — mesaj silinemedi.", type: "error" });
     }
   };
 
   const addAnn = async () => {
-    if (!annText.trim()) return;
-    const res = await fetch("/api/announcements", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: annText }) });
-    if (res.ok) {
+    if (!annText.trim() || annSaving) return;
+    setAnnSaving(true);
+    try {
+      const res = await fetch("/api/announcements", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: annText }) });
+      if (!res.ok) {
+        showToastSafe({ title: "Hata", message: "Duyuru eklenemedi", type: "error" });
+        return;
+      }
       const ann = await res.json();
       setAnnouncements(prev => [ann, ...prev]);
       setAnnText("");
+    } catch {
+      showToastSafe({ title: "Hata", message: "Bağlantı hatası — duyuru eklenemedi.", type: "error" });
+    } finally {
+      setAnnSaving(false);
     }
   };
 
   const deleteAnn = async (id: string) => {
     const ok = await confirmDialog({ message: "Duyuru silinsin mi?", danger: true, confirmText: "Sil" });
     if (!ok) return;
-    const res = await fetch("/api/announcements", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
-    if (res.ok) setAnnouncements(prev => prev.filter(a => a.id !== id));
+    try {
+      const res = await fetch("/api/announcements", { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
+      if (!res.ok) {
+        showToastSafe({ title: "Hata", message: "Duyuru silinemedi", type: "error" });
+        return;
+      }
+      setAnnouncements(prev => prev.filter(a => a.id !== id));
+    } catch {
+      showToastSafe({ title: "Hata", message: "Bağlantı hatası — duyuru silinemedi.", type: "error" });
+    }
   };
 
   const todayTotal   = appts.length;
@@ -592,9 +646,9 @@ export default function AnasayfaPage() {
   // "Bekleyen Lab" burada ayrıca bir sayaç olarak durmuyor — aynı sayı zaten
   // "Bugün Dikkat Gerekenler" görev listesinde ve sidebar rozetinde var,
   // üçüncü bir tekrar gereksizdi.
-  const summaryItems: SummaryItem[] = [
-    { id: "s-appt-total", label: "Bugünkü Randevu", value: String(todayTotal), tone: "blue", href: "/randevu" },
-    { id: "s-appt-pending", label: "İşlem Bekleyen", value: String(todayWaiting), tone: "amber", href: "/randevu" },
+  const summaryItems: (SummaryItem & { module: ModuleKey; accentOverride?: "amber" })[] = [
+    { id: "s-appt-total", label: "Bugünkü Randevu", value: String(todayTotal), tone: "blue", href: "/randevu", module: "calendar" },
+    { id: "s-appt-pending", label: "İşlem Bekleyen", value: String(todayWaiting), tone: "amber", href: "/randevu", module: "calendar", accentOverride: "amber" },
   ];
 
   return (
@@ -608,7 +662,7 @@ export default function AnasayfaPage() {
             <h1 className="font-display text-2xl font-extrabold tracking-tight text-slate-950">Günlük görünüm</h1>
             <p className="mt-1 text-sm text-slate-500">{dateLabel}</p>
           </div>
-          <p className="pb-0.5 text-xs font-semibold text-slate-500">{roleLabel} · Güncellendi {lastSyncLabel}</p>
+          <p className="pb-0.5 text-xs font-semibold text-slate-500">{roleLabel}{lastSyncAt ? ` · Güncellendi ${lastSyncLabel}` : ""}</p>
         </div>
       </div>
 
@@ -633,14 +687,20 @@ export default function AnasayfaPage() {
           <Link
             key={item.id}
             href={item.href}
-            className={`ui-interactive group relative min-w-[150px] overflow-hidden rounded-2xl border px-5 py-4 shadow-sm ${idx === 0 ? "border-primary/15 bg-gradient-to-br from-primary-50 via-white to-white" : "border-amber-200/70 bg-gradient-to-br from-amber-50 via-white to-white"}`}
+            style={{ ["--row-delay" as string]: `${idx * 60}ms` }}
+            className={`ui-interactive ui-kpi-in group relative min-w-[150px] overflow-hidden rounded-2xl border px-5 py-4 shadow-sm ${idx === 0 ? "border-primary/15 bg-gradient-to-br from-primary-50 via-white to-white" : "border-amber-200/70 bg-gradient-to-br from-amber-50 via-white to-white"}`}
           >
             <span
               aria-hidden="true"
               className={`pointer-events-none absolute -right-6 -top-6 h-24 w-24 rounded-full blur-2xl transition-opacity duration-200 group-hover:opacity-80 ${idx === 0 ? "bg-primary/15" : "bg-amber-400/20"}`}
             />
-            <p className="relative text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">{item.label}</p>
-            <p className={`relative mt-1 text-[2.25rem] font-extrabold tabular-nums leading-none ${summaryValueClass[item.tone]}`}>{item.value}</p>
+            <div className="relative flex items-start justify-between gap-2">
+              <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">{item.label}</p>
+              <ModuleIcon module={item.module} accentOverride={item.accentOverride} size="sm" />
+            </div>
+            <p className={`relative mt-1 text-[2.25rem] font-extrabold leading-none ${summaryValueClass[item.tone]}`}>
+              <CountUp value={idx === 0 ? todayTotal : todayWaiting} />
+            </p>
           </Link>
         ))}
       </div>
@@ -730,10 +790,11 @@ export default function AnasayfaPage() {
               </div>
             </div>
             {appts.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-slate-300">
-                <CalendarDays className="mb-3 h-11 w-11" strokeWidth={1.25} />
-                <p className="text-sm text-slate-400">Bu gün için randevu yok</p>
-                <Link href="/randevu" className="mt-3 rounded-lg bg-primary px-4 py-1.5 text-xs font-semibold text-white transition hover:bg-primary-strong">Randevu Ekle</Link>
+              <div className="flex flex-col items-center justify-center py-10 text-center">
+                <CalendarEmptyIcon className="ui-empty-illustration mb-3" />
+                <p className="text-sm font-bold text-slate-800">Bu gün için randevu yok</p>
+                <p className="mt-1 max-w-xs text-xs leading-5 text-slate-500">Takvim boş — yeni bir randevu ekleyerek günü planlamaya başlayın.</p>
+                <Link href="/randevu" className="ui-interactive mt-4 rounded-lg bg-gradient-to-b from-primary to-primary-strong px-4 py-1.5 text-xs font-bold text-white shadow-[0_2px_8px_rgb(var(--app-primary)/0.35)]">Randevu Ekle</Link>
               </div>
             ) : (
               <div className="divide-y divide-slate-50">
@@ -787,18 +848,22 @@ export default function AnasayfaPage() {
                     </div>
                   </div>
                 ) : (
-                  <Link key={task.id} href={task.href} className="flex items-start gap-3 rounded-xl px-3 py-2 transition hover:bg-slate-50">
+                  <Link key={task.id} href={task.href} className="group/task flex items-start gap-3 rounded-xl px-3 py-2 transition-colors duration-150 hover:bg-slate-50">
                     <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${taskDotClass[task.tone]}`} />
-                    <div>
+                    <div className="min-w-0 flex-1">
                       <p className="text-xs font-semibold text-slate-800">{task.title}</p>
                       {task.meta && <p className="mt-0.5 text-[11px] text-slate-500">{task.meta}</p>}
                     </div>
+                    <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-300 opacity-0 transition-all duration-150 -translate-x-1 group-hover/task:opacity-100 group-hover/task:translate-x-0" />
                   </Link>
                 )
               ))}
             </div>
           ) : (
-            <p className="px-4 py-4 text-xs text-slate-400">Bugün için bekleyen bir işlem yok.</p>
+            <div className="flex items-center gap-2 px-4 py-4">
+              <StatusFeedback type="success" size={16} />
+              <p className="text-xs font-semibold text-slate-600">Bugün için bekleyen bir işlem yok — her şey yolunda.</p>
+            </div>
           )}
 
           <div className="flex items-center justify-between border-y border-slate-50 bg-slate-50/70 px-4 py-2">
@@ -806,7 +871,12 @@ export default function AnasayfaPage() {
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">{announcements.length}</span>
           </div>
           <div className="max-h-40 divide-y divide-slate-50 overflow-y-auto">
-            {announcements.length === 0 && <p className="py-4 text-center text-xs text-slate-400">Duyuru yok</p>}
+            {announcements.length === 0 && (
+              <div className="flex flex-col items-center gap-1.5 py-6 text-center">
+                <ModuleIcon module="log" size="sm" />
+                <p className="text-xs font-semibold text-slate-500">Henüz duyuru yok</p>
+              </div>
+            )}
             {announcements.map(a => (
               <div key={a.id} className="flex items-start gap-2 px-4 py-2.5">
                 <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
@@ -822,7 +892,7 @@ export default function AnasayfaPage() {
           {annRole === "YONETICI" && (
             <div className="flex gap-2 border-t border-slate-50 p-3">
               <input value={annText} onChange={e => setAnnText(e.target.value)} onKeyDown={e => e.key === "Enter" && addAnn()} placeholder="Duyuru metni…" className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none" />
-              <button onClick={addAnn} className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-amber-600">Ekle</button>
+              <button onClick={addAnn} disabled={annSaving || !annText.trim()} className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-amber-600 disabled:opacity-50">Ekle</button>
             </div>
           )}
         </div>
@@ -837,7 +907,12 @@ export default function AnasayfaPage() {
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">{messages.length}</span>
           </div>
           <div ref={chatScrollRef} className="max-h-48 flex-1 space-y-2 overflow-y-auto px-4 py-3">
-            {messages.length === 0 && <p className="py-4 text-center text-xs text-slate-400">Henüz mesaj yok</p>}
+            {messages.length === 0 && (
+              <div className="flex flex-col items-center gap-1.5 py-6 text-center">
+                <ModuleIcon module="sms" size="sm" />
+                <p className="text-xs font-semibold text-slate-500">Henüz mesaj yok — ekibinizle burada iletişim kurun</p>
+              </div>
+            )}
             {messages.map(m => (
               <div key={m.id} className="flex items-start gap-2">
                 <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-white">{m.user.fullName.charAt(0)}</div>

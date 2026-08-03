@@ -18,17 +18,19 @@ import {
   AlertCircle,
   PackageSearch,
   FlaskConical,
-  Loader2,
 } from "lucide-react";
 import type { ComponentType } from "react";
 import { getAlertPermissions, usePanelAlerts } from "@/components/layout/use-panel-alerts";
 import { cachedGet } from "@/lib/client-cache";
+import { useOutsideClickGroup } from "@/lib/use-outside-click";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { showToastSafe } from "@/lib/toast-client";
 import { UserCheck } from "lucide-react";
 import { PatientFormModal } from "@/components/patient/PatientFormModal";
+import { ModuleIcon, type ModuleKey } from "@/components/ui/ModuleIcon";
+import { Spinner } from "@/components/ui/Spinner";
 
 type Props = { user: { fullName: string; role: string; photoUrl?: string | null } };
 
@@ -73,6 +75,44 @@ const PAGE_TITLES: Record<string, string> = {
   "/destek":        "Destek",
   "/dashboard":     "Dashboard",
 };
+
+// Sidebar'daki modül ikonuyla aynı görsel kimliği sayfa başlığında da
+// göstermek için — bir modülün sidebar'da bir ikonu, sayfa içinde başka
+// (jenerik) bir ikonu olmamalı.
+const PAGE_MODULE: Record<string, ModuleKey> = {
+  "/anasayfa": "home",
+  "/dashboard": "home",
+  "/randevu": "calendar",
+  "/hasta": "users",
+  "/hasta-ekle": "users",
+  "/hasta-detay": "users",
+  "/hasta-takip": "follow",
+  "/gorevler": "clipboard",
+  "/tedavi-plani": "clipboard",
+  "/lab": "flask",
+  "/recete": "clipboard",
+  "/muhasebe": "finance",
+  "/kasa": "finance",
+  "/finans": "finance",
+  "/taksit": "finance",
+  "/gider": "finance",
+  "/rapor": "rapor",
+  "/firma": "firma",
+  "/firma-detay": "firma",
+  "/stok": "box",
+  "/personel": "person",
+  "/personel-ekle": "person",
+  "/sms": "sms",
+  "/sistem-izleme": "chart",
+  "/ayar": "settings",
+  "/log": "log",
+  "/profil": "profile",
+  "/destek": "support",
+};
+
+function moduleForPath(pathname: string): ModuleKey | null {
+  return PAGE_MODULE[pathname] ?? null;
+}
 
 type MessageLite = { id: string; userId: string; createdAt: string };
 
@@ -215,6 +255,7 @@ export function Topbar({ user }: Props) {
 
   // Sayfa başlığı
   const pageTitle = PAGE_TITLES[pathname ?? ""] ?? "";
+  const pageModule = moduleForPath(pathname ?? "");
 
   useEffect(() => {
     if (typeof document !== "undefined") {
@@ -329,24 +370,16 @@ export function Topbar({ user }: Props) {
   // bu oturum açıkken sonradan eklenenler için).
   const seenWaitingIdsRef = useRef<Set<string> | null>(null);
 
-  // Dışarı tıklanınca kapat
-  useEffect(() => {
-    function handle(e: MouseEvent) {
-      if (alertRef.current && !alertRef.current.contains(e.target as Node)) {
-        setShowAlerts(false);
-      }
-      if (waitingRef.current && !waitingRef.current.contains(e.target as Node)) {
-        setShowWaiting(false);
-      }
-      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
-        setShowSearchDropdown(false);
-        setQ("");
-        setSearchResults([]);
-      }
-    }
-    document.addEventListener("mousedown", handle);
-    return () => document.removeEventListener("mousedown", handle);
-  }, []);
+  // Dışarı tıklanınca kapat — sistem genelindeki ortak dış-tıklama
+  // sözleşmesi (bkz. src/lib/use-outside-click.ts); önceden burada tek
+  // başına `mousedown` kullanılıyordu, diğer tüm dropdown/popover'lar
+  // `pointerdown` kullanıyordu (dokunmatik ekranlarda daha tutarlı) —
+  // artık hepsi aynı olayı dinliyor.
+  useOutsideClickGroup([
+    { ref: alertRef, onOutside: () => setShowAlerts(false) },
+    { ref: waitingRef, onOutside: () => setShowWaiting(false) },
+    { ref: searchRef, onOutside: () => { setShowSearchDropdown(false); setQ(""); setSearchResults([]); } },
+  ]);
 
   // Debounced search
   useEffect(() => {
@@ -421,7 +454,10 @@ export function Topbar({ user }: Props) {
           <Menu className="h-4 w-4" />
         </button>
         {pageConfig.showPageTitle && pageTitle && (
-          <span className="hidden shrink-0 font-display text-[15px] font-bold text-slate-900 lg:block">{pageTitle}</span>
+          <span key={pathname} className="ui-page-title-in group hidden shrink-0 items-center gap-2.5 lg:flex">
+            {pageModule && <ModuleIcon module={pageModule} size="sm" />}
+            <span className="font-display text-[15px] font-bold text-slate-900">{pageTitle}</span>
+          </span>
         )}
         {pageConfig.showSearch && <div className="relative flex min-w-0 max-w-sm flex-1">
           <form onSubmit={search} className="min-w-0 w-full">
@@ -487,7 +523,7 @@ export function Topbar({ user }: Props) {
               {showSearchDropdown && q.length >= 2 && searchResults.length === 0 && (
                 <div className="ui-popover absolute left-0 right-0 top-full z-[220] mt-2 px-4 py-3 text-center text-sm text-slate-500">
                   <div className="inline-flex items-center gap-2">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                    <Spinner className="h-3.5 w-3.5 text-primary" />
                     Hastalar aranıyor…
                   </div>
                 </div>

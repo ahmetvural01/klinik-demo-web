@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { invalidateInstitutionCache, requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { syncInstitutionPaymentGate } from "@/lib/billing";
 
@@ -77,21 +77,34 @@ export async function POST(request: NextRequest) {
   // Fatura numarası oluştur
   const invoiceNo = `INV-${Date.now()}`;
 
-  const invoice = await prisma.invoice.create({
-    data: {
-      invoiceNo,
-      institutionId: body.institutionId,
-      amount: body.amount,
-      description: body.description,
-      dueDate: body.dueDate ? new Date(body.dueDate) : undefined,
-      status: body.status || "PENDING",
-    },
+  // Fatura oluşturma ile kurumun paymentGraceUntil senkronu TEK transaction
+  // içinde yapılır — sync adımı başarısız olursa fatura da hiç oluşturulmamış
+  // sayılır (bkz. denetim raporu, önceden `.catch(() => {})` ile hata
+  // sessizce yutuluyordu).
+  const invoice = await prisma.$transaction(async (tx) => {
+    const created = await tx.invoice.create({
+      data: {
+        invoiceNo,
+        institutionId: body.institutionId,
+        amount: body.amount,
+        description: body.description,
+        dueDate: body.dueDate ? new Date(body.dueDate) : undefined,
+        status: body.status || "PENDING",
+      },
+    });
+
+    if (created.status !== "PAID") {
+      await syncInstitutionPaymentGate(body.institutionId, tx);
+    }
+
+    return created;
   });
 
-  const institution = await prisma.institution.findUnique({ where: { id: body.institutionId }, select: { name: true } });
   if (invoice.status !== "PAID") {
-    await syncInstitutionPaymentGate(body.institutionId).catch(() => {});
+    invalidateInstitutionCache(invoice.institutionId);
   }
+
+  const institution = await prisma.institution.findUnique({ where: { id: body.institutionId }, select: { name: true } });
   await writeAudit(auth.user.id, "SUPERADMIN_INVOICE_CREATE", `${institution?.name || body.institutionId} için ${invoice.invoiceNo} oluşturuldu: ₺${Number(invoice.amount).toLocaleString("tr-TR")}`);
   return NextResponse.json(invoice);
 }

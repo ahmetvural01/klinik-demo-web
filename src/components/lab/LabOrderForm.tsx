@@ -135,7 +135,7 @@ export function LabOrderForm({
       </Field>
       {teethSelector && <Field label="Diş Seçimi (opsiyonel)">{teethSelector}</Field>}
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Gönderilen">
+        <Field label="Gönderilen *">
           <input
             value={sentItem}
             onChange={(e) => onSentItemChange(e.target.value)}

@@ -8,6 +8,7 @@ import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { FormField, inputErrorClass } from "@/components/ui/FormField";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { ListPager } from "@/components/ui/ListPager";
+import { CountUp } from "@/components/ui/CountUp";
 import { confirmDialog } from "@/lib/confirm-client";
 
 type Invoice = {
@@ -116,7 +117,7 @@ export default function InvoicesPage() {
       body: JSON.stringify({ status: "PAID" }),
     }).catch(() => null);
     if (r?.ok) {
-      showToastSafe({ message: "Fatura ödendi olarak işaretlendi", type: "success" });
+      showToastSafe({ message: "Fatura ödendi olarak işaretlendi", type: "success", icon: "finance" });
       load();
     } else {
       showToastSafe({ message: "Fatura güncellenemedi", type: "error" });
@@ -210,7 +211,7 @@ export default function InvoicesPage() {
     setSaving(false);
 
     if (r?.ok) {
-      showToastSafe({ message: "Fatura oluşturuldu", type: "success" });
+      showToastSafe({ message: "Fatura oluşturuldu", type: "success", icon: "finance" });
       closeCreate();
       load();
     } else {
@@ -291,16 +292,18 @@ export default function InvoicesPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm sm:grid-cols-4 sm:divide-y-0">
+      <div className="ui-surface grid grid-cols-2 divide-x divide-y divide-slate-100 overflow-hidden sm:grid-cols-4 sm:divide-y-0">
         {[
-          { label: "Toplam", value: fmt(summary.totalAmount), tone: "text-primary" },
-          { label: "Ödendi", value: String(summary.paid), tone: "text-emerald-700" },
-          { label: "Bekliyor", value: fmt(summary.unpaidAmount), tone: "text-amber-700" },
-          { label: "Gecikmiş", value: fmt(overdueAmount), tone: "text-red-700" },
-        ].map((stat) => (
-          <div key={stat.label} className="p-4">
-            <p className="text-xs font-bold uppercase text-slate-500">{stat.label}</p>
-            <p className={`mt-1 text-xl font-black ${stat.tone}`}>{stat.value}</p>
+          { label: "Toplam", value: summary.totalAmount, money: true, tone: "text-primary", pulse: false },
+          { label: "Ödendi", value: summary.paid, money: false, tone: "text-emerald-700", pulse: false },
+          { label: "Bekliyor", value: summary.unpaidAmount, money: true, tone: "text-amber-700", pulse: false },
+          { label: "Gecikmiş", value: overdueAmount, money: true, tone: "text-red-700", pulse: overdueAmount > 0 },
+        ].map((stat, i) => (
+          <div key={stat.label} className={`ui-kpi-in p-4 ${stat.pulse ? "ui-badge-pulse" : ""}`} style={{ ["--row-delay" as string]: `${i * 40}ms` }}>
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{stat.label}</p>
+            <p className={`mt-1 text-2xl font-black ${stat.tone}`}>
+              <CountUp value={stat.value} formatter={stat.money ? (n) => fmt(n) : undefined} />
+            </p>
           </div>
         ))}
       </div>

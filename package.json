@@ -28,11 +28,21 @@
     "verify:redis:realtime": "tsx scripts/verify-redis-realtime.ts",
     "test:integration": "tsx scripts/integration-basic.ts",
     "test:stock-ledger": "tsx scripts/stock-ledger-test.ts",
+    "test:stock-idempotency": "tsx scripts/stock-idempotency-test.ts",
+    "test:role-permissions": "tsx scripts/role-permission-enforcement-test.ts",
+    "backfill:fine-grained-permissions": "tsx scripts/backfill-fine-grained-permissions.ts",
+    "test:firma-islem-cancel-race": "tsx scripts/firma-islem-cancel-race-test.ts",
+    "test:taksit-quick-pay-ledger": "tsx scripts/taksit-quick-pay-ledger-test.ts",
     "test:working-hours": "tsx scripts/working-hours-rules-test.ts",
     "test:visual": "node scripts/visual-audit.mjs",
+    "test:layout-sidebar-header": "tsx scripts/layout-sidebar-header-test.ts",
+    "test:modal-dirty-state": "tsx scripts/modal-dirty-state-test.ts",
+    "test:ensure-postgres": "node scripts/ensure-postgres-test.mjs",
     "preflight:prod": "tsx scripts/preflight-prod.ts",
+    "pilot:smoke": "node scripts/pilot-smoke.mjs",
     "backup:db": "node scripts/backup-postgres.mjs",
-    "encrypt:legacy-data": "tsx scripts/encrypt-existing-sensitive-data.ts"
+    "encrypt:legacy-data": "tsx scripts/encrypt-existing-sensitive-data.ts",
+    "security:secrets": "node scripts/security-scan-secrets.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -42,6 +52,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1096.0",
+    "@icon-park/react": "^1.4.2",
     "@prisma/client": "^5.17.0",
     "@tanstack/react-table": "^8.21.3",
     "@types/jsbarcode": "^3.11.4",
@@ -65,7 +76,6 @@
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "signature_pad": "^5.1.3",
-    "swr": "^2.4.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {

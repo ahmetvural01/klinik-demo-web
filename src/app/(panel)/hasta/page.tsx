@@ -8,6 +8,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   CalendarDays,
+  CalendarPlus,
   ChevronLeft,
   ChevronRight,
   Filter,
@@ -23,6 +24,13 @@ import { useSlashFocus } from "@/lib/use-slash-focus";
 import { ListRowSkeleton, TableRowsSkeleton } from "@/components/ui/ListSkeleton";
 import { cachedGet } from "@/lib/client-cache";
 import { PatientFormModal } from "@/components/patient/PatientFormModal";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
+import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+import { Badge } from "@/components/ui/Badge";
+import { ShieldAlert, Percent } from "lucide-react";
+import { Tooltip } from "@/components/ui/Tooltip";
+
+const PatientEmptyIcon = createSceneIllustration("hasta");
 
 type Patient = {
   id: string;
@@ -132,6 +140,7 @@ function HastaContent() {
   const [doctors, setDoctors] = useState<{ id: string; fullName: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [forbidden, setForbidden] = useState(false);
   const [userRole, setUserRole] = useState(() => readCachedAuthRole());
   const [showQuickCreate, setShowQuickCreate] = useState(false);
   const [editPatientId, setEditPatientId] = useState<string | null>(null);
@@ -198,6 +207,7 @@ function HastaContent() {
   const load = useCallback(async (force = false) => {
     setLoading(true);
     setError(null);
+    setForbidden(false);
     const params = new URLSearchParams({
       q: debouncedQuery,
       page: String(page),
@@ -211,8 +221,20 @@ function HastaContent() {
 
     try {
       const url = `/api/patients?${params.toString()}`;
-      const json = await cachedGet<PatientResponse | null>(url, 15_000, { force });
-      if (!json) throw new Error("Hasta listesi yüklenemedi");
+      // cachedGet burada kasıtlı kullanılmıyor: 403 durumunda gerçek durum
+      // kodunu ayırt edip kullanıcıya "yetkiniz yok" ile "kayıt bulunamadı"
+      // arasındaki farkı net göstermek gerekiyor — cachedGet her HTTP
+      // hatasını aynı şekilde null'a indirger (bkz. src/lib/client-cache.ts).
+      const res = await fetch(url, { cache: "no-store" });
+      if (res.status === 401 || res.status === 403) {
+        setForbidden(true);
+        setPatients([]);
+        setTotal(0);
+        setPageCount(1);
+        return;
+      }
+      if (!res.ok) throw new Error("Hasta listesi yüklenemedi");
+      const json: PatientResponse = await res.json();
       setPatients(Array.isArray(json.patients) ? json.patients : []);
       setTotal(Number(json.total || 0));
       setPageCount(Math.max(1, Number(json.pageCount || 1)));
@@ -295,7 +317,7 @@ function HastaContent() {
   };
 
   const SortButton = ({ col, label }: { col: SortKey; label: string }) => (
-    <button type="button" onClick={() => toggleSort(col)} className="inline-flex items-center gap-1 text-left">
+    <button type="button" onClick={() => toggleSort(col)} className="inline-flex items-center gap-1 text-left uppercase tracking-wide">
       {label}
       {sortKey === col ? (
         sortDir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
@@ -318,22 +340,26 @@ function HastaContent() {
 
   return (
     <section className="space-y-4">
-      <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div>
-            <h1 className="text-lg font-black text-slate-900">Hastalar</h1>
+      <div className="ui-surface p-4 sm:p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-3">
+            <ModuleIcon module="users" size="lg" />
+            <div>
+              <h1 className="font-display text-xl font-black tracking-tight text-slate-900">Hastalar</h1>
+              <p className="text-xs font-medium text-slate-500">Kayıtlı hasta dosyalarını görüntüleyin ve yönetin.</p>
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2.5">
             {visibleSummary.map((item) => (
-              <div key={item.label} className="rounded-lg border border-slate-100 bg-slate-50 px-3 py-2">
-                <span className="block text-[11px] font-bold uppercase text-slate-400">{item.label}</span>
-                <span className={`text-base font-black ${item.color}`}>{Number(item.value || 0).toLocaleString("tr-TR")}</span>
+              <div key={item.label} className="ui-surface-soft min-w-[104px] px-3.5 py-2">
+                <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">{item.label}</span>
+                <span className={`text-xl font-black tabular-nums ${item.color}`}>{Number(item.value || 0).toLocaleString("tr-TR")}</span>
               </div>
             ))}
             <button
               type="button"
               onClick={() => setShowQuickCreate(true)}
-              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white shadow-sm transition hover:bg-primary/90"
+              className="ui-interactive inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-gradient-to-b from-primary to-primary-strong px-4 py-2 text-sm font-bold text-white shadow-[0_2px_8px_rgb(var(--app-primary)/0.3)]"
             >
               <UserPlus className="h-4 w-4" />
               Yeni Hasta
@@ -342,7 +368,7 @@ function HastaContent() {
         </div>
       </div>
 
-      <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="ui-surface p-3">
         <div className="grid gap-2 xl:grid-cols-[1fr_auto] xl:items-center">
           <div className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_160px]">
             <label className="relative block">
@@ -371,7 +397,7 @@ function HastaContent() {
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex h-10 items-center gap-2 rounded-lg border border-slate-200 px-3 text-sm text-slate-500">
+            <div className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm transition ${activeFilterCount > 0 ? "border-primary/25 bg-primary/5 text-primary" : "border-slate-200 text-slate-500"}`}>
               <Filter className="h-4 w-4" />
               {activeFilterCount} filtre
             </div>
@@ -379,7 +405,7 @@ function HastaContent() {
               <button
                 type="button"
                 onClick={resetFilters}
-                className="inline-flex h-10 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-600 hover:bg-primary/[0.04]"
+                className="inline-flex h-10 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
               >
                 <X className="h-4 w-4" />
                 Temizle
@@ -405,16 +431,22 @@ function HastaContent() {
         </div>
       )}
 
-      {error && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">{error}</p>}
+      {error && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 shadow-[var(--shadow-rest)]">{error}</p>}
 
-      <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm" aria-busy={loading}>
+      <div className="ui-surface overflow-hidden" aria-busy={loading}>
         <div className="divide-y divide-slate-100 md:hidden">
           {loading && patients.length === 0 ? (
             <ListRowSkeleton rows={6} />
+          ) : forbidden ? (
+            <div className="px-4 py-14 text-center text-sm font-medium text-amber-700">Bu sayfayı görüntüleme yetkiniz yok.</div>
           ) : patients.length === 0 ? (
-            <div className="px-4 py-14 text-center text-sm text-slate-400">Hasta bulunamadı</div>
+            <div className="flex flex-col items-center px-4 py-14 text-center">
+              <PatientEmptyIcon className="ui-empty-illustration mb-4" />
+              <p className="text-sm font-bold text-slate-800">Hasta bulunamadı</p>
+              <p className="mt-1 max-w-xs text-xs leading-5 text-slate-500">Arama veya filtre kriterlerine uyan bir hasta yok. Yeni bir hasta ekleyerek başlayabilirsiniz.</p>
+            </div>
           ) : (
-            patients.map((patient) => {
+            patients.map((patient, patientIdx) => {
               const age = calculateAge(patient.birthDate);
               const riskFlag = hasMedicalRisk(patient);
               return (
@@ -430,10 +462,11 @@ function HastaContent() {
                   onKeyDown={(event) => {
                     if (event.key === "Enter") router.push(`/hasta-detay?id=${patient.id}`);
                   }}
-                  className="cursor-pointer p-4 transition-colors hover:bg-primary/[0.035] focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25"
+                  style={{ ["--row-delay" as string]: `${Math.min(patientIdx, 12) * 20}ms` }}
+                  className="ui-tone-card-interactive ui-row-in ui-pressable p-4 transition-colors hover:bg-primary/[0.035] focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25"
                 >
                   <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-black text-primary">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary-strong text-sm font-black text-white shadow-[0_2px_6px_rgb(var(--app-primary)/0.28)] ring-2 ring-white">
                       {patientInitials(patient.fullName)}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -451,15 +484,24 @@ function HastaContent() {
                     </div>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-1.5">
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{patient.gender || "Cinsiyet yok"}</span>
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600">{age !== null ? `${age} yaş` : "Yaş yok"}</span>
-                    {patient.insurance && <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-semibold text-emerald-700">{patient.insurance}</span>}
-                    {patient.hasContagiousDisease && <span className="rounded-full bg-red-600 px-2 py-0.5 text-xs font-black text-white" title={patient.contagiousDiseaseNote || undefined}>⚠ Bulaşıcı Hastalık</span>}
-                    {riskFlag && <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">Medikal uyarı</span>}
+                    <Badge tone="neutral">{patient.gender || "Cinsiyet yok"}</Badge>
+                    <Badge tone="neutral">{age !== null ? `${age} yaş` : "Yaş yok"}</Badge>
+                    {patient.insurance && <Badge tone="success">{patient.insurance}</Badge>}
+                    {patient.hasContagiousDisease && <Badge tone="critical" solid icon={ShieldAlert} className="ui-badge-pulse" title={patient.contagiousDiseaseNote || undefined}>Bulaşıcı Hastalık</Badge>}
+                    {riskFlag && <Badge tone="critical" icon={ShieldAlert}>Medikal uyarı</Badge>}
                   </div>
-                  <div className={`mt-4 grid gap-2 ${canDeletePatients ? "grid-cols-2" : "grid-cols-1"}`}>
-                    <button type="button" onClick={() => setEditPatientId(patient.id)} className="rounded-lg border border-slate-200 px-3 py-2 text-center text-sm font-semibold text-slate-700">Düzenle</button>
-                    {canDeletePatients && <button type="button" onClick={() => remove(patient.id)} className="rounded-lg border border-red-200 px-3 py-2 text-sm font-semibold text-red-600">Sil</button>}
+                  <div className="mt-4 grid grid-cols-1 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => router.push(`/randevu?newPatientId=${patient.id}&newPatientName=${encodeURIComponent(patient.fullName)}`)}
+                      className="ui-interactive rounded-lg bg-gradient-to-b from-primary to-primary-strong px-3 py-2.5 text-center text-sm font-bold text-white shadow-[0_2px_8px_rgb(var(--app-primary)/0.25)]"
+                    >
+                      Randevu Oluştur
+                    </button>
+                    <div className={`grid gap-2 ${canDeletePatients ? "grid-cols-2" : "grid-cols-1"}`}>
+                      <button type="button" onClick={() => setEditPatientId(patient.id)} className="ui-interactive rounded-lg border border-slate-200 px-3 py-2.5 text-center text-sm font-semibold text-slate-700">Düzenle</button>
+                      {canDeletePatients && <button type="button" onClick={() => remove(patient.id)} className="ui-interactive rounded-lg border border-red-200 px-3 py-2.5 text-sm font-semibold text-red-600">Sil</button>}
+                    </div>
                   </div>
                 </div>
               );
@@ -470,40 +512,49 @@ function HastaContent() {
         <div className="hidden overflow-x-auto md:block">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50">
-              <tr className="border-b border-slate-100">
-                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">
+              <tr className="border-b border-slate-200">
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
                   <SortButton col="fullName" label="Hasta" />
                 </th>
-                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
                   <SortButton col="tcNo" label="TC Kimlik" />
                 </th>
                 {!hidePhone && (
-                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">
+                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
                     <SortButton col="phone" label="Telefon" />
                   </th>
                 )}
-                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
                   <SortButton col="birthDate" label="Yaş" />
                 </th>
-                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
                   <SortButton col="profession" label="Meslek" />
                 </th>
-                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase text-slate-500">
+                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
                   <SortButton col="insurance" label="Kurum" />
                 </th>
-                <th className="px-4 py-3 text-right text-[11px] font-bold uppercase text-slate-500">İşlem</th>
+                <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wide text-slate-500">İşlem</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading && patients.length === 0 && <TableRowsSkeleton rows={7} columns={hidePhone ? 6 : 7} />}
-              {!loading && patients.length === 0 && (
+              {!loading && forbidden && (
                 <tr>
-                  <td colSpan={hidePhone ? 6 : 7} className="px-4 py-14 text-center text-sm text-slate-400">
-                    Hasta bulunamadı
+                  <td colSpan={hidePhone ? 6 : 7} className="px-4 py-14 text-center text-sm font-medium text-amber-700">
+                    Bu sayfayı görüntüleme yetkiniz yok.
                   </td>
                 </tr>
               )}
-              {patients.map((patient) => {
+              {!loading && !forbidden && patients.length === 0 && (
+                <tr>
+                  <td colSpan={hidePhone ? 6 : 7} className="px-4 py-14 text-center">
+                    <PatientEmptyIcon className="ui-empty-illustration mx-auto mb-4" />
+                    <p className="text-sm font-bold text-slate-800">Hasta bulunamadı</p>
+                    <p className="mx-auto mt-1 max-w-xs text-xs leading-5 text-slate-500">Arama veya filtre kriterlerine uyan bir hasta yok. Yeni bir hasta ekleyerek başlayabilirsiniz.</p>
+                  </td>
+                </tr>
+              )}
+              {patients.map((patient, patientIdx) => {
                 const age = calculateAge(patient.birthDate);
                 const riskFlag = hasMedicalRisk(patient);
                 return (
@@ -519,11 +570,12 @@ function HastaContent() {
                     onKeyDown={(event) => {
                       if (event.key === "Enter") router.push(`/hasta-detay?id=${patient.id}`);
                     }}
-                    className="cursor-pointer transition-colors hover:bg-primary/[0.035] focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25"
+                    style={{ ["--row-delay" as string]: `${Math.min(patientIdx, 12) * 20}ms` }}
+                    className="ui-row-in cursor-pointer transition-colors hover:bg-primary/[0.035] focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25"
                   >
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-black text-primary">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary-strong text-xs font-black text-white shadow-[0_2px_6px_rgb(var(--app-primary)/0.28)] ring-2 ring-white">
                           {patientInitials(patient.fullName)}
                         </div>
                         <div className="min-w-0">
@@ -531,11 +583,13 @@ function HastaContent() {
                             {patient.fullName}
                           </Link>
                           <p className="mt-0.5 text-xs text-slate-400">{patient.gender === "ERKEK" ? "Erkek" : patient.gender === "KADIN" ? "Kadın" : "Cinsiyet yok"}</p>
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {patient.hasContagiousDisease && <span className="rounded-full bg-red-600 px-2 py-0.5 text-[11px] font-black text-white" title={patient.contagiousDiseaseNote || undefined}>⚠ Bulaşıcı Hastalık</span>}
-                            {riskFlag && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-700">Medikal uyarı</span>}
-                            {patient.discountRate ? <span className="rounded-full bg-orange-50 px-2 py-0.5 text-[11px] font-bold text-orange-700">%{patient.discountRate} indirim</span> : null}
-                          </div>
+                          {Boolean(patient.hasContagiousDisease || riskFlag || patient.discountRate) && (
+                            <div className="mt-1 flex flex-wrap gap-1">
+                              {patient.hasContagiousDisease && <Badge tone="critical" solid icon={ShieldAlert} className="ui-badge-pulse" title={patient.contagiousDiseaseNote || undefined}>Bulaşıcı Hastalık</Badge>}
+                              {riskFlag && <Badge tone="critical" icon={ShieldAlert}>Medikal uyarı</Badge>}
+                              {patient.discountRate ? <Badge tone="warning" icon={Percent}>%{patient.discountRate} indirim</Badge> : null}
+                            </div>
+                          )}
                         </div>
                       </div>
                     </td>
@@ -550,20 +604,34 @@ function HastaContent() {
                     <td className="px-4 py-3 text-slate-600">{patient.profession || "-"}</td>
                     <td className="px-4 py-3">
                       {patient.insurance ? (
-                        <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-semibold text-emerald-700">{patient.insurance}</span>
+                        <Badge tone="success">{patient.insurance}</Badge>
                       ) : (
                         <span className="text-slate-300">-</span>
                       )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-end gap-1.5">
-                        <button type="button" onClick={() => setEditPatientId(patient.id)} title="Düzenle" className="rounded-lg bg-slate-100 p-2 text-slate-600 transition hover:bg-slate-200">
-                          <Pencil className="h-4 w-4" />
-                        </button>
-                        {canDeletePatients && (
-                          <button type="button" onClick={() => remove(patient.id)} title="Sil" className="rounded-lg bg-red-50 p-2 text-red-600 transition hover:bg-red-100">
-                            <Trash2 className="h-4 w-4" />
+                        <Tooltip label="Randevu Oluştur">
+                          <button
+                            type="button"
+                            onClick={() => router.push(`/randevu?newPatientId=${patient.id}&newPatientName=${encodeURIComponent(patient.fullName)}`)}
+                            aria-label="Randevu Oluştur"
+                            className="ui-interactive rounded-lg bg-primary/10 p-2 text-primary hover:bg-primary/20"
+                          >
+                            <CalendarPlus className="h-4 w-4" />
                           </button>
+                        </Tooltip>
+                        <Tooltip label="Düzenle">
+                          <button type="button" onClick={() => setEditPatientId(patient.id)} aria-label="Düzenle" className="ui-interactive rounded-lg bg-slate-100 p-2 text-slate-600 hover:bg-slate-200">
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        </Tooltip>
+                        {canDeletePatients && (
+                          <Tooltip label="Sil">
+                            <button type="button" onClick={() => remove(patient.id)} aria-label="Sil" className="ui-interactive rounded-lg bg-red-50 p-2 text-red-600 hover:bg-red-100">
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </Tooltip>
                         )}
                       </div>
                     </td>
@@ -574,9 +642,10 @@ function HastaContent() {
           </table>
         </div>
 
-        <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
-            <span>{startRow}-{endRow} / {total.toLocaleString("tr-TR")} kayıt</span>
+        <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50/70 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-3 text-xs font-medium text-slate-500">
+            <span className="font-bold text-slate-700">{startRow}-{endRow}</span>
+            <span>/ {total.toLocaleString("tr-TR")} kayıt</span>
             <span className="inline-flex items-center gap-1">
               <CalendarDays className="h-3.5 w-3.5" />
               Sayfa {page} / {pageCount}
@@ -602,7 +671,7 @@ function HastaContent() {
               type="button"
               disabled={page <= 1 || loading}
               onClick={() => setPage((current) => Math.max(1, current - 1))}
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+              className="ui-interactive inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 disabled:pointer-events-none disabled:opacity-40"
             >
               <ChevronLeft className="h-4 w-4" />
               Önceki
@@ -611,7 +680,7 @@ function HastaContent() {
               type="button"
               disabled={page >= pageCount || loading}
               onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
-              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+              className="ui-interactive inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 disabled:pointer-events-none disabled:opacity-40"
             >
               Sonraki
               <ChevronRight className="h-4 w-4" />

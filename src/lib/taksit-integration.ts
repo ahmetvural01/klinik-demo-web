@@ -6,7 +6,16 @@
  * Prisma transaction içinde kullanılmak üzere tasarlanmıştır.
  */
 
-import type { PaymentMethod, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
+import type { PaymentMethod } from "@prisma/client";
+
+// Taksit kalan/ödenen tutarları DB'den Prisma.Decimal olarak gelir. Bunları
+// JS number'a çevirip float aritmetiğiyle işlemek (önceki hâl: `Number(...)`
+// + epsilon tolerans 0.001/0.009) CLAUDE.md'nin "Decimal/string-safe
+// aritmetik kullan" kuralını ihlal ediyordu ve çok sayıda küçük kısmi ödeme
+// sonrası kümülatif yuvarlama riski taşıyordu (bkz. denetim raporu). Tüm
+// tutar hesapları burada Decimal ile yapılır.
+const ZERO = new Prisma.Decimal(0);
 
 export interface TaksitApplyResult {
   /** Taksitlere uygulanan toplam tutar */
@@ -63,17 +72,18 @@ export async function applyTaksitIntegration(
 
   if (pendingTaksitler.length === 0) return result;
 
-  let remaining = amount;
+  let remaining = new Prisma.Decimal(amount);
+  let applied = ZERO;
   const odeDate = tarih ?? new Date();
 
   for (const taksit of pendingTaksitler) {
-    if (remaining <= 0.009) break;
+    if (remaining.lessThanOrEqualTo(ZERO)) break;
 
-    const kalan  = Number(taksit.kalan);
-    const pay    = Math.min(remaining, kalan);
-    const yeniOdenen = Number(taksit.odenen) + pay;
-    const yeniKalan  = Math.max(0, kalan - pay);
-    const fullyPaid  = yeniKalan <= 0.009;
+    const kalan = taksit.kalan as unknown as Prisma.Decimal;
+    const pay = Prisma.Decimal.min(remaining, kalan);
+    const yeniOdenen = (taksit.odenen as unknown as Prisma.Decimal).plus(pay);
+    const yeniKalan = Prisma.Decimal.max(ZERO, kalan.minus(pay));
+    const fullyPaid = yeniKalan.isZero();
 
     await tx.taksit.update({
       where: { id: taksit.id },
@@ -113,11 +123,12 @@ export async function applyTaksitIntegration(
       }
     }
 
-    remaining       -= pay;
-    result.applied  += pay;
+    remaining = remaining.minus(pay);
+    applied = applied.plus(pay);
     result.updatedCount++;
   }
 
+  result.applied = applied.toNumber();
   return result;
 }
 
@@ -128,8 +139,8 @@ async function refreshTaksitAndPlanStatus(tx: Prisma.TransactionClient, taksitId
   });
   if (!taksit) return;
 
-  const kalan = Number(taksit.kalan);
-  const nextStatus = kalan <= 0.009 ? "ODENDI" : "BEKLIYOR";
+  const kalan = taksit.kalan as unknown as Prisma.Decimal;
+  const nextStatus = kalan.lessThanOrEqualTo(ZERO) ? "ODENDI" : "BEKLIYOR";
   await tx.taksit.update({
     where: { id: taksit.id },
     data: { status: nextStatus },
@@ -157,13 +168,13 @@ export async function reverseTaksitIntegrationForPayment(
     select: { id: true, taksitId: true, tutar: true, taksit: { select: { odenen: true, kalan: true } } },
   });
 
-  let reversed = 0;
+  let reversed = ZERO;
   const touched = new Set<string>();
 
   for (const odeme of odemeler) {
-    const amount = Number(odeme.tutar);
-    const nextOdenen = Math.max(0, Number(odeme.taksit.odenen) - amount);
-    const nextKalan = Number(odeme.taksit.kalan) + amount;
+    const amount = odeme.tutar as unknown as Prisma.Decimal;
+    const nextOdenen = Prisma.Decimal.max(ZERO, (odeme.taksit.odenen as unknown as Prisma.Decimal).minus(amount));
+    const nextKalan = (odeme.taksit.kalan as unknown as Prisma.Decimal).plus(amount);
     await tx.taksit.update({
       where: { id: odeme.taksitId },
       data: {
@@ -173,7 +184,7 @@ export async function reverseTaksitIntegrationForPayment(
       },
     });
     await tx.taksitOdeme.delete({ where: { id: odeme.id } });
-    reversed += amount;
+    reversed = reversed.plus(amount);
     touched.add(odeme.taksitId);
   }
 
@@ -181,7 +192,7 @@ export async function reverseTaksitIntegrationForPayment(
     await refreshTaksitAndPlanStatus(tx, taksitId);
   }
 
-  return { reversed, updatedCount: touched.size };
+  return { reversed: reversed.toNumber(), updatedCount: touched.size };
 }
 
 /**
@@ -204,11 +215,11 @@ export async function payTaksit(
     return { updated: false, planCompleted: false };
   }
 
-  const kalan = Number(taksit.kalan);
-  const pay = Math.min(amount, kalan);
-  const yeniOdenen = Number(taksit.odenen) + pay;
-  const yeniKalan  = Math.max(0, kalan - pay);
-  const fullyPaid  = yeniKalan <= 0.009;
+  const kalan = taksit.kalan as unknown as Prisma.Decimal;
+  const pay = Prisma.Decimal.min(new Prisma.Decimal(amount), kalan);
+  const yeniOdenen = (taksit.odenen as unknown as Prisma.Decimal).plus(pay);
+  const yeniKalan  = Prisma.Decimal.max(ZERO, kalan.minus(pay));
+  const fullyPaid  = yeniKalan.isZero();
 
   await tx.taksit.update({
     where: { id: taksitId },

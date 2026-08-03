@@ -7,14 +7,19 @@ import { downloadCsv } from "@/lib/csv-export";
 import { useSlashFocus } from "@/lib/use-slash-focus";
 import { showToastSafe } from "@/lib/toast-client";
 import { Button } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
+import { confirmDialog } from "@/lib/confirm-client";
 import { Badge } from "@/components/ui/Badge";
 import { FormField, inputErrorClass } from "@/components/ui/FormField";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import {
   usePurchaseModals, fmt,
   type StockItem,
 } from "./purchase-shared";
+
+const FirmaEmptyIcon = createSceneIllustration("firma");
 
 type FirmaKontakt = { id: string; ad: string };
 
@@ -181,6 +186,18 @@ export default function FirmaPage() {
     showToast("success", `${filteredFirmas.length} tedarikçi CSV olarak dışa aktarıldı`);
   };
 
+  const firmaFormDirty = Boolean(
+    firmaForm.name.trim() || firmaForm.phone.trim() || firmaForm.iban.trim() || firmaForm.ibanName.trim() || firmaForm.notes.trim()
+  );
+
+  async function requestCloseAddFirma() {
+    if (firmaFormDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE, danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) return;
+    setShowAddFirma(false);
+  }
+
   const handleAddFirma = async () => {
     if (!firmaForm.name) { showToast("error", "Firma adı zorunludur"); return; }
     if (isSubmittingFirma) return;
@@ -253,16 +270,16 @@ export default function FirmaPage() {
 
   return (
     <div className="space-y-3">
-      <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-lg font-black text-slate-900">Satın Alma</h1>
-          </div>
+      <PageHeader
+        icon="firma"
+        title="Satın Alma"
+        description="Tedarikçi firmalarınızı ve alım/ödeme hareketlerini yönetin."
+        actions={
           <Button variant="secondary" onClick={() => purchaseManager.openAddPurchase()}>
             Satın Alma Kaydet
           </Button>
-        </div>
-      </div>
+        }
+      />
 
       <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
@@ -289,17 +306,20 @@ export default function FirmaPage() {
         rowKey={(f) => f.id}
         loading={loading}
         emptyText="Firma bulunamadı"
+        emptyIcon={FirmaEmptyIcon} emptyIllustrative
         onRowClick={(firma) => router.push(`/firma-detay?id=${firma.id}`)}
         getRowAriaLabel={(firma) => `${firma.name} firma detayını aç`}
       />
 
       <Modal
+        module="firma"
         open={showAddFirma}
         onClose={() => setShowAddFirma(false)}
+        isDirty={firmaFormDirty}
         title="Yeni Firma Ekle"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowAddFirma(false)}>Vazgeç</Button>
+            <Button variant="secondary" onClick={() => void requestCloseAddFirma()}>Vazgeç</Button>
             <Button onClick={handleAddFirma} loading={isSubmittingFirma}>Kaydet</Button>
           </>
         }

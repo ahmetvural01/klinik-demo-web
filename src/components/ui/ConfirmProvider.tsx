@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ConfirmOptions } from "@/lib/confirm-client";
 
@@ -9,6 +9,7 @@ type PendingConfirm = ConfirmOptions & { id: string };
 export const ConfirmProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [pending, setPending] = useState<PendingConfirm | null>(null);
   const [mounted, setMounted] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setMounted(true);
@@ -43,6 +44,42 @@ export const ConfirmProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [pending, respond]);
 
+  // Modal.tsx'teki focus trap + odak geri yükleme disiplini bu bileşende
+  // yoktu — klavye kullanan biri onay diyaloğunda Tab'a basmaya devam
+  // ederse odak arka plandaki sayfaya kaçabiliyordu, diyalog kapanınca da
+  // odak işlemi başlatan butona geri dönmüyordu (bkz. denetim raporu).
+  useEffect(() => {
+    if (!pending) return;
+    const previousActiveElement = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => !element.hasAttribute("hidden") && element.getClientRects().length > 0);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    document.addEventListener("keydown", trapFocus);
+    return () => {
+      document.removeEventListener("keydown", trapFocus);
+      previousActiveElement?.focus();
+    };
+  }, [pending]);
+
   const dialog = pending && (
     <div
       className="fixed inset-0 z-[350] flex items-center justify-center bg-slate-950/50 px-3 backdrop-blur-[1px]"
@@ -52,6 +89,7 @@ export const ConfirmProvider: React.FC<{ children: React.ReactNode }> = ({ child
       onClick={() => respond(false)}
     >
       <div
+        ref={dialogRef}
         className="w-full max-w-sm animate-fade-in rounded-lg border border-slate-200 bg-white p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >

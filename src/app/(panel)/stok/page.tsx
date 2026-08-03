@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ColumnDef } from "@tanstack/react-table";
 import { showToastSafe } from "@/lib/toast-client";
 import { confirmDialog } from "@/lib/confirm-client";
@@ -10,10 +10,16 @@ import { downloadCsv } from "@/lib/csv-export";
 import JsBarcode from "jsbarcode";
 import { ProfessionalDataTable } from "@/components/ui/ProfessionalDataTable";
 import { Button } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
+import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
-import { Download, Plus, Printer } from "lucide-react";
+import { Download, Plus, Printer, TriangleAlert, CalendarClock, PackageX, Wallet } from "lucide-react";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
+import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+import { CountUp } from "@/components/ui/CountUp";
+import { Spinner } from "@/components/ui/Spinner";
+
+const StockEmptyIcon = createSceneIllustration("stok");
 
 type StockItem = {
   id: string; name: string; category: string; unit: string;
@@ -54,8 +60,23 @@ export default function StokPage() {
   useSlashFocus(searchInputRef);
   const [showNew,    setShowNew]    = useState(false);
   const [moveItem,   setMoveItem]   = useState<StockItem | null>(null);
+  // Modal her açıldığında yeni bir anahtar üretilir, ağ hatası sonrası
+  // "Tekrar Dene" AYNI anahtarı kullanır — sunucu bu sayede miktarı ikinci
+  // kez değiştirmez (bkz. src/app/api/stock/[id]/route.ts Idempotency-Key).
+  const moveRequestKeyRef = useRef<string | null>(null);
   const [editItem,   setEditItem]   = useState<StockItem | null>(null);
   const [editForm, setEditForm] = useState({ name: "", category: "Sarf", unit: "adet", minQuantity: "5", barcode: "", expiresAt: "", storageLocation: "" });
+
+  // Depoda hızlı çıkış yapan personel önceden önce Detay modalini açmak
+  // zorundaydı (2 modal, 4+ tıklama) — artık tablo satırından doğrudan
+  // buraya gelinebiliyor (bkz. ürün denetimi).
+  function openMoveModal(item: StockItem) {
+    moveRequestKeyRef.current = typeof crypto !== "undefined" && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `stock-move-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    setMoveItem(item);
+    setMove({ type: "CIKIS", quantity: "", note: "" });
+  }
 
   const [saving,     setSaving]     = useState(false);
 
@@ -66,6 +87,7 @@ export default function StokPage() {
 
   const [newItem, setNewItem] = useState({ name: "", category: "Sarf", unit: "adet", quantity: "", minQuantity: "5", barcode: "", expiresAt: "", storageLocation: "" });
   const [move,    setMove]    = useState<StockMoveForm>({ type: "CIKIS", quantity: "", note: "" });
+  const editSnapshotRef = useRef("");
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { fetchItems(); }, [category]);
@@ -125,6 +147,36 @@ export default function StokPage() {
     window.dispatchEvent(new CustomEvent("ks:realtime-sync", { detail: { scope: "stock" } }));
   }
 
+  const NEW_ITEM_DEFAULT = { name: "", category: "Sarf", unit: "adet", quantity: "", minQuantity: "5", barcode: "", expiresAt: "", storageLocation: "" };
+  const newItemDirty = JSON.stringify(newItem) !== JSON.stringify(NEW_ITEM_DEFAULT);
+  const editItemDirty = Boolean(editItem) && JSON.stringify(editForm) !== editSnapshotRef.current;
+  const moveDirty = Boolean(move.quantity || move.note.trim());
+
+  async function requestCloseNewItem() {
+    if (newItemDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE, danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) return;
+    setShowNew(false);
+  }
+
+  async function requestCloseEditItem() {
+    if (editItemDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE, danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) return;
+    setEditItem(null);
+  }
+
+  async function requestCloseMove() {
+    if (moveDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE, danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) return;
+    setMoveItem(null);
+    setMove({ type: "CIKIS", quantity: "", note: "" });
+  }
+
   async function submitNew() {
     if (!newItem.name) return;
     setSaving(true);
@@ -161,15 +213,25 @@ export default function StokPage() {
     }
     setSaving(true);
     try {
-      const res = await fetch(`/api/stock/${moveItem.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(move) });
+      const requestKey = moveRequestKeyRef.current ||= (typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `stock-move-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      const res = await fetch(`/api/stock/${moveItem.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
+        body: JSON.stringify(move),
+      });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.message || body?.error || "Lütfen miktar ve işlem bilgilerini kontrol edin.");
+      moveRequestKeyRef.current = null;
       upsertItem({ ...(body as StockItem), lastPurchase: moveItem.lastPurchase, averageUnitPrice: moveItem.averageUnitPrice });
       setMoveItem(null);
       setMove({ type: "CIKIS", quantity: "", note: "" });
-      showToastSafe({ title: "Stok hareketi işlendi", message: "Miktar anlık güncellendi.", type: "success" });
+      showToastSafe({ title: "Stok hareketi işlendi", message: "Miktar anlık güncellendi.", type: "success", icon: "box" });
       void fetchItems();
     } catch (error) {
+      // requestKey KASITLI olarak temizlenmiyor — kullanıcı "Tekrar Dene"
+      // derse aynı anahtar gönderilir, sunucu miktarı ikinci kez değiştirmez.
       showToastSafe({ title: "Stok hareketi kaydedilemedi", message: error instanceof Error ? error.message : "Lütfen miktar ve işlem bilgilerini kontrol edin.", type: "error" });
     } finally {
       setSaving(false);
@@ -190,7 +252,7 @@ export default function StokPage() {
 
   function openEdit(item: StockItem) {
     setEditItem(item);
-    setEditForm({
+    const next = {
       name: item.name,
       category: item.category || "Sarf",
       unit: item.unit || "adet",
@@ -198,7 +260,9 @@ export default function StokPage() {
       barcode: item.barcode || "",
       expiresAt: item.expiresAt ? item.expiresAt.slice(0, 10) : "",
       storageLocation: item.storageLocation || "",
-    });
+    };
+    setEditForm(next);
+    editSnapshotRef.current = JSON.stringify(next);
   }
 
   async function submitEdit() {
@@ -245,7 +309,11 @@ export default function StokPage() {
     }
   }
 
-  const filtered = items.filter((i) => {
+  // items listesi büyük envanterli kliniklerde binlerce kalem olabilir —
+  // bu 6 türetilmiş değer önceden her render'da (arama kutusuna her tuş
+  // vuruşunda, modal aç/kapa gibi ilgisiz state değişikliklerinde bile)
+  // sıfırdan yeniden hesaplanıyordu (bkz. denetim raporu).
+  const filtered = useMemo(() => items.filter((i) => {
     const q = search.trim().toLowerCase();
     const matchesSearch =
       !q ||
@@ -258,13 +326,19 @@ export default function StokPage() {
     if (statusFilter === "SKT_YAKIN") return isExpiringSoon(i.expiresAt);
     if (statusFilter === "SKT_GECMIS") return isExpired(i.expiresAt);
     return true;
-  });
-  const lowStock  = items.filter(i => i.quantity < i.minQuantity).length;
+  }), [items, search, statusFilter]);
+  const lowStock  = useMemo(() => items.filter(i => i.quantity < i.minQuantity).length, [items]);
   const averageCost = (item: StockItem) => item.averageUnitPrice ?? null;
   const stockValue = (item: StockItem) => item.quantity * (averageCost(item) ?? 0);
-  const totalValue = items.reduce((s, i) => s + stockValue(i), 0);
-  const expiringSoon = items.filter(i => isExpiringSoon(i.expiresAt)).length;
-  const expiredCount = items.filter(i => isExpired(i.expiresAt)).length;
+  // stockValue her render'da yeniden oluşturulan bir fonksiyon olduğu için
+  // doğrudan dependency yapılırsa memoizasyon anlamsız kalır — aynı hesap
+  // burada bağımsız olarak inline edilir.
+  const totalValue = useMemo(
+    () => items.reduce((s, i) => s + i.quantity * (i.averageUnitPrice ?? 0), 0),
+    [items],
+  );
+  const expiringSoon = useMemo(() => items.filter(i => isExpiringSoon(i.expiresAt)).length, [items]);
+  const expiredCount = useMemo(() => items.filter(i => isExpired(i.expiresAt)).length, [items]);
 
   function isExpiringSoon(value?: string | null) {
     if (!value) return false;
@@ -321,8 +395,8 @@ export default function StokPage() {
           <div className="w-[300px] max-w-[300px]">
             <p className="truncate font-semibold text-slate-900">{item.name}</p>
             <div className="mt-1 flex flex-wrap gap-1.5">
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">{item.category}</span>
-              {item.storageLocation && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">{item.storageLocation}</span>}
+              <Badge tone="neutral">{item.category}</Badge>
+              {item.storageLocation && <Badge tone="info">{item.storageLocation}</Badge>}
               {item.expiresAt && (
                 <Badge tone={isExpired(item.expiresAt) ? "critical" : isExpiringSoon(item.expiresAt) ? "warning" : "neutral"}>
                   SKT {formatDate(item.expiresAt)}
@@ -384,13 +458,50 @@ export default function StokPage() {
         );
       },
     },
+    {
+      id: "quickAction",
+      header: "",
+      cell: ({ row }) => (
+        <div className="w-[84px] text-right">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); openMoveModal(row.original); }}
+            title="Stok Çıkışı"
+            className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-600 transition hover:border-primary hover:text-primary"
+          >
+            Çıkış
+          </button>
+        </div>
+      ),
+    },
   ];
 
   const inp = "rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none";
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+      <div className="ui-surface p-4 sm:p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-3">
+            <ModuleIcon module="box" size="lg" />
+            <div>
+              <h1 className="font-display text-xl font-black tracking-tight text-slate-900">Stok Yönetimi</h1>
+              <p className="text-xs font-medium text-slate-500">Malzeme envanterini, kritik stok ve SKT uyarılarını takip edin.</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <Button size="sm" variant="secondary" icon={Download} onClick={exportStockCsv} disabled={filtered.length === 0}>
+              CSV
+            </Button>
+            <button type="button" onClick={() => setShowNew(true)}
+              className="ui-interactive inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-gradient-to-b from-primary to-primary-strong px-4 py-2 text-sm font-bold text-white shadow-[0_2px_8px_rgb(var(--app-primary)/0.3)]">
+              <Plus className="h-4 w-4" /> Yeni Stok Kartı
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="ui-surface p-3">
         <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-48">
           <svg className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
@@ -405,24 +516,43 @@ export default function StokPage() {
           <option value="SKT_YAKIN">SKT yakın</option>
           <option value="SKT_GECMIS">SKT geçmiş</option>
         </select>
-        <Button size="sm" variant="secondary" icon={Download} onClick={exportStockCsv} disabled={filtered.length === 0}>
-          CSV
-        </Button>
-        <Button size="sm" variant="primary" icon={Plus} onClick={() => setShowNew(true)}>
-          Yeni Stok Kartı
-        </Button>
       </div>
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-bold text-slate-500">
-          <span>{filtered.length}/{items.length} kalem</span>
-          {lowStock > 0 && <span className="text-red-600">{lowStock} kritik</span>}
-          {expiringSoon > 0 && <span className="text-amber-700">{expiringSoon} SKT yakın</span>}
-          {expiredCount > 0 && <span className="text-red-700">{expiredCount} SKT geçmiş</span>}
-          <span className="text-slate-700">Değer: {CURRENCY.format(totalValue)}</span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="ui-surface ui-kpi-in flex items-center gap-2.5 p-3" style={{ ["--row-delay" as string]: "0ms" }}>
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500"><Wallet className="h-4 w-4" /></span>
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{filtered.length}/{items.length} kalem</p>
+            <p className="truncate text-sm font-black text-slate-800"><CountUp value={totalValue} formatter={(n) => CURRENCY.format(n)} /></p>
+          </div>
+        </div>
+        <div className={`ui-kpi-in flex items-center gap-2.5 rounded-[var(--radius-surface)] border p-3 shadow-[var(--shadow-rest)] ${lowStock > 0 ? "border-red-200 bg-red-50/50" : "border-[rgb(var(--app-border))] bg-[rgb(var(--app-surface))]"}`} style={{ ["--row-delay" as string]: "40ms" }}>
+          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${lowStock > 0 ? "bg-red-100 text-red-600 ui-badge-pulse" : "bg-slate-100 text-slate-400"}`}><TriangleAlert className="h-4 w-4" /></span>
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Kritik Stok</p>
+            <p className={`text-sm font-black ${lowStock > 0 ? "text-red-700" : "text-slate-800"}`}><CountUp value={lowStock} /> kalem</p>
+          </div>
+        </div>
+        <div className={`ui-kpi-in flex items-center gap-2.5 rounded-[var(--radius-surface)] border p-3 shadow-[var(--shadow-rest)] ${expiringSoon > 0 ? "border-amber-200 bg-amber-50/50" : "border-[rgb(var(--app-border))] bg-[rgb(var(--app-surface))]"}`} style={{ ["--row-delay" as string]: "80ms" }}>
+          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${expiringSoon > 0 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-400"}`}><CalendarClock className="h-4 w-4" /></span>
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">SKT Yakın</p>
+            <p className={`text-sm font-black ${expiringSoon > 0 ? "text-amber-700" : "text-slate-800"}`}><CountUp value={expiringSoon} /> kalem</p>
+          </div>
+        </div>
+        <div className={`ui-kpi-in flex items-center gap-2.5 rounded-[var(--radius-surface)] border p-3 shadow-[var(--shadow-rest)] ${expiredCount > 0 ? "border-red-200 bg-red-50/50" : "border-[rgb(var(--app-border))] bg-[rgb(var(--app-surface))]"}`} style={{ ["--row-delay" as string]: "120ms" }}>
+          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${expiredCount > 0 ? "bg-red-100 text-red-600 ui-badge-pulse" : "bg-slate-100 text-slate-400"}`}><PackageX className="h-4 w-4" /></span>
+          <div className="min-w-0">
+            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">SKT Geçmiş</p>
+            <p className={`text-sm font-black ${expiredCount > 0 ? "text-red-700" : "text-slate-800"}`}><CountUp value={expiredCount} /> kalem</p>
+          </div>
         </div>
       </div>
 
       {loading && filtered.length === 0 ? (
-        <div className="rounded-xl border border-slate-200 bg-white py-12 text-center text-sm text-slate-400 shadow-sm">
+        <div className="ui-surface flex flex-col items-center gap-2 py-12 text-sm text-slate-400">
+          <Spinner className="h-5 w-5 text-primary" />
           Stok kalemleri yükleniyor...
         </div>
       ) : (
@@ -430,6 +560,8 @@ export default function StokPage() {
           data={filtered}
           columns={stockColumns}
           emptyText="Stok kalemi bulunamadı"
+          emptyAccent="orange"
+          emptyIcon={StockEmptyIcon} emptyIllustrative
           pageSize={15}
           onRowClick={setDetailItem}
           getRowAriaLabel={(item) => `${item.name} stok detayını aç`}
@@ -438,12 +570,14 @@ export default function StokPage() {
 
       {/* New Item Modal */}
       <Modal
+        module="box"
         open={showNew}
         onClose={() => setShowNew(false)}
+        isDirty={newItemDirty}
         title="Yeni Stok Kalemi"
         footer={(
           <>
-            <Button variant="secondary" onClick={() => setShowNew(false)}>İptal</Button>
+            <Button variant="secondary" onClick={() => void requestCloseNewItem()}>İptal</Button>
             <Button variant="primary" loading={saving} onClick={submitNew}>
               {saving ? "Kaydediliyor…" : "Stok Kartını Aç"}
             </Button>
@@ -491,6 +625,7 @@ export default function StokPage() {
 
       {/* Stock Item Detail Modal */}
       <Modal
+        module="box"
         open={Boolean(detailItem)}
         onClose={() => setDetailItem(null)}
         title={detailItem?.name || "Stok Kartı"}
@@ -522,8 +657,7 @@ export default function StokPage() {
                   const item = detailItem;
                   setDetailItem(null);
                   if (!item) return;
-                  setMoveItem(item);
-                  setMove({ type: "CIKIS", quantity: "", note: "" });
+                  openMoveModal(item);
                 }}
               >
                 Stok Çıkışı
@@ -544,13 +678,15 @@ export default function StokPage() {
 
       {/* Edit Item Modal */}
       <Modal
+        module="box"
         open={Boolean(editItem)}
         onClose={() => setEditItem(null)}
+        isDirty={editItemDirty}
         title="Stok Kartını Düzenle"
         description="Bu form ürün kimliğini düzenler. Alış fiyatı ve tedarikçi satın alma satırlarında tutulur."
         footer={(
           <>
-            <Button variant="secondary" onClick={() => setEditItem(null)}>Vazgeç</Button>
+            <Button variant="secondary" onClick={() => void requestCloseEditItem()}>Vazgeç</Button>
             <Button variant="primary" loading={saving} disabled={saving || !editForm.name.trim()} onClick={submitEdit}>
               {saving ? "Kaydediliyor…" : "Kartı Güncelle"}
             </Button>
@@ -592,12 +728,14 @@ export default function StokPage() {
 
       {/* Movement Modal */}
       <Modal
+        module="box"
         open={Boolean(moveItem)}
-        onClose={() => setMoveItem(null)}
+        onClose={() => { setMoveItem(null); setMove({ type: "CIKIS", quantity: "", note: "" }); }}
+        isDirty={moveDirty}
         title="Stok Çıkışı"
         footer={(
           <>
-            <Button variant="secondary" onClick={() => { setMoveItem(null); setMove({ type: "CIKIS", quantity: "", note: "" }); }}>İptal</Button>
+            <Button variant="secondary" onClick={() => void requestCloseMove()}>İptal</Button>
             <Button variant="primary" loading={saving} onClick={submitMove}>
               {saving ? "Kaydediliyor…" : "Çıkışı Kaydet"}
             </Button>
@@ -622,6 +760,7 @@ export default function StokPage() {
 
       {/* History Modal */}
       <Modal
+        module="box"
         open={Boolean(historyItem)}
         onClose={() => setHistoryItem(null)}
         title={historyItem ? `${historyItem.name} — Hareket Geçmişi` : "Hareket Geçmişi"}

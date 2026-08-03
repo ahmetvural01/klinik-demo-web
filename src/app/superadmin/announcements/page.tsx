@@ -103,7 +103,7 @@ export default function AnnouncementsPage() {
       return;
     }
 
-    showToastSafe({ title: "Yayınlandı", message: "Duyuru başarıyla yayınlandı", type: "success" });
+    showToastSafe({ title: "Yayınlandı", message: "Duyuru başarıyla yayınlandı", type: "success", icon: "log" });
     closeForm();
     await load();
   };
@@ -117,11 +117,16 @@ export default function AnnouncementsPage() {
     });
     if (!confirmed) return;
     try {
-      await fetch(`/api/superadmin/announcements?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      const res = await fetch(`/api/superadmin/announcements?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToastSafe({ title: "Hata", message: err.message || "Duyuru pasifleştirilemedi", type: "error" });
+        return;
+      }
       showToastSafe({ title: "Pasifleştirildi", message: "Duyuru pasife alındı", type: "success" });
       await load();
     } catch {
-      showToastSafe({ title: "Hata", message: "Duyuru pasifleştirilemedi", type: "error" });
+      showToastSafe({ title: "Hata", message: "Bağlantı hatası — duyuru pasifleştirilemedi.", type: "error" });
     }
   };
 

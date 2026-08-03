@@ -5,7 +5,8 @@ import Link from "next/link";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { ListPager } from "@/components/ui/ListPager";
-import { Modal } from "@/components/ui/Modal";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { HakedisMonthlyPanel } from "@/components/hakedis/HakedisMonthlyPanel";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -13,6 +14,11 @@ import { stripSystemTags } from "@/lib/format-text";
 import { useRouter, useSearchParams } from "next/navigation";
 import { cachedGet } from "@/lib/client-cache";
 import { Plus, Pencil, Trash2 } from "lucide-react";
+import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+import { CountUp } from "@/components/ui/CountUp";
+
+const FinanceEmptyIcon = createSceneIllustration("muhasebe", 140);
+const StaffEmptyIcon = createSceneIllustration("personel", 140);
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type Payment = {
@@ -250,8 +256,8 @@ export default function MuhasebePage() {
     setActiveTab(tab);
     router.replace(`/muhasebe?tab=${tab}`, { scroll: false });
   }, [router]);
-  const showToast = useCallback((type: "success" | "error", text: string) => {
-    showToastSafe({ message: text, type });
+  const showToast = useCallback((type: "success" | "error", text: string, icon?: "finance" | "firma" | "hakediş") => {
+    showToastSafe({ message: text, type, icon });
   }, []);
 
   // ── Summary state ─────────────────────────────────────────────────────────
@@ -440,7 +446,7 @@ export default function MuhasebePage() {
     }).catch(() => null);
     setTahSaving(false);
     if (r?.ok) {
-      showToast("success", "Tahsilat kaydedildi");
+      showToast("success", "Tahsilat kaydedildi", "finance");
       setTransactionOpen(false);
       setTahForm({ tarih: todayIso(), patientId: "", doctorId: "", method: "NAKIT", amount: "", description: "", posId: "" });
       setPatientSearch("");
@@ -580,7 +586,7 @@ export default function MuhasebePage() {
     setGiderSaving(false);
     if (r?.ok) {
       giderRequestKeyRef.current = "";
-      showToast("success", isDoctorPayoutCategory ? "Hakediş ödemesi kaydedildi" : "Gider kaydedildi");
+      showToast("success", isDoctorPayoutCategory ? "Hakediş ödemesi kaydedildi" : "Gider kaydedildi", isDoctorPayoutCategory ? "hakediş" : "finance");
       setTransactionOpen(false);
       const payoutDoctorId = giderForm.doctorId;
       setGiderForm({ tarih: new Date().toISOString().split("T")[0], categoryId: "", category: "", description: "", tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0", doctorId: "", donem: new Date().toISOString().slice(0, 7) });
@@ -611,11 +617,21 @@ export default function MuhasebePage() {
 
   const handleAddCategory = async () => {
     if (!newCatName.trim()) return;
-    await fetch("/api/gider-kategorileri", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newCatName.trim() }),
-    });
-    setNewCatName(""); loadGiderKats();
+    try {
+      const r = await fetch("/api/gider-kategorileri", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newCatName.trim() }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        showToast("error", err.message || "Gider türü eklenemedi");
+        return;
+      }
+      setNewCatName("");
+      loadGiderKats();
+    } catch {
+      showToast("error", "Bağlantı hatası — gider türü eklenemedi. Lütfen tekrar deneyin.");
+    }
   };
 
   const updateExpenseTypeName = async (id: string, currentName: string) => {
@@ -659,6 +675,29 @@ export default function MuhasebePage() {
     return () => clearTimeout(timer);
   }, [loadPatientOptions, patientSearch, transactionKind, transactionOpen]);
 
+
+  // "İşlem Ekle" birleşik formu — tarih/varsayılan yöntem/oran gibi alanlar
+  // her zaman dolu bir varsayılana sahip (bugün, NAKIT, %0 KDV) ve dirty
+  // sinyaline dahil EDİLMEZ, aksi halde modal her açılışta "kirli" görünürdü.
+  const transactionDirty = transactionOpen && (
+    transactionKind === "gelir"
+      ? Boolean(tahForm.patientId || tahForm.doctorId || tahForm.amount || tahForm.description.trim() || tahForm.method !== "NAKIT" || tahForm.posId)
+      : expenseEntryKind === "firma"
+        ? Boolean(firmaPayForm.firmaId || firmaPayForm.tutar || firmaPayForm.faturaNo.trim() || firmaPayForm.aciklama.trim() || firmaPayForm.yontem !== "HAVALE_EFT" || firmaPayForm.kdvOrani !== "0")
+        : Boolean(giderForm.categoryId || giderForm.description.trim() || giderForm.tutar || giderForm.faturaNo.trim() || giderForm.doctorId || giderForm.yontem !== "NAKIT")
+  );
+
+  async function requestCloseTransaction() {
+    if (transactionDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE,
+      danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
+      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) {
+      return;
+    }
+    setTransactionOpen(false);
+  }
 
   const openTransaction = useCallback((kind: TransactionKind | "firma" = "gelir") => {
     tahsilatRequestKeyRef.current = "";
@@ -704,7 +743,7 @@ export default function MuhasebePage() {
     if (r?.ok) {
       const result = await r.json().catch(() => null);
       firmaPaymentRequestKeyRef.current = "";
-      showToast("success", result?.message || "Firma ödemesi kaydedildi");
+      showToast("success", result?.message || "Firma ödemesi kaydedildi", "firma");
       setTransactionOpen(false);
       setFirmaPayForm({ firmaId: "", tarih: todayIso(), tutar: "", yontem: "HAVALE_EFT", faturaNo: "", kdvOrani: "0", aciklama: "" });
       setFirmaPayErrors({});
@@ -839,13 +878,38 @@ export default function MuhasebePage() {
       }),
     });
     if (r.ok) {
-      showToast("success", "Taksit planı oluşturuldu");
+      showToast("success", "Taksit planı oluşturuldu", "finance");
       setNewPlanForm({ patientId: "", doctorId: "", baslik: "", toplamBorc: "", pesnat: "0", taksitSayisi: "6", period: "AYLIK", startDate: new Date().toISOString().split("T")[0], notes: "" });
       setTaksitSubTab("liste"); loadTaksitPlans(); refreshSummary();
     } else {
       const e = await r.json(); showToast("error", e.error || "Hata");
     }
   };
+
+  async function requestCloseOdeModal() {
+    const dirty = Boolean(showOdeModal) && (odeForm.yontem !== "NAKIT" || odeForm.note.trim() !== "" || odeForm.tutar !== String(showOdeModal?.kalan ?? ""));
+    if (dirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE,
+      danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
+      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) {
+      return;
+    }
+    setShowOdeModal(null);
+  }
+
+  async function requestCloseRemModal() {
+    if (Boolean(remForm.patientId || remForm.note.trim()) && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE,
+      danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
+      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) {
+      return;
+    }
+    setShowRemModal(false);
+  }
 
   const handleOde = async () => {
     if (!showOdeModal || !selectedPlan) return;
@@ -858,7 +922,7 @@ export default function MuhasebePage() {
     if (r.ok) {
       setShowOdeModal(null); setOdeForm({ tutar: "", yontem: "NAKIT", note: "" });
       loadPlanDetail(selectedPlan.id); loadTaksitPlans(); refreshSummary();
-      showToast("success", "Taksit tahsil edildi");
+      showToast("success", "Taksit tahsil edildi", "finance");
     } else {
       const e = await r.json(); showToast("error", e.error || "Hata");
     }
@@ -985,19 +1049,26 @@ export default function MuhasebePage() {
     tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0", doctorId: "" as string | null,
   });
   const [editSaving, setEditSaving] = useState(false);
+  // Düzenleme modalları mevcut kaydın değerleriyle önceden dolu açılır — API'den
+  // gelen ilk değerler yanlışlıkla dirty sayılmamalı, yalnızca kullanıcının
+  // GERÇEKTEN değiştirdiği alanlar dirty saymalı (bkz. Modal isDirty sözleşmesi).
+  const editPaymentSnapshotRef = useRef("");
+  const editExpenseSnapshotRef = useRef("");
 
   const startEditPayment = (payment: Payment) => {
     ensurePos();
     setEditingKind("TAHSILAT");
     setEditingId(payment.id);
-    setEditPaymentForm({
+    const next = {
       tarih: payment.createdAt?.substring(0, 10) || todayIso(),
       amount: String(Number(payment.amount || 0)),
       method: payment.method || "NAKIT",
       description: stripFinanceTags(payment.description),
       posId: payment.posId || "",
       doctorId: payment.doctorId || "",
-    });
+    };
+    setEditPaymentForm(next);
+    editPaymentSnapshotRef.current = JSON.stringify(next);
     setEditPaymentDoctorSearch(payment.doctor?.fullName || "");
   };
 
@@ -1005,7 +1076,7 @@ export default function MuhasebePage() {
     loadGiderKats();
     setEditingKind("GIDER");
     setEditingId(expense.id);
-    setEditExpenseForm({
+    const next = {
       tarih: expense.tarih?.substring(0, 10) || new Date().toISOString().split("T")[0],
       categoryId: expense.categoryId || "",
       category: expense.category || "",
@@ -1015,9 +1086,29 @@ export default function MuhasebePage() {
       faturaNo: expense.faturaNo || "",
       kdvOrani: String(expense.kdvOrani ?? 0),
       doctorId: expense.doctorId || null,
-    });
+    };
+    setEditExpenseForm(next);
+    editExpenseSnapshotRef.current = JSON.stringify(next);
     setEditGiderTurSearch(expense.category || "");
   };
+
+  const editRecordDirty = editingKind === "TAHSILAT"
+    ? JSON.stringify(editPaymentForm) !== editPaymentSnapshotRef.current
+    : editingKind === "GIDER"
+      ? JSON.stringify(editExpenseForm) !== editExpenseSnapshotRef.current
+      : false;
+
+  async function requestCloseEditModal() {
+    if (editRecordDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE,
+      danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
+      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) {
+      return;
+    }
+    setEditingKind(null);
+  }
 
   const savePaymentEdit = async () => {
     if (!editingId) return;
@@ -1215,9 +1306,21 @@ export default function MuhasebePage() {
   const loadDoctorFinance = useCallback(async (id: string) => {
     if (!id) { setDoctorFinance(null); return; }
     setHakLoading(true);
-    const r = await fetch(`/api/finance?doctorId=${id}&from=${hakFrom}&to=${hakTo}`, { cache: "no-store" });
-    setDoctorFinance(await r.json()); setHakLoading(false);
-  }, [hakFrom, hakTo]);
+    try {
+      const r = await fetch(`/api/finance?doctorId=${id}&from=${hakFrom}&to=${hakTo}`, { cache: "no-store" });
+      if (!r.ok) {
+        showToast("error", "Doktor hakediş verisi yüklenemedi");
+        setDoctorFinance(null);
+        return;
+      }
+      setDoctorFinance(await r.json());
+    } catch {
+      showToast("error", "Bağlantı hatası — doktor hakediş verisi yüklenemedi.");
+      setDoctorFinance(null);
+    } finally {
+      setHakLoading(false);
+    }
+  }, [hakFrom, hakTo, showToast]);
 
   const openDoctorPayoutFor = async (doctorId: string, year: number, month: number, kalan: number) => {
     openTransaction("gider");
@@ -1368,7 +1471,7 @@ export default function MuhasebePage() {
         <div className="flex min-w-0 gap-1 overflow-x-auto">
           {visibleTabs.map(tab => (
             <button key={tab.id} onClick={() => changeTab(tab.id)} title={tab.hint}
-              className={`relative shrink-0 rounded-lg px-3 py-2 text-sm font-black transition sm:px-4 ${activeTab === tab.id ? "bg-primary text-white shadow-sm" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100 hover:text-slate-900"}`}>
+              className={`ui-view-tab relative shrink-0 rounded-lg px-3 py-2 text-sm font-black transition sm:px-4 ${activeTab === tab.id ? "is-active bg-primary text-white shadow-sm" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100 hover:text-slate-900"}`}>
               {tab.id === "defter" ? (
                 <>
                   <span className="sm:hidden">Defter</span>
@@ -1389,7 +1492,7 @@ export default function MuhasebePage() {
 
       {/* Page Header */}
 
-      <Modal open={transactionOpen} onClose={() => setTransactionOpen(false)} title="İşlem Ekle" size="xl">
+      <Modal open={transactionOpen} onClose={() => setTransactionOpen(false)} isDirty={transactionDirty} title="İşlem Ekle" size="xl" module="finance">
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-4">
               {([
                 { id: "gelir", label: "Gelir", disabled: false },
@@ -1489,7 +1592,7 @@ export default function MuhasebePage() {
                 <input value={tahForm.description} onChange={e => setTahForm(f => ({ ...f, description: e.target.value }))} placeholder="Tedavi, protokol veya kasa notu" className={INP} />
               </div>
               <div className="flex justify-end gap-2 sm:col-span-2">
-                <Button variant="secondary" onClick={() => setTransactionOpen(false)}>İptal</Button>
+                <Button variant="secondary" onClick={() => void requestCloseTransaction()}>İptal</Button>
                 <button onClick={submitTahsilat} disabled={tahSaving} className="h-9 rounded-lg bg-emerald-600 px-5 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-60">
                   {tahSaving ? "Kaydediliyor..." : "Gelir Kaydet"}
                 </button>
@@ -1606,7 +1709,7 @@ export default function MuhasebePage() {
                 <input value={giderForm.description} onChange={e => setGiderForm(f => ({ ...f, description: e.target.value }))} placeholder="Gider detayı" className={INP} />
               </div>
               <div className="flex justify-end gap-2 sm:col-span-2">
-                <Button variant="secondary" onClick={() => setTransactionOpen(false)}>İptal</Button>
+                <Button variant="secondary" onClick={() => void requestCloseTransaction()}>İptal</Button>
                 <button onClick={submitGider} disabled={giderSaving} className="h-9 rounded-lg bg-red-600 px-5 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-60">
                   {giderSaving ? "Kaydediliyor..." : (isDoctorPayoutCategory ? "Hakediş Ödemesi Kaydet" : "Gider Kaydet")}
                 </button>
@@ -1664,7 +1767,7 @@ export default function MuhasebePage() {
                 <input value={firmaPayForm.aciklama} onChange={e => setFirmaPayForm(f => ({ ...f, aciklama: e.target.value }))} placeholder="Ödeme açıklaması" className={INP} />
               </div>
               <div className="flex justify-end gap-2 sm:col-span-2">
-                <Button variant="secondary" onClick={() => setTransactionOpen(false)}>İptal</Button>
+                <Button variant="secondary" onClick={() => void requestCloseTransaction()}>İptal</Button>
                 <button onClick={submitFirmaPayment} disabled={firmaPaySaving} className="h-9 rounded-lg bg-amber-600 px-5 text-sm font-bold text-white hover:bg-amber-700 disabled:opacity-60">
                   {firmaPaySaving ? "Kaydediliyor..." : "Firma Ödemesi Kaydet"}
                 </button>
@@ -1673,7 +1776,7 @@ export default function MuhasebePage() {
           )}
       </Modal>
 
-      <Modal open={Boolean(editingKind)} onClose={() => setEditingKind(null)} title={editingKind === "TAHSILAT" ? "Tahsilatı Düzenle" : "Gideri Düzenle"} description="Kayıt değişiklikleri muhasebe geçmişine işlenir." size="lg">
+      <Modal open={Boolean(editingKind)} onClose={() => setEditingKind(null)} isDirty={editRecordDirty} title={editingKind === "TAHSILAT" ? "Tahsilatı Düzenle" : "Gideri Düzenle"} description="Kayıt değişiklikleri muhasebe geçmişine işlenir." size="lg" module="finance">
             {editingKind === "TAHSILAT" && (
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <div>
@@ -1722,7 +1825,7 @@ export default function MuhasebePage() {
                   <input value={editPaymentForm.description} onChange={e => setEditPaymentForm(f => ({ ...f, description: e.target.value }))} className={INP} />
                 </div>
                 <div className="flex justify-end gap-2 sm:col-span-2">
-                  <Button variant="secondary" onClick={() => setEditingKind(null)}>İptal</Button>
+                  <Button variant="secondary" onClick={() => void requestCloseEditModal()}>İptal</Button>
                   <Button variant="primary" onClick={savePaymentEdit} loading={editSaving}>{editSaving ? "Kaydediliyor..." : "Kaydet"}</Button>
                 </div>
               </div>
@@ -1783,14 +1886,14 @@ export default function MuhasebePage() {
                   <input value={editExpenseForm.description} onChange={e => setEditExpenseForm(f => ({ ...f, description: e.target.value }))} className={INP} />
                 </div>
                 <div className="flex justify-end gap-2 sm:col-span-2">
-                  <Button variant="secondary" onClick={() => setEditingKind(null)}>İptal</Button>
+                  <Button variant="secondary" onClick={() => void requestCloseEditModal()}>İptal</Button>
                   <Button variant="primary" onClick={saveExpenseEdit} loading={editSaving}>{editSaving ? "Kaydediliyor..." : "Kaydet"}</Button>
                 </div>
               </div>
             )}
       </Modal>
 
-      <Modal open={showCatMgr} onClose={() => setShowCatMgr(false)} title="Gider Türleri" size="sm">
+      <Modal open={showCatMgr} onClose={() => setShowCatMgr(false)} title="Gider Türleri" size="sm" module="finance">
             <div className="flex gap-2">
               <input value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddCategory()} placeholder="Yeni gider türü" className={INP} />
               <Button onClick={handleAddCategory} variant="primary">Ekle</Button>
@@ -1824,7 +1927,7 @@ export default function MuhasebePage() {
       </Modal>
 
       {activeTab === "defter" && (
-        <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="ui-surface">
           <div className="flex flex-col gap-2 border-b border-slate-100 px-4 py-3 lg:flex-row lg:items-center">
             <div className="flex w-fit gap-1 rounded-lg bg-slate-100 p-1">
               {([
@@ -1879,7 +1982,7 @@ export default function MuhasebePage() {
               </thead>
               <tbody className="divide-y divide-slate-100">
                 {ledgerRows.length === 0 ? (
-                  <tr><td colSpan={8} className="px-4 py-10 text-center text-slate-400">Kayıt bulunamadı</td></tr>
+                  <tr><td colSpan={8}><EmptyState title="Kayıt bulunamadı" accent="amber" icon={FinanceEmptyIcon} illustrative compact /></td></tr>
                 ) : pagedLedgerRows.map((row) => (
                   <tr
                     key={row.id}
@@ -1960,16 +2063,18 @@ export default function MuhasebePage() {
       {alacakView === "taksit" && (
         <div className="space-y-4">
           {/* KPI */}
-          <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm sm:grid-cols-4 sm:divide-y-0">
+          <div className="ui-surface grid grid-cols-2 divide-x divide-y divide-slate-100 overflow-hidden sm:grid-cols-4 sm:divide-y-0">
             {[
-              { label: "Toplam Kalan",  value: fmt(taksitKPIs.toplamKalan), color: "text-primary"    },
-              { label: "Bekleyen",      value: String(taksitKPIs.bekleyen), color: "text-amber-700"   },
-              { label: "Gecikmiş Plan", value: String(taksitKPIs.geciken),  color: "text-red-700"     },
-              { label: "Bugün Vadeli",  value: String(taksitKPIs.bugunVade),color: "text-emerald-700" },
-            ].map(k => (
-              <div key={k.label} className="p-4">
-                <p className="text-xs font-bold uppercase text-slate-500">{k.label}</p>
-                <p className={`mt-0.5 text-xl font-black ${k.color}`}>{k.value}</p>
+              { label: "Toplam Kalan",  value: taksitKPIs.toplamKalan, money: true,  color: "text-primary"    },
+              { label: "Bekleyen",      value: taksitKPIs.bekleyen,    money: false, color: "text-amber-700"   },
+              { label: "Gecikmiş Plan", value: taksitKPIs.geciken,     money: false, color: "text-red-700"     },
+              { label: "Bugün Vadeli",  value: taksitKPIs.bugunVade,   money: false, color: "text-emerald-700" },
+            ].map((k, i) => (
+              <div key={k.label} className="ui-kpi-in p-4" style={{ ["--row-delay" as string]: `${i * 40}ms` }}>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{k.label}</p>
+                <p className={`mt-1 text-2xl font-black ${k.color}`}>
+                  <CountUp value={k.value} formatter={k.money ? (n) => fmt(n) : undefined} />
+                </p>
               </div>
             ))}
           </div>
@@ -1988,7 +2093,7 @@ export default function MuhasebePage() {
             const totalCount = buckets.reduce((s, b) => s + b.count, 0);
             if (totalCount === 0) return null;
             return (
-              <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="ui-surface p-4">
                 <p className="mb-3 text-sm font-black text-slate-800">Alacak Yaşlandırma Tablosu</p>
                 <div className="mb-2 flex h-4 overflow-hidden rounded-full">
                   {buckets.map(b => b.amount > 0 && <div key={b.label} className={`${b.color} transition-all`} style={{ width: `${(b.amount / totalAmt) * 100}%` }} />)}
@@ -2038,7 +2143,7 @@ export default function MuhasebePage() {
                   </select>
                 </div>
                 {filteredTaksitPlans.length === 0
-                    ? <div className="py-10 text-center text-sm text-slate-400">Taksit planı bulunamadı</div>
+                    ? <EmptyState title="Taksit planı bulunamadı" accent="amber" icon={FinanceEmptyIcon} illustrative compact />
                     : (
                       <div className="space-y-2">
                         {filteredTaksitPlans.map(plan => {
@@ -2062,7 +2167,7 @@ export default function MuhasebePage() {
                                   </div>
                                 </div>
                                 <div className="flex shrink-0 flex-col items-end gap-1">
-                                  {gec > 0 && <span className="rounded-lg bg-red-100 px-2 py-1 text-xs font-bold text-red-700">{gec} gecikti</span>}
+                                  {gec > 0 && <span className="ui-badge-pulse rounded-lg bg-red-100 px-2 py-1 text-xs font-bold text-red-700">{gec} gecikti</span>}
                                   {bek > 0 && <span className="rounded-lg bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">{bek} bekliyor</span>}
                                   <button onClick={e => { e.stopPropagation(); cancelPlan(plan.id); }} className="mt-1 rounded-lg border border-red-100 px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 hover:text-red-700">Planı İptal Et</button>
                                 </div>
@@ -2087,7 +2192,7 @@ export default function MuhasebePage() {
               {/* Plan Detay */}
               {planDetail && (
                 <div className="min-w-0">
-                  <div className="sticky top-4 space-y-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="ui-surface sticky top-4 space-y-3 p-4">
                     <div className="flex items-center justify-between">
                       <h3 className="text-sm font-black text-slate-900">Taksit Detayı</h3>
                       <button onClick={() => { setSelectedPlan(null); setPlanDetail(null); }} className="rounded-lg p-2 text-slate-400 hover:bg-slate-100" aria-label="Detayı kapat">
@@ -2129,7 +2234,7 @@ export default function MuhasebePage() {
 
           {/* Yeni Plan Oluştur */}
           {taksitSubTab === "olustur" && (
-            <div className="max-w-lg space-y-4 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+            <div className="ui-surface max-w-lg space-y-4 p-6">
               <h2 className="text-sm font-black text-slate-800">Yeni Taksit Planı</h2>
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
@@ -2196,7 +2301,7 @@ export default function MuhasebePage() {
                 <button onClick={() => setShowRemModal(true)} className="rounded-xl bg-primary px-4 py-2 text-sm font-bold text-white hover:bg-primary/90">Hatırlatma Ekle</button>
               </div>
               {reminders.length === 0
-                ? <div className="py-10 text-center text-sm text-slate-400">Hatırlatma bulunamadı</div>
+                ? <EmptyState title="Hatırlatma bulunamadı" accent="amber" icon={FinanceEmptyIcon} illustrative compact />
                 : (
                   <div className="space-y-2">
                     {reminders.map(r => {
@@ -2225,7 +2330,14 @@ export default function MuhasebePage() {
           )}
 
           {/* Modal: Taksit Tahsilat */}
-          <Modal open={Boolean(showOdeModal)} onClose={() => setShowOdeModal(null)} title={showOdeModal ? `Taksit Tahsilatı — #${showOdeModal.siraNo}` : "Taksit Tahsilatı"} size="sm">
+          <Modal
+            module="finance"
+            open={Boolean(showOdeModal)}
+            onClose={() => setShowOdeModal(null)}
+            isDirty={Boolean(showOdeModal) && (odeForm.yontem !== "NAKIT" || odeForm.note.trim() !== "" || odeForm.tutar !== String(showOdeModal?.kalan ?? ""))}
+            title={showOdeModal ? `Taksit Tahsilatı — #${showOdeModal.siraNo}` : "Taksit Tahsilatı"}
+            size="sm"
+          >
               {showOdeModal && (
                 <div className="space-y-4">
                 <div className="rounded-xl bg-slate-50 px-4 py-3 text-xs text-slate-600 space-y-1">
@@ -2248,7 +2360,7 @@ export default function MuhasebePage() {
                   <input value={odeForm.note} onChange={e => setOdeForm(f => ({ ...f, note: e.target.value }))} placeholder="Opsiyonel…" className={INP} />
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="secondary" fullWidth onClick={() => setShowOdeModal(null)}>Vazgeç</Button>
+                  <Button variant="secondary" fullWidth onClick={() => void requestCloseOdeModal()}>Vazgeç</Button>
                   <button onClick={handleOde} className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white hover:bg-emerald-700">Tahsil Et</button>
                 </div>
                 </div>
@@ -2256,7 +2368,14 @@ export default function MuhasebePage() {
           </Modal>
 
           {/* Modal: Hatırlatma Ekle */}
-          <Modal open={showRemModal} onClose={() => setShowRemModal(false)} title="Hatırlatma Ekle" size="sm">
+          <Modal
+            module="finance"
+            open={showRemModal}
+            onClose={() => setShowRemModal(false)}
+            isDirty={Boolean(remForm.patientId || remForm.note.trim())}
+            title="Hatırlatma Ekle"
+            size="sm"
+          >
                 <div className="space-y-4">
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta (opsiyonel)</label>
@@ -2274,7 +2393,7 @@ export default function MuhasebePage() {
                   <input type="date" value={remForm.reminderDate} onChange={e => setRemForm(f => ({ ...f, reminderDate: e.target.value }))} className={INP} />
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="secondary" fullWidth onClick={() => setShowRemModal(false)}>Vazgeç</Button>
+                  <Button variant="secondary" fullWidth onClick={() => void requestCloseRemModal()}>Vazgeç</Button>
                   <Button variant="primary" fullWidth onClick={handleAddReminder}>Kaydet</Button>
                 </div>
                 </div>
@@ -2303,18 +2422,18 @@ export default function MuhasebePage() {
           </div>
 
           {/* Özet KPI */}
-          <div className="grid grid-cols-3 divide-x divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+          <div className="ui-surface grid grid-cols-3 divide-x divide-slate-100 overflow-hidden">
             <div className="p-4">
-              <p className="text-xs font-bold uppercase text-slate-500">Toplam Alacak</p>
-              <p className="mt-1 text-xl font-black text-violet-700">{fmt(alacakTotal)}</p>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam Alacak</p>
+              <p className="mt-1 text-2xl font-black tabular-nums text-violet-700">{fmt(alacakTotal)}</p>
             </div>
             <div className="p-4">
-              <p className="text-xs font-bold uppercase text-slate-500">Borçlu Hasta</p>
-              <p className="mt-1 text-xl font-black text-slate-800">{alacaklar.length} kişi</p>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Borçlu Hasta</p>
+              <p className="mt-1 text-2xl font-black tabular-nums text-slate-800">{alacaklar.length} kişi</p>
             </div>
             <div className="p-4">
-              <p className="text-xs font-bold uppercase text-slate-500">Ortalama Bakiye</p>
-              <p className="mt-1 text-xl font-black text-amber-700">{fmt(alacaklar.length > 0 ? alacakTotal / alacaklar.length : 0)}</p>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Ortalama Bakiye</p>
+              <p className="mt-1 text-2xl font-black tabular-nums text-amber-700">{fmt(alacaklar.length > 0 ? alacakTotal / alacaklar.length : 0)}</p>
             </div>
           </div>
 
@@ -2323,8 +2442,9 @@ export default function MuhasebePage() {
             : alacakError
               ? <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-6 text-sm font-semibold text-red-700">{alacakError}</div>
             : (
-              <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
-                <table className="w-full text-xs">
+              <div className="ui-surface overflow-hidden">
+                <div className="overflow-x-auto">
+                <table className="min-w-[720px] w-full text-xs">
                   <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                     <th className="px-4 py-3 text-left">Hasta</th>
                     <th className="px-4 py-3 text-left">Telefon</th>
@@ -2336,8 +2456,8 @@ export default function MuhasebePage() {
                   </tr></thead>
                   <tbody className="divide-y divide-slate-100">
                     {filteredAlacaklar.length === 0
-                      ? <tr><td colSpan={7} className="py-10 text-center text-slate-400">
-                          {alacaklar.length === 0 ? "Alacak kaydı bulunamadı" : "Arama sonucu yok"}
+                      ? <tr><td colSpan={7}>
+                          <EmptyState title={alacaklar.length === 0 ? "Alacak kaydı bulunamadı" : "Arama sonucu yok"} accent="amber" icon={FinanceEmptyIcon} illustrative compact />
                         </td></tr>
                       : filteredAlacaklar.map(a => {
                         const pctOdendi = a.netTedavi > 0 ? Math.min(100, Math.round((a.odenen / a.netTedavi) * 100)) : 0;
@@ -2346,7 +2466,9 @@ export default function MuhasebePage() {
                         return (
                           <tr key={a.id} className="hover:bg-slate-50">
                             <td className="px-4 py-3">
-                              <Link href={`/hasta-detay?id=${a.id}`} className="font-semibold text-slate-800 hover:text-primary hover:underline">{a.fullName}</Link>
+                              {userRole === "MUHASEBE"
+                                ? <span title="Muhasebe rolü hasta klinik kartına erişemez" className="font-semibold text-slate-800">{a.fullName}</span>
+                                : <Link href={`/hasta-detay?id=${a.id}`} className="font-semibold text-slate-800 hover:text-primary hover:underline">{a.fullName}</Link>}
                               {a.discountRate > 0 && <span className="ml-1.5 rounded-lg bg-green-100 px-2 py-1 text-xs text-green-700">%{a.discountRate} indirim</span>}
                               <div className="mt-1 text-[11px] text-slate-400">Net tedavi: {fmt(a.netTedavi)}</div>
                             </td>
@@ -2379,7 +2501,21 @@ export default function MuhasebePage() {
                               <span className="text-[11px] text-slate-400">{a.lastPaymentAt ? "Son ödeme" : "Tedavi tarihi"}</span>
                             </td>
                             <td className="px-4 py-3">
-                              <button onClick={() => { openTransaction("gelir"); setPatientSearch(a.fullName); setTahForm(f => ({ ...f, patientId: a.id })); ensurePatients(); ensurePos(); }}
+                              <button onClick={() => {
+                                openTransaction("gelir");
+                                setPatientSearch(a.fullName);
+                                // Hastanın tek bir hekimi varsa doktor alanı da
+                                // otomatik doldurulur — önceden her tahsilatta
+                                // hasta seçili gelse bile doktor yeniden
+                                // aranıyordu (bkz. ürün denetimi).
+                                const doctorNames = a.doctorNames || [];
+                                const matchedDoctor = doctorNames.length === 1
+                                  ? taksitDoctors.find(d => d.fullName === doctorNames[0])
+                                  : undefined;
+                                if (matchedDoctor) setDoctorSearch(matchedDoctor.fullName);
+                                setTahForm(f => ({ ...f, patientId: a.id, doctorId: matchedDoctor?.id || f.doctorId }));
+                                ensurePatients(); ensurePos();
+                              }}
                                 className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">
                                 Tahsilat
                               </button>
@@ -2390,6 +2526,7 @@ export default function MuhasebePage() {
                     }
                   </tbody>
                 </table>
+                </div>
                 <div className="flex items-center justify-between border-t border-slate-100 bg-slate-50 px-5 py-3">
                   <span className="text-xs text-slate-500">{filteredAlacaklar.length} hasta</span>
                   <span className="text-sm font-black text-violet-700">{fmt(filteredAlacaklar.reduce((s, a) => s + a.bakiye, 0))} toplam alacak</span>
@@ -2436,7 +2573,7 @@ export default function MuhasebePage() {
           </div>
           {!selectedDoctor
             ? (
-                <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+                <div className="ui-surface overflow-hidden">
                   <div className="border-b border-slate-100 px-5 py-4">
                     <h3 className="text-sm font-black text-slate-900">Genel Bakış — Bu Ay</h3>
                     <p className="mt-0.5 text-xs text-slate-500">Tüm doktorların içinde bulunulan aya ait hakedilen/ödenen/kalan özeti. Detay için bir doktora tıklayın.</p>
@@ -2444,9 +2581,10 @@ export default function MuhasebePage() {
                   {hakedisOzetLoading ? (
                     <div className="p-8 text-center text-sm text-slate-400">Yükleniyor…</div>
                   ) : hakedisOzet.length === 0 ? (
-                    <div className="p-8 text-center text-sm text-slate-400">Kayıtlı doktor bulunamadı</div>
+                    <EmptyState title="Kayıtlı doktor bulunamadı" accent="amber" icon={StaffEmptyIcon} illustrative compact />
                   ) : (
-                    <table className="w-full text-xs">
+                    <div className="overflow-x-auto">
+                    <table className="min-w-[640px] w-full text-xs">
                       <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                         <th className="px-4 py-3 text-left">Doktor</th>
                         <th className="px-4 py-3 text-right">Bu Ay Ciro</th>
@@ -2474,6 +2612,7 @@ export default function MuhasebePage() {
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   )}
                 </div>
               )
@@ -2502,11 +2641,12 @@ export default function MuhasebePage() {
                   />
 
                   {doctorFinance && Array.isArray(doctorFinance.topExaminations) && (doctorFinance.topExaminations as { type: string; count: number }[]).length > 0 && (
-                    <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+                    <div className="ui-surface overflow-hidden">
                       <div className="border-b border-slate-100 px-5 py-4">
                         <h3 className="text-sm font-black text-slate-900">En Çok Yapılan Tedaviler</h3>
                       </div>
-                      <table className="w-full text-xs">
+                      <div className="overflow-x-auto">
+                      <table className="min-w-[320px] w-full text-xs">
                         <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
                           <th className="px-4 py-3 text-left">Tedavi</th>
                           <th className="px-4 py-3 text-right">Adet</th>
@@ -2520,6 +2660,7 @@ export default function MuhasebePage() {
                           ))}
                         </tbody>
                       </table>
+                      </div>
                     </div>
                   )}
                 </div>

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 
@@ -41,7 +42,10 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     // "write conflict" ile reddeder (asagida P2034 olarak yakalaniyor) —
     // boylece "kayip guncelleme" (lost update) ile taksit bakiyesinin
     // yanlis hesaplanmasi engellenir.
-    let odemeAmt = 0;
+    // Taksit tutarları DB'de Decimal — burada da Number'a çevirip float
+    // aritmetiğiyle işlemek yerine Decimal ile hesaplanır (bkz. denetim
+    // raporu, CLAUDE.md Decimal kuralı).
+    let odemeAmtDecimal = new Prisma.Decimal(0);
     const updated = await (prisma as any).$transaction(async (tx: any) => {
       const taksit = await tx.taksit.findUnique({
         where: { id: params.tid },
@@ -56,23 +60,47 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         throw new HttpError(400, "Bu taksit zaten ödenmiş");
       }
 
-      odemeAmt = Math.min(Number(tutar), Number(taksit.kalan));
-      const yeniOdenen = Number(taksit.odenen) + odemeAmt;
-      const yeniKalan = Number(taksit.tutar) - yeniOdenen;
-      const yeniStatus = yeniKalan <= 0.001 ? "ODENDI" : "BEKLIYOR";
+      const kalan = taksit.kalan as Prisma.Decimal;
+      const tutarD = taksit.tutar as Prisma.Decimal;
+      const odenenD = taksit.odenen as Prisma.Decimal;
+      odemeAmtDecimal = Prisma.Decimal.min(new Prisma.Decimal(tutar), kalan);
+      const yeniOdenen = odenenD.plus(odemeAmtDecimal);
+      const yeniKalan = Prisma.Decimal.max(new Prisma.Decimal(0), tutarD.minus(yeniOdenen));
+      const yeniStatus = yeniKalan.isZero() ? "ODENDI" : "BEKLIYOR";
+
+      // Bu uç "hızlı tahsilat" için Payment kaydı hiç oluşturmuyordu —
+      // Muhasebe Defteri, /api/reports (kasa dağılımı) ve doktor hakediş
+      // "tahsil edilen" hesabı SADECE Payment tablosunu okuduğu için, bu
+      // yoldan alınan taksit tahsilatı gün sonu mutabakatta ve raporlarda
+      // sessizce kayboluyordu (bkz. denetim raporu — kritik veri
+      // tutarlılığı sorunu). /api/payments ile AYNI iz bırakması için
+      // burada da bir Payment kaydı oluşturulup TaksitOdeme'ye bağlanıyor.
+      const linkedPayment = await tx.payment.create({
+        data: {
+          institutionId: taksit.plan.patient.institutionId || user.institutionId,
+          patientId: taksit.plan.patientId,
+          doctorId: taksit.plan.doctorId,
+          method: yontem,
+          amount: odemeAmtDecimal,
+          description: note || `Taksit tahsilatı (${taksit.siraNo}. taksit)`,
+          posId: posId || null,
+          status: "ACTIVE",
+        },
+      });
 
       await tx.taksitOdeme.create({
         data: {
           taksitId: params.tid,
+          paymentId: linkedPayment.id,
           tarih: new Date(),
-          tutar: odemeAmt,
+          tutar: odemeAmtDecimal,
           yontem,
           posId: posId || null,
         }
       });
       await tx.taksit.update({
         where: { id: params.tid },
-        data: { odenen: yeniOdenen, kalan: Math.max(0, yeniKalan), status: yeniStatus }
+        data: { odenen: yeniOdenen, kalan: yeniKalan, status: yeniStatus }
       });
 
       // Plan durumunu güncelle
@@ -96,7 +124,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       });
     }, { isolationLevel: "Serializable" });
 
-    await writeAudit(auth.user.id, "TAKSIT_ODEME", `${odemeAmt} TL taksit ödemesi alındı (${params.tid})`);
+    await writeAudit(auth.user.id, "TAKSIT_ODEME", `${odemeAmtDecimal.toString()} TL taksit ödemesi alındı (${params.tid})`);
     return NextResponse.json(updated);
   } catch (e) {
     if (e instanceof HttpError) {

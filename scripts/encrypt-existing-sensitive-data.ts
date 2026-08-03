@@ -3,9 +3,9 @@ export {};
 
 /**
  * FIELD_ENCRYPTION_KEY tanımlandıktan sonra, o tarihten ÖNCE düz metin olarak kaydedilmiş
- * hasta alanlarını (surgeries/medications/otherDiseases/notes) ve yüklenmiş belgeleri
- * (data/uploads) geriye dönük şifreler. Zaten şifreli kayıtları atlar — birden fazla kez
- * çalıştırmak güvenlidir.
+ * hasta alanlarını (surgeries/medications/otherDiseases/notes/contagiousDiseaseNote) ve
+ * yüklenmiş belgeleri (data/uploads) geriye dönük şifreler. Zaten şifreli kayıtları atlar —
+ * birden fazla kez çalıştırmak güvenlidir.
  *
  * Kullanım: npm run encrypt:legacy-data
  */
@@ -17,12 +17,12 @@ import { encryptField, isEncryptedValue, encryptBuffer } from "../src/lib/field-
 
 const prisma = new PrismaClient();
 
-const PATIENT_FIELDS = ["surgeries", "medications", "otherDiseases", "notes"] as const;
+const PATIENT_FIELDS = ["surgeries", "medications", "otherDiseases", "notes", "contagiousDiseaseNote"] as const;
 type PatientRow = Record<(typeof PATIENT_FIELDS)[number] | "id", string | null>;
 
 async function encryptPatientFields() {
   const patients = await prisma.$queryRawUnsafe<PatientRow[]>(
-    `SELECT id, surgeries, medications, "otherDiseases", notes FROM "Patient"`
+    `SELECT id, surgeries, medications, "otherDiseases", notes, "contagiousDiseaseNote" FROM "Patient"`
   );
 
   let updated = 0;

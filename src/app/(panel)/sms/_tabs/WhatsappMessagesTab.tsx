@@ -17,7 +17,11 @@ import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { FormField } from "@/components/ui/FormField";
 import { SearchSelect } from "@/components/ui/SearchSelect";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { showToastSafe } from "@/lib/toast-client";
+
+const WhatsappEmptyIcon = createSceneIllustration("whatsapp");
 
 type PatientOption = {
   id: string;
@@ -338,10 +342,13 @@ export default function WhatsappMessagesTab() {
                 {[1, 2, 3, 4].map((item) => <div key={item} className="h-16 animate-pulse rounded-lg bg-slate-100" />)}
               </div>
             ) : conversations.length === 0 ? (
-              <div className="p-8 text-center">
-                <p className="text-sm font-semibold text-slate-700">Görüşme bulunmuyor</p>
-                <p className="mt-1 text-xs leading-5 text-slate-500">Yeni bir görüşme başlatabilir veya arama ölçütünü temizleyebilirsiniz.</p>
-              </div>
+              <EmptyState
+                icon={WhatsappEmptyIcon}
+                illustrative
+                compact
+                title="Görüşme bulunmuyor"
+                description="Yeni bir görüşme başlatabilir veya arama ölçütünü temizleyebilirsiniz."
+              />
             ) : conversations.map((conversation) => {
               const name = conversation.patient?.fullName || conversation.phone;
               return (
@@ -525,6 +532,7 @@ export default function WhatsappMessagesTab() {
       </div>
 
       <Modal
+        module="sms"
         open={composerOpen}
         onClose={closeComposer}
         title="Yeni WhatsApp Görüşmesi"
@@ -620,6 +628,7 @@ export default function WhatsappMessagesTab() {
       </Modal>
 
       <Modal
+        module="sms"
         open={Boolean(detailMessage)}
         onClose={() => setDetailMessage(null)}
         title="Mesaj Ayrıntısı"

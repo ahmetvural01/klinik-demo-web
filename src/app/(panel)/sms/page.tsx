@@ -1,6 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+import { CountUp } from "@/components/ui/CountUp";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
+import { CheckCircle2, XCircle, TriangleAlert, CircleDashed } from "lucide-react";
+import type { BadgeTone } from "@/components/ui/Badge";
+
+const TONE_ICON: Record<BadgeTone, typeof CheckCircle2> = {
+  success: CheckCircle2,
+  critical: XCircle,
+  warning: TriangleAlert,
+  info: CircleDashed,
+  neutral: CircleDashed,
+};
+
+const SmsEmptyIcon = createSceneIllustration("sms");
 import { showToastSafe } from "@/lib/toast-client";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -189,7 +204,7 @@ function ConsentSummaryCard() {
   }, []);
 
   return (
-    <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+    <div className="ui-surface p-4">
       <div className="mb-3">
         <h3 className="text-sm font-black text-slate-900">SMS İzin Durumu Özeti</h3>
         <p className="mt-0.5 text-xs text-slate-500">
@@ -202,7 +217,7 @@ function ConsentSummaryCard() {
           <a
             key={item.key}
             href={`/hasta?smsConsent=${item.key}`}
-            className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-center transition hover:border-primary/30 hover:bg-white"
+            className="ui-interactive rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-center hover:border-primary/30 hover:bg-white"
           >
             <span className="block text-lg font-black text-slate-900">{loading ? "…" : (summary?.[item.key] ?? 0)}</span>
             <span className="mt-0.5 block text-[11px] font-bold uppercase text-slate-500">{item.label}</span>
@@ -273,7 +288,7 @@ function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
       header: "Durum",
       render: (log) => {
         const rowStatus = getSmsRowStatus(log);
-        return <Badge tone={rowStatus.tone}>{rowStatus.label}</Badge>;
+        return <Badge tone={rowStatus.tone} icon={TONE_ICON[rowStatus.tone]} className={rowStatus.tone === "critical" ? "ui-badge-pulse" : ""}>{rowStatus.label}</Badge>;
       },
     },
     {
@@ -292,14 +307,17 @@ function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
 
   return (
     <section className="space-y-4">
-      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+      <div className="ui-surface p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-lg font-black text-slate-900">SMS Kayıtları</h1>
-            <p className="mt-1 text-sm text-slate-500">Gönderilen SMS hareketleri ve başarısız denemeler.</p>
+          <div className="flex items-center gap-3">
+            <ModuleIcon module="sms" size="lg" />
+            <div>
+              <h1 className="font-display text-xl font-black tracking-tight text-slate-900">SMS Kayıtları</h1>
+              <p className="text-xs font-medium text-slate-500">Gönderilen SMS hareketleri ve başarısız denemeler.</p>
+            </div>
           </div>
           <button onClick={onGoToSettings} title="Ayarlar sekmesine git" className="transition hover:opacity-80">
-            <Badge tone={settings.smsEnabled ? "success" : "critical"} size="md">
+            <Badge tone={settings.smsEnabled ? "success" : "critical"} icon={settings.smsEnabled ? CheckCircle2 : XCircle} size="md">
               {settings.smsEnabled ? "SMS aktif" : "SMS pasif"}
             </Badge>
           </button>
@@ -307,17 +325,17 @@ function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
+        <div className="ui-surface ui-kpi-in px-4 py-3" style={{ ["--row-delay" as string]: "0ms" }}>
           <p className="text-xs font-bold uppercase text-slate-400">Toplam Kayıt</p>
-          <p className="mt-1 text-xl font-black text-slate-900">{deliveryLogs.length}</p>
+          <p className="mt-1 text-xl font-black text-slate-900"><CountUp value={deliveryLogs.length} /></p>
         </div>
-        <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 shadow-sm">
+        <div className="ui-kpi-in rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 shadow-sm" style={{ ["--row-delay" as string]: "40ms" }}>
           <p className="text-xs font-bold uppercase text-emerald-700">Başarılı</p>
-          <p className="mt-1 text-xl font-black text-emerald-800">{successCount}</p>
+          <p className="mt-1 text-xl font-black text-emerald-800"><CountUp value={successCount} /></p>
         </div>
-        <div className="rounded-xl border border-red-100 bg-red-50 px-4 py-3 shadow-sm">
+        <div className={`ui-kpi-in rounded-xl border border-red-100 bg-red-50 px-4 py-3 shadow-sm ${failedCount > 0 ? "ui-badge-pulse" : ""}`} style={{ ["--row-delay" as string]: "80ms" }}>
           <p className="text-xs font-bold uppercase text-red-700">Başarısız</p>
-          <p className="mt-1 text-xl font-black text-red-800">{failedCount}</p>
+          <p className="mt-1 text-xl font-black text-red-800"><CountUp value={failedCount} /></p>
         </div>
       </div>
 
@@ -351,6 +369,8 @@ function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
           rowKey={(log) => log.id}
           loading={loading}
           emptyText="SMS kaydı bulunamadı."
+          emptyAccent="emerald"
+          emptyIcon={SmsEmptyIcon} emptyIllustrative
         />
       </div>
     </section>
@@ -431,19 +451,22 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
 
   return (
     <section className="space-y-4" aria-busy={loading}>
-      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+      <div className="ui-surface p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-lg font-black text-slate-900">SMS Ayarları</h1>
-            <p className="mt-1 text-sm text-slate-500">SMS gönderim tercihleri, izin akışı ve WhatsApp bağlantı durumu.</p>
+          <div className="flex items-center gap-3">
+            <ModuleIcon module="settings" size="lg" />
+            <div>
+              <h1 className="font-display text-xl font-black tracking-tight text-slate-900">SMS Ayarları</h1>
+              <p className="text-xs font-medium text-slate-500">SMS gönderim tercihleri, izin akışı ve WhatsApp bağlantı durumu.</p>
+            </div>
           </div>
-          <Badge tone={settings.smsEnabled ? "success" : "critical"} size="md">
+          <Badge tone={settings.smsEnabled ? "success" : "critical"} icon={settings.smsEnabled ? CheckCircle2 : XCircle} size="md">
             {settings.smsEnabled ? "SMS aktif" : "SMS pasif"}
           </Badge>
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+      <div className="ui-surface p-4">
         <div className="grid gap-3 lg:grid-cols-2">
           {toggleItems.map((item) => (
             <label
@@ -471,7 +494,7 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
         </p>
       </div>
 
-      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+      <div className="ui-surface p-4">
         <p className="mb-1 text-sm font-bold text-slate-800">SMS Onay Metni Önizlemesi</p>
         <p className="mb-3 text-xs text-slate-500">
           Bu metin sabittir, klinikler değiştiremez — yalnızca klinik adı ve bağlantı otomatik doldurulur.
@@ -491,7 +514,7 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
       </div>
 
       {settings.whatsappEnabled && (
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <div className="ui-surface p-4">
           <p className="mb-3 text-sm font-bold text-slate-800">Varsayılan Bildirim Kanalı</p>
           <p className="mb-3 text-xs text-slate-500">
             Randevu oluşturma, hatırlatma, ödeme hatırlatma ve değerlendirme
@@ -523,14 +546,14 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
       )}
 
       {settings.whatsappEnabled && (
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+        <div className="ui-surface p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-sm font-bold text-slate-800">WhatsApp Bağlantı Durumu</p>
               <p className="mt-0.5 text-xs text-slate-500">Sağlayıcı bağlantı testi ve tam ayarlar WhatsApp Ayarları sekmesindedir.</p>
             </div>
             <div className="flex items-center gap-2">
-              <Badge tone={waStatusBadge[waStatus].tone} size="md">{waStatusBadge[waStatus].label}</Badge>
+              <Badge tone={waStatusBadge[waStatus].tone} icon={TONE_ICON[waStatusBadge[waStatus].tone]} size="md">{waStatusBadge[waStatus].label}</Badge>
               <Button variant="secondary" size="sm" onClick={onGoToWhatsappSettings}>
                 {waStatus === "ACTIVE" ? "Bağlantıyı Yönet / Test Et" : "WhatsApp Ayarlarına Git"}
               </Button>
@@ -539,7 +562,7 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
         </div>
       )}
 
-      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+      <div className="ui-surface p-4">
         <div className="grid gap-4 md:grid-cols-2">
           <FormField label="Ödeme Hatırlatması — Vadeden Kaç Gün Önce" hint="1-30 gün arası değer girilebilir.">
             <input
@@ -566,7 +589,7 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
         </div>
       </div>
 
-      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+      <div className="ui-surface p-4">
         <p className="mb-2 text-sm font-bold text-slate-800">Gönderim Başarısızlıklarının Açıklaması</p>
         <ul className="space-y-1.5 text-xs text-slate-600">
           <li><strong className="font-bold text-slate-700">Hastanın SMS iletişim izni bulunmuyor</strong> — hasta henüz ONAYLIYORUM dememiş, reddetmiş ya da izin bağlantısı hiç gönderilememiş.</li>
@@ -626,32 +649,31 @@ export default function SmsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-2">
-        <Button variant={tab === "kayitlar" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("kayitlar")}>
-          Kayıtlar
-        </Button>
-        <Button variant={tab === "ayarlar" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("ayarlar")}>
-          Ayarlar
-        </Button>
-        {whatsappEnabled && (
-          <>
-            <Button variant={tab === "whatsapp" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("whatsapp")}>
-              WhatsApp
-            </Button>
-            <Button variant={tab === "whatsapp-ayarlar" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("whatsapp-ayarlar")}>
-              WhatsApp Ayarları
-            </Button>
-          </>
-        )}
-        <Button variant={tab === "sablonlar" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("sablonlar")}>
-          Şablonlar
-        </Button>
-        <Button variant={tab === "kutlama-gunleri" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("kutlama-gunleri")}>
-          Kutlama Günleri
-        </Button>
-        <Button variant={tab === "toplu" ? "primary" : "secondary"} size="sm" onClick={() => activateTab("toplu")}>
-          Toplu Gönderim
-        </Button>
+      <div className="flex w-fit max-w-full items-center gap-0.5 overflow-x-auto rounded-lg bg-slate-100/80 p-1" role="tablist">
+        {([
+          { key: "kayitlar" as const, label: "Kayıtlar" },
+          { key: "ayarlar" as const, label: "Ayarlar" },
+          ...(whatsappEnabled ? [
+            { key: "whatsapp" as const, label: "WhatsApp" },
+            { key: "whatsapp-ayarlar" as const, label: "WhatsApp Ayarları" },
+          ] : []),
+          { key: "sablonlar" as const, label: "Şablonlar" },
+          { key: "kutlama-gunleri" as const, label: "Kutlama Günleri" },
+          { key: "toplu" as const, label: "Toplu Gönderim" },
+        ]).map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={tab === t.key}
+            onClick={() => activateTab(t.key)}
+            className={`ui-view-tab shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-semibold transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
+              tab === t.key ? "is-active bg-white text-primary shadow-[0_1px_3px_rgb(15_23_42/0.12)]" : "text-slate-600 hover:text-slate-900"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
       {/* Sekmeler DOM'dan tamamen kaldırılmak yerine gizleniyor — özellikle Toplu
           Gönderim'deki seçili hasta listesi gibi girilmiş verinin, kullanıcı

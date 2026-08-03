@@ -1,10 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { FileText, Trash2 } from "lucide-react";
+import { Trash2 } from "lucide-react";
 import { Button, IconButton } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
+import { Spinner } from "@/components/ui/Spinner";
 import { showToastSafe } from "@/lib/toast-client";
 import { confirmDialog } from "@/lib/confirm-client";
+
+const OnamEmptyIcon = createModuleEmptyIcon("clipboard");
 
 type ConsentTemplate = {
   id: string;
@@ -79,7 +84,7 @@ export default function OnamTab() {
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.message || "Onam paketi kaydedilemedi.");
       setTemplate(data);
-      showToastSafe({ title: "Kaydedildi", message: "Onam paketi kaydedildi. Klinik ekranları bu metni kullanacak.", type: "success" });
+      showToastSafe({ title: "Kaydedildi", message: "Onam paketi kaydedildi. Klinik ekranları bu metni kullanacak.", type: "success", icon: "clipboard" });
       await load();
     } catch (error) {
       showToastSafe({ title: "Hata", message: error instanceof Error ? error.message : "Onam paketi kaydedilemedi.", type: "error" });
@@ -102,7 +107,7 @@ export default function OnamTab() {
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.message || "Şablon silinemedi.");
       setOldTemplates((current) => current.filter((item) => item.id !== id));
-      showToastSafe({ title: "Silindi", message: "Pasif onam şablonu silindi.", type: "success" });
+      showToastSafe({ title: "Silindi", message: "Pasif onam şablonu silindi.", type: "success", icon: "clipboard" });
     } catch (error) {
       showToastSafe({ title: "Hata", message: error instanceof Error ? error.message : "Şablon silinemedi.", type: "error" });
     } finally {
@@ -121,7 +126,7 @@ export default function OnamTab() {
 
       {loading ? (
         <div className="rounded-2xl border border-slate-100 bg-white p-10 text-center shadow-sm">
-          <div className="mx-auto h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          <Spinner className="mx-auto h-8 w-8 text-primary" />
         </div>
       ) : (
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
@@ -177,13 +182,10 @@ export default function OnamTab() {
               </div>
               <div className="max-h-[620px] space-y-2 overflow-auto pr-1">
                 {oldTemplates.length === 0 ? (
-                  <div className="flex flex-col items-center justify-center rounded-lg bg-slate-50 px-3 py-8 text-center text-slate-400">
-                    <FileText className="mb-2 h-8 w-8 text-slate-200" />
-                    <p className="text-sm">Silinebilir pasif şablon yok.</p>
-                  </div>
+                  <EmptyState icon={OnamEmptyIcon} illustrative compact title="Silinebilir pasif şablon yok" />
                 ) : (
-                  oldTemplates.map((item) => (
-                    <div key={item.id} className="rounded-lg border border-slate-200 p-3">
+                  oldTemplates.map((item, itemIdx) => (
+                    <div key={item.id} style={{ ["--row-delay" as string]: `${Math.min(itemIdx, 14) * 18}ms` }} className="ui-row-in rounded-lg border border-slate-200 p-3">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="text-sm font-bold text-slate-900">{item.title}</p>

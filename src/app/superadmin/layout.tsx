@@ -11,21 +11,21 @@ export default async function SuperadminLayout({ children }: { children: React.R
   }
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50">
+    <div className="flex h-screen overflow-hidden bg-[rgb(var(--app-bg))]">
       <Sidebar />
 
       <div className="flex-1 flex flex-col overflow-hidden">
-        <header className="h-14 border-b border-slate-100 bg-white px-6 flex items-center justify-between shadow-sm flex-shrink-0">
-          <h2 className="text-sm font-semibold text-slate-700">Sistem Yönetimi</h2>
-          <div className="flex items-center gap-3">
-            <span className="text-sm text-slate-600">{user.fullName}</span>
-            <div className="h-8 w-8 rounded-full bg-primary flex items-center justify-center text-white font-bold text-xs">
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-[rgb(var(--app-surface))]/95 px-6 shadow-[0_1px_0_rgb(15_23_42/0.025),0_6px_20px_rgb(15_23_42/0.025)] backdrop-blur">
+          <h2 className="font-display text-sm font-bold text-slate-800">Sistem Yönetimi</h2>
+          <div className="flex items-center gap-2.5">
+            <span className="text-sm font-semibold text-slate-700">{user.fullName}</span>
+            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary-strong text-xs font-bold text-white shadow-[0_2px_6px_rgb(var(--app-primary)/0.3)]">
               {user.fullName.charAt(0).toUpperCase()}
             </div>
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-6">
+        <main className="panel-content flex-1 overflow-y-auto p-6">
           <ConfirmProvider>{children}</ConfirmProvider>
         </main>
       </div>

@@ -140,6 +140,25 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   const auth = await requireAuth("stock:write");
   if (auth.error) return auth.error;
 
+  // Çift tıklama / ağ hatası sonrası retry koruması sunucu tarafındadır —
+  // istemcinin loading state'ine güvenilmez (bkz. denetim raporu). Aynı
+  // Idempotency-Key ile gelen tekrar istek, stok miktarını İKİNCİ KEZ
+  // değiştirmeden mevcut hareketi döndürür.
+  const requestKey = req.headers.get("Idempotency-Key")?.trim().slice(0, 180) || null;
+  const institutionId = auth.user.institutionId;
+
+  if (requestKey) {
+    const existing = await (prisma as any).stockMovement.findFirst({
+      where: { institutionId, requestKey },
+    });
+    if (existing) {
+      const item = await (prisma as any).stockItem.findFirst({ where: { id: params.id, ...(institutionId ? { institutionId } : {}) } });
+      if (item) {
+        return NextResponse.json({ ...item, category: normalizeCategory(item.category), isCritical: Number(item.quantity) < Number(item.minQuantity), duplicateRequest: true });
+      }
+    }
+  }
+
   const parsed = stockMovementSchema.safeParse(await req.json());
   if (!parsed.success) {
     return NextResponse.json({ error: "Stok hareketi bilgileri geçersiz", errors: formatZodError(parsed.error) }, { status: 400 });
@@ -150,19 +169,38 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       return applyStockMovement({
         tx,
         stockItemId: params.id,
-        institutionId: auth.user.institutionId,
+        institutionId,
         userId: auth.user.id,
         type,
         quantity,
         note,
         supplier,
         unitPrice,
+        requestKey,
       });
     });
 
-    await writeAudit(auth.user.id, "STOCK_MOVEMENT", `${type === "GIRIS" ? "Stok girişi" : "Stok çıkışı"}: ${quantity} adet (${params.id})`);
-    return NextResponse.json({ ...result.item, category: normalizeCategory(result.item.category), isCritical: result.isCritical });
+    if (!result.duplicate) {
+      await writeAudit(auth.user.id, "STOCK_MOVEMENT", `${type === "GIRIS" ? "Stok girişi" : "Stok çıkışı"}: ${quantity} adet (${params.id})`);
+    }
+    return NextResponse.json({
+      ...result.item,
+      category: normalizeCategory(result.item.category),
+      isCritical: result.isCritical,
+      ...(result.duplicate ? { duplicateRequest: true } : {}),
+    });
   } catch (error) {
+    // Aynı requestKey ile eşzamanlı iki istek, satır kilidi (FOR UPDATE)
+    // sayesinde applyStockMovement içindeki kontrolle normalde zaten
+    // yakalanır; bu P2002 yalnızca farklı stok kalemlerine aynı anahtarla
+    // gelen teorik bir yarış durumu için son savunma hattıdır.
+    if (requestKey && error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
+      const existing = await (prisma as any).stockMovement.findFirst({ where: { institutionId, requestKey } });
+      const item = existing ? await (prisma as any).stockItem.findFirst({ where: { id: params.id, ...(institutionId ? { institutionId } : {}) } }) : null;
+      if (item) {
+        return NextResponse.json({ ...item, category: normalizeCategory(item.category), isCritical: Number(item.quantity) < Number(item.minQuantity), duplicateRequest: true });
+      }
+    }
     return NextResponse.json({ error: error instanceof Error ? error.message : "Stok hareketi kaydedilemedi" }, { status: 400 });
   }
 }

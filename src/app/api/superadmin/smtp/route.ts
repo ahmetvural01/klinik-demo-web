@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import nodemailer from "nodemailer";
-import { encryptField } from "@/lib/field-crypto";
+import { encryptField, decryptField } from "@/lib/field-crypto";
 
 export async function GET() {
   const auth = await requireAuth("superadmin");
@@ -82,12 +82,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "host, username, password ve testTo zorunlu" }, { status: 400 });
   }
 
+  // Form alanı kaydedilmiş şifreyi maskeli ("••••••••") gösterir — kullanıcı
+  // şifreyi değiştirmeden test gönderirse gerçek (kayıtlı, şifreli) şifre
+  // burada çözülüp kullanılır; aksi halde SMTP sunucusuna literal olarak
+  // "••••••••" gönderilip doğrulama her zaman başarısız olurdu.
+  let testPassword = body.password as string;
+  if (testPassword === "••••••••") {
+    const existing = await prisma.smtpConfig.findUnique({ where: { id: 1 } });
+    testPassword = existing?.password ? decryptField(existing.password) : "";
+  }
+
   try {
     const transporter = nodemailer.createTransport({
       host: body.host,
       port: Number(body.port) || 587,
       secure: Boolean(body.secure),
-      auth: { user: body.username, pass: body.password },
+      auth: { user: body.username, pass: testPassword },
       disableFileAccess: true,
       disableUrlAccess: true,
     });

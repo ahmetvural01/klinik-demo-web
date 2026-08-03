@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { PageHeader } from "@/components/ui/PageHeader";
 
 type Ticket = { id: string; subject: string; message: string; answer: string | null; createdAt: string };
 
@@ -102,12 +103,12 @@ export default function DestekPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-black text-slate-900">Destek</h1>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{tickets.length} talep</span>
-        </div>
-      </div>
+      <PageHeader
+        icon="support"
+        title="Destek"
+        description="Platform ekibine talep açın, geçmiş yanıtlarınızı görüntüleyin."
+        stats={[{ label: "Talep", value: tickets.length }]}
+      />
 
       {/* WhatsApp */}
       <div className="flex items-center gap-4 rounded-2xl bg-emerald-50 border border-emerald-200 p-4">

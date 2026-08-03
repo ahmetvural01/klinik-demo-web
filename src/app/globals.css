@@ -59,13 +59,13 @@
   --color-accent-950: 73 35 19;
   --font-sans: var(--font-manrope), "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
   --font-display: var(--font-jakarta), var(--font-manrope), "Segoe UI", ui-sans-serif, system-ui, sans-serif;
-  --radius-control: 0.75rem;
-  --radius-surface: 1.25rem;
-  --shadow-rest: 0 1px 2px rgb(15 23 42 / 0.06), 0 10px 24px rgb(15 23 42 / 0.06);
-  --shadow-surface: 0 2px 5px rgb(15 23 42 / 0.07), 0 16px 40px rgb(15 23 42 / 0.10);
-  --shadow-raised: 0 4px 10px rgb(15 23 42 / 0.09), 0 24px 52px rgb(15 23 42 / 0.14);
-  --shadow-popover: 0 12px 32px rgb(15 23 42 / 0.16), 0 4px 10px rgb(15 23 42 / 0.09);
-  --shadow-floating: 0 32px 80px rgb(15 23 42 / 0.24), 0 8px 20px rgb(15 23 42 / 0.11);
+  --radius-control: 0.5rem;
+  --radius-surface: 0.5rem;
+  --shadow-rest: 0 1px 2px rgb(15 23 42 / 0.04), 0 4px 12px rgb(15 23 42 / 0.035);
+  --shadow-surface: 0 1px 2px rgb(15 23 42 / 0.05), 0 8px 22px rgb(15 23 42 / 0.07);
+  --shadow-raised: 0 2px 5px rgb(15 23 42 / 0.06), 0 14px 34px rgb(15 23 42 / 0.1);
+  --shadow-popover: 0 10px 28px rgb(15 23 42 / 0.14), 0 3px 8px rgb(15 23 42 / 0.07);
+  --shadow-floating: 0 26px 64px rgb(15 23 42 / 0.2), 0 7px 18px rgb(15 23 42 / 0.09);
   --ease-product: cubic-bezier(0.2, 0, 0, 1);
 }
 
@@ -105,17 +105,89 @@ body {
 }
 
 .ui-surface {
-  border: 1px solid rgb(var(--color-slate-200));
+  border: 1px solid rgb(var(--app-border));
   border-radius: var(--radius-surface);
   background: rgb(var(--app-surface));
   box-shadow: var(--shadow-rest);
 }
 
 .ui-surface-raised {
-  border: 1px solid rgb(var(--color-slate-200) / 0.92);
+  border: 1px solid rgb(var(--app-border));
   border-radius: var(--radius-surface);
   background: rgb(var(--app-surface));
   box-shadow: var(--shadow-raised);
+}
+
+/* Yüzey katman sistemi — bilgi önemine göre seçilir, her karta aynı gölge
+   verilmesin diye (bkz. Hasta Detay / Muhasebe / Stok kart hiyerarşisi):
+   soft (ikincil/arka plan bilgi), interactive (tıklanabilir — hover'da
+   yükselir), warning/success (durum anlamı taşıyan kartlar). `.ui-surface`
+   (default) ve `.ui-surface-raised` zaten mevcuttu. */
+.ui-surface-soft {
+  border: 1px solid rgb(var(--color-slate-100));
+  border-radius: var(--radius-surface);
+  background: rgb(var(--color-slate-50) / 0.7);
+}
+
+.ui-surface-interactive {
+  border: 1px solid rgb(var(--app-border));
+  border-radius: var(--radius-surface);
+  background: rgb(var(--app-surface));
+  box-shadow: var(--shadow-rest);
+  cursor: pointer;
+  transition: border-color 140ms var(--ease-product), box-shadow 140ms var(--ease-product), transform 140ms var(--ease-product);
+}
+@media (hover: hover) and (pointer: fine) {
+  .ui-surface-interactive:hover {
+    border-color: rgb(var(--app-primary) / 0.3);
+    box-shadow: var(--shadow-surface);
+    transform: translateY(-1.5px);
+  }
+}
+.ui-surface-interactive:active {
+  transform: translateY(0) scale(0.995);
+  transition-duration: 80ms;
+}
+.ui-surface-interactive:focus-visible {
+  outline: 2px solid rgb(var(--app-primary) / 0.5);
+  outline-offset: 2px;
+}
+
+.ui-surface-warning {
+  border: 1px solid rgb(var(--color-warning) / 0.3);
+  border-radius: var(--radius-surface);
+  background: rgb(var(--color-warning) / 0.06);
+  box-shadow: var(--shadow-rest);
+}
+
+.ui-surface-success {
+  border: 1px solid rgb(var(--color-success) / 0.28);
+  border-radius: var(--radius-surface);
+  background: rgb(var(--color-success) / 0.06);
+  box-shadow: var(--shadow-rest);
+}
+
+/* Kendi rengini (ör. Tailwind `border-emerald-200 bg-emerald-50` gibi
+   "tone" class'ları) zaten taşıyan kartlar için — yalnızca hover/press/focus
+   HAREKETİ ekler, border/background rengine dokunmaz (aksi halde cascade
+   sırası nedeniyle tone rengini ezerdi). */
+.ui-tone-card-interactive {
+  cursor: pointer;
+  transition: box-shadow 140ms var(--ease-product), transform 140ms var(--ease-product);
+}
+@media (hover: hover) and (pointer: fine) {
+  .ui-tone-card-interactive:hover {
+    box-shadow: var(--shadow-surface);
+    transform: translateY(-1.5px);
+  }
+}
+.ui-tone-card-interactive:active {
+  transform: translateY(0) scale(0.99);
+  transition-duration: 80ms;
+}
+.ui-tone-card-interactive:focus-visible {
+  outline: 2px solid rgb(var(--app-primary) / 0.5);
+  outline-offset: 2px;
 }
 
 .ui-popover {
@@ -146,24 +218,153 @@ body {
   box-shadow: inset 3px 0 0 rgb(var(--app-primary)), var(--shadow-rest);
 }
 
+/* Tek aileden gelen ikonlar için sakin ve sabit optik çerçeve. */
 .ui-icon-frame {
+  --module-icon-secondary: rgb(var(--color-slate-400));
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: none;
-  border: 1px solid rgb(var(--color-slate-200));
-  border-radius: 0.75rem;
-  background: rgb(var(--color-slate-50));
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  background: transparent;
   color: rgb(var(--color-slate-600));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.72), 0 1px 2px rgb(15 23 42 / 0.05);
-  transition: border-color 140ms var(--ease-product), background-color 140ms var(--ease-product), box-shadow 140ms var(--ease-product), transform 140ms var(--ease-product);
+  transition: border-color 140ms var(--ease-product), background-color 140ms var(--ease-product), color 140ms var(--ease-product), transform 140ms var(--ease-product);
+}
+.ui-icon-frame > svg,
+.ui-icon-frame .i-icon,
+.ui-icon-frame .i-icon > svg {
+  display: block;
+}
+.ui-icon-frame .i-icon {
+  line-height: 0;
 }
 
+/* Sidebar'daki kurum/kullanıcı kartları — ikon tile'larıyla aynı porselen
+   yüzey dili (ince üst highlight + düşük yoğunluklu iç/dış gölge). */
+.ui-sidebar-card {
+  border: 1px solid rgb(var(--color-slate-200));
+  background: rgb(var(--app-surface));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.7),
+    inset 0 -1px 1px rgb(15 23 42 / 0.025),
+    0 1px 2px rgb(15 23 42 / 0.04);
+}
 .ui-icon-frame[data-active="true"] {
-  border-color: rgb(var(--app-primary) / 0.28);
-  background: linear-gradient(180deg, rgb(var(--color-primary-100)), rgb(var(--color-primary-50)));
+  border-color: rgb(var(--app-primary) / 0.16);
+  background: rgb(var(--app-primary) / 0.1);
   color: rgb(var(--app-primary));
-  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.5), 0 2px 8px rgb(var(--app-primary) / 0.18);
+}
+
+/* ── Modül vurgu renkleri (bkz. IconFrame.tsx notu) ───────────────────────
+   Sabit, temadan bağımsız tonlar — yalnızca ikon yüzeyinde, "rest" halinde
+   çok hafif bir ipucu, hover'da orta yoğunluk, aktifte belirgin renk+glow.
+   Her modül tek bir --tile-* üçlüsü tanımlar, aşağıdaki ortak kurallar
+   (.group:hover / [data-active]) bunu kullanır. */
+.ui-icon-frame[data-accent] {
+  --tile-tint: rgb(var(--color-slate-500) / 0.06);
+  --module-icon-secondary: rgb(var(--tile-rgb) / 0.38);
+}
+.ui-icon-frame[data-accent="indigo"]     { --tile-rgb: 79 70 229;   }
+.ui-icon-frame[data-accent="cyan"]       { --tile-rgb: 14 116 144;  }
+.ui-icon-frame[data-accent="violet"]     { --tile-rgb: 124 58 237;  }
+.ui-icon-frame[data-accent="purple"]     { --tile-rgb: 147 51 234;  }
+.ui-icon-frame[data-accent="fuchsia"]    { --tile-rgb: 162 28 175;  }
+.ui-icon-frame[data-accent="emerald"]    { --tile-rgb: 5 150 105;   }
+.ui-icon-frame[data-accent="amber"]      { --tile-rgb: 180 83 9;    }
+.ui-icon-frame[data-accent="orange"]     { --tile-rgb: 194 65 12;   }
+.ui-icon-frame[data-accent="blueviolet"] { --tile-rgb: 79 70 229;   }
+.ui-icon-frame[data-accent="teal"]       { --tile-rgb: 13 148 136;  }
+.ui-icon-frame[data-accent="rose"]       { --tile-rgb: 190 24 93;   }
+
+.ui-icon-frame[data-accent] {
+  background: rgb(var(--tile-rgb) / 0.08);
+  border-color: rgb(var(--tile-rgb) / 0.13);
+  color: rgb(var(--tile-rgb));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.72), 0 1px 2px rgb(var(--tile-rgb) / 0.06);
+}
+.ui-icon-frame[data-accent][data-active="true"] {
+  --module-icon-secondary: rgb(var(--tile-rgb) / 0.52);
+  background: rgb(var(--tile-rgb) / 0.15);
+  border-color: rgb(var(--tile-rgb) / 0.24);
+  color: rgb(var(--tile-rgb));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.7), 0 3px 9px rgb(var(--tile-rgb) / 0.12);
+}
+
+/* Hover/basılma yalnızca imleç desteği olan cihazlarda (dokunmatikte
+   "yapışkan hover" oluşmasın) ve `.group` (tıklanabilir satır/kart) altında.
+   Hover'da yalnız kalkma değil, üst ışık çizgisi de belirginleşir — "yüzeyde
+   küçük ışık hareketi" hissi. */
+@media (hover: hover) and (pointer: fine) {
+  .group:hover .ui-icon-frame {
+    transform: translateY(-1px) scale(1.05);
+  }
+  .group:hover .ui-icon-frame[data-accent]:not([data-active="true"]) {
+    background: rgb(var(--tile-rgb) / 0.11);
+    border-color: rgb(var(--tile-rgb) / 0.16);
+  }
+  .group:hover .ui-icon-frame:not([data-accent]):not([data-active="true"]) {
+    background: rgb(var(--color-slate-100) / 0.8);
+    color: rgb(var(--color-slate-700));
+  }
+}
+.group:active .ui-icon-frame {
+  transform: scale(0.96);
+  transition-duration: 80ms;
+}
+
+/* Modül görselleri (Fluent Emoji Flat, bkz. ModuleIcon.tsx) kendi sabit
+   illüstrasyon renklerini taşır — burada yapay bir renkli kutu YOK, yalnızca
+   çok hafif bir yüzey ipucu (hover'da soluk gri, aktifte kurum rengi tonu). */
+.module-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border-radius: 0.5rem;
+  padding: 2px;
+  transition: background-color 180ms var(--ease-product);
+}
+/* Fluent Emoji Flat ikonları bazen açık/beyaz alanlar içeriyor — beyaz
+   nav zemininde soluklaşabiliyor. Hafif doygunluk artışı + ince bir kontur
+   gölgesi ikonu zeminden ayırır (bkz. kullanıcı geri bildirimi: "soluk ve
+   küçük kalıyor"). */
+.module-icon-img {
+  display: block;
+  filter: saturate(1.2) drop-shadow(0 1px 1.5px rgb(15 23 42 / 0.18));
+  transition: transform 180ms var(--ease-product), filter 180ms var(--ease-product);
+}
+.module-icon[data-active="true"] {
+  background: rgb(var(--app-primary) / 0.1);
+}
+.module-icon[data-active="true"] .module-icon-img {
+  filter: saturate(1.28) drop-shadow(0 1px 2.5px rgb(var(--app-primary) / 0.4));
+}
+@media (hover: hover) and (pointer: fine) {
+  .group:hover .module-icon {
+    background: rgb(var(--color-slate-100) / 0.75);
+  }
+  .group:hover .module-icon[data-active="true"] {
+    background: rgb(var(--app-primary) / 0.16);
+  }
+  .group:hover .module-icon-img {
+    transform: translateY(-1.5px) scale(1.1);
+    filter: saturate(1.32) drop-shadow(0 3px 5px rgb(15 23 42 / 0.2));
+  }
+}
+.group:active .module-icon-img {
+  transform: scale(0.92);
+  transition-duration: 90ms;
+}
+
+/* Klavye ile gezinirken de aynı geri bildirim — yalnız hover'a bağımlı
+   kalmasın (bkz. erişilebilirlik gereksinimi). */
+.group:focus-visible .module-icon,
+a:focus-visible .module-icon,
+button:focus-visible .module-icon {
+  outline: 2px solid rgb(var(--app-primary) / 0.55);
+  outline-offset: 2px;
 }
 
 .ui-tooltip {
@@ -182,14 +383,23 @@ body {
   font-weight: 650;
   line-height: 1rem;
   opacity: 0;
-  transform: translateY(3px);
+  transform: translateY(3px) scale(0.96);
   transition: opacity 120ms var(--ease-product), transform 120ms var(--ease-product);
 }
 
+/* Hover'da kısa, tutarlı bir gecikme sonrası belirir (yanlışlıkla üzerinden
+   geçilen her ikonda anında tooltip patlamasını önler) — klavye ile
+   focus'ta ise GECİKME YOK (klavye kullanıcısı için anında geri bildirim
+   erişilebilirlik açısından önemli). */
+@media (hover: hover) and (pointer: fine) {
+  .ui-tooltip-trigger:hover .ui-tooltip {
+    transition-delay: 350ms;
+  }
+}
 .ui-tooltip-trigger:hover .ui-tooltip,
 .ui-tooltip-trigger:focus-within .ui-tooltip {
   opacity: 1;
-  transform: translateY(0);
+  transform: translateY(0) scale(1);
 }
 
 /* Panel readability floor: eski sayfalardaki çok küçük yazı ve dar kontrolleri
@@ -214,7 +424,17 @@ body {
   font-size: 0.875rem;
   border-color: rgb(var(--color-slate-200));
   background-color: rgb(var(--app-surface));
-  box-shadow: 0 1px 2px rgb(15 23 42 / 0.025);
+  box-shadow: inset 0 1px 1px rgb(15 23 42 / 0.025), 0 1px 2px rgb(15 23 42 / 0.02);
+  transition: border-color 160ms var(--ease-product), box-shadow 160ms var(--ease-product), background-color 160ms var(--ease-product);
+}
+
+/* Dokunmatikte rahat hedef alanı — metin/select/textarea input'ları en az
+   40px yükseklikte olsun (ör. text-xs kompakt filtre inputları hariç
+   tutulmasın diye min-height, height değil — mevcut daha büyük inputları
+   küçültmez, yalnız çok küçük olanları büyütür). */
+.panel-content input:not([type="checkbox"]):not([type="radio"]),
+.panel-content select {
+  min-height: 40px;
 }
 
 .panel-content input:hover,
@@ -227,24 +447,101 @@ body {
 .panel-content select:focus,
 .panel-content textarea:focus {
   border-color: rgb(var(--app-primary));
-  box-shadow: 0 0 0 3px rgb(var(--app-primary) / 0.1);
+  box-shadow: 0 0 0 3px rgb(var(--app-primary) / 0.11), 0 2px 6px rgb(var(--app-primary) / 0.08);
+}
+
+.panel-content input:disabled,
+.panel-content select:disabled,
+.panel-content textarea:disabled {
+  cursor: not-allowed;
+  border-color: rgb(var(--color-slate-200));
+  background-color: rgb(var(--color-slate-100) / 0.6);
+  color: rgb(var(--color-slate-400));
+  box-shadow: none;
+}
+
+.panel-content input[readonly] {
+  background-color: rgb(var(--color-slate-50));
+  color: rgb(var(--color-slate-600));
+}
+
+/* FormField.tsx hatalı alanı otomatik olarak `aria-invalid="true"` ile
+   işaretler — burada tek bir global kuralla o input'un görsel durumu
+   ayarlanır, her sayfanın kendi hata class'ını yazmasına gerek kalmaz. */
+.panel-content input[aria-invalid="true"],
+.panel-content select[aria-invalid="true"],
+.panel-content textarea[aria-invalid="true"] {
+  border-color: rgb(var(--color-danger) / 0.55);
+  background-color: rgb(var(--color-danger) / 0.04);
+}
+.panel-content input[aria-invalid="true"]:focus,
+.panel-content select[aria-invalid="true"]:focus,
+.panel-content textarea[aria-invalid="true"]:focus {
+  border-color: rgb(var(--color-danger));
+  box-shadow: 0 0 0 3px rgb(var(--color-danger) / 0.13), 0 2px 6px rgb(var(--color-danger) / 0.08);
+}
+
+/* Native checkbox/radio/switch: `accent-color` tarayıcı desteğiyle tek
+   satırda kurum rengine bağlanır — özel bir bileşen yazmadan tutarlı,
+   premium bir görünüm sağlar. */
+.panel-content input[type="checkbox"],
+.panel-content input[type="radio"] {
+  accent-color: rgb(var(--app-primary));
+  width: 1.05rem;
+  height: 1.05rem;
+  cursor: pointer;
+}
+.panel-content input[type="checkbox"]:disabled,
+.panel-content input[type="radio"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* FormField `success` durumu — kısa, sakin bir onay hissi. */
+.panel-content input[data-success="true"],
+.panel-content select[data-success="true"],
+.panel-content textarea[data-success="true"] {
+  border-color: rgb(var(--color-success) / 0.5);
+}
+@keyframes ui-field-success-check-in {
+  from { opacity: 0; transform: scale(0.6); }
+  to { opacity: 1; transform: scale(1); }
+}
+.ui-field-success-check {
+  animation: ui-field-success-check-in 200ms var(--ease-product);
+}
+@keyframes ui-field-message-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ui-field-message {
+  animation: ui-field-message-in 160ms var(--ease-product);
 }
 
 .panel-content table {
   width: 100%;
   line-height: 1.5;
-  font-size: 0.9rem;
+  font-size: 0.8125rem;
 }
 
 .panel-content thead {
-  background: rgb(var(--color-slate-50));
+  background: transparent;
 }
 
+/* Önceden text-transform:none/letter-spacing:0 idi ve sayfaların kendi
+   `uppercase tracking-wide` sınıflarını (aynı özgüllükte, ama bu dosyada
+   daha sonra tanımlandığı için) sessizce eziyordu — tablo başlıkları hedeflenenin
+   aksine hiçbir zaman büyük harf/aralıklı görünmüyordu. Artık premium
+   varsayılan burada: sayfa bazlı sınıfa gerek kalmadan her tablo başlığı
+   tutarlı, sakin bir "SaaS" hissi taşır. calendar-doctor-heading/
+   calendar-time-heading gibi özel sınıflar (bu kuraldan sonra tanımlı,
+   dolayısıyla hâlâ kazanıyor) randevu ızgarasında bilerek büyük harf
+   kullanmaz. */
 .panel-content th {
   color: rgb(var(--color-slate-500));
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
 }
 
@@ -262,11 +559,18 @@ body {
 
 .panel-content .calendar-time-heading,
 .panel-content .calendar-time-cell {
-  color: rgb(var(--color-slate-700));
+  color: rgb(var(--color-slate-800));
   font-size: 0.8125rem;
   font-weight: 700;
   letter-spacing: 0;
   text-transform: none;
+}
+
+/* Sol saat sütunu, randevu ızgarasından hafifçe ayrışan kendi yüzeyini
+   taşısın — önceden diğer hücrelerle aynı düz beyazdı, gözle takip
+   etmeyi zorlaştırıyordu (bkz. kullanıcı geri bildirimi). */
+.panel-content .calendar-time-cell {
+  background: rgb(var(--color-slate-50) / 0.7) !important;
 }
 
 .panel-content th,
@@ -418,6 +722,21 @@ body {
   opacity: 1;
 }
 
+/* Dokunmatik cihazlarda hover olayı hiç tetiklenmez — boş slot butonu
+   görünmeden dokunmak zorunda kalınır ve 24px yükseklik ~40px önerilen
+   dokunma hedefinin altında kalır (bkz. denetim raporu). */
+@media (hover: none) and (pointer: coarse) {
+  .panel-content .randevu-page .randevu-slot-create {
+    min-height: 40px;
+    opacity: 0.55;
+  }
+
+  .panel-content .randevu-page .randevu-slot-create-label {
+    max-width: 120px;
+    opacity: 1;
+  }
+}
+
 .panel-content .randevu-page .randevu-slot-create-icon {
   font-size: 1rem;
   font-weight: 700;
@@ -531,14 +850,39 @@ th {
   color: rgb(var(--app-text));
 }
 
-@keyframes panel-enter {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-
 @keyframes ui-popover-in {
   from { opacity: 0; transform: translateY(-4px) scale(0.99); }
   to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Empty-state illüstrasyonları mount olduğunda kısa, sakin bir giriş
+   hareketi yapar — sürekli loop yok, yalnızca bir kez. */
+@keyframes ui-empty-illustration-in {
+  from { opacity: 0; transform: scale(0.85); }
+  to { opacity: 1; transform: scale(1); }
+}
+.ui-empty-illustration {
+  animation: ui-empty-illustration-in 320ms var(--ease-product);
+}
+
+/* Gün/Hafta/Ay gibi sekme geçişlerinde aktif olan sekme kısaca "yerine
+   oturur" — yalnızca yeni aktif olduğunda (bkz. Randevu toolbar). */
+@keyframes ui-view-tab-pop {
+  from { transform: scale(0.93); }
+  to { transform: scale(1); }
+}
+.ui-view-tab.is-active {
+  animation: ui-view-tab-pop 160ms var(--ease-product);
+}
+
+/* Sayfa başlığı (topbar) her sayfa geçişinde bir kez kısa fade+translate
+   ile belirir — dikkat dağıtmayan, tek seferlik bir "sayfa canlı" hissi. */
+@keyframes ui-page-title-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ui-page-title-in {
+  animation: ui-page-title-in 220ms var(--ease-product);
 }
 
 @keyframes ui-modal-backdrop-in {
@@ -557,6 +901,240 @@ th {
 
 .ui-modal-panel {
   animation: ui-modal-panel-in 180ms var(--ease-product);
+}
+
+/* Kaydedilmemiş değişiklik varken backdrop'a tıklanınca modal kapanmaz —
+   bunun yerine kullanıcıya çok hafif bir "dikkat" vurgusu gösterilir (bkz.
+   src/components/ui/Modal.tsx isDirty). prefers-reduced-motion altındaki
+   genel kural (yukarıda) bu animasyonu da otomatik olarak neredeyse anlık
+   hale getirir. */
+@keyframes ui-modal-panel-attention {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.015); }
+}
+.ui-modal-panel-attention {
+  animation: ui-modal-panel-attention 200ms var(--ease-product);
+}
+
+/* ============================================================
+   SİSTEM GENELİ MOTION KATMANI — kart/tablo/rozet/durum geri
+   bildirimi. Tümü tek seferlik, sakin, `--ease-product` ile;
+   sürekli loop yok (yalnız "aktif işlem sürüyor" pulse istisna,
+   aşağıda açıkça işaretli). prefers-reduced-motion global kural
+   (bu dosyanın altında) tüm bunları otomatik olarak devre dışı
+   bırakır — burada ayrıca tekrar etmeye gerek yok. */
+
+/* Liste/tablo satırları mount olduğunda hafif, kademeli (staggered)
+   bir giriş yapar. Gecikme değeri satır bileşeninde `--row-delay`
+   custom property'siyle verilir (bkz. ör. ListTable, Randevu Ajanda
+   kartları) — JS'te index * 22ms gibi hesaplanır. */
+@keyframes ui-row-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ui-row-in {
+  animation: ui-row-in 260ms var(--ease-product) both;
+  animation-delay: var(--row-delay, 0ms);
+}
+
+/* KPI/istatistik kartları sayfa açılışında hafifçe yükselerek belirir. */
+@keyframes ui-kpi-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.ui-kpi-in {
+  animation: ui-kpi-in 320ms var(--ease-product) both;
+  animation-delay: var(--row-delay, 0ms);
+}
+
+/* Kritik/gecikmiş durumları taşıyan rozetler dikkat çekmek için çok
+   hafif, yavaş bir nefes alma (breathing) pulse'u kullanır — bu
+   BİLİNÇLİ bir loop istisnasıdır (aksiyon gerektiren gerçek bir
+   durumu iletir), ama genlik çok küçük tutulur ki rahatsız etmesin. */
+@keyframes ui-badge-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(var(--color-danger, 220 38 38) / 0.28); }
+  50% { box-shadow: 0 0 0 4px rgb(var(--color-danger, 220 38 38) / 0); }
+}
+.ui-badge-pulse {
+  animation: ui-badge-pulse 2.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-badge-pulse { animation: none; }
+}
+
+/* Randevu kartı / hasta satırı gibi tıklanabilir öğelerde bas-tut
+   (press) geri bildirimi — hover'daki lift'in tersine kısa bir
+   "batma" hissi verir, dokunma cihazlarında da çalışır. */
+.ui-pressable {
+  transition: transform 120ms var(--ease-product), box-shadow 120ms var(--ease-product);
+}
+.ui-pressable:active {
+  transform: scale(0.985);
+}
+
+/* Randevu takvimi: boş slot reveal'ı artık anlık değil, yumuşak geçişli. */
+.panel-content .randevu-page .randevu-slot-create {
+  transition: opacity 140ms var(--ease-product), border-color 140ms var(--ease-product),
+    background-color 140ms var(--ease-product), color 140ms var(--ease-product);
+}
+.panel-content .randevu-page .randevu-appt-card {
+  transition: transform 140ms var(--ease-product), box-shadow 140ms var(--ease-product);
+}
+@media (hover: hover) and (pointer: fine) {
+  .panel-content .randevu-page .randevu-appt-card:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-surface);
+  }
+}
+.panel-content .randevu-page .randevu-appt-card:active {
+  transform: scale(0.985);
+}
+/* Tarih navigasyon okları basılınca yön hissi versin. */
+.panel-content .randevu-page button[aria-label="Önceki tarih aralığı"],
+.panel-content .randevu-page button[aria-label="Sonraki tarih aralığı"] {
+  transition: transform 120ms var(--ease-product), background-color 140ms ease, color 140ms ease;
+}
+.panel-content .randevu-page button[aria-label="Önceki tarih aralığı"]:active {
+  transform: translateX(-2px);
+}
+.panel-content .randevu-page button[aria-label="Sonraki tarih aralığı"]:active {
+  transform: translateX(2px);
+}
+
+/* ---- Başarı / Hata durum geri bildirimi: çizilerek beliren check/x ----
+   src/components/ui/StatusFeedback.tsx tarafından kullanılır. Stroke,
+   stroke-dasharray/offset ile "elle çizilmiş" gibi tek seferlik açılır —
+   üçüncü taraf bir Lottie/animasyon dosyası değil, MIT lisanslı bir
+   temel üzerine (basit check/x glif — evrensel, telif konusu olmayan
+   bir sembol) kurulmuş orkestrasyonlu CSS hareketidir. */
+@keyframes ui-status-ring-in {
+  from { transform: scale(0.5); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+@keyframes ui-status-stroke-draw {
+  from { stroke-dashoffset: var(--stroke-len, 40); }
+  to { stroke-dashoffset: 0; }
+}
+.ui-status-feedback svg {
+  animation: ui-status-ring-in 260ms var(--ease-product) both;
+}
+.ui-status-feedback path.ui-status-stroke {
+  stroke-dasharray: var(--stroke-len, 40);
+  stroke-dashoffset: var(--stroke-len, 40);
+  animation: ui-status-stroke-draw 320ms var(--ease-product) 180ms forwards;
+}
+
+/* Belge yükleme ilerlemesi bilinmediğinde (lengthComputable=false) sahte
+   yüzde üretmek yerine bu belirsiz (indeterminate) çubuk kullanılır. */
+@keyframes ui-upload-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(300%); }
+}
+
+/* KPI sayaç animasyonu sırasında tabular hizalama kaymasın. */
+.ui-count-up {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Sekme içeriği (Hasta Detayı 9 sekmesi gibi) her değiştiğinde kısa,
+   sakin bir giriş yapar — konum sıçraması yaratmayacak kadar küçük. */
+@keyframes ui-tab-panel-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.ui-tab-panel-in {
+  animation: ui-tab-panel-in 240ms var(--ease-product) both;
+}
+
+/* Belge/ödeme/laboratuvar gibi işlemler tamamlandığında kısa bir "para/
+   evrak teslim edildi" hissi — ölçek+opaklık, kalıcı loop değil. */
+@keyframes ui-settle-in {
+  0% { opacity: 0; transform: translateY(8px) scale(0.97); }
+  60% { opacity: 1; transform: translateY(-1px) scale(1.005); }
+  100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+.ui-settle-in {
+  animation: ui-settle-in 320ms var(--ease-product) both;
+  animation-delay: var(--row-delay, 0ms);
+}
+
+/* Laboratuvar/tedavi süreç adımları arasında ilerleme çizgisi çizilir. */
+@keyframes ui-progress-draw {
+  from { stroke-dashoffset: var(--progress-len, 100); }
+  to { stroke-dashoffset: 0; }
+}
+.ui-progress-line {
+  stroke-dasharray: var(--progress-len, 100);
+  stroke-dashoffset: var(--progress-len, 100);
+  animation: ui-progress-draw 480ms var(--ease-product) forwards;
+}
+
+/* Randevu takvim gövdesi: varsayılan Tailwind hücre çerçeveleri
+   (border-collapse + her hücrede tam kenarlık) yoğun bir "Excel tablosu"
+   hissi veriyordu. Kenarlıklar burada tek noktadan hafifletiliyor —
+   yatay çizgiler dikeylerden daha soluk (göz saat sütununu takip eder,
+   dikey doktor ayrımları biraz daha belirgin kalır). */
+.panel-content .randevu-page table.randevu-grid td,
+.panel-content .randevu-page table.randevu-grid th {
+  border-color: rgb(var(--color-slate-100));
+}
+.panel-content .randevu-page table.randevu-grid td {
+  border-top-color: rgb(var(--color-slate-100) / 0.7);
+  border-bottom-color: rgb(var(--color-slate-100) / 0.7);
+}
+.panel-content .randevu-page table.randevu-grid th {
+  border-color: rgb(var(--color-slate-200));
+}
+
+/* ---- Randevu sürükle-bırak geri bildirimi ---- */
+.panel-content .randevu-page .randevu-appt-card.is-dragging {
+  opacity: 0.45;
+  transform: scale(0.97);
+}
+@keyframes ui-drop-target-in {
+  from { background-color: rgb(var(--app-primary) / 0); box-shadow: inset 0 0 0 0 rgb(var(--app-primary) / 0); }
+  to { background-color: rgb(var(--app-primary) / 0.1); box-shadow: inset 0 0 0 2px rgb(var(--app-primary) / 0.55); }
+}
+.panel-content .randevu-page td.ui-drop-target {
+  animation: ui-drop-target-in 140ms var(--ease-product) forwards;
+}
+@keyframes ui-drop-reject-in {
+  from { background-color: rgb(var(--color-danger) / 0); }
+  to { background-color: rgb(var(--color-danger) / 0.07); }
+}
+.panel-content .randevu-page td.ui-drop-reject {
+  animation: ui-drop-reject-in 140ms var(--ease-product) forwards;
+  cursor: not-allowed;
+}
+/* Başarılı taşımadan sonra hedefe "yerleşme" hissi (dead-code'dan
+   canlandırılan .ui-settle-in burada gerçek bir bağlamda kullanılıyor). */
+.panel-content .randevu-page .randevu-appt-card.ui-settle-in {
+  animation: ui-settle-in 320ms var(--ease-product) both;
+}
+/* Taşıma reddedilince (çakışma/hata) kart eski konumuna kısa, net bir
+   "hayır" tepkisiyle döner — modal-attention ile aynı aile, kart bağlamına
+   uyarlanmış. */
+@keyframes ui-drop-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-3px); }
+  75% { transform: translateX(3px); }
+}
+.panel-content .randevu-page .randevu-appt-card.ui-drop-shake {
+  animation: ui-drop-shake 220ms var(--ease-product);
+}
+
+/* Randevu takvimi: bugünün sütunu/hücresi ince, sabit bir vurgu alır —
+   pulse DEĞİL, tek seferlik değil, sürekli ama çok düşük genlikli bir
+   "canlı" nefes — yalnızca "bugün" bağlamı için, tek bir yerde. */
+@keyframes ui-today-breathe {
+  0%, 100% { background-color: rgb(var(--app-primary) / 0.05); }
+  50% { background-color: rgb(var(--app-primary) / 0.09); }
+}
+.ui-today-breathe {
+  animation: ui-today-breathe 3.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ui-today-breathe { animation: none; background-color: rgb(var(--app-primary) / 0.06); }
 }
 
 @media (prefers-reduced-motion: reduce) {

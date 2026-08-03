@@ -1273,6 +1273,8 @@ model StockItem {
 model StockMovement {
   id             String                       @id @default(cuid())
   stockItemId    String
+  institutionId  String?
+  requestKey     String?
   type           String
   quantity       Int
   unitPrice      Decimal?                     @db.Decimal(10, 2)
@@ -1285,6 +1287,7 @@ model StockMovement {
   purchaseItem   PurchaseItem?
   lotAllocations StockMovementLotAllocation[]
 
+  @@unique([institutionId, requestKey])
   @@index([stockItemId, createdAt])
 }
 

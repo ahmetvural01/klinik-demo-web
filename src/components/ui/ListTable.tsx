@@ -1,9 +1,10 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { TableRowsSkeleton } from "@/components/ui/ListSkeleton";
 import { ListPager, type ListPagerProps } from "@/components/ui/ListPager";
 import { EmptyState } from "@/components/ui/EmptyState";
+import type { IconAccent } from "@/components/ui/IconFrame";
 
 export interface ListTableColumn<T> {
   key: string;
@@ -21,6 +22,10 @@ export interface ListTableProps<T> {
   loading?: boolean;
   skeletonRows?: number;
   emptyText?: string;
+  /** Boş durum ikonunun modül vurgu rengi (bkz. IconFrame) — opsiyonel. */
+  emptyAccent?: IconAccent;
+  emptyIcon?: ComponentType<{ className?: string }>;
+  emptyIllustrative?: boolean;
   onRowClick?: (row: T) => void;
   getRowAriaLabel?: (row: T) => string;
   pager?: ListPagerProps;
@@ -42,6 +47,9 @@ export function ListTable<T>({
   loading = false,
   skeletonRows = 6,
   emptyText = "Kayıt bulunamadı",
+  emptyAccent,
+  emptyIcon,
+  emptyIllustrative = false,
   onRowClick,
   getRowAriaLabel,
   pager,
@@ -54,12 +62,12 @@ export function ListTable<T>({
       <div className="overflow-x-auto">
         <table className={`${tableMinWidth} w-full`}>
           <thead>
-            <tr className="border-b border-slate-200 bg-slate-50/80">
+            <tr className="border-b-2 border-slate-100">
               {columns.map((col) => (
                 <th
                   key={col.key}
                   className={[
-                    "whitespace-nowrap px-3 py-2.5 sm:px-4",
+                    "whitespace-nowrap px-3 py-2 sm:px-4",
                     ALIGN_CLASS[col.align || "left"],
                     hasStickyActions && (col.key === "islem" || col.key === "actions")
                       ? "md:sticky md:right-0 md:z-10 md:bg-slate-50/95 md:shadow-[-5px_0_8px_-8px_rgb(15_23_42/0.35)]"
@@ -78,11 +86,11 @@ export function ListTable<T>({
             ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={columns.length}>
-                  <EmptyState title={emptyText} compact />
+                  <EmptyState title={emptyText} accent={emptyAccent} icon={emptyIcon} illustrative={emptyIllustrative} compact />
                 </td>
               </tr>
             ) : (
-              rows.map((row) => (
+              rows.map((row, rowIndex) => (
                 <tr
                   key={rowKey(row)}
                   tabIndex={onRowClick ? 0 : undefined}
@@ -95,13 +103,14 @@ export function ListTable<T>({
                       onRowClick(row);
                     }
                   } : undefined}
-                  className={`group transition-[background-color,box-shadow] duration-150 hover:bg-primary/[0.045] ${onRowClick ? "cursor-pointer focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25" : ""}`}
+                  style={{ ["--row-delay" as string]: `${Math.min(rowIndex, 14) * 18}ms` }}
+                  className={`ui-row-in group transition-[background-color,box-shadow] duration-150 hover:bg-primary/[0.04] hover:shadow-[inset_3px_0_0_rgb(var(--app-primary)/0.55)] ${onRowClick ? "cursor-pointer focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25" : ""}`}
                 >
                   {columns.map((col) => (
                     <td
                       key={col.key}
                       className={[
-                        "px-3 py-2.5 sm:px-4",
+                        "px-3 py-2 sm:px-4",
                         ALIGN_CLASS[col.align || "left"],
                         hasStickyActions && (col.key === "islem" || col.key === "actions")
                           ? "md:sticky md:right-0 md:z-10 md:bg-white md:shadow-[-5px_0_8px_-8px_rgb(15_23_42/0.35)] md:group-hover:bg-primary/[0.035]"

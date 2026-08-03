@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
 import { getAuditActionLabel, getAuditScopeLabel } from "@/lib/audit-labels";
 
 type Log = {
@@ -171,9 +172,12 @@ export default function LogPage() {
 
   return (
     <section className="space-y-5">
-      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <h1 className="text-lg font-black text-slate-900">İşlem Kayıtları</h1>
-        <p className="mt-0.5 text-sm text-slate-500">Kurum içindeki kritik işlemler, değişiklik detayları ve erişim kayıtları.</p>
+      <div className="ui-surface flex items-center gap-3 p-4 sm:p-5">
+        <ModuleIcon module="log" size="lg" />
+        <div>
+          <h1 className="font-display text-xl font-black tracking-tight text-slate-900">İşlem Kayıtları</h1>
+          <p className="text-xs font-medium text-slate-500">Kurum içindeki kritik işlemler, değişiklik detayları ve erişim kayıtları.</p>
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-3 items-center rounded-2xl bg-white border border-slate-100 shadow-sm px-4 py-3">

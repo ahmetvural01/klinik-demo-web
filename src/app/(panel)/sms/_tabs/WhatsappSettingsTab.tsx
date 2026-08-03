@@ -92,7 +92,7 @@ export default function WhatsappSettingsTab() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.message || "Kaydedilemedi");
-      showToastSafe({ message: "WhatsApp bağlantısı kaydedildi", type: "success" });
+      showToastSafe({ message: "WhatsApp bağlantısı kaydedildi", type: "success", icon: "sms" });
       void load();
     } catch (e) {
       showToastSafe({ message: e instanceof Error ? e.message : "Kaydedilemedi", type: "error" });
@@ -112,7 +112,7 @@ export default function WhatsappSettingsTab() {
       });
       const data = await res.json().catch(() => ({}));
       if (data.ok) {
-        showToastSafe({ message: `Test mesajı gönderildi (${data.providerMessageId ?? "-"})`, type: "success" });
+        showToastSafe({ message: `Test mesajı gönderildi (${data.providerMessageId ?? "-"})`, type: "success", icon: "sms" });
         setTestOpen(false);
       } else {
         showToastSafe({ message: data.error || data.message || "Gönderilemedi", type: "error" });
@@ -258,6 +258,7 @@ export default function WhatsappSettingsTab() {
       </div>
 
       <Modal
+        module="sms"
         open={testOpen}
         onClose={() => setTestOpen(false)}
         title="Test Mesajı Gönder"

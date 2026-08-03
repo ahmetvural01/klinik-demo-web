@@ -6,7 +6,12 @@ import { Button, IconButton } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
+import { Spinner } from "@/components/ui/Spinner";
 import { showToastSafe } from "@/lib/toast-client";
+
+const ProviderEmptyIcon = createModuleEmptyIcon("sms");
 
 type Provider = {
   id: string;
@@ -90,7 +95,7 @@ export default function ProviderTab() {
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.message || "Kaydedilemedi");
-      showToastSafe({ title: "Kaydedildi", message: `${d.name} sağlayıcısı kaydedildi`, type: "success" });
+      showToastSafe({ title: "Kaydedildi", message: `${d.name} sağlayıcısı kaydedildi`, type: "success", icon: "sms" });
       setShowForm(false);
       load();
     } catch (e) {
@@ -109,7 +114,7 @@ export default function ProviderTab() {
         body: JSON.stringify({ id: p.id, isActive: true }),
       });
       if (!res.ok) throw new Error("Aktif edilemedi");
-      showToastSafe({ title: "Aktif edildi", message: `${p.name} artık aktif sağlayıcı`, type: "success" });
+      showToastSafe({ title: "Aktif edildi", message: `${p.name} artık aktif sağlayıcı`, type: "success", icon: "sms" });
       load();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
@@ -127,7 +132,7 @@ export default function ProviderTab() {
       });
       const d = await res.json();
       if (d.ok) {
-        showToastSafe({ title: "Bakiye", message: `${p.name}: ${d.balance ?? d.raw}`, type: "success" });
+        showToastSafe({ title: "Bakiye", message: `${p.name}: ${d.balance ?? d.raw}`, type: "success", icon: "sms" });
       } else {
         showToastSafe({ title: "Hata", message: d.error || "Bakiye alınamadı", type: "error" });
       }
@@ -149,7 +154,7 @@ export default function ProviderTab() {
       });
       const d = await res.json();
       if (d.ok) {
-        showToastSafe({ title: "Gönderildi", message: `Test SMS gönderildi (${d.providerMessageId ?? "-"})`, type: "success" });
+        showToastSafe({ title: "Gönderildi", message: `Test SMS gönderildi (${d.providerMessageId ?? "-"})`, type: "success", icon: "sms" });
         setSendModal(null);
         setSendForm({ phone: "", message: "" });
       } else {
@@ -165,7 +170,7 @@ export default function ProviderTab() {
   if (loading) {
     return (
       <div className="flex items-center justify-center rounded-2xl border border-slate-100 bg-white py-16 shadow-sm">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+        <Spinner className="h-8 w-8 text-primary" />
       </div>
     );
   }
@@ -178,13 +183,13 @@ export default function ProviderTab() {
       </div>
 
       {providers.length === 0 ? (
-        <div className="rounded-2xl border border-slate-100 bg-white p-10 text-center text-sm text-slate-400 shadow-sm">
-          Henüz sağlayıcı tanımlanmamış
+        <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+          <EmptyState icon={ProviderEmptyIcon} illustrative title="Henüz sağlayıcı tanımlanmamış" />
         </div>
       ) : (
         <div className="space-y-3">
-          {providers.map((p) => (
-            <div key={p.id} className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
+          {providers.map((p, pIdx) => (
+            <div key={p.id} style={{ ["--row-delay" as string]: `${Math.min(pIdx, 14) * 18}ms` }} className="ui-row-in rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0">
                   <div className="mb-1 flex flex-wrap items-center gap-2">

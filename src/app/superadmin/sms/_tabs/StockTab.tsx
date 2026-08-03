@@ -6,6 +6,7 @@ import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
+import { Spinner } from "@/components/ui/Spinner";
 import { showToastSafe } from "@/lib/toast-client";
 
 type Institution = { id: string; name: string; isActive: boolean; smsBalance: number };
@@ -52,7 +53,7 @@ export default function StockTab() {
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.message || "Eklenemedi");
-      showToastSafe({ title: "Eklendi", message: d.message ?? "Stok güncellendi", type: "success" });
+      showToastSafe({ title: "Eklendi", message: d.message ?? "Stok güncellendi", type: "success", icon: "sms" });
       setForm({ quantity: "", unitCost: "", provider: "", note: "" });
       load();
     } catch (e) {
@@ -93,7 +94,7 @@ export default function StockTab() {
   if (loading && !data) {
     return (
       <div className="flex items-center justify-center rounded-2xl border border-slate-100 bg-white py-16 shadow-sm">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+        <Spinner className="h-8 w-8 text-primary" />
       </div>
     );
   }

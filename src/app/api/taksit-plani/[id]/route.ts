@@ -97,7 +97,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
 export async function DELETE(_: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
-    const auth = await requireAuth("installments:write");
+    const auth = await requireAuth("installments:delete");
     if (auth.error) return auth.error;
     if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
       return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });

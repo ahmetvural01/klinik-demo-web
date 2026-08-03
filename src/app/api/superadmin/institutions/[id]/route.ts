@@ -184,7 +184,7 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
       ...(body.paymentGraceUntil !== undefined && { paymentGraceUntil }),
       ...(body.suspendedUntil !== undefined && { suspendedUntil }),
       // Yalnızca süperadmin açabilir/kapatabilir — klinik kendi ayarlarından
-      // bu bayrağı hiç değiştiremez (bkz. src/lib/notify.ts).
+      // bu bayrağı hiç değiştiremez (bkz. src/lib/notification-dispatch.ts).
       ...(body.whatsappEnabled !== undefined && { whatsappEnabled: Boolean(body.whatsappEnabled) }),
     },
     });

@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { FormField } from "@/components/ui/FormField";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
 import { confirmDialog } from "@/lib/confirm-client";
 import { SmsMessageEditor } from "@/components/sms/SmsMessageEditor";
 import { showToastSafe } from "@/lib/toast-client";
@@ -26,6 +28,8 @@ type CelebrationDay = {
 const inputClass = "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
 
 const emptyForm = { code: "", title: "", month: 1, day: 1, targetProfessions: [] as string[], messageTemplate: "", isActive: true };
+
+const CelebrationDaysEmptyIcon = createModuleEmptyIcon("sms");
 
 function formatDate(month: number, day: number) {
   return `${String(day).padStart(2, "0")}.${String(month).padStart(2, "0")}`;
@@ -88,7 +92,7 @@ export default function CelebrationDaysTab() {
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.message || "Kaydedilemedi");
-      showToastSafe({ title: "Kaydedildi", message: `${d.title} kaydedildi`, type: "success" });
+      showToastSafe({ title: "Kaydedildi", message: `${d.title} kaydedildi`, type: "success", icon: "sms" });
       setShowForm(false);
       load();
     } catch (e) {
@@ -105,7 +109,7 @@ export default function CelebrationDaysTab() {
       const res = await fetch(`/api/superadmin/celebration-days?id=${d.id}`, { method: "DELETE" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || "Silinemedi");
-      showToastSafe({ message: "Silindi", type: "success" });
+      showToastSafe({ message: "Silindi", type: "success", icon: "sms" });
       load();
     } catch (e) {
       showToastSafe({ message: e instanceof Error ? e.message : "Silinemedi", type: "error" });
@@ -131,11 +135,11 @@ export default function CelebrationDaysTab() {
             ))}
           </div>
         ) : days.length === 0 ? (
-          <div className="px-6 py-14 text-center text-sm text-slate-400">Henüz kutlama günü tanımlanmamış</div>
+          <EmptyState icon={CelebrationDaysEmptyIcon} illustrative title="Henüz kutlama günü tanımlanmamış" />
         ) : (
           <div className="divide-y divide-slate-100">
-            {days.map((d) => (
-              <div key={d.id} className="p-4 transition hover:bg-slate-50/80">
+            {days.map((d, dIdx) => (
+              <div key={d.id} style={{ ["--row-delay" as string]: `${Math.min(dIdx, 14) * 18}ms` }} className="ui-row-in p-4 transition hover:bg-slate-50/80">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="mb-1.5 flex flex-wrap items-center gap-2">

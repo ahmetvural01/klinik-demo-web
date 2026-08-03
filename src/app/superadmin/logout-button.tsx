@@ -1,5 +1,7 @@
 "use client";
 
+import { LogOut } from "lucide-react";
+
 export default function LogoutButton() {
   const handleLogout = async () => {
     await fetch("/api/auth/logout", { method: "POST" });
@@ -9,9 +11,10 @@ export default function LogoutButton() {
   return (
     <button
       onClick={handleLogout}
-      className="w-full rounded-lg bg-red-600 hover:bg-red-700 px-3 py-2 text-sm font-semibold text-white transition"
+      className="flex h-11 w-full items-center gap-3 rounded-lg px-3 text-sm font-bold text-slate-500 transition hover:bg-red-50 hover:text-red-600"
     >
-      Çıkış Yap
+      <LogOut className="h-4 w-4" strokeWidth={1.9} />
+      <span>Çıkış Yap</span>
     </button>
   );
 }

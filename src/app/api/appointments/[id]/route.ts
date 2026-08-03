@@ -349,6 +349,15 @@ export async function PUT(request: NextRequest, props: Params) {
           clinicUnitId: requestedClinicUnitId,
           startAt: newStart,
           endAt: newEnd,
+          // İletişim tercihleri (smsInfo/smsReminder/smsSurvey) yalnızca randevu
+          // oluşturulurken hastanın onayıyla belirlenir. Genel düzenleme/taşıma
+          // isteği (arayüzde bu üç alan için ayrı bir onay adımı yok, formlar
+          // sabit değer gönderiyor) bu tercihleri asla sessizce değiştirmemeli —
+          // bkz. denetim raporu: düzenleme/sürükle-taşıma "Hatırlatma SMS"i
+          // farkında olmadan kapatıyordu.
+          smsInfo: existing.smsInfo,
+          smsReminder: existing.smsReminder,
+          smsSurvey: existing.smsSurvey,
         },
         include: { patient: true, doctor: { select: { id: true, fullName: true } }, clinicUnit: { select: { id: true, name: true, code: true } } },
       });
@@ -410,7 +419,7 @@ export async function PUT(request: NextRequest, props: Params) {
 
 export async function DELETE(_: NextRequest, props: Params) {
   const params = await props.params;
-  const auth = await requireAuth("appointments:write");
+  const auth = await requireAuth("appointments:delete");
   if (auth.error) return auth.error;
 
   const existing = await prisma.appointment.findFirst({

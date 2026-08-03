@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming } from "@/lib/api";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { buildDataConsistencyReport } from "@/lib/data-consistency";
-import { turkeyDayRangeUtc, turkeyDateKey, turkeyLocalDateTimeToUtc } from "@/lib/tz";
+import { turkeyDayRangeUtc, turkeyDateKey, turkeyLocalDateTimeToUtc, turkeyTodayStartUtc } from "@/lib/tz";
 
 // Rapor ekranındaki <input type="datetime-local"> zaman dilimi belirtmeden
 // ("2026-07-15T09:30") gönderir — bu, kullanıcının Türkiye yerel saatidir.
@@ -79,6 +79,7 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
     : undefined;
 
   // ── Paralel sorgular ──────────────────────────────────────────────────────
+  const overdueTodayStart = turkeyTodayStartUtc();
   const [payments, examinations, labOrders, expenses, firmaIslemler, newPatients, taksitler] =
     await Promise.all([
       prisma.payment.findMany({
@@ -129,10 +130,18 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
           ? { createdAt: dateFilter, ...institutionPatientScope }
           : { createdAt: dateFilter },
       }),
+      // Vadesi geçmiş BEKLIYOR taksitler yalnızca mark-gecikti sweep'i
+      // çalıştıktan sonra DB'de GECIKTI olur — burada da diğer uçlarla (bkz.
+      // /api/taksit-plani, /api/taksit-plani/[id], /api/patients/[id]) aynı
+      // desende canlı türetilmiş durum sorgulanır (bkz. denetim raporu).
       (prisma as any).taksit.findMany({
-        where: institutionId
-          ? { status: "GECIKTI", plan: { patient: { institutionId } } }
-          : { status: "GECIKTI" },
+        where: {
+          OR: [
+            { status: "GECIKTI" },
+            { status: "BEKLIYOR", vadeDate: { lt: overdueTodayStart } },
+          ],
+          ...(institutionId ? { plan: { patient: { institutionId } } } : {}),
+        },
       }),
     ]);
 

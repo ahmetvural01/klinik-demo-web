@@ -65,3 +65,11 @@ Thumbs.db
 
 # Vercel
 .vercel
+
+# Test/build artifacts
+/test-results/
+/playwright-report/
+/coverage/
+
+# Local codebase-indexing tool cache
+/.codebase-memory/

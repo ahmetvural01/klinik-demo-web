@@ -6,6 +6,7 @@ import { confirmDialog } from "@/lib/confirm-client";
 import { downscaleImageToDataUrl } from "@/lib/image-upload";
 import { invalidateCachedGet } from "@/lib/client-cache";
 import { showToastSafe } from "@/lib/toast-client";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
@@ -224,9 +225,12 @@ export default function ProfilPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <h1 className="text-lg font-black text-slate-900">Profilim</h1>
-        <p className="mt-0.5 text-sm text-slate-500">Hesap ayarları ve güvenlik</p>
+      <div className="ui-surface flex items-center gap-3 p-4 sm:p-5">
+        <ModuleIcon module="profile" size="lg" />
+        <div>
+          <h1 className="font-display text-xl font-black tracking-tight text-slate-900">Profilim</h1>
+          <p className="text-xs font-medium text-slate-500">Hesap ayarları ve güvenlik</p>
+        </div>
       </div>
 
       {forcePasswordChange && (

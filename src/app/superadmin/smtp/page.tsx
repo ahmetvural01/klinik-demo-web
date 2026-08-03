@@ -6,12 +6,15 @@ import { Button } from "@/components/ui/Button";
 import { FormField, FormSection } from "@/components/ui/FormField";
 import { Badge } from "@/components/ui/Badge";
 import { showToastSafe } from "@/lib/toast-client";
+import { StatusFeedback } from "@/components/ui/StatusFeedback";
+import { Spinner } from "@/components/ui/Spinner";
 
 type SmtpConfig = {
   host: string;
   port: number;
   secure: boolean;
   username: string;
+  password: string;
   fromName: string;
   fromEmail: string;
   isActive: boolean;
@@ -48,6 +51,12 @@ export default function SmtpPage() {
             port: String(d.port ?? 587),
             secure: d.secure ?? false,
             username: d.username ?? "",
+            // Sunucu şifreyi "••••••••" ile maskeleyerek döner — bu değeri
+            // forma yazmazsak kullanıcı ilgisiz bir alanı değiştirip
+            // kaydettiğinde boş şifre gönderilir ve kayıtlı SMTP şifresi
+            // sessizce silinirdi (bkz. denetim raporu). Kullanıcı gerçekten
+            // yeni bir şifre yazarsa bu maskeli değerin üzerine yazılır.
+            password: d.password ?? "",
             fromName: d.fromName ?? "",
             fromEmail: d.fromEmail ?? "",
             isActive: d.isActive ?? false,
@@ -68,7 +77,7 @@ export default function SmtpPage() {
       });
       if (!res.ok) throw new Error("Kaydedilemedi");
       setSaved(true);
-      showToastSafe({ title: "Kaydedildi", message: "SMTP ayarları güncellendi", type: "success" });
+      showToastSafe({ title: "Kaydedildi", message: "SMTP ayarları güncellendi", type: "success", icon: "settings" });
       setTimeout(() => setSaved(false), 3000);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
@@ -112,7 +121,7 @@ export default function SmtpPage() {
 
       {loading ? (
         <div className="flex items-center justify-center rounded-2xl border border-slate-100 bg-white py-16 shadow-sm">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          <Spinner className="h-8 w-8 text-primary" />
         </div>
       ) : (
         <FormSection icon={Mail} title="Sunucu Bilgileri" description="Mail gönderimi için SMTP sunucu ayarları">
@@ -217,12 +226,13 @@ export default function SmtpPage() {
 
             {testResult && (
               <div
-                className={`rounded-lg border p-3 text-sm font-medium ${
+                className={`ui-kpi-in flex items-center gap-2 rounded-lg border p-3 text-sm font-medium ${
                   testResult.ok
                     ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                     : "border-red-200 bg-red-50 text-red-700"
                 }`}
               >
+                <StatusFeedback type={testResult.ok ? "success" : "error"} size={18} />
                 {testResult.message}
               </div>
             )}

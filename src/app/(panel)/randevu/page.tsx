@@ -2,16 +2,22 @@
 
 /* eslint-disable react-hooks/exhaustive-deps */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { cachedGet } from "@/lib/client-cache";
 import { canMarkNoShow, getDisplayAppointmentStatus, isStaleWaitingAppointment } from "@/lib/appointment-status";
-import { Modal } from "@/components/ui/Modal";
+import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
+import { CalendarClock, CheckCircle2, Clock, XCircle, Ban } from "lucide-react";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+import { STATUS_ACTION_ICON } from "@/lib/status-actions";
+
+const AgendaEmptyIcon = createSceneIllustration("randevu");
 import {
   buildScheduleByJsDay,
   checkDoctorLocalHoursInterval,
@@ -67,8 +73,23 @@ const STATUS_COLORS: Record<string, string> = {
   IPTAL: "bg-gray-100 border-l-4 border-gray-400",
 };
 
+const STATUS_BADGE: Record<string, { icon: typeof Clock; tone: "info" | "warning" | "success" | "critical" | "neutral" }> = {
+  PLANLANDI: { icon: CalendarClock, tone: "info" },
+  BEKLIYOR: { icon: Clock, tone: "warning" },
+  TAMAMLANDI: { icon: CheckCircle2, tone: "success" },
+  GELMEDI: { icon: XCircle, tone: "critical" },
+  IPTAL: { icon: Ban, tone: "neutral" },
+};
+
 const STATUS_LABELS: Record<string, string> = {
   PLANLANDI: "Planlandı", BEKLIYOR: "Bekliyor", TAMAMLANDI: "Tamamlandı", GELMEDI: "Gelmedi", IPTAL: "İptal"
+};
+
+// Durumlar yalnız arka plan rengiyle ayrılmasın diye (renk körü kullanıcılar
+// için) her durumun ayrıca kısa bir sembolü + STATUS_LABELS metni var —
+// randevu kartında bu sembol görünür, tam etiket title/tooltip'te.
+const STATUS_ICON: Record<string, string> = {
+  PLANLANDI: "◐", BEKLIYOR: "◔", TAMAMLANDI: "✓", GELMEDI: "✕", IPTAL: "⊘",
 };
 
 function toLocalInput(date: Date) {
@@ -259,6 +280,7 @@ export default function RandevuPage() {
   const [treatmentDropdownOpen, setTreatmentDropdownOpen] = useState(false);
   // Edit modal state
   const [editMode, setEditMode] = useState(false);
+  const editSnapshotRef = useRef("");
   const [editPatientId, setEditPatientId] = useState("");
   const [editPatientSearch, setEditPatientSearch] = useState("");
   const [editPatientResults, setEditPatientResults] = useState<Patient[]>([]);
@@ -274,6 +296,9 @@ export default function RandevuPage() {
   // Drag-drop state
   const [draggedApptId, setDraggedApptId] = useState<string | null>(null);
   const [dragOverKey, setDragOverKey] = useState<string | null>(null);
+  const [dragOverInvalid, setDragOverInvalid] = useState<string | null>(null);
+  const [justMovedApptId, setJustMovedApptId] = useState<string | null>(null);
+  const [dropRejectedApptId, setDropRejectedApptId] = useState<string | null>(null);
 
   // Doctor Block state
   const [doctorBlocks, setDoctorBlocks] = useState<DoctorBlock[]>([]);
@@ -356,6 +381,24 @@ export default function RandevuPage() {
     setWlTo("");
     setWlNote("");
   };
+
+  // Bekleme Listesi modalının içindeki "Listeye Ekle" mini-formu — tüm
+  // alanlar boş varsayılanla başlar, bu yüzden herhangi biri doluysa dirty.
+  const waitlistFormDirty = Boolean(
+    wlSelectedPatient || wlPatientSearch.trim() || wlDoctorId || wlFrom || wlTo || wlNote.trim()
+  );
+
+  async function requestCloseWaitlistModal() {
+    if (waitlistFormDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE,
+      danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
+      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) {
+      return;
+    }
+    setShowWaitlistModal(false);
+  }
 
   const submitWaitlist = async () => {
     if (!wlSelectedPatient) { showToastSafe({ title: "Hata", message: "Lütfen bir hasta seçin", type: "error" }); return; }
@@ -697,7 +740,32 @@ export default function RandevuPage() {
 
     const qpFocusAppointmentId = searchParams.get("focusAppointmentId");
     if (qpFocusAppointmentId && qpFocusAppointmentId !== focusAppointmentId) setFocusAppointmentId(qpFocusAppointmentId);
-  }, [searchParams, view, date, doctorId, focusAppointmentId]);
+
+    // Hasta listesi/hasta detayından "Randevu Oluştur" ile gelindiğinde hasta
+    // ikinci kez aranmasın diye form önceden dolu açılır (bkz. ürün denetimi
+    // — hasta bağlamından randevu oluşturma daha önce tamamen kopuktu).
+    const qpNewPatientId = searchParams.get("newPatientId");
+    const qpNewPatientName = searchParams.get("newPatientName");
+    if (qpNewPatientId && canCreateAppointments) {
+      setPatientId(qpNewPatientId);
+      setPatientSearch(qpNewPatientName || "");
+      setShowForm(true);
+      const next = new URLSearchParams(Array.from(searchParams.entries()));
+      next.delete("newPatientId");
+      next.delete("newPatientName");
+      router.replace(`?${next.toString()}`, { scroll: false });
+    }
+  }, [searchParams, view, date, doctorId, focusAppointmentId, canCreateAppointments, router]);
+
+  // Tek doktorlu klinikte her yeni randevuda ayrıca doktor aratmak gereksiz
+  // bir adımdı (bkz. ürün denetimi) — tek bir hekim varsa form açılınca
+  // otomatik seçili gelir, kullanıcı yine de değiştirebilir.
+  useEffect(() => {
+    if (showForm && staff.length === 1 && !newDoctorId) {
+      setNewDoctorId(staff[0].id);
+      setDoctorQuery(staff[0].fullName);
+    }
+  }, [showForm, staff, newDoctorId]);
 
   useEffect(() => {
     if (initialRandevuCache) {
@@ -983,6 +1051,29 @@ export default function RandevuPage() {
     if (selectedDoctor) setDoctorQuery(selectedDoctor.fullName);
   }, [newDoctorId, staff]);
 
+  // "Yeni Randevu" formu gerçek veri girişi içerir — ESC/dış tıklama ile
+  // yanlışlıkla kapatılırsa girilen hasta/hekim/not bilgileri sessizce
+  // kaybolmamalı (bkz. src/components/ui/Modal.tsx isDirty sözleşmesi).
+  // startAt/durationMinutes dahil EDİLMEZ: bunlar tıklanan takvim hücresinden
+  // otomatik dolduruluyor, kullanıcı hiçbir şey yazmasa bile her zaman
+  // değerli olur — dirty sayılırsa modal her açılışta "kirli" görünürdü.
+  const newAppointmentDirty = Boolean(
+    patientId || patientSearch.trim() || newDoctorId || note.trim() || treatmentKey !== "MUAYENE"
+  );
+
+  async function requestCloseNewAppointment() {
+    if (newAppointmentDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE,
+      danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
+      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) {
+      return;
+    }
+    setShowForm(false);
+    resetForm();
+  }
+
   const resetForm = () => {
     setPatientId(""); setPatientSearch(""); setPatientResults([]); setPatientDropdownOpen(false);
     setNewDoctorId(""); setNewClinicUnitId(""); setNote(""); setConflictWarning(null); setConflictSuggestions([]); setTreatmentKey("MUAYENE");
@@ -1003,6 +1094,41 @@ export default function RandevuPage() {
     setEditDoctorDropdownOpen(false);
     setSelectedAppt(null);
   }, []);
+
+  // Yalnızca düzenleme modundayken (salt görüntüleme/durum güncelleme
+  // görünümünde değil) ve gerçekten bir alan değiştiyse dirty sayılır.
+  const editAppointmentDirty = editMode && JSON.stringify({
+    patientId: editPatientId,
+    doctorId: editDoctorId,
+    clinicUnitId: editClinicUnitId,
+    startAt: editStartAt,
+    durationMinutes: editDurationMinutes,
+  }) !== editSnapshotRef.current;
+
+  async function requestCloseAppointmentModal() {
+    if (editAppointmentDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE,
+      danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
+      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) {
+      return;
+    }
+    closeAppointmentModal();
+  }
+
+  async function requestCancelEdit() {
+    if (editAppointmentDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE,
+      danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
+      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) {
+      return;
+    }
+    setEditMode(false);
+    setError(null);
+  }
 
   const createAppointment = async () => {
     if (!canCreateAppointments) {
@@ -1043,61 +1169,67 @@ export default function RandevuPage() {
       return;
     }
     setSaving(true); setError(null);
-    const res = await submitAppointmentWithConflictConfirm("/api/appointments", "POST", {
-      patientId,
-      doctorId: newDoctorId,
-      clinicUnitId: newClinicUnitId || null,
-      startAt: startDate.toISOString(),
-      endAt: endDate.toISOString(),
-      type: "STANDART",
-      colorCode: resolvedTreatmentMeta.color,
-      note: buildAppointmentNote("YOK", note, resolvedTreatmentKey),
-      smsInfo,
-      smsReminder,
-      smsSurvey,
-    });
-    setSaving(false);
-    const responseBody = await res.json().catch(() => ({ message: "Kaydedilemedi" }));
-    if (!res.ok) {
-      if (!responseBody.requiresConfirmation) setError(responseBody.message || "Kaydedilemedi");
-      return;
-    }
+    try {
+      const res = await submitAppointmentWithConflictConfirm("/api/appointments", "POST", {
+        patientId,
+        doctorId: newDoctorId,
+        clinicUnitId: newClinicUnitId || null,
+        startAt: startDate.toISOString(),
+        endAt: endDate.toISOString(),
+        type: "STANDART",
+        colorCode: resolvedTreatmentMeta.color,
+        note: buildAppointmentNote("YOK", note, resolvedTreatmentKey),
+        smsInfo,
+        smsReminder,
+        smsSurvey,
+      });
+      const responseBody = await res.json().catch(() => ({ message: "Kaydedilemedi" }));
+      if (!res.ok) {
+        if (!responseBody.requiresConfirmation) setError(responseBody.message || "Kaydedilemedi");
+        return;
+      }
 
-    if (pendingBookingRequestId) {
-      const requestId = pendingBookingRequestId;
-      setPendingBookingRequestId(null);
-      await fetch(`/api/booking-requests/${requestId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "ONAYLANDI", appointmentId: responseBody.id }),
-      }).catch(() => {});
-      setBookingRequests((prev) => prev.filter((r) => r.id !== requestId));
-    }
+      if (pendingBookingRequestId) {
+        const requestId = pendingBookingRequestId;
+        setPendingBookingRequestId(null);
+        await fetch(`/api/booking-requests/${requestId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "ONAYLANDI", appointmentId: responseBody.id }),
+        }).catch(() => {});
+        setBookingRequests((prev) => prev.filter((r) => r.id !== requestId));
+      }
 
-    if (pendingWaitlistId) {
-      const waitlistId = pendingWaitlistId;
-      setPendingWaitlistId(null);
-      await fetch(`/api/waitlist/${waitlistId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "YERLESTIRILDI", appointmentId: responseBody.id }),
-      }).catch(() => {});
-      setWaitlist((prev) => prev.filter((w) => w.id !== waitlistId));
-    }
+      if (pendingWaitlistId) {
+        const waitlistId = pendingWaitlistId;
+        setPendingWaitlistId(null);
+        await fetch(`/api/waitlist/${waitlistId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "YERLESTIRILDI", appointmentId: responseBody.id }),
+        }).catch(() => {});
+        setWaitlist((prev) => prev.filter((w) => w.id !== waitlistId));
+      }
 
-    setShowForm(false); resetForm();
-    const smsStatus = responseBody.smsStatus;
-    const smsMessages = [
-      smsStatus?.infoMessage,
-      smsStatus?.reminderMessage,
-      smsStatus?.surveyMessage,
-    ].filter(Boolean).join(" ");
-    showToastSafe({
-      title: "Randevu oluşturuldu",
-      message: smsMessages || "Randevu takvime eklendi.",
-      type: smsStatus?.info === "failed" ? "error" : "success",
-    });
-    await load();
+      setShowForm(false); resetForm();
+      const smsStatus = responseBody.smsStatus;
+      const smsMessages = [
+        smsStatus?.infoMessage,
+        smsStatus?.reminderMessage,
+        smsStatus?.surveyMessage,
+      ].filter(Boolean).join(" ");
+      showToastSafe({
+        title: "Randevu oluşturuldu",
+        message: smsMessages || "Randevu takvime eklendi.",
+        type: smsStatus?.info === "failed" ? "error" : "success",
+        icon: STATUS_ACTION_ICON["appointment-created"],
+      });
+      await load();
+    } catch {
+      setError("Bağlantı hatası — randevu kaydedilemedi. Lütfen tekrar deneyin.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const updateStatus = async (id: string, status: string) => {
@@ -1149,20 +1281,35 @@ export default function RandevuPage() {
 
   const openEditMode = () => {
     if (!selectedAppt) return;
-    setEditPatientId(selectedAppt.patient?.id || "");
-    setEditPatientSearch(selectedAppt.patient?.fullName || "");
-    setEditPatientResults([]);
-    setEditPatientDropdownOpen(false);
-    setEditDoctorId(selectedAppt.doctor?.id || "");
-    setEditDoctorQuery(selectedAppt.doctor?.fullName || "");
-    setEditDoctorDropdownOpen(false);
-    setEditClinicUnitId(selectedAppt.clinicUnit?.id || "");
+    const nextEditPatientId = selectedAppt.patient?.id || "";
+    const nextEditDoctorId = selectedAppt.doctor?.id || "";
+    const nextEditClinicUnitId = selectedAppt.clinicUnit?.id || "";
     const startDate = new Date(selectedAppt.startAt);
     const endDate = new Date(selectedAppt.endAt);
     const dur = Math.round((endDate.getTime() - startDate.getTime()) / 60000);
-    setEditStartAt(toLocalInput(startDate));
-    setEditDurationMinutes(dur > 0 ? dur : slotInterval);
+    const nextEditStartAt = toLocalInput(startDate);
+    const nextEditDurationMinutes = dur > 0 ? dur : slotInterval;
+
+    setEditPatientId(nextEditPatientId);
+    setEditPatientSearch(selectedAppt.patient?.fullName || "");
+    setEditPatientResults([]);
+    setEditPatientDropdownOpen(false);
+    setEditDoctorId(nextEditDoctorId);
+    setEditDoctorQuery(selectedAppt.doctor?.fullName || "");
+    setEditDoctorDropdownOpen(false);
+    setEditClinicUnitId(nextEditClinicUnitId);
+    setEditStartAt(nextEditStartAt);
+    setEditDurationMinutes(nextEditDurationMinutes);
     setEditMode(true);
+    // API'den gelen ilk değerler yanlışlıkla dirty sayılmamalı — düzenleme
+    // moduna girildiği andaki değerler "temiz başlangıç" olarak saklanır.
+    editSnapshotRef.current = JSON.stringify({
+      patientId: nextEditPatientId,
+      doctorId: nextEditDoctorId,
+      clinicUnitId: nextEditClinicUnitId,
+      startAt: nextEditStartAt,
+      durationMinutes: nextEditDurationMinutes,
+    });
   };
 
   const updateAppointment = async () => {
@@ -1198,29 +1345,38 @@ export default function RandevuPage() {
     const parsed = parseAppointmentNote(selectedAppt.note);
     const treatmentMeta = getTreatmentMeta(parsed.treatment);
     setEditSaving(true); setError(null);
-    const res = await submitAppointmentWithConflictConfirm("/api/appointments/" + selectedAppt.id, "PUT", {
-      patientId: editPatientId,
-      doctorId: editDoctorId,
-      clinicUnitId: editClinicUnitId || null,
-      startAt: startDate.toISOString(),
-      endAt: endDate.toISOString(),
-      type: selectedAppt.type,
-      status: selectedAppt.status,
-      colorCode: treatmentMeta.color || selectedAppt.colorCode || "#2a9d8f",
-      note: selectedAppt.note || "",
-      smsInfo: false,
-      smsReminder: false,
-      smsSurvey: false,
-    });
-    setEditSaving(false);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ message: "Güncelleme başarısız" }));
-      if (!body.requiresConfirmation) setError(body.message || "Güncelleme başarısız");
-      return;
+    try {
+      const res = await submitAppointmentWithConflictConfirm("/api/appointments/" + selectedAppt.id, "PUT", {
+        patientId: editPatientId,
+        doctorId: editDoctorId,
+        clinicUnitId: editClinicUnitId || null,
+        startAt: startDate.toISOString(),
+        endAt: endDate.toISOString(),
+        type: selectedAppt.type,
+        status: selectedAppt.status,
+        colorCode: treatmentMeta.color || selectedAppt.colorCode || "#2a9d8f",
+        note: selectedAppt.note || "",
+        // smsInfo/smsReminder/smsSurvey kasıtlı olarak gönderilmiyor — sunucu bu
+        // düzenleme isteğinde hastanın mevcut iletişim tercihlerini korur (bkz.
+        // src/app/api/appointments/[id]/route.ts).
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ message: "Güncelleme başarısız" }));
+        if (!body.requiresConfirmation) setError(body.message || "Güncelleme başarısız");
+        return;
+      }
+      const movedId = selectedAppt.id;
+      setEditMode(false);
+      setSelectedAppt(null);
+      await load();
+      showToastSafe({ title: "Randevu güncellendi", message: "Yeni tarih/saat kaydedildi.", type: "success", icon: STATUS_ACTION_ICON["appointment-rescheduled"] });
+      setJustMovedApptId(movedId);
+      window.setTimeout(() => setJustMovedApptId(prev => prev === movedId ? null : prev), 400);
+    } catch {
+      setError("Bağlantı hatası — randevu güncellenemedi. Lütfen tekrar deneyin.");
+    } finally {
+      setEditSaving(false);
     }
-    setEditMode(false);
-    setSelectedAppt(null);
-    await load();
   };
 
   const handleDropOnSlot = async (newDate: Date, slotTime: string, newDocId?: string) => {
@@ -1240,24 +1396,41 @@ export default function RandevuPage() {
     newEnd.setMinutes(newEnd.getMinutes() + dur);
     const parsed = parseAppointmentNote(appt.note);
     const treatmentMeta = getTreatmentMeta(parsed.treatment);
-    const res = await submitAppointmentWithConflictConfirm("/api/appointments/" + draggedApptId, "PUT", {
-      patientId: appt.patient?.id || "",
-      doctorId: newDocId || appt.doctor?.id || "",
-      clinicUnitId: appt.clinicUnit?.id || null,
-      startAt: newStart.toISOString(),
-      endAt: newEnd.toISOString(),
-      type: appt.type,
-      status: appt.status,
-      colorCode: treatmentMeta.color || appt.colorCode || "#2a9d8f",
-      note: appt.note || "",
-      smsInfo: false,
-      smsReminder: false,
-      smsSurvey: false,
-    });
-    setDraggedApptId(null); setDragOverKey(null);
-    if (res.ok) { await load(); return; }
-    const body = await res.json().catch(() => ({ message: "Güncelleme başarısız" }));
-    if (!body.requiresConfirmation) setError(body.message || "Güncelleme başarısız");
+    const movedApptId = draggedApptId;
+    try {
+      const res = await submitAppointmentWithConflictConfirm("/api/appointments/" + draggedApptId, "PUT", {
+        patientId: appt.patient?.id || "",
+        doctorId: newDocId || appt.doctor?.id || "",
+        clinicUnitId: appt.clinicUnit?.id || null,
+        startAt: newStart.toISOString(),
+        endAt: newEnd.toISOString(),
+        type: appt.type,
+        status: appt.status,
+        colorCode: treatmentMeta.color || appt.colorCode || "#2a9d8f",
+        note: appt.note || "",
+        // smsInfo/smsReminder/smsSurvey kasıtlı olarak gönderilmiyor — sunucu bu
+        // taşıma isteğinde hastanın mevcut iletişim tercihlerini korur (bkz.
+        // src/app/api/appointments/[id]/route.ts).
+      });
+      if (res.ok) {
+        await load();
+        setJustMovedApptId(movedApptId);
+        window.setTimeout(() => setJustMovedApptId(prev => prev === movedApptId ? null : prev), 400);
+        return;
+      }
+      const body = await res.json().catch(() => ({ message: "Güncelleme başarısız" }));
+      if (!body.requiresConfirmation) {
+        setError(body.message || "Güncelleme başarısız");
+        setDropRejectedApptId(movedApptId);
+        window.setTimeout(() => setDropRejectedApptId(prev => prev === movedApptId ? null : prev), 260);
+      }
+    } catch {
+      setError("Bağlantı hatası — randevu taşınamadı. Lütfen tekrar deneyin.");
+      setDropRejectedApptId(movedApptId);
+      window.setTimeout(() => setDropRejectedApptId(prev => prev === movedApptId ? null : prev), 260);
+    } finally {
+      setDraggedApptId(null); setDragOverKey(null); setDragOverInvalid(null);
+    }
   };
 
   const weekDays = useMemo(() => {
@@ -1877,6 +2050,25 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
     await load();
   };
 
+  // blockDate/Start/End her zaman anlamlı bir varsayılana sahip (bugün,
+  // 13:00-17:00), bu yüzden dirty sinyali olarak kullanılmazlar (aksi halde
+  // modal her açılışta "kirli" görünürdü) — doktor seçimi ve neden metni
+  // gerçek kullanıcı girdisidir.
+  const blockModalDirty = Boolean(blockDoctorId || blockReason.trim());
+
+  async function requestCloseBlockModal() {
+    if (blockModalDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE,
+      danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
+      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) {
+      return;
+    }
+    setShowBlockModal(false);
+    setBlockSubmitError(null);
+  }
+
   const saveBlock = async () => {
     if (!blockDoctorId || !blockDate || !blockStartTime || !blockEndTime) return;
     if (blockValidationError) {
@@ -1909,16 +2101,22 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
       const treatmentMeta = getTreatmentMeta(parsed.treatment);
       const displayStatus = getDisplayAppointmentStatus(a.status, a.startAt);
       const stale = isStaleWaitingAppointment(a.status, a.startAt);
+      const a11yLabel = `${a.patient?.fullName || "Hasta belirtilmemiş"}, ${STATUS_LABELS[displayStatus] || displayStatus}, ${new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}${a.patient?.hasContagiousDisease ? ", bulaşıcı hastalık uyarısı" : ""}${stale ? ", geçmiş tarihli durum işaretlenmemiş" : ""}`;
       return (
     <div key={a.id}
+      role="button"
+      tabIndex={0}
+      aria-label={a11yLabel}
       draggable={enableDrag}
       onDragStart={enableDrag ? (e) => { e.stopPropagation(); e.dataTransfer.effectAllowed = "move"; setDraggedApptId(a.id); } : undefined}
-      onDragEnd={enableDrag ? () => { setDraggedApptId(null); setDragOverKey(null); } : undefined}
+      onDragEnd={enableDrag ? () => { setDraggedApptId(null); setDragOverKey(null); setDragOverInvalid(null); } : undefined}
       onClick={() => setSelectedAppt(a)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedAppt(a); } }}
       title={`${a.patient?.fullName || "-"}${a.patient?.hasContagiousDisease ? ` — ⚠ Bulaşıcı Hastalık${a.patient.contagiousDiseaseNote ? `: ${a.patient.contagiousDiseaseNote}` : ""}` : ""} - ${new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}${stale ? " — Geçmiş tarihli, durum işaretlenmemiş" : ""}`}
-      className={"randevu-appt-card mb-1 cursor-pointer rounded-md border px-2 py-1 shadow-sm " + (enableDrag ? "cursor-grab active:cursor-grabbing " : "") + (STATUS_COLORS[displayStatus] || "bg-primary/5 border-l-4 border-l-primary") + (stale ? " ring-1 ring-orange-400" : "")}>
+      className={"randevu-appt-card mb-1 cursor-pointer rounded-md border px-2 py-1 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 " + (enableDrag ? "cursor-grab active:cursor-grabbing " : "") + (STATUS_COLORS[displayStatus] || "bg-primary/5 border-l-4 border-l-primary") + (stale ? " ring-1 ring-orange-400" : "") + (draggedApptId === a.id ? " is-dragging" : "") + (justMovedApptId === a.id ? " ui-settle-in" : "") + (dropRejectedApptId === a.id ? " ui-drop-shake" : "")}>
       <div className="flex items-center gap-1">
         <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: treatmentMeta.color }} />
+        <span className="shrink-0 text-[10px] leading-none" title={STATUS_LABELS[displayStatus] || displayStatus} aria-hidden="true">{STATUS_ICON[displayStatus] || ""}</span>
         {a.patient?.hasContagiousDisease && <span className="shrink-0 text-[11px]" title="Bulaşıcı Hastalık">⚠</span>}
         <p className="min-w-0 flex-1 truncate text-[11px] font-semibold text-gray-800">{a.patient?.fullName || "-"}</p>
         {stale && <span className="shrink-0 text-[11px]" title="Geçmiş tarihli, durum işaretlenmemiş">⚠</span>}
@@ -1937,24 +2135,28 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
 
   return (
     <section className="randevu-page space-y-2">
-      <div className="randevu-toolbar sticky top-0 z-40 flex flex-wrap items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2 py-2 shadow-sm">
-        <button onClick={() => nav(-1)} aria-label="Önceki tarih aralığı" className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-lg leading-none hover:bg-primary/[0.05]">‹</button>
-        <span className="max-w-full truncate rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-sm font-bold text-slate-800 shadow-sm">{navLabel()}</span>
-        <button onClick={() => nav(1)} aria-label="Sonraki tarih aralığı" className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-lg leading-none hover:bg-primary/[0.05]">›</button>
+      <div className="randevu-toolbar ui-sidebar-card sticky top-0 z-40 flex flex-wrap items-center gap-2 rounded-xl px-2.5 py-2.5">
+        {/* Tarih navigasyonu — tek rafine kontrol grubu */}
+        <div className="flex h-9 items-center overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[var(--shadow-rest)]">
+          <button onClick={() => nav(-1)} aria-label="Önceki tarih aralığı" className="flex h-9 w-8 items-center justify-center text-slate-500 transition hover:bg-slate-50 hover:text-slate-900">‹</button>
+          <span className="max-w-full shrink-0 truncate border-x border-slate-200 px-3 text-sm font-bold text-slate-800">{navLabel()}</span>
+          <button onClick={() => nav(1)} aria-label="Sonraki tarih aralığı" className="flex h-9 w-8 items-center justify-center text-slate-500 transition hover:bg-slate-50 hover:text-slate-900">›</button>
+        </div>
 
-        <div className="mx-1 hidden h-6 w-px bg-slate-200 sm:block" />
+        {/* Gün/Hafta/Ay/Ajanda — akıcı aktif gösterge */}
+        <div className="flex h-9 items-center gap-0.5 rounded-lg bg-slate-100/80 p-1">
+          {(["GUN","HAFTA","AY","AJANDA"] as const).map(mode => (
+            <button
+              key={mode}
+              onClick={() => setView(mode)}
+              className={"ui-view-tab h-7 rounded-md px-2.5 text-sm font-semibold transition-all duration-150 " + (view === mode ? "is-active bg-white text-primary shadow-[0_1px_3px_rgb(15_23_42/0.12)]" : "text-slate-600 hover:text-slate-900")}
+            >
+              {mode === "GUN" ? "Gün" : mode === "HAFTA" ? "Hafta" : mode === "AY" ? "Ay" : "Ajanda"}
+            </button>
+          ))}
+        </div>
 
-        {(["GUN","HAFTA","AY","AJANDA"] as const).map(mode => (
-          <button
-            key={mode}
-            onClick={() => setView(mode)}
-            className={"h-8 rounded-lg px-2.5 text-sm font-semibold transition-colors " + (view === mode ? "bg-primary text-white shadow-sm" : "bg-slate-100 text-slate-700 hover:bg-primary/[0.08]")}
-          >
-            {mode === "GUN" ? "Gün" : mode === "HAFTA" ? "Hafta" : mode === "AY" ? "Ay" : "Ajanda"}
-          </button>
-        ))}
-
-        <select className="h-8 min-w-[170px] rounded-lg border border-slate-200 px-2 text-sm focus:border-primary focus:outline-none" value={doctorId} onChange={e => setDoctorId(e.target.value)}>
+        <select className="h-9 min-w-[170px] rounded-lg border border-slate-200 bg-white px-2 text-sm shadow-[var(--shadow-rest)] focus:border-primary focus:outline-none" value={doctorId} onChange={e => setDoctorId(e.target.value)}>
           <option value="">Tüm Doktorlar</option>
           {staff.map(s => <option key={s.id} value={s.id}>{s.fullName}</option>)}
         </select>
@@ -1968,24 +2170,24 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
           </span>
         )}
 
-        <button onClick={() => setShowForm(true)} disabled={!canCreateAppointments} className="h-8 rounded-lg bg-primary px-3 text-sm font-semibold text-white shadow-sm disabled:cursor-not-allowed disabled:opacity-50">Yeni Randevu</button>
+        <button onClick={() => setShowForm(true)} disabled={!canCreateAppointments} className="ui-interactive h-9 rounded-lg bg-gradient-to-b from-primary to-primary-strong px-3.5 text-sm font-bold text-white shadow-[0_2px_8px_rgb(var(--app-primary)/0.35)] disabled:cursor-not-allowed disabled:opacity-50">+ Yeni Randevu</button>
         {canCreateAppointments && (
-          <button onClick={() => { setBlockSubmitError(null); setShowBlockModal(true); }} className="h-8 rounded-lg border border-orange-300 bg-orange-50 px-3 text-sm font-semibold text-orange-700 hover:bg-orange-100">Zamanı Kapat</button>
+          <button onClick={() => { setBlockSubmitError(null); setShowBlockModal(true); }} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 shadow-[var(--shadow-rest)] transition hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700">Zamanı Kapat</button>
         )}
-        <button onClick={() => setShowWaitlistModal(true)} className="relative h-8 rounded-lg border border-purple-300 bg-purple-50 px-3 text-sm font-semibold text-purple-700 hover:bg-purple-100" title="Randevu bekleme listesini aç">
+        <button onClick={() => setShowWaitlistModal(true)} className="relative h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 shadow-[var(--shadow-rest)] transition hover:border-purple-200 hover:bg-purple-50 hover:text-purple-700" title="Randevu bekleme listesini aç">
           Bekleme
           {activeWaitlist.length > 0 && (
             <span className="ml-1.5 rounded-full bg-purple-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{activeWaitlist.length}</span>
           )}
         </button>
-        <button onClick={() => setShowBookingRequestsModal(true)} className="relative h-8 rounded-lg border border-cyan-300 bg-cyan-50 px-3 text-sm font-semibold text-cyan-700 hover:bg-cyan-100" title="Online randevu taleplerini aç">
+        <button onClick={() => setShowBookingRequestsModal(true)} className="relative h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 shadow-[var(--shadow-rest)] transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700" title="Online randevu taleplerini aç">
           Online Talepler
           {bookingRequests.length > 0 && (
             <span className="ml-1.5 rounded-full bg-cyan-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{bookingRequests.length}</span>
           )}
         </button>
         <details className="relative">
-          <summary className="flex h-8 cursor-pointer list-none items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 hover:bg-primary/[0.04]">
+          <summary className="flex h-9 cursor-pointer list-none items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-rest)] hover:bg-slate-50">
             Dışa Aktar
           </summary>
           <div className="absolute right-0 top-full z-40 mt-2 w-40 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-lg">
@@ -2027,14 +2229,16 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
       </div>
 
       <Modal
+        module="calendar"
         open={showForm}
         onClose={() => { setShowForm(false); resetForm(); }}
+        isDirty={newAppointmentDirty}
         title="Yeni Randevu"
         description="Hasta, hekim, tedavi ve zaman bilgilerini tek kayıtta planlayın."
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => { setShowForm(false); resetForm(); }}>İptal</Button>
+            <Button variant="secondary" onClick={() => void requestCloseNewAppointment()}>İptal</Button>
             <Button variant="primary" onClick={createAppointment} loading={saving} disabled={Boolean(newAppointmentValidationError)}>
               {saving ? "Kaydediliyor..." : "Randevu Ekle"}
             </Button>
@@ -2277,18 +2481,39 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
       <div aria-busy={loading}>
       {view === "GUN" && workingDayIndexes.has(date.getDay()) && (
         <div className="max-h-[calc(100dvh-12rem)] overflow-auto rounded-lg border border-slate-200 bg-white shadow-[var(--shadow-surface)]">
-          <table className="min-w-[980px] border-collapse text-xs">
-            <thead className="sticky top-0 z-20 bg-slate-50">
+          <table className="randevu-grid min-w-[980px] border-collapse text-xs">
+            <thead className="sticky top-0 z-20 bg-slate-50/95 shadow-[0_1px_0_rgb(var(--color-slate-200)),0_4px_10px_-6px_rgb(15_23_42/0.18)] backdrop-blur-sm">
               <tr>
-                <th className="calendar-time-heading sticky left-0 z-30 w-20 border border-slate-200 bg-slate-50 px-3 py-3 text-left">Saat</th>
-                {doctors.length === 0 ? <th className="border px-2 py-2 text-gray-400">Doktor bulunamadı</th> :
-                  doctors.map(d => <th key={d.id} className="calendar-doctor-heading min-w-40 border border-slate-200 bg-slate-50 px-3 py-3 text-center">{d.fullName}</th>)}
+                <th scope="col" className="calendar-time-heading sticky left-0 z-30 w-20 border border-slate-200 bg-slate-50 px-3 py-3 text-left">Saat</th>
+                {doctors.length === 0 ? <th scope="col" className="calendar-doctor-heading border px-2 py-2 text-gray-400">Doktor bulunamadı</th> :
+                  doctors.map(d => (
+                    <th key={d.id} scope="col" title={d.fullName} className="calendar-doctor-heading min-w-40 max-w-52 border border-slate-200 bg-slate-50 px-3 py-3 text-center">
+                      <span className="flex items-center justify-center gap-1.5">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary-strong text-[9px] font-black text-white">
+                          {d.fullName.split(" ").filter(Boolean).slice(0, 2).map((p) => p[0]).join("").toLocaleUpperCase("tr-TR")}
+                        </span>
+                        <span className="truncate">{d.fullName}</span>
+                      </span>
+                    </th>
+                  ))}
               </tr>
             </thead>
             <tbody>
-              {gunSlotTimes.map(slot => (
-                <tr key={slot} className="hover:bg-gray-50">
-                  <td className="calendar-time-cell sticky left-0 z-10 whitespace-nowrap border border-slate-200 bg-white px-3 py-1.5 align-top font-mono">{slot}</td>
+              {(() => {
+                const isTodayGun = date.toDateString() === new Date().toDateString();
+                const nowMinutesGun = new Date().getHours() * 60 + new Date().getMinutes();
+                return gunSlotTimes.map(slot => {
+                  const [sh, sm] = slot.split(":").map(Number);
+                  const slotMinutes = sh * 60 + sm;
+                  const isPastSlot = isTodayGun && slotMinutes + slotInterval <= nowMinutesGun;
+                  const isNowSlot = isTodayGun && slotMinutes <= nowMinutesGun && nowMinutesGun < slotMinutes + slotInterval;
+                  const isHalfHour = sm === 0 || sm === 30;
+              return (
+                <tr key={slot} className={"hover:bg-gray-50 " + (isNowSlot ? "relative" : "")}>
+                  <td className={"calendar-time-cell sticky left-0 z-10 whitespace-nowrap border border-slate-200 px-3 py-1.5 align-top font-mono tabular-nums " + (isNowSlot ? "ui-today-breathe font-black text-primary" : isPastSlot ? "bg-slate-50/40 text-slate-500" : isHalfHour ? "bg-white font-bold text-slate-800" : "bg-white text-slate-500")}>
+                    {isNowSlot && <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-primary align-middle" aria-hidden="true" />}
+                    {slot}
+                  </td>
                   {doctors.map(d => {
                     const slotAppts = getApptForSlot(d.id, slot);
                     const continuingAppts = getContinuingApptForSlot(d.id, slot, date);
@@ -2301,9 +2526,14 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                       <td
                         key={d.id}
                         title={outsideHours ? "Doktorun mesai saati dışında" : undefined}
-                        className={"group h-9 border p-0.5 align-top transition-colors " + (continuingAppts.length > 0 ? "bg-slate-50 " : outsideHours ? "bg-slate-50/70 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-primary/10 ring-2 ring-inset ring-primary" : "")}
-                        onDragOver={(e) => { if (draggedApptId && !blocked && continuingAppts.length === 0) { e.preventDefault(); setDragOverKey(dropKey); } }}
-                        onDragLeave={() => setDragOverKey(prev => prev === dropKey ? null : prev)}
+                        className={"group h-9 border p-0.5 align-top transition-colors " + (continuingAppts.length > 0 ? "bg-slate-50 " : outsideHours ? "bg-slate-50/70 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-primary/10 ring-2 ring-inset ring-primary ui-drop-target" : dragOverInvalid === dropKey ? "ui-drop-reject" : "")}
+                        onDragOver={(e) => {
+                          if (!draggedApptId) return;
+                          e.preventDefault();
+                          if (!blocked && continuingAppts.length === 0) { setDragOverKey(dropKey); setDragOverInvalid(null); }
+                          else { setDragOverInvalid(dropKey); setDragOverKey(prev => prev === dropKey ? null : prev); }
+                        }}
+                        onDragLeave={() => { setDragOverKey(prev => prev === dropKey ? null : prev); setDragOverInvalid(prev => prev === dropKey ? null : prev); }}
                         onDrop={(e) => { if (!blocked && continuingAppts.length === 0) { e.preventDefault(); void handleDropOnSlot(date, slot, d.id); } }}
                       >
                         {blocked ? (
@@ -2361,7 +2591,9 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                     );
                   })}
                 </tr>
-              ))}
+              );
+                });
+              })()}
             </tbody>
           </table>
         </div>
@@ -2375,19 +2607,26 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
 
       {view === "HAFTA" && (
         <div className="max-h-[calc(100dvh-12rem)] overflow-auto rounded-lg border border-slate-200 bg-white shadow-[var(--shadow-surface)]">
-          <table className="min-w-[980px] border-collapse text-xs">
+          <table className="randevu-grid min-w-[980px] border-collapse text-xs">
               <thead className="sticky top-0 z-20 bg-slate-50">
                 <tr>
-                <th className="calendar-time-heading sticky left-0 z-30 w-20 border border-slate-200 bg-slate-50 px-3 py-3 text-left">Saat</th>
+                <th scope="col" className="calendar-time-heading sticky left-0 z-30 w-20 border border-slate-200 bg-slate-50 px-3 py-3 text-left">Saat</th>
                 {weekDays.map((d, i) => {
                   const isToday = d.toDateString() === new Date().toDateString();
                   const isWorkday = workingDayIndexes.has(d.getDay());
                   const canOpenDay = isWorkday || getApptForDay(d).length > 0;
+                  const dayA11yLabel = `${TR_DAYS_BY_JS_INDEX[d.getDay()]} ${d.getDate()}${isToday ? " — bugün" : ""}${canOpenDay ? ", gün görünümünü aç" : ", klinik için tatil günü"}`;
                   return (
-                    <th key={i} onClick={() => { if (canOpenDay) { setDate(d); setView("GUN"); } }}
+                    <th key={i}
+                      role={canOpenDay ? "button" : undefined}
+                      tabIndex={canOpenDay ? 0 : undefined}
+                      aria-label={dayA11yLabel}
+                      onClick={() => { if (canOpenDay) { setDate(d); setView("GUN"); } }}
+                      onKeyDown={(e) => { if (canOpenDay && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setDate(d); setView("GUN"); } }}
                       title={canOpenDay ? undefined : "Klinik için tatil günü — görüntülenecek bir şey yok"}
-                      className={"min-w-28 border border-slate-200 bg-slate-50 px-3 py-3 text-center text-sm font-bold " + (canOpenDay ? "cursor-pointer hover:bg-primary/10 " : "cursor-not-allowed opacity-40 ") + (isToday ? "text-primary" : "text-slate-800")}>
+                      className={"min-w-28 border border-slate-200 px-3 py-3 text-center text-sm font-bold transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40 " + (canOpenDay ? "cursor-pointer hover:bg-primary/10 " : "cursor-not-allowed opacity-40 ") + (isToday ? "ui-today-breathe text-primary" : "bg-slate-50 text-slate-800")}>
                       {TR_DAYS_BY_JS_INDEX[d.getDay()]}<br /><span className="text-sm">{d.getDate()}</span>
+                      {isToday && <span className="mt-0.5 block text-[9px] font-black uppercase tracking-wide text-primary">Bugün</span>}
                     </th>
                   );
                 })}
@@ -2418,9 +2657,14 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                       <td
                         key={i}
                         title={doctorOutsideHours ? "Doktorun mesai saati dışında" : undefined}
-                        className={"group h-9 border p-0.5 align-top transition-colors " + (haftaOutOfHours || continuingAppts.length > 0 ? "bg-slate-50 " : doctorOutsideHours ? "bg-slate-50/70 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-primary/10 ring-2 ring-inset ring-primary" : "")}
-                        onDragOver={(e) => { if (draggedApptId && !blocked && !haftaOutOfHours && continuingAppts.length === 0) { e.preventDefault(); setDragOverKey(dropKey); } }}
-                        onDragLeave={() => setDragOverKey(prev => prev === dropKey ? null : prev)}
+                        className={"group h-9 border p-0.5 align-top transition-colors " + (haftaOutOfHours || continuingAppts.length > 0 ? "bg-slate-50 " : doctorOutsideHours ? "bg-slate-50/70 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-primary/10 ring-2 ring-inset ring-primary ui-drop-target" : dragOverInvalid === dropKey ? "ui-drop-reject" : "")}
+                        onDragOver={(e) => {
+                          if (!draggedApptId) return;
+                          e.preventDefault();
+                          if (!blocked && !haftaOutOfHours && continuingAppts.length === 0) { setDragOverKey(dropKey); setDragOverInvalid(null); }
+                          else { setDragOverInvalid(dropKey); setDragOverKey(prev => prev === dropKey ? null : prev); }
+                        }}
+                        onDragLeave={() => { setDragOverKey(prev => prev === dropKey ? null : prev); setDragOverInvalid(prev => prev === dropKey ? null : prev); }}
                         onDrop={(e) => { if (!blocked && !haftaOutOfHours && continuingAppts.length === 0) { e.preventDefault(); void handleDropOnSlot(d, slot); } }}
                       >
                         {haftaOutOfHours ? (
@@ -2483,12 +2727,16 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
 
       {view === "AY" && (
         <div className="rounded-xl border bg-white p-2">
-          <div className="grid grid-cols-7 gap-px bg-gray-200 rounded overflow-hidden">
-            {TR_DAYS.map(d => <div key={d} className="bg-gray-100 text-center text-xs font-semibold py-2 text-gray-600">{d}</div>)}
+          {/* GÜN/HAFTA görünümleriyle aynı desen: dar ekranda sütunlar
+              sıkışıp okunmaz hale gelmesin diye min-genişlik + yatay
+              kaydırma (bkz. denetim raporu). */}
+          <div className="overflow-x-auto">
+          <div className="grid min-w-[700px] grid-cols-7 gap-px overflow-hidden rounded bg-slate-200">
+            {TR_DAYS.map(d => <div key={d} className="bg-slate-50 py-2 text-center text-xs font-bold uppercase tracking-wide text-slate-500">{d}</div>)}
             {(() => {
               const firstDay = currentRange.from.getDay();
               const offset = firstDay === 0 ? 6 : firstDay - 1;
-              return Array.from({length: offset}, (_, i) => <div key={"e"+i} className="bg-white min-h-20" />);
+              return Array.from({length: offset}, (_, i) => <div key={"e"+i} className="min-h-20 bg-slate-50/50" />);
             })()}
             {monthDays.map((d, i) => {
               const dayAppts = getApptForDay(d);
@@ -2497,42 +2745,69 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
               // Tatil günü olsa da o günde zaten kayıtlı randevu varsa (örn.
               // tatil ayarı sonradan eklendiyse) yine de görülüp yönetilebilmeli.
               const canOpenDay = isWorkday || dayAppts.length > 0;
+              const densityTone = dayAppts.length === 0 ? "" : dayAppts.length <= 2 ? "bg-slate-100 text-slate-600" : dayAppts.length <= 4 ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-700";
               return (
-                <div key={i} onClick={() => { if (canOpenDay) { setDate(d); setView("GUN"); } }}
+                <div key={i}
+                  role={canOpenDay ? "button" : undefined}
+                  tabIndex={canOpenDay ? 0 : undefined}
+                  onClick={() => { if (canOpenDay) { setDate(d); setView("GUN"); } }}
+                  onKeyDown={(e) => { if (canOpenDay && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setDate(d); setView("GUN"); } }}
                   title={canOpenDay ? undefined : "Klinik için tatil günü — görüntülenecek bir şey yok"}
-                  className={"bg-white min-h-20 p-1 hover:bg-primary/5 " + (canOpenDay ? "cursor-pointer" : "cursor-not-allowed") + " " + (isToday ? "ring-2 ring-inset ring-primary" : "") + (isWorkday ? "" : " opacity-70") }>
+                  className={"min-h-20 p-1 transition-colors " + (canOpenDay ? "cursor-pointer hover:bg-primary/[0.06] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary/40 " : "cursor-not-allowed ") + (isToday ? "ui-today-breathe ring-2 ring-inset ring-primary " : "bg-white ") + (isWorkday ? "" : "opacity-70")}>
                   <div className="mb-1 flex items-center justify-between">
-                    <div className={"text-xs font-bold " + (isToday ? "text-primary" : "text-gray-700")}>{d.getDate()}</div>
-                    {canCreateAppointments && isWorkday ? (
-                      <button
-                        onClick={e => {
-                          e.stopPropagation();
-                          openQuickCreate(slotTimes[0], d, doctorId || undefined);
-                        }}
-                        className="rounded border border-dashed border-gray-300 px-1 text-[10px] text-gray-500 hover:border-primary hover:text-primary"
-                      >
-                        +
-                      </button>
-                    ) : <span className="w-3" />}
+                    <div className={"text-xs font-black " + (isToday ? "text-primary" : "text-slate-700")}>{d.getDate()}</div>
+                    <div className="flex items-center gap-1">
+                      {dayAppts.length > 0 && (
+                        <span
+                          className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold tabular-nums ${densityTone}`}
+                          aria-label={`${dayAppts.length} randevu${dayAppts.length > 4 ? ", yoğun gün" : dayAppts.length > 2 ? ", orta yoğunlukta gün" : ""}`}
+                        >{dayAppts.length}</span>
+                      )}
+                      {canCreateAppointments && isWorkday ? (
+                        <button
+                          onClick={e => {
+                            e.stopPropagation();
+                            openQuickCreate(slotTimes[0], d, doctorId || undefined);
+                          }}
+                          aria-label={`${d.getDate()} için randevu oluştur`}
+                          className="ui-interactive rounded border border-dashed border-slate-300 px-1 text-[10px] text-slate-500 hover:border-primary hover:text-primary"
+                        >
+                          +
+                        </button>
+                      ) : <span className="w-3" />}
+                    </div>
                   </div>
                   {dayAppts.slice(0,3).map(a => (
                     <div key={a.id} style={{background: a.colorCode || getTreatmentMeta(parseAppointmentNote(a.note).treatment).color}}
-                      className="rounded text-white text-xs px-1 mb-0.5 truncate"
-                      onClick={e => { e.stopPropagation(); setSelectedAppt(a); }}>
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`${a.patient?.fullName || "Hasta belirtilmemiş"}, ${new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}`}
+                      className="ui-interactive mb-0.5 truncate rounded px-1 text-xs text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-white"
+                      onClick={e => { e.stopPropagation(); setSelectedAppt(a); }}
+                      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); setSelectedAppt(a); } }}>
                       {new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})} {a.patient?.fullName}
                     </div>
                   ))}
-                  {dayAppts.length > 3 && <div className="text-xs text-gray-400">+{dayAppts.length-3} daha</div>}
+                  {dayAppts.length > 3 && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setDate(d); setView("GUN"); }}
+                      aria-label={`${d.getDate()} tarihinde ${dayAppts.length - 3} randevu daha var, gün görünümünü aç`}
+                      className="text-xs font-semibold text-primary hover:underline"
+                    >
+                      +{dayAppts.length-3} daha
+                    </button>
+                  )}
                 </div>
               );
             })}
+          </div>
           </div>
         </div>
       )}
 
       {view === "AJANDA" && (
         <div className="space-y-1">
-          <div className="mb-2 flex flex-wrap gap-1">
+          <div className="mb-2 inline-flex flex-wrap items-center gap-0.5 rounded-lg bg-slate-100/80 p-1">
             {[
               { key: "ALL", label: "Tümü" },
               { key: "BEKLIYOR", label: "Planlandı" },
@@ -2543,39 +2818,60 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
             ].map((chip) => (
               <button
                 key={chip.key}
+                type="button"
                 onClick={() => setAgendaStatusFilter(chip.key as "ALL" | "BEKLIYOR" | "GELDI" | "TAMAMLANDI" | "GELMEDI" | "IPTAL")}
-                className={"rounded-full px-3 py-1 text-xs font-semibold " + (agendaStatusFilter === chip.key ? "bg-primary text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200")}
+                className={"ui-view-tab h-7 rounded-md px-2.5 text-xs font-semibold transition-all duration-150 " + (agendaStatusFilter === chip.key ? "is-active bg-white text-primary shadow-[0_1px_3px_rgb(15_23_42/0.12)]" : "text-slate-600 hover:text-slate-900")}
               >
                 {chip.label}
               </button>
             ))}
           </div>
-          {filteredAgendaAppointments.length === 0 && <p className="py-8 text-center text-gray-400">Seçilen filtrede randevu yok</p>}
-          {filteredAgendaAppointments.map(a => (
+          {filteredAgendaAppointments.length === 0 && (
+            <EmptyState
+              icon={AgendaEmptyIcon}
+              illustrative
+              title="Seçilen filtrede randevu yok"
+              description="Farklı bir tarih aralığı veya durum filtresi deneyin, ya da yeni bir randevu oluşturun."
+            />
+          )}
+          {filteredAgendaAppointments.map((a, agendaIdx) => (
             (() => {
               const parsed = parseAppointmentNote(a.note);
               const meta = getFollowUpMeta(parsed.followUp);
               const treatmentMeta = getTreatmentMeta(parsed.treatment);
               const displayStatus = getDisplayAppointmentStatus(a.status, a.startAt);
               const stale = isStaleWaitingAppointment(a.status, a.startAt);
+              const statusBadge = STATUS_BADGE[displayStatus] || STATUS_BADGE.BEKLIYOR;
+              const initials = (a.patient?.fullName || "?")
+                .split(" ")
+                .filter(Boolean)
+                .slice(0, 2)
+                .map((part) => part[0])
+                .join("")
+                .toLocaleUpperCase("tr-TR");
               return (
             <div key={a.id} onClick={() => setSelectedAppt(a)}
-              className={"flex items-center gap-3 rounded-lg border bg-white p-3 cursor-pointer hover:shadow-sm " + (STATUS_COLORS[displayStatus] || "") + (stale ? " ring-1 ring-orange-400" : "")}>
+              style={{ ["--row-delay" as string]: `${Math.min(agendaIdx, 10) * 28}ms` }}
+              className={"ui-tone-card-interactive ui-pressable ui-row-in flex items-center gap-3 rounded-lg border bg-white p-3 cursor-pointer " + (STATUS_COLORS[displayStatus] || "") + (stale ? " ring-1 ring-orange-400" : "")}>
               <div className="flex flex-col items-center min-w-16 text-center">
-                <span className="text-xs text-gray-500">{new Date(a.startAt).toLocaleDateString("tr-TR",{day:"2-digit",month:"short"})}</span>
-                <span className="text-sm font-bold text-primary">{new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}</span>
+                <span className="text-xs font-medium text-slate-500">{new Date(a.startAt).toLocaleDateString("tr-TR",{day:"2-digit",month:"short"})}</span>
+                <span className="text-sm font-bold text-primary tabular-nums">{new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}</span>
               </div>
-              <div className="flex-1">
-                <p className="font-semibold text-gray-800">{a.patient?.fullName}</p>
-                <p className="text-xs text-gray-500">{a.doctor?.fullName}</p>
-                <p className="mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold text-white" style={{ backgroundColor: treatmentMeta.color }}>{treatmentMeta.label}</p>
-                {parsed.detail && <p className="text-xs text-gray-400 mt-0.5">{parsed.detail}</p>}
-                {parsed.followUp !== "YOK" && <p className={"mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold " + meta.badge}>{meta.label}</p>}
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary-strong text-xs font-black text-white shadow-[0_2px_6px_rgb(var(--app-primary)/0.28)] ring-2 ring-white">
+                {initials}
               </div>
-              <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + (displayStatus==="TAMAMLANDI"?"bg-green-100 text-green-700":displayStatus==="GELMEDI"?"bg-red-100 text-red-700":displayStatus==="IPTAL"?"bg-gray-200 text-gray-600":displayStatus==="PLANLANDI"?"bg-sky-100 text-sky-700":"bg-yellow-100 text-yellow-700")}>
-                {stale && <span title="Geçmiş tarihli, durum işaretlenmemiş">⚠ </span>}
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-slate-800 truncate">{a.patient?.fullName}</p>
+                <p className="text-xs text-slate-500 truncate">{a.doctor?.fullName}</p>
+                <div className="mt-1 flex flex-wrap items-center gap-1">
+                  <span className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold text-white" style={{ backgroundColor: treatmentMeta.color }}>{treatmentMeta.label}</span>
+                  {parsed.followUp !== "YOK" && <span className={"inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold " + meta.badge}>{meta.label}</span>}
+                </div>
+                {parsed.detail && <p className="text-xs text-slate-400 mt-0.5 truncate">{parsed.detail}</p>}
+              </div>
+              <Badge tone={statusBadge.tone} icon={statusBadge.icon} title={stale ? "Geçmiş tarihli, durum işaretlenmemiş" : undefined}>
                 {STATUS_LABELS[displayStatus] || a.status}
-              </span>
+              </Badge>
             </div>
               );
             })()
@@ -2586,13 +2882,15 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
 
       {/* DOKTOR BLOK EKLEME MODALI */}
       <Modal
+        module="calendar"
         open={showBlockModal}
         onClose={() => { setShowBlockModal(false); setBlockSubmitError(null); }}
+        isDirty={blockModalDirty}
         title="Doktorun Zamanını Kapat"
         description="Doktorun randevu kabul etmeyeceği çalışma saati aralığını kaydedin."
         footer={
           <>
-            <Button variant="secondary" onClick={() => { setShowBlockModal(false); setBlockSubmitError(null); }}>İptal</Button>
+            <Button variant="secondary" onClick={() => void requestCloseBlockModal()}>İptal</Button>
             <Button
               variant="primary"
               onClick={saveBlock}
@@ -2661,8 +2959,10 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
       </Modal>
 
       <Modal
+        module="calendar"
         open={showWaitlistModal}
         onClose={() => setShowWaitlistModal(false)}
+        isDirty={waitlistFormDirty}
         title="Bekleme Listesi"
         description="Uygun randevu bulunamayan veya iptal olan bir slotu doldurmak istediğiniz hastaları buraya ekleyin."
         size="lg"
@@ -2769,6 +3069,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
       </Modal>
 
       <Modal
+        module="calendar"
         open={showBookingRequestsModal}
         onClose={() => setShowBookingRequestsModal(false)}
         title="Online Randevu Talepleri"
@@ -2813,12 +3114,18 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
           const detailCanMarkNoShow = canMarkNoShow(selectedAppt.startAt);
           return (
         <Modal
+          module="calendar"
           open={Boolean(selectedAppt)}
           onClose={closeAppointmentModal}
+          isDirty={editAppointmentDirty}
           title={editMode ? "Randevuyu Düzenle" : "Randevu Detayı"}
         >
             {editMode ? (
               <div className="space-y-3">
+                <p className="rounded-lg bg-primary/5 px-3 py-2 text-xs font-medium text-primary sm:hidden">
+                  Randevuyu taşımak için doktor ve/veya başlangıç tarihini değiştirip kaydedin — dokunmatik
+                  cihazlarda sürükle-bırak yerine bu akış kullanılır.
+                </p>
                 {error && <p className="text-red-600 text-sm">{error}</p>}
                 {/* Hasta */}
                 <div>
@@ -2911,7 +3218,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                   <Button variant="primary" onClick={updateAppointment} disabled={!editPatientId || !editDoctorId} loading={editSaving}>
                     {editSaving ? "Kaydediliyor..." : "Kaydet"}
                   </Button>
-                  <Button variant="secondary" onClick={() => { setEditMode(false); setError(null); }}>İptal</Button>
+                  <Button variant="secondary" onClick={() => void requestCancelEdit()}>İptal</Button>
                 </div>
               </div>
             ) : (
@@ -2993,9 +3300,9 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                     size="sm"
                     onClick={openEditMode}
                     disabled={selectedAppt.status === "IPTAL"}
-                    title={selectedAppt.status === "IPTAL" ? "İptal edilmiş randevu düzenlenemez — önce 'Planlandı'ya alın" : undefined}
+                    title={selectedAppt.status === "IPTAL" ? "İptal edilmiş randevu düzenlenemez — önce 'Planlandı'ya alın" : "Tarih, doktor veya saat değiştirin — dokunmatik cihazlarda sürükle-bırak yerine kullanılır"}
                   >
-                    Düzenle
+                    Taşı / Düzenle
                   </Button>
                   <Button
                     variant="danger"

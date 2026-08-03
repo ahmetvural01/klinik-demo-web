@@ -51,7 +51,7 @@ export async function PUT(request: NextRequest, props: Params) {
       closedAt: shouldClose ? new Date() : shouldOpen ? null : undefined,
     },
     include: {
-      patient: { select: { id: true, fullName: true, phone: true } },
+      patient: { select: { id: true, fullName: true, phone: true, whatsappOptInAt: true, whatsappOptOutAt: true } },
       appointment: {
         select: {
           id: true,

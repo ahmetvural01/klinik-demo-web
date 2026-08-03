@@ -4,75 +4,26 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
-  BadgeDollarSign,
-  Building2,
-  CalendarDays,
-  ChartColumnIncreasing,
-  ClipboardList,
-  FileClock,
-  FileBarChart2,
-  FileText,
-  FlaskConical,
-  LifeBuoy,
-  LogOut,
-  MessagesSquare,
-  Package2,
-  HandCoins,
-  ReceiptText,
-  Landmark,
-  Home,
-  Settings2,
-  ShieldCheck,
-  UserRound,
-  UsersRound,
-  UserCheck,
-  WalletCards,
   Code2,
   ChevronDown,
   X,
 } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { Hospital } from "@icon-park/react";
 import { usePanelAlerts } from "@/components/layout/use-panel-alerts";
-import { IconFrame } from "@/components/ui/IconFrame";
+import { ModuleIcon, type ModuleKey } from "@/components/ui/ModuleIcon";
 import { useEscapeClose } from "@/lib/use-modal-dismiss";
 import { parseRolePreview, ROLE_PREVIEW_COOKIE, ROLE_PREVIEW_STORAGE } from "@/lib/role-preview";
 
-const ICONS: Record<string, LucideIcon> = {
-  home: Home,
-  calendar: CalendarDays,
-  users: UsersRound,
-  clipboard: ClipboardList,
-  flask: FlaskConical,
-  finance: Landmark,
-  chart: ChartColumnIncreasing,
-  box: Package2,
-  person: UserRound,
-  sms: MessagesSquare,
-  settings: Settings2,
-  profile: UserRound,
-  support: LifeBuoy,
-  follow: UserCheck,
-  logout: LogOut,
-  taksit: BadgeDollarSign,
-  gider: ReceiptText,
-  firma: Building2,
-  recete: FileText,
-  kasa: WalletCards,
-  rapor: FileBarChart2,
-  hakediş: HandCoins,
-  log: FileClock,
-};
-
 const NAV_LABEL_BASE =
-  "min-w-0 overflow-hidden whitespace-nowrap text-left tracking-[-0.01em] transition-all duration-150 ease-out";
+  "min-w-0 overflow-hidden whitespace-nowrap text-left tracking-normal transition-all duration-150 ease-out";
 
 const NAV_LABEL_OPEN = "max-w-[180px] opacity-100 translate-x-0";
 
 const NAV_LABEL_CLOSED = "max-w-0 opacity-0 -translate-x-1";
 
-const NAV_ITEM_OPEN = "grid grid-cols-[32px_minmax(0,1fr)_auto] items-center gap-x-3";
+const NAV_ITEM_OPEN = "grid grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-x-3";
 
-const NAV_ITEM_CLOSED = "grid grid-cols-[32px] items-center justify-items-center";
+const NAV_ITEM_CLOSED = "grid grid-cols-[36px] items-center justify-items-center";
 
 const ROLE_LABELS: Record<string, string> = {
   YONETICI:  "Yönetici",
@@ -229,7 +180,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
         // eslint-disable-next-line @next/next/no-img-element
         <img src={brand.logoUrl} alt="Kurum logosu" className="h-full w-full object-contain p-1" />
       ) : (
-        <ShieldCheck className="h-4 w-4 text-white" strokeWidth={1.9} />
+        <Hospital theme="two-tone" size={19} strokeWidth={3} fill={["currentColor", "rgb(255 255 255 / 0.65)"]} className="text-white" />
       )}
     </div>
   );
@@ -431,14 +382,13 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
 
               <nav className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 pb-3 [-webkit-overflow-scrolling:touch]">
                 {navGroups.map((group) => (
-                  <div key={group.label} className="border-t border-slate-100 pt-2">
-                    <p className="mb-1 px-1 text-xs font-extrabold uppercase tracking-[0.16em] text-slate-500">{group.label}</p>
+                  <div key={group.label} className="border-t border-slate-100 pt-2 first:border-t-0 first:pt-0">
                     <div className="flex flex-col gap-1">
                       {group.items.map((it) => {
                         const active = isActive(it.href);
                         return (
-                        <Link key={it.href} href={it.href} onClick={() => setMobileOpen(false)} aria-current={active ? "page" : undefined} className={`grid h-11 grid-cols-[32px_minmax(0,1fr)] items-center gap-x-3 rounded-lg px-3 text-sm font-bold transition ${active ? "bg-primary-50 text-primary shadow-[inset_3px_0_0_rgb(var(--app-primary))]" : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"}`}>
-                          <IconFrame icon={ICONS[it.icon]} active={active} />
+                        <Link key={it.href} href={it.href} onClick={() => setMobileOpen(false)} aria-current={active ? "page" : undefined} className={`group grid h-11 grid-cols-[36px_minmax(0,1fr)] items-center gap-x-3 rounded-lg px-3 text-sm font-bold transition active:scale-[0.98] active:duration-75 ${active ? "bg-primary-50 text-primary shadow-[inset_3px_0_0_rgb(var(--app-primary))]" : "text-slate-700 hover:bg-slate-50 hover:text-slate-950"}`}>
+                          <ModuleIcon module={it.icon as ModuleKey} active={active} />
                           <span className="truncate">{it.label}</span>
                         </Link>
                         );
@@ -456,7 +406,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                   }}
                   className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-500 transition hover:bg-red-50 hover:text-red-600"
                 >
-                  <LogOut className="h-4 w-4" strokeWidth={1.9} />
+                  <ModuleIcon module="logout" size="sm" />
                   <span>Oturumu Kapat</span>
                 </button>
               </div>
@@ -464,9 +414,15 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
           </div>
         </div>
       )}
-      <div className="relative hidden h-screen w-[72px] shrink-0 md:block">
+      {/* Daraltılmış/genişlemiş genişlik burada gerçek bir flex öğesi olarak
+          tutulur (önceden aside `absolute` ile bu track'in dışına taşıp
+          genişlediğinde header/ana içerik yeniden akmıyordu — sidebar
+          genişleyince altındaki banner/içerik metnini kesip örtüyordu, bkz.
+          denetim raporu). Artık genişlik değişimi normal flex reflow ile
+          header ve ana içeriğe otomatik yansır. */}
+      <div className={`relative hidden h-screen ${w} shrink-0 transition-[width] duration-200 ease-out md:block`}>
       <aside
-        className={`absolute inset-y-0 left-0 z-40 h-screen ${w} flex-col border-r border-slate-200/80 bg-gradient-to-b from-white via-white to-slate-50/60 shadow-[4px_0_24px_rgb(15_23_42/0.05),1px_0_0_rgb(15_23_42/0.03)] transition-[width] duration-200 ease-out md:flex`}
+        className="flex h-screen w-full flex-col border-r border-slate-200/80 bg-white shadow-[4px_0_18px_rgb(15_23_42/0.045),1px_0_0_rgb(15_23_42/0.03)] md:flex"
         onMouseEnter={() => setDesktopHovered(true)}
         onMouseLeave={() => { setDesktopHovered(false); setRolePickerOpen(false); }}
         onFocusCapture={() => setDesktopHovered(true)}
@@ -482,14 +438,17 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
         </div>
       </div>
 
-      {/* Kullanıcı kartı */}
+      {/* Kullanıcı kartı — ikon tile'larıyla aynı "porselen" yüzey dili
+          (ince üst highlight + düşük yoğunluklu iç gölge) — önceden düz
+          tek renk bir kutuydu, yeni ikon sisteminden görsel olarak
+          kopuktu (bkz. kullanıcı geri bildirimi). */}
       {userName && (
-        <div className={`mx-2 mb-3 flex h-14 items-center rounded-xl border border-slate-200 bg-slate-50 ${collapsed ? "justify-center px-0" : "gap-3 pl-[10px] pr-3"}`}>
+        <div className={`ui-sidebar-card mx-2 mb-3 flex h-14 items-center rounded-xl ${collapsed ? "justify-center px-0" : "gap-3 pl-[10px] pr-3"}`}>
           {user.photoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={user.photoUrl} alt={userName} className="h-9 w-9 shrink-0 rounded-full object-cover" />
+            <img src={user.photoUrl} alt={userName} className="h-9 w-9 shrink-0 rounded-full object-cover ring-2 ring-white" />
           ) : (
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-bold text-white">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary-strong text-sm font-bold text-white shadow-[0_2px_6px_rgb(var(--app-primary)/0.3)]">
               {userName.charAt(0).toUpperCase()}
             </div>
           )}
@@ -613,10 +572,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
       <nav className="flex-1 overflow-y-auto px-2 pb-2">
         {navGroups.map((group, gi) => {
           return (
-          <div key={group.label} className={gi > 0 ? "mt-2 border-t border-slate-100 pt-2" : ""}>
-            <div className={`flex h-7 items-center pl-[19px] text-[11px] font-extrabold uppercase tracking-[0.16em] text-slate-400 transition-opacity ${collapsed ? "pointer-events-none opacity-0" : "opacity-100"}`} aria-hidden={collapsed}>
-              {group.label}
-            </div>
+          <div key={group.label} className={gi > 0 ? "mt-1.5 border-t border-slate-100 pt-1.5" : ""}>
             {group.items.map((item) => {
               const active = isActive(item.href);
               const badge = dynamicBadge(item.href) || (item.badge ? parseInt(item.badge) : 0);
@@ -627,28 +583,29 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                     prefetch={false}
                     onMouseEnter={() => router.prefetch(item.href)}
                     aria-current={active ? "page" : undefined}
+                    aria-label={collapsed ? item.label : undefined}
                     className={
-                      "relative h-11 rounded-lg px-3 text-sm font-bold transition-all duration-150 " +
+                      "relative h-11 rounded-lg px-3 text-sm transition-all duration-150 active:scale-[0.98] active:duration-75 " +
                       (collapsed ? NAV_ITEM_CLOSED : NAV_ITEM_OPEN) + " " +
                       (active
-                        ? "bg-primary-50 text-primary shadow-[inset_3px_0_0_rgb(var(--app-primary))]"
-                        : "text-slate-700 hover:bg-slate-50 hover:text-slate-950") +
+                        ? "bg-primary-50/80 font-bold text-primary shadow-[inset_3px_0_0_rgb(var(--app-primary))]"
+                        : "font-semibold text-slate-700 hover:bg-slate-100/70 hover:text-slate-950") +
                       " focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-primary/70"
                     }
                   >
-                    <IconFrame icon={ICONS[item.icon]} active={active} />
+                    <ModuleIcon module={item.icon as ModuleKey} active={active} />
                     {!collapsed && (
-                      <span className={`${NAV_LABEL_BASE} ${NAV_LABEL_OPEN} font-bold`}>
+                      <span className={`${NAV_LABEL_BASE} ${NAV_LABEL_OPEN} ${active ? "font-bold" : "font-semibold"}`}>
                         {item.label}
                       </span>
                     )}
                     {!collapsed && badge > 0 && (
-                      <span className="rounded-full bg-red-500 px-2 py-1 text-xs font-bold text-white leading-none">
+                      <span className="rounded-full bg-gradient-to-b from-red-500 to-red-600 px-2 py-1 text-xs font-bold text-white leading-none shadow-[0_2px_6px_rgba(220,38,38,0.35)]">
                         {badge > 99 ? "99+" : badge}
                       </span>
                     )}
                     {collapsed && badge > 0 && (
-                      <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white">
+                      <span className="absolute -right-1 -top-1 flex h-5 min-w-5 items-center justify-center rounded-full bg-gradient-to-b from-red-500 to-red-600 px-1 text-[10px] font-bold text-white shadow-[0_2px_6px_rgba(220,38,38,0.35)] ring-2 ring-white">
                         {badge > 9 ? "9+" : badge}
                       </span>
                     )}
@@ -676,9 +633,10 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
               await fetch("/api/auth/logout", { method: "POST" });
               window.location.href = "/giris";
             }}
-            className={`grid h-11 w-full rounded-lg px-3 text-slate-500 transition hover:bg-red-50 hover:text-red-600 ${collapsed ? "grid-cols-[32px] justify-items-center" : "grid-cols-[32px_minmax(0,1fr)] gap-x-3 text-sm font-bold"}`}
+            aria-label={collapsed ? "Oturumu Kapat" : undefined}
+            className={`grid h-11 w-full rounded-lg px-3 text-slate-500 transition active:scale-[0.98] active:duration-75 hover:bg-red-50 hover:text-red-600 ${collapsed ? "grid-cols-[36px] justify-items-center" : "grid-cols-[36px_minmax(0,1fr)] gap-x-3 text-sm font-bold"}`}
           >
-            <IconFrame icon={LogOut} className="border-red-100 bg-red-50 text-red-500 group-hover:border-red-200 group-hover:bg-red-100" />
+            <ModuleIcon module="logout" size="sm" className="text-red-500 group-hover:bg-red-50" />
             {!collapsed && <span className={`${NAV_LABEL_BASE} ${NAV_LABEL_OPEN} text-left`}>Oturumu Kapat</span>}
           </button>
           {collapsed && (

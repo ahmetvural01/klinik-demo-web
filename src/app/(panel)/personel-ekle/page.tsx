@@ -9,6 +9,7 @@ import { downscaleImageToDataUrl } from "@/lib/image-upload";
 import { invalidateCachedGet } from "@/lib/client-cache";
 import { Button } from "@/components/ui/Button";
 import { FormField, FormSection, FormErrorBanner, inputErrorClass } from "@/components/ui/FormField";
+import { Spinner } from "@/components/ui/Spinner";
 
 const isEffectiveDoctorRole = (role: string, showAsDoctor: boolean) => role === "DOKTOR" || (role === "YONETICI" && showAsDoctor);
 
@@ -88,39 +89,43 @@ function PersonelEkleContent() {
       }
     }
 
-    let res = await fetch(isEdit ? "/api/staff/" + editId : "/api/staff", {
-      method: isEdit ? "PUT" : "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
+    try {
+      let res = await fetch(isEdit ? "/api/staff/" + editId : "/api/staff", {
+        method: isEdit ? "PUT" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
 
-    if (res.status === 409) {
-      const b = await res.json().catch(() => ({}));
-      if (b.requiresForce) {
-        const proceed = await confirmDialog({
-          message: `${b.message}\n\nYine de pasife almak istiyor musunuz? (Randevu/plan/takipler devredilmeden kalır.)`,
-          danger: true,
-          confirmText: "Yine de Pasife Al",
-        });
-        if (!proceed) { setSaving(false); return; }
-        res = await fetch(isEdit ? "/api/staff/" + editId : "/api/staff", {
-          method: isEdit ? "PUT" : "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...body, force: true }),
-        });
+      if (res.status === 409) {
+        const b = await res.json().catch(() => ({}));
+        if (b.requiresForce) {
+          const proceed = await confirmDialog({
+            message: `${b.message}\n\nYine de pasife almak istiyor musunuz? (Randevu/plan/takipler devredilmeden kalır.)`,
+            danger: true,
+            confirmText: "Yine de Pasife Al",
+          });
+          if (!proceed) return;
+          res = await fetch(isEdit ? "/api/staff/" + editId : "/api/staff", {
+            method: isEdit ? "PUT" : "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...body, force: true }),
+          });
+        }
       }
+
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({ message: "Kayıt başarısız" }));
+        setError(b.message || "Kayıt başarısız");
+        return;
+      }
+
+      invalidateCachedGet("/api/staff");
+      router.push("/personel");
+    } catch {
+      setError("Bağlantı hatası — kayıt yapılamadı. Lütfen tekrar deneyin.");
+    } finally {
+      setSaving(false);
     }
-
-    setSaving(false);
-
-    if (!res.ok) {
-      const b = await res.json().catch(() => ({ message: "Kayıt başarısız" }));
-      setError(b.message || "Kayıt başarısız");
-      return;
-    }
-
-    invalidateCachedGet("/api/staff");
-    router.push("/personel");
   };
 
   if (loadingEdit) return <div className="space-y-3 rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
@@ -310,7 +315,7 @@ function PersonelEkleContent() {
 
 export default function PersonelEklePage() {
   return (
-    <Suspense fallback={<div className="flex h-40 items-center justify-center"><div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>}>
+    <Suspense fallback={<div className="flex h-40 items-center justify-center"><Spinner className="h-6 w-6 text-primary" /></div>}>
       <PersonelEkleContent />
     </Suspense>
   );

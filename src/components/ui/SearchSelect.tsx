@@ -71,7 +71,7 @@ export function SearchSelect({
         className={className}
       />
       {open && (
-        <div id={listboxId} role="listbox" className="absolute left-0 right-0 top-full z-40 mt-1 max-h-56 overflow-y-auto rounded-lg border border-slate-200 bg-white py-1 shadow-[var(--shadow-floating)]">
+        <div id={listboxId} role="listbox" className="ui-popover absolute left-0 right-0 top-full z-40 mt-1 max-h-56 overflow-y-auto py-1">
           {options.length === 0 ? (
             <p className="px-3 py-2 text-xs text-slate-400">{emptyText || "Sonuç bulunamadı"}</p>
           ) : (

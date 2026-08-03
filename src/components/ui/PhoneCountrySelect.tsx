@@ -4,6 +4,7 @@ import { Check, ChevronDown, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { COUNTRY_CODES } from "@/lib/country-codes";
+import { useOutsideClick } from "@/lib/use-outside-click";
 
 type PhoneCountrySelectProps = {
   value: string;
@@ -24,14 +25,10 @@ export function PhoneCountrySelect({ value, onChange, className = "" }: PhoneCou
     return COUNTRY_CODES.filter((item) => `${item.name} ${item.code}`.toLocaleLowerCase("tr-TR").includes(term));
   }, [query]);
 
+  useOutsideClick(rootRef, () => setOpen(false), open);
+
   useEffect(() => {
     if (!open) return;
-    const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Element;
-      if (rootRef.current?.contains(target) || target.closest("[data-phone-country-picker]")) return;
-      setOpen(false);
-    };
-    document.addEventListener("pointerdown", onPointerDown);
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setOpen(false);
@@ -39,10 +36,7 @@ export function PhoneCountrySelect({ value, onChange, className = "" }: PhoneCou
       triggerRef.current?.focus();
     };
     document.addEventListener("keydown", onKeyDown);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
+    return () => document.removeEventListener("keydown", onKeyDown);
   }, [open]);
 
   useEffect(() => {
@@ -81,7 +75,7 @@ export function PhoneCountrySelect({ value, onChange, className = "" }: PhoneCou
         <ChevronDown className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>
       {open && typeof document !== "undefined" && createPortal(
-        <div data-phone-country-picker className="fixed z-[330] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[var(--shadow-floating)]" style={{ left: position.left, top: position.top, width: position.width }}>
+        <div data-outside-click-ignore className="fixed z-[330] overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[var(--shadow-floating)]" style={{ left: position.left, top: position.top, width: position.width }}>
           <div className="border-b border-slate-100 p-2">
             <label className="flex h-9 items-center gap-2 rounded-lg bg-slate-50 px-2.5 text-slate-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/15">
               <Search className="h-4 w-4" />

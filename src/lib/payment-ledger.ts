@@ -139,8 +139,14 @@ export async function updateIntegratedPayment({
   if (!existing) throw new Error("Ödeme bulunamadı");
   if (existing.status !== "ACTIVE") throw new Error("İptal edilmiş ödeme düzenlenemez");
 
+  // doctorId değişimi de yeniden uygulamayı tetiklemeli — aksi halde
+  // Payment.doctorId yeni doktora güncellenir ama bağlı taksit
+  // ödemeleri/planı hâlâ eski doktora bağlı kalır ve iki doktorun
+  // hakedişini bozar (bkz. denetim raporu, applyTaksitIntegration'daki
+  // doctorId notuyla aynı risk).
   const shouldReapply =
-    amount !== undefined || method !== undefined || posId !== undefined || createdAt !== undefined;
+    amount !== undefined || method !== undefined || posId !== undefined ||
+    createdAt !== undefined || doctorId !== undefined;
 
   let taksitReverseInfo = { reversed: 0, updatedCount: 0 };
   let taksitInfo = null;

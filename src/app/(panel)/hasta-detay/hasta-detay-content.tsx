@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, useRef } from "react";
-import { Download, List as ListIcon, Pencil, Plus } from "lucide-react";
+import { Download, List as ListIcon, Pencil, Plus, ShieldAlert } from "lucide-react";
 import { OdontogramSelector, ToothStatus as TSType, TOOTH_STATUS_LABELS } from "@/components/ToothChart";
 import { PatientConsentPanel } from "@/components/PatientConsentPanel";
 import { SearchSelect } from "@/components/ui/SearchSelect";
@@ -25,7 +25,15 @@ import { addPdfSection, createPdfDoc, pdfSafeText } from "@/lib/pdf-export";
 import { cachedGet } from "@/lib/client-cache";
 import { PatientFormModal } from "@/components/patient/PatientFormModal";
 import { Badge } from "@/components/ui/Badge";
+import { CountUp } from "@/components/ui/CountUp";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { createModuleEmptyIcon, type ModuleKey } from "@/components/ui/ModuleIcon";
+import { showToastSafe } from "@/lib/toast-client";
 import { getDisplayAppointmentStatus } from "@/lib/appointment-status";
+
+const TaskEmptyIcon = createModuleEmptyIcon("clipboard");
+const RxEmptyIcon = createModuleEmptyIcon("finance");
+const LabTabEmptyIcon = createModuleEmptyIcon("flask");
 
 type PatientDocument = {
   id: string;
@@ -37,6 +45,16 @@ type PatientDocument = {
   note?: string | null;
   createdAt: string;
   uploadedBy?: { fullName: string } | null;
+};
+
+type DocUploadItem = {
+  key: string;
+  file: File;
+  name: string;
+  size: number;
+  status: "uploading" | "done" | "error" | "canceled";
+  progress: number | null;
+  error?: string;
 };
 
 type LabOrder = { id: string; labName?: string; labType: string; status: string; price?: number | null; notes?: string | null; createdAt: string; doctor?: { fullName: string } | null };
@@ -554,8 +572,11 @@ export default function HastaDetayContent() {
   const [docCategory, setDocCategory] = useState<"BELGE" | "RONTGEN" | "FOTOGRAF">("BELGE");
   const [docToothNo, setDocToothNo] = useState("");
   const [docNote, setDocNote] = useState("");
-  const [docUploading, setDocUploading] = useState(false);
-  const [docUploadError, setDocUploadError] = useState("");
+  const [docUploadQueue, setDocUploadQueue] = useState<DocUploadItem[]>([]);
+  const docXhrRefs = useRef<Map<string, XMLHttpRequest>>(new Map());
+  // null = ilerleme bilinmiyor (indeterminate) — sunucu/tarayıcı byte bazlı
+  // ilerlemeyi raporlamazsa (bkz. XHR upload.onprogress lengthComputable)
+  // sahte bir yüzde üretmek yerine belirsiz (indeterminate) çubuk gösterilir.
   const [currentUserId, setCurrentUserId] = useState("");
   // Başlangıçta sessionStorage'dan oku — flash'siz render
   const [currentUserRole, setCurrentUserRole] = useState(() =>
@@ -586,9 +607,11 @@ export default function HastaDetayContent() {
   const [taskDetails, setTaskDetails] = useState("");
   const [taskSaving, setTaskSaving] = useState(false);
   const [taskBusyId, setTaskBusyId] = useState("");
-  const [toast, setToast] = useState<{ type: "success" | "error"; text: string } | null>(null);
-  const showToast = (type: "success" | "error", text: string) => {
-    setToast({ type, text }); setTimeout(() => setToast(null), 3500);
+  // Tek, paylaşılan bildirim sistemi — bu sayfa önceden kendi renkli kutu
+  // toast'ını çiziyordu (motion'suz, StatusFeedback'siz), artık uygulama
+  // genelindeki tek toast sistemine (showToastSafe → ToastProvider) yönlendirir.
+  const showToast = (type: "success" | "error", text: string, icon?: ModuleKey) => {
+    showToastSafe({ message: text, type, icon });
   };
   const [smsConsentResending, setSmsConsentResending] = useState(false);
   const resendSmsConsent = async () => {
@@ -1699,35 +1722,40 @@ export default function HastaDetayContent() {
     if (totalDebt - downPayment <= 0) return showToast("error", "Taksitlendirilecek miktar 0'dan büyük olmalıdır");
 
     setInstallmentLoading(true);
-    const res = await fetch("/api/taksit-plani", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        patientId: id,
-        doctorId: currentUserId,
-        baslik: `${installmentPreview.length} Taksitli Ödeme - ${new Date().toLocaleDateString("tr-TR")}`,
-        toplamBorc: totalDebt,
-        pesnat: downPayment,
-        taksitSayisi: installmentPreview.length,
-        period: installmentForm.period,
-        startDate: installmentForm.startDate,
-        notes: installmentForm.notes || undefined,
-        taksitler: installmentPreview.map((p, i) => ({ siraNo: i + 1, date: p.date, amount: p.amount }))
-      })
-    });
+    try {
+      const res = await fetch("/api/taksit-plani", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patientId: id,
+          doctorId: currentUserId,
+          baslik: `${installmentPreview.length} Taksitli Ödeme - ${new Date().toLocaleDateString("tr-TR")}`,
+          toplamBorc: totalDebt,
+          pesnat: downPayment,
+          taksitSayisi: installmentPreview.length,
+          period: installmentForm.period,
+          startDate: installmentForm.startDate,
+          notes: installmentForm.notes || undefined,
+          taksitler: installmentPreview.map((p, i) => ({ siraNo: i + 1, date: p.date, amount: p.amount }))
+        })
+      });
 
-    if (res.ok) {
-      showToast("success", "Taksit planı oluşturuldu");
-      setInstallmentForm({toplamBorc: "", pesnat: "0", taksitSayisi: "3", period: "AYLIK", startDate: new Date().toISOString().slice(0, 10), notes: ""});
-      setInstallmentModalOpen(false);
-      setInstallmentStep("borç");
-      setInstallmentPreview([]);
-      void load();
-    } else {
-      const err = await res.json().catch(() => ({}));
-      showToast("error", err.error || "Taksit planı oluşturulamadı");
+      if (res.ok) {
+        showToast("success", "Taksit planı oluşturuldu", "finance");
+        setInstallmentForm({toplamBorc: "", pesnat: "0", taksitSayisi: "3", period: "AYLIK", startDate: new Date().toISOString().slice(0, 10), notes: ""});
+        setInstallmentModalOpen(false);
+        setInstallmentStep("borç");
+        setInstallmentPreview([]);
+        void load();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast("error", err.error || "Taksit planı oluşturulamadı");
+      }
+    } catch {
+      showToast("error", "Bağlantı hatası — taksit planı oluşturulamadı. Lütfen tekrar deneyin.");
+    } finally {
+      setInstallmentLoading(false);
     }
-    setInstallmentLoading(false);
   };
 
   const handleInstallmentNextStep = () => {
@@ -2074,26 +2102,31 @@ export default function HastaDetayContent() {
         : `payment-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     paymentRequestKeyRef.current = requestKey;
     setPayLoading(true);
-    const res = editingPaymentId
-      ? await fetch("/api/payments/" + editingPaymentId, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ method: payMethod, amount, description: payDesc, doctorId: payDoctorId, posId: payPosId || null, createdAt: new Date(payDate + "T00:00:00").toISOString() })
-        })
-      : await fetch("/api/payments", {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
-          body: JSON.stringify({ patientId: id, method: payMethod, amount, description: payDesc, doctorId: payDoctorId, ...(payPosId && { posId: payPosId }) })
-        });
-    if (res.ok) {
-      showToast("success", editingPaymentId ? "Ödeme güncellendi" : "Ödeme kaydedildi");
-      closePaymentModal();
-      void load();
-    } else {
-      const err = await res.json().catch(() => ({}));
-      showToast("error", err.message || (editingPaymentId ? "Ödeme güncellenemedi" : "Ödeme kaydedilemedi"));
+    try {
+      const res = editingPaymentId
+        ? await fetch("/api/payments/" + editingPaymentId, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ method: payMethod, amount, description: payDesc, doctorId: payDoctorId, posId: payPosId || null, createdAt: new Date(payDate + "T00:00:00").toISOString() })
+          })
+        : await fetch("/api/payments", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
+            body: JSON.stringify({ patientId: id, method: payMethod, amount, description: payDesc, doctorId: payDoctorId, ...(payPosId && { posId: payPosId }) })
+          });
+      if (res.ok) {
+        showToast("success", editingPaymentId ? "Ödeme güncellendi" : "Ödeme kaydedildi", "finance");
+        closePaymentModal();
+        void load();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast("error", err.message || (editingPaymentId ? "Ödeme güncellenemedi" : "Ödeme kaydedilemedi"));
+      }
+    } catch {
+      showToast("error", "Bağlantı hatası — ödeme kaydedilemedi. Lütfen tekrar deneyin.");
+    } finally {
+      setPayLoading(false);
     }
-    setPayLoading(false);
   };
 
   const saveNote = async () => {
@@ -2110,51 +2143,63 @@ export default function HastaDetayContent() {
   const createClinicTask = async () => {
     if (!taskTitle.trim()) return showToast("error", "Görev başlığı girin");
     setTaskSaving(true);
-    const res = await fetch("/api/clinic-tasks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        patientId: id,
-        title: taskTitle.trim(),
-        type: taskType,
-        priority: taskPriority,
-        assignedToId: taskAssignedToId || undefined,
-        vendorName: taskVendor.trim() || undefined,
-        dueAt: taskDueAt ? new Date(taskDueAt).toISOString() : undefined,
-        details: taskDetails.trim() || undefined,
-      }),
-    });
-    setTaskSaving(false);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      return showToast("error", err.message || "Görev oluşturulamadı");
-    }
+    try {
+      const res = await fetch("/api/clinic-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patientId: id,
+          title: taskTitle.trim(),
+          type: taskType,
+          priority: taskPriority,
+          assignedToId: taskAssignedToId || undefined,
+          vendorName: taskVendor.trim() || undefined,
+          dueAt: taskDueAt ? new Date(taskDueAt).toISOString() : undefined,
+          details: taskDetails.trim() || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast("error", err.message || "Görev oluşturulamadı");
+        return;
+      }
 
-    setTaskTitle("");
-    setTaskType("PARCA_SIPARIS");
-    setTaskPriority(2);
-    setTaskAssignedToId("");
-    setTaskVendor("");
-    setTaskDueAt("");
-    setTaskDetails("");
-    showToast("success", "Görev eklendi");
-    void load();
+      setTaskTitle("");
+      setTaskType("PARCA_SIPARIS");
+      setTaskPriority(2);
+      setTaskAssignedToId("");
+      setTaskVendor("");
+      setTaskDueAt("");
+      setTaskDetails("");
+      showToast("success", "Görev eklendi");
+      void load();
+    } catch {
+      showToast("error", "Bağlantı hatası — görev oluşturulamadı. Lütfen tekrar deneyin.");
+    } finally {
+      setTaskSaving(false);
+    }
   };
 
   const updateClinicTaskStatus = async (taskId: string, status: ClinicTask["status"]) => {
     setTaskBusyId(taskId);
-    const res = await fetch("/api/clinic-tasks/" + taskId, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
-    setTaskBusyId("");
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      return showToast("error", err.message || "Görev güncellenemedi");
+    try {
+      const res = await fetch("/api/clinic-tasks/" + taskId, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast("error", err.message || "Görev güncellenemedi");
+        return;
+      }
+      showToast("success", "Görev durumu güncellendi");
+      void load();
+    } catch {
+      showToast("error", "Bağlantı hatası — görev güncellenemedi. Lütfen tekrar deneyin.");
+    } finally {
+      setTaskBusyId("");
     }
-    showToast("success", "Görev durumu güncellendi");
-    void load();
   };
 
   const deleteClinicTask = async (taskId: string) => {
@@ -2195,18 +2240,26 @@ export default function HastaDetayContent() {
   const addRecete = async () => {
     if (currentRecipeDrugs.length === 0) return showToast("error", "En az bir ilaç ekleyin");
     setRxSaving(true);
-    const res = await fetch("/api/prescriptions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ patientId: id, drugs: JSON.stringify(currentRecipeDrugs), note: rxNote, doctorId: rxDoctorId || undefined })
-    });
-    if (res.ok) {
-      showToast("success", "Reçete kaydedildi");
-      setCurrentRecipeDrugs([]);
-      setRxNote("");
-      void load();
-    } else showToast("error", "Reçete kaydedilemedi");
-    setRxSaving(false);
+    try {
+      const res = await fetch("/api/prescriptions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ patientId: id, drugs: JSON.stringify(currentRecipeDrugs), note: rxNote, doctorId: rxDoctorId || undefined })
+      });
+      if (res.ok) {
+        showToast("success", "Reçete kaydedildi", "clipboard");
+        setCurrentRecipeDrugs([]);
+        setRxNote("");
+        void load();
+      } else {
+        const err = await res.json().catch(() => ({}));
+        showToast("error", err.message || "Reçete kaydedilemedi");
+      }
+    } catch {
+      showToast("error", "Bağlantı hatası — reçete kaydedilemedi. Lütfen tekrar deneyin.");
+    } finally {
+      setRxSaving(false);
+    }
   };
 
   const deleteRecete = async (rxId: string) => {
@@ -2240,21 +2293,9 @@ export default function HastaDetayContent() {
     }
   };
 
-  const uploadDocument = async (file: File) => {
+  const uploadDocument = async (file: File, key: string) => {
     if (!id) return;
-    setDocUploadError("");
-    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
-    if (!allowedTypes.includes(file.type)) {
-      const message = "Yalnızca JPG, PNG, WEBP veya PDF dosyası yüklenebilir.";
-      setDocUploadError(message);
-      return showToast("error", message);
-    }
-    if (file.size > 15 * 1024 * 1024) {
-      const message = "Dosya boyutu en fazla 15MB olabilir.";
-      setDocUploadError(message);
-      return showToast("error", message);
-    }
-    setDocUploading(true);
+    setDocUploadQueue((q) => q.map((it) => (it.key === key ? { ...it, status: "uploading", progress: 0, error: undefined } : it)));
     try {
       const formData = new FormData();
       formData.append("patientId", id);
@@ -2263,26 +2304,106 @@ export default function HastaDetayContent() {
       if (docNote.trim()) formData.append("note", docNote.trim());
       formData.append("file", file);
 
-      const res = await fetch("/api/documents", { method: "POST", body: formData });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        const message = json?.error || "Belge yüklenemedi";
-        setDocUploadError(message);
-        showToast("error", message);
+      // Gerçek yükleme ilerlemesini (fetch değil, XMLHttpRequest) izlemek için —
+      // `fetch` gövde gönderim ilerlemesini raporlamaz. API sözleşmesi (uç,
+      // FormData alanları, yanıt şekli) aynı kalır, yalnız istemci taşıma
+      // mekanizması değişti. xhr referansı ayrıca bir Map'te tutulur ki
+      // kullanıcı yükleme sırasında "İptal"e basarsa gerçekten abort() edilsin
+      // (sahte/görsel bir iptal değil).
+      const json = await new Promise<{ ok: boolean; status: number; body: unknown }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        docXhrRefs.current.set(key, xhr);
+        xhr.open("POST", "/api/documents");
+        xhr.upload.onprogress = (evt) => {
+          if (evt.lengthComputable) {
+            const pct = Math.round((evt.loaded / evt.total) * 100);
+            setDocUploadQueue((q) => q.map((it) => (it.key === key ? { ...it, progress: pct } : it)));
+          } else {
+            setDocUploadQueue((q) => q.map((it) => (it.key === key ? { ...it, progress: null } : it)));
+          }
+        };
+        xhr.onload = () => {
+          let body: unknown = {};
+          try { body = JSON.parse(xhr.responseText); } catch { /* boş yanıt */ }
+          resolve({ ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status, body });
+        };
+        xhr.onerror = () => reject(new Error("network"));
+        xhr.onabort = () => reject(new Error("aborted"));
+        xhr.send(formData);
+      }).then((r) => ({ ok: r.ok, json: r.body as { error?: string; id?: string } }));
+
+      docXhrRefs.current.delete(key);
+
+      if (!json.ok) {
+        const message = json.json?.error || "Belge yüklenemedi";
+        setDocUploadQueue((q) => q.map((it) => (it.key === key ? { ...it, status: "error", error: message } : it)));
         return;
       }
-      setDocuments((prev) => [json as PatientDocument, ...prev]);
-      setDocToothNo("");
-      setDocNote("");
-      showToast("success", "Belge yüklendi");
+      setDocuments((prev) => [json.json as unknown as PatientDocument, ...prev]);
+      showToast("success", "Belge yüklendi", "clipboard");
+      setDocUploadQueue((q) => q.map((it) => (it.key === key ? { ...it, status: "done", progress: 100 } : it)));
+      window.setTimeout(() => setDocUploadQueue((q) => q.filter((it) => it.key !== key)), 2500);
       void loadDocuments();
-    } catch {
-      const message = "Belge yüklenirken bağlantı hatası oluştu";
-      setDocUploadError(message);
-      showToast("error", message);
-    } finally {
-      setDocUploading(false);
+    } catch (err) {
+      docXhrRefs.current.delete(key);
+      const aborted = err instanceof Error && err.message === "aborted";
+      setDocUploadQueue((q) => q.map((it) => (it.key === key ? { ...it, status: aborted ? "canceled" : "error", error: aborted ? undefined : "Belge yüklenirken bağlantı hatası oluştu" } : it)));
     }
+  };
+
+  const enqueueDocumentFiles = async (files: File[]) => {
+    if (!id || files.length === 0) return;
+    const allowedTypes = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+    const existingNames = new Set(documents.map((d) => d.fileName.toLowerCase()));
+    const dupNames = files.filter((f) => existingNames.has(f.name.toLowerCase())).map((f) => f.name);
+    let filesToUpload = files;
+    if (dupNames.length > 0) {
+      const proceed = await confirmDialog({
+        title: "Aynı isimli belge",
+        message: `Şu dosya(lar) bu hastada zaten yüklü görünüyor: ${dupNames.join(", ")}. Yine de yeni kopya olarak yüklensin mi?`,
+        confirmText: "Yine de Yükle",
+      });
+      if (!proceed) {
+        filesToUpload = files.filter((f) => !dupNames.includes(f.name));
+        if (filesToUpload.length === 0) return;
+      }
+    }
+
+    const newItems: DocUploadItem[] = [];
+    const toUpload: { file: File; key: string }[] = [];
+    for (const file of filesToUpload) {
+      const key = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      if (!allowedTypes.includes(file.type)) {
+        newItems.push({ key, file, name: file.name, size: file.size, status: "error", progress: null, error: "Yalnızca JPG, PNG, WEBP veya PDF dosyası yüklenebilir." });
+        continue;
+      }
+      if (file.size > 15 * 1024 * 1024) {
+        newItems.push({ key, file, name: file.name, size: file.size, status: "error", progress: null, error: "Dosya boyutu en fazla 15MB olabilir." });
+        continue;
+      }
+      newItems.push({ key, file, name: file.name, size: file.size, status: "uploading", progress: 0 });
+      toUpload.push({ file, key });
+    }
+    setDocUploadQueue((q) => [...q, ...newItems]);
+    setDocToothNo("");
+    setDocNote("");
+    for (const { file, key } of toUpload) {
+      await uploadDocument(file, key);
+    }
+  };
+
+  const retryUpload = (key: string) => {
+    const item = docUploadQueue.find((it) => it.key === key);
+    if (!item) return;
+    void uploadDocument(item.file, key);
+  };
+
+  const cancelUpload = (key: string) => {
+    docXhrRefs.current.get(key)?.abort();
+  };
+
+  const dismissUploadItem = (key: string) => {
+    setDocUploadQueue((q) => q.filter((it) => it.key !== key));
   };
 
   const deleteDocument = async (docId: string) => {
@@ -2341,7 +2462,7 @@ export default function HastaDetayContent() {
       <div className="h-56 animate-pulse rounded-lg bg-slate-50" />
     </section>
   );
-  if (!data) return <section className="rounded-xl bg-white border border-slate-100 p-6 shadow-sm"><p>{loadError || "Hasta bulunamadı"}. <Link href="/hasta" className="text-primary underline">Geri Dön</Link></p></section>;
+  if (!data) return <section className="ui-surface p-6"><p>{loadError || "Hasta bulunamadı"}. <Link href="/hasta" className="text-primary underline">Geri Dön</Link></p></section>;
 
   const totalPaid = data.payments.reduce((s, p) => s + Number(p.amount), 0);
   const diagnozlar = data.examinations.filter(e => isDiagnosisStatus(e.status));
@@ -2799,31 +2920,21 @@ export default function HastaDetayContent() {
 
   return (
     <section className="space-y-4">
-      {/* Toast */}
-      {toast && (
-        <div className={`fixed right-5 top-5 z-[320] flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-lg ${
-          toast.type === "success" ? "bg-emerald-500" : "bg-red-500"
-        }`}>
-          {toast.text}
-        </div>
-      )}
 
-      <div className="rounded-lg border border-slate-200 bg-white px-4 py-3 shadow-sm">
+      <div className="ui-surface px-4 py-3">
         <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 basis-full items-center gap-3 sm:basis-auto sm:flex-1">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-base font-bold text-white">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary-strong text-base font-black text-white shadow-[0_2px_6px_rgb(var(--app-primary)/0.28)] ring-2 ring-white">
             {data.fullName.split(" ").map(w => w[0]).slice(0, 2).join("").toUpperCase()}
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="min-w-0 max-w-full flex-1 truncate text-lg font-black text-slate-900" title={data.fullName}>{data.fullName}</h2>
               {data.hasContagiousDisease && (
-                <span className="rounded-full border border-red-300 bg-red-600 px-2 py-0.5 text-[11px] font-black text-white" title={data.contagiousDiseaseNote || "Bulaşıcı hastalık"}>
-                  ⚠ Bulaşıcı Hastalık
-                </span>
+                <Badge tone="critical" solid icon={ShieldAlert} title={data.contagiousDiseaseNote || "Bulaşıcı hastalık"}>Bulaşıcı Hastalık</Badge>
               )}
-              {healthFlags.length > 0 && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-700">Sağlık uyarısı</span>}
-              {totalDebt > 0 && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-bold text-amber-700">Kalan {totalDebt.toLocaleString("tr-TR", { maximumFractionDigits: 0 })} TL</span>}
+              {healthFlags.length > 0 && <Badge tone="critical" icon={ShieldAlert}>Sağlık uyarısı</Badge>}
+              {totalDebt > 0 && <Badge tone="warning">Kalan {totalDebt.toLocaleString("tr-TR", { maximumFractionDigits: 0 })} TL</Badge>}
             </div>
             <p className="mt-0.5 text-xs text-slate-500">TC: {data.tcNo}{(currentUserRole !== "DOKTOR" && currentUserRole !== "ASISTAN") ? ` · ${data.phone}` : ""}</p>
           </div>
@@ -2831,11 +2942,21 @@ export default function HastaDetayContent() {
 
         <div className="flex w-full items-center justify-end gap-2 sm:w-auto">
           <details ref={actionMenuRef} className="relative">
-            <summary className="inline-flex h-10 cursor-pointer list-none items-center gap-2 rounded-xl bg-slate-950 px-3 text-sm font-bold text-white transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2">
+            <summary className="ui-interactive inline-flex h-10 cursor-pointer list-none items-center gap-2 rounded-xl bg-gradient-to-b from-primary to-primary-strong px-3 text-sm font-bold text-white shadow-[0_2px_8px_rgb(var(--app-primary)/0.3)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2">
               <Plus className="h-4 w-4" aria-hidden="true" />
               İşlem Ekle
             </summary>
             <div className="absolute right-0 z-30 mt-2 w-48 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
+              <button
+                type="button"
+                onClick={() => {
+                  closeActionMenu();
+                  router.push(`/randevu?newPatientId=${id}&newPatientName=${encodeURIComponent(data?.fullName || "")}`);
+                }}
+                className="block w-full px-3 py-2 text-left text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Randevu Oluştur
+              </button>
               {canOpenTab("tedavi") && (
                 <button
                   type="button"
@@ -2928,29 +3049,29 @@ export default function HastaDetayContent() {
         </div>
         </div>
         <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-100 pt-3 sm:grid-cols-4">
-          <button onClick={() => canOpenTab("randevular") && selectTab("randevular")} className="rounded-lg bg-slate-50 px-3 py-2 text-left text-xs text-slate-500 hover:bg-slate-100">
-            <span className="block font-bold uppercase">Randevu</span><span className="text-sm font-black text-slate-900">{data.appointments.length}</span>
+          <button onClick={() => canOpenTab("randevular") && selectTab("randevular")} className="ui-surface-soft ui-interactive ui-kpi-in px-3 py-2 text-left" style={{ ["--row-delay" as string]: "0ms" }}>
+            <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">Randevu</span><span className="text-sm font-black text-slate-900"><CountUp value={data.appointments.length} /></span>
           </button>
-          <button onClick={() => canOpenTab("tedavi") && selectTab("tedavi")} className="rounded-lg bg-slate-50 px-3 py-2 text-left text-xs text-slate-500 hover:bg-slate-100">
-            <span className="block font-bold uppercase">Tedavi</span><span className="text-sm font-black text-slate-900">{tedaviler.length}</span>
+          <button onClick={() => canOpenTab("tedavi") && selectTab("tedavi")} className="ui-surface-soft ui-interactive ui-kpi-in px-3 py-2 text-left" style={{ ["--row-delay" as string]: "40ms" }}>
+            <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">Tedavi</span><span className="text-sm font-black text-slate-900"><CountUp value={tedaviler.length} /></span>
           </button>
-          <button onClick={() => canOpenTab("odeme") && selectTab("odeme")} className="rounded-lg bg-slate-50 px-3 py-2 text-left text-xs text-slate-500 hover:bg-slate-100">
-            <span className="block font-bold uppercase">Ödenen</span><span className="text-sm font-black text-emerald-700">{totalPaid.toLocaleString("tr-TR", { maximumFractionDigits: 0 })} TL</span>
+          <button onClick={() => canOpenTab("odeme") && selectTab("odeme")} className="ui-surface-soft ui-interactive ui-kpi-in px-3 py-2 text-left" style={{ ["--row-delay" as string]: "80ms" }}>
+            <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">Ödenen</span><span className="text-sm font-black text-emerald-700"><CountUp value={totalPaid} formatter={(n) => `${n.toLocaleString("tr-TR")} TL`} /></span>
           </button>
-          <button onClick={() => canOpenTab("odeme") && selectTab("odeme")} className="rounded-lg bg-slate-50 px-3 py-2 text-left text-xs text-slate-500 hover:bg-slate-100">
-            <span className="block font-bold uppercase">Kalan</span><span className={`text-sm font-black ${totalDebt > 0 ? "text-red-700" : "text-emerald-700"}`}>{totalDebt.toLocaleString("tr-TR", { maximumFractionDigits: 0 })} TL</span>
+          <button onClick={() => canOpenTab("odeme") && selectTab("odeme")} className="ui-surface-soft ui-interactive ui-kpi-in px-3 py-2 text-left" style={{ ["--row-delay" as string]: "120ms" }}>
+            <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">Kalan</span><span className={`text-sm font-black ${totalDebt > 0 ? "text-red-700" : "text-emerald-700"} ${totalDebt > 0 ? "ui-badge-pulse" : ""}`}><CountUp value={totalDebt} formatter={(n) => `${n.toLocaleString("tr-TR")} TL`} /></span>
           </button>
         </div>
       </div>
 
-      <div className="sticky top-0 z-40 flex items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm">
-        <div className="flex min-w-0 flex-1 gap-1 overflow-x-auto">
+      <div className="sticky top-0 z-40 flex items-center justify-between gap-2 rounded-lg bg-slate-100/80 p-1 shadow-sm">
+        <div className="flex min-w-0 flex-1 gap-0.5 overflow-x-auto">
           {primaryTabs.map((tabKey) => (
             <button
               key={tabKey}
               type="button"
               onClick={() => selectTab(tabKey)}
-              className={"shrink-0 rounded-xl px-4 py-2 text-sm font-black transition-colors " + (tab === tabKey ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900")}
+              className={"ui-view-tab shrink-0 rounded-md px-4 py-2 text-sm font-black transition-all duration-150 " + (tab === tabKey ? "is-active bg-white text-primary shadow-[0_1px_3px_rgb(15_23_42/0.12)]" : "text-slate-600 hover:text-slate-900")}
             >
               {tabLabel(tabKey)}
             </button>
@@ -2958,7 +3079,7 @@ export default function HastaDetayContent() {
         </div>
         {moreTabs.length > 0 && (
           <details ref={moreMenuRef} className="relative shrink-0">
-            <summary className={"cursor-pointer list-none rounded-xl px-4 py-2 text-sm font-black transition-colors " + (isMoreTabActive ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900")}>
+            <summary className={"ui-view-tab cursor-pointer list-none rounded-md px-4 py-2 text-sm font-black transition-all duration-150 " + (isMoreTabActive ? "is-active bg-white text-primary shadow-[0_1px_3px_rgb(15_23_42/0.12)]" : "text-slate-600 hover:text-slate-900")}>
               Diğer
             </summary>
             <div className="absolute right-0 z-30 mt-2 w-56 overflow-hidden rounded-lg border border-slate-200 bg-white py-1 shadow-lg">
@@ -2981,9 +3102,9 @@ export default function HastaDetayContent() {
       </div>
 
       {tab === "bilgi" && (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="ui-tab-panel-in grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
           <div className="space-y-4">
-            <div className="rounded-lg border border-slate-200 bg-white shadow-sm">
+            <div className="ui-surface">
               <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-4">
                 <div>
                   <h3 className="text-base font-black text-slate-900">Açık İşler</h3>
@@ -3000,7 +3121,7 @@ export default function HastaDetayContent() {
                       key={item.id}
                       type="button"
                       onClick={item.onClick}
-                      className={`rounded-xl border px-4 py-3 text-left transition hover:shadow-sm ${item.tone}`}
+                      className={`ui-tone-card-interactive rounded-xl border px-4 py-3 text-left ${item.tone}`}
                     >
                       <span className="block text-sm font-black text-slate-900">{item.title}</span>
                       <span className="mt-1 block line-clamp-2 text-xs text-slate-600">{item.detail}</span>
@@ -3053,7 +3174,7 @@ export default function HastaDetayContent() {
           </div>
 
           <aside className="space-y-4">
-            <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="ui-surface p-5">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <h3 className="text-base font-black text-slate-900">Hasta Profili</h3>
                 {canEditPatient && (
@@ -3142,10 +3263,10 @@ export default function HastaDetayContent() {
               const sendFailed = pref?.status === "PENDING" && Boolean(pref?.lastRequestError);
 
               return (
-                <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+                <div className="ui-surface ui-kpi-in p-5">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <h3 className="text-base font-black text-slate-900">SMS İzin Durumu</h3>
-                    <Badge tone={STATUS_TONE[displayStatus]} solid>{STATUS_LABEL[displayStatus]}</Badge>
+                    <Badge tone={STATUS_TONE[displayStatus]} solid className={displayStatus === "PENDING" || sendFailed ? "ui-badge-pulse" : ""}>{STATUS_LABEL[displayStatus]}</Badge>
                   </div>
                   {sendFailed && (
                     <div className="mb-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5">
@@ -3196,7 +3317,7 @@ export default function HastaDetayContent() {
       )}
 
       {tab === "randevular" && (
-        <div className="panel-surface overflow-hidden">
+        <div className="ui-tab-panel-in panel-surface overflow-hidden">
           <table className="w-full text-sm">
             <thead className="bg-gray-50 border-b text-xs uppercase text-gray-500">
               <tr><th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Doktor</th><th className="px-3 py-2 text-left">Tip</th><th className="px-3 py-2 text-left">Durum</th></tr>
@@ -3241,8 +3362,8 @@ export default function HastaDetayContent() {
       )}
 
       {tab === "gorevler" && (
-        <div className="space-y-4">
-          <div className="rounded-lg border bg-white p-4">
+        <div className="ui-tab-panel-in space-y-4">
+          <div className="ui-surface p-4">
             <h3 className="mb-3 text-sm font-bold text-slate-800">Yeni Görev Ekle</h3>
             <div className="grid gap-2 md:grid-cols-3">
               <input
@@ -3290,7 +3411,7 @@ export default function HastaDetayContent() {
             </div>
           </div>
 
-          <div className="rounded-lg border bg-white overflow-hidden">
+          <div className="ui-surface overflow-hidden">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 border-b text-xs uppercase text-gray-500">
                 <tr>
@@ -3303,9 +3424,13 @@ export default function HastaDetayContent() {
                 </tr>
               </thead>
               <tbody>
-                {clinicTasks.length === 0 && <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">Kayıtlı görev yok</td></tr>}
-                {clinicTasks.map(t => (
-                  <tr key={t.id} className="border-b">
+                {clinicTasks.length === 0 && (
+                  <tr><td colSpan={6} className="px-3 py-8">
+                    <EmptyState icon={TaskEmptyIcon} illustrative compact title="Kayıtlı görev yok" description="Bu hasta için henüz bir görev oluşturulmadı." />
+                  </td></tr>
+                )}
+                {clinicTasks.map((t, taskIdx) => (
+                  <tr key={t.id} className="ui-row-in border-b" style={{ ["--row-delay" as string]: `${Math.min(taskIdx, 10) * 20}ms` }}>
                     <td className="px-3 py-2">
                       <p className="font-semibold text-slate-800">{t.title}</p>
                       {t.vendorName && <p className="text-xs text-slate-500">Firma: {t.vendorName}</p>}
@@ -3367,13 +3492,22 @@ export default function HastaDetayContent() {
           PLANLANDI: "bg-slate-100 text-slate-700", DEVAM_EDIYOR: "bg-primary/10 text-primary",
           TAMAMLANDI: "bg-emerald-100 text-emerald-700", IPTAL: "bg-red-100 text-red-700",
         };
+        const treatmentPlanHref = `/tedavi-plani?patientId=${id}&patientName=${encodeURIComponent(data?.fullName || "")}`;
         return (
-        <div className="space-y-4">
+        <div className="ui-tab-panel-in space-y-4">
+          {treatmentPlans.length === 0 && currentUserRole !== "ASISTAN" && (
+            <div className="rounded-xl border border-primary/20 bg-primary/10 p-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-sm font-bold text-primary">Tedavi Planları</h3>
+                <Link href={treatmentPlanHref} className="text-xs font-semibold text-primary underline">Yeni Plan Oluştur</Link>
+              </div>
+            </div>
+          )}
           {treatmentPlans.length > 0 && (
             <div className="rounded-xl border border-primary/20 bg-primary/10 p-4">
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="text-sm font-bold text-primary">Tedavi Planları</h3>
-                <Link href="/tedavi-plani" className="text-xs font-semibold text-primary underline">Tümünü Yönet</Link>
+                <Link href={treatmentPlanHref} className="text-xs font-semibold text-primary underline">Tümünü Yönet</Link>
               </div>
               <p className="mb-3 text-xs text-primary">
                 Bu tutarlar aşağıdaki &quot;Kalan&quot; bakiyeye otomatik yansımaz — plan, hasta muayeneye/tedaviye geldikçe
@@ -3568,7 +3702,7 @@ export default function HastaDetayContent() {
           </div>
           )}
 
-          <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+          <div className="ui-surface overflow-hidden">
             <div className="flex items-center justify-between border-b bg-slate-50 px-4 py-3">
               <div className="flex items-center gap-2">
                 <h3 className="font-semibold text-amber-700">Muayene Listesi (Tedavi Bekleyen)</h3>
@@ -3712,7 +3846,7 @@ export default function HastaDetayContent() {
             </table>
           </div>
 
-          <div className="overflow-hidden rounded-xl border bg-white shadow-sm">
+          <div className="ui-surface overflow-hidden">
             <div className="flex items-center justify-between border-b bg-slate-50 px-4 py-3">
               <h3 className="font-semibold text-emerald-700">Yapılan Tedaviler</h3>
               <span className="text-xs text-slate-400">{tedaviler.length} kayıt</span>
@@ -3863,19 +3997,19 @@ export default function HastaDetayContent() {
       })()}
 
       {tab === "odeme" && (
-        <div className="space-y-4">
+        <div className="ui-tab-panel-in space-y-4">
           <div className="grid grid-cols-2 divide-x divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm sm:grid-cols-4 sm:divide-y-0">
-            <div className="p-3 text-center"><p className="text-xs text-slate-500">Brüt Tedavi</p><p className="font-bold text-slate-900">{totalCharged.toFixed(2)} TL</p></div>
-            <div className="p-3 text-center"><p className="text-xs text-slate-500">İndirim</p><p className="font-bold text-orange-600">%{data.discountRate}</p></div>
-            <div className="p-3 text-center"><p className="text-xs text-slate-500">İndirimli Tutar</p><p className="font-bold text-primary">{discountedTotal.toFixed(2)} TL</p></div>
-            <div className="p-3 text-center"><p className="text-xs text-slate-500">Kalan</p><p className={"font-bold " + (totalDebt > 0 ? "text-red-600" : "text-green-700")}>{totalDebt.toFixed(2)} TL</p></div>
+            <div className="ui-kpi-in p-3 text-center" style={{ ["--row-delay" as string]: "0ms" }}><p className="text-xs text-slate-500">Brüt Tedavi</p><p className="font-bold text-slate-900"><CountUp value={totalCharged} formatter={(n) => `${n.toFixed(2)} TL`} /></p></div>
+            <div className="ui-kpi-in p-3 text-center" style={{ ["--row-delay" as string]: "40ms" }}><p className="text-xs text-slate-500">İndirim</p><p className="font-bold text-orange-600">%{data.discountRate}</p></div>
+            <div className="ui-kpi-in p-3 text-center" style={{ ["--row-delay" as string]: "80ms" }}><p className="text-xs text-slate-500">İndirimli Tutar</p><p className="font-bold text-primary"><CountUp value={discountedTotal} formatter={(n) => `${n.toFixed(2)} TL`} /></p></div>
+            <div className={`ui-kpi-in p-3 text-center ${totalDebt > 0 ? "ui-badge-pulse" : ""}`} style={{ ["--row-delay" as string]: "120ms" }}><p className="text-xs text-slate-500">Kalan</p><p className={"font-bold " + (totalDebt > 0 ? "text-red-600" : "text-green-700")}><CountUp value={totalDebt} formatter={(n) => `${n.toFixed(2)} TL`} /></p></div>
           </div>
 
           <div className="flex justify-end gap-2">
             <button onClick={openNewPaymentModal} className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">Ödeme Al</button>
           </div>
 
-          <div className="rounded-xl border border-slate-100 bg-white shadow-sm overflow-hidden">
+          <div className="ui-surface overflow-hidden">
             <div className="border-b border-slate-100 px-5 py-3">
               <p className="text-sm font-black text-slate-900">Ödeme Geçmişi</p>
             </div>
@@ -3896,11 +4030,15 @@ export default function HastaDetayContent() {
                 <tr><th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Hekim</th><th className="px-3 py-2 text-left">Yöntem</th><th className="px-3 py-2 text-left">Açıklama</th><th className="px-3 py-2 text-right">Tutar</th><th className="px-3 py-2 text-center">İşlem</th></tr>
               </thead>
               <tbody>
-                {data.payments.length === 0 && <tr><td colSpan={6} className="px-3 py-4 text-center text-gray-400">Ödeme yok</td></tr>}
-                {data.payments.map((p: {id:string; createdAt:string; method:string; description?:string|null; amount:string|number; doctorId?:string|null; doctor?:{id:string; fullName:string}|null; posId?:string|null}) => {
+                {data.payments.length === 0 && (
+                  <tr><td colSpan={6} className="px-3 py-8">
+                    <EmptyState icon={RxEmptyIcon} illustrative compact title="Ödeme yok" description="Bu hasta için henüz bir tahsilat kaydedilmedi." />
+                  </td></tr>
+                )}
+                {data.payments.map((p: {id:string; createdAt:string; method:string; description?:string|null; amount:string|number; doctorId?:string|null; doctor?:{id:string; fullName:string}|null; posId?:string|null}, payIdx: number) => {
                   const ML: Record<string,string> = { NAKIT:"Nakit", KREDI_KARTI:"Kredi Kartı", HAVALE_EFT:"Havale/EFT", MAIL_ORDER:"Mail Order", DIGER:"Diğer" };
                   return (
-                    <tr key={p.id} className="border-b hover:bg-slate-50">
+                    <tr key={p.id} style={{ ["--row-delay" as string]: `${Math.min(payIdx, 10) * 20}ms` }} className="ui-row-in border-b hover:bg-slate-50">
                       <td className="px-3 py-2 text-xs">{new Date(p.createdAt).toLocaleDateString("tr-TR")}</td>
                       <td className="px-3 py-2 text-xs">{p.doctor?.fullName || "—"}</td>
                       <td className="px-3 py-2"><span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">{ML[p.method] || p.method}</span></td>
@@ -3919,7 +4057,7 @@ export default function HastaDetayContent() {
             </table>
           </div>
 
-          <div className="rounded-lg border bg-white p-4">
+          <div className="ui-surface p-4">
             <button onClick={() => {setInstallmentModalOpen(true); setInstallmentStep("borç"); setInstallmentForm({toplamBorc: String(discountedTotal), pesnat: "0", taksitSayisi: "3", period: "AYLIK", startDate: new Date().toISOString().slice(0, 10), notes: ""});}} className="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-primary/90 transition">+ Taksit Planı Oluştur</button>
           </div>
 
@@ -4065,7 +4203,7 @@ export default function HastaDetayContent() {
                 </div>
           </Modal>
 
-          <div className="rounded-lg border bg-white p-4">
+          <div className="ui-surface p-4">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="font-semibold">Ödeme Planları</h3>
               <Link href="/muhasebe?tab=taksit" className="text-xs font-bold text-primary hover:underline">Tüm Planları Aç</Link>
@@ -4145,8 +4283,8 @@ export default function HastaDetayContent() {
       )}
 
       {tab === "recete" && (
-        <div className="space-y-5">
-          <div className="rounded-xl border border-slate-100 bg-white p-6 shadow-sm">
+        <div className="ui-tab-panel-in space-y-5">
+          <div className="ui-surface p-6">
             <h3 className="mb-1 text-lg font-bold text-slate-900">Yeni Reçete Yaz</h3>
             <p className="mb-4 text-sm text-slate-500">İlaç listesinden seçin, sistem standart kullanım bilgisini otomatik eklesin.</p>
 
@@ -4261,13 +4399,11 @@ export default function HastaDetayContent() {
           <div>
             <h3 className="mb-3 text-lg font-bold text-slate-900">Reçete Geçmişi</h3>
             {(!data.prescriptions || data.prescriptions.length === 0) ? (
-              <div className="rounded-lg border border-slate-100 bg-slate-50 p-6 text-center">
-                <p className="text-sm text-slate-600">Henüz reçete yazılmamış</p>
-              </div>
+              <EmptyState icon={RxEmptyIcon} illustrative compact title="Henüz reçete yazılmamış" description="Bu hasta için kaydedilmiş bir reçete yok." />
             ) : (
               <div className="space-y-2">
-                {data.prescriptions.map(rx => (
-                  <div key={rx.id} className="flex items-center justify-between rounded-lg border border-slate-100 bg-white p-4 hover:shadow-sm transition">
+                {data.prescriptions.map((rx, rxIdx) => (
+                  <div key={rx.id} style={{ ["--row-delay" as string]: `${Math.min(rxIdx, 10) * 20}ms` }} className="ui-row-in flex items-center justify-between rounded-lg border border-slate-100 bg-white p-4 hover:shadow-sm transition">
                     <div>
                       <p className="text-xs text-slate-500">{new Date(rx.createdAt).toLocaleDateString("tr-TR")}</p>
                     </div>
@@ -4295,7 +4431,7 @@ export default function HastaDetayContent() {
 
       {tab === "notlar" && (
 
-        <div className="rounded-lg border bg-white p-4 space-y-4">
+        <div className="ui-tab-panel-in ui-surface p-4 space-y-4">
           <h3 className="font-semibold text-gray-700">Hasta Notları</h3>
           <div className="rounded-lg bg-gray-50 border p-3 min-h-24 whitespace-pre-wrap text-sm text-gray-800">
             {data.notes || <span className="text-gray-400 italic">Henüz not eklenmemiş.</span>}
@@ -4311,7 +4447,7 @@ export default function HastaDetayContent() {
       )}
 
       {tab === "lab" && (
-        <div className="space-y-4">
+        <div className="ui-tab-panel-in space-y-4">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-slate-800">Laboratuvar İşleri</h3>
             <div className="flex items-center gap-3">
@@ -4324,9 +4460,8 @@ export default function HastaDetayContent() {
             </div>
           </div>
           {(!data.labOrders || data.labOrders.length === 0) ? (
-            <div className="rounded-xl border bg-white p-8 text-center text-slate-400">
-              <svg className="mx-auto mb-3 h-10 w-10 text-slate-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5}><path d="M9 3H5a2 2 0 00-2 2v4m6-6h10a2 2 0 012 2v4M9 3v18m0 0h10a2 2 0 002-2V9M9 21H5a2 2 0 01-2-2V9m0 0h18"/></svg>
-              <p>Bu hasta için laboratuvar kaydı bulunmuyor</p>
+            <div className="ui-surface">
+              <EmptyState icon={LabTabEmptyIcon} illustrative title="Bu hasta için laboratuvar kaydı bulunmuyor" description="Yeni bir laboratuvar işi oluşturarak süreci burada takip edebilirsiniz." />
             </div>
           ) : (
             <>
@@ -4351,7 +4486,7 @@ export default function HastaDetayContent() {
                     ))}
                 </div>
               </div>
-              <div className="rounded-xl border bg-white overflow-hidden shadow-sm">
+              <div className="ui-surface overflow-hidden">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-50 border-b text-xs uppercase text-slate-500">
                     <tr>
@@ -4365,7 +4500,7 @@ export default function HastaDetayContent() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-50">
-                    {data.labOrders.map(l => {
+                    {data.labOrders.map((l, labIdx) => {
                       // LabOrderStatus enum'u ile birebir eşleşir (bkz. prisma/schema.prisma) —
                       // eskiden burada var olmayan enum değerleri (SIPARIS_VERILDI vb.) listeleniyor,
                       // en sık görülen DEVAM_EDIYOR ise hiç eşleşmediği için ham kod olarak görünüyordu.
@@ -4382,7 +4517,8 @@ export default function HastaDetayContent() {
                       return (
                         <tr
                           key={l.id}
-                          className="cursor-pointer hover:bg-slate-50 transition"
+                          style={{ ["--row-delay" as string]: `${Math.min(labIdx, 10) * 20}ms` }}
+                          className="ui-row-in cursor-pointer hover:bg-slate-50 transition"
                           onClick={() => openLabOrderDetail(l.id)}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") {
@@ -4428,10 +4564,10 @@ export default function HastaDetayContent() {
       )}
 
       {tab === "belgeler" && (
-        <div className="space-y-4">
+        <div className="ui-tab-panel-in space-y-4">
           <PatientConsentPanel patientId={data.id} patientName={data.fullName} patientTcNo={data.tcNo} />
 
-          <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="ui-surface p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h3 className="font-semibold text-slate-900">Belge / Röntgen Yükle</h3>
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">JPG, PNG, WEBP, PDF · 15MB</span>
@@ -4456,25 +4592,82 @@ export default function HastaDetayContent() {
                 <input value={docNote} onChange={(e) => setDocNote(e.target.value)} placeholder="Açıklama" className="w-full rounded border px-3 py-2 text-sm" />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-gray-600">Dosya (JPG, PNG, WEBP, PDF — en fazla 15MB)</label>
+                <label className="mb-1 block text-xs text-gray-600">Dosya (JPG, PNG, WEBP, PDF — en fazla 15MB, birden fazla seçilebilir)</label>
                 <input
                   type="file"
+                  multiple
                   accept="image/jpeg,image/png,image/webp,application/pdf"
-                  disabled={docUploading}
                   onChange={(e) => {
-                    const file = e.target.files?.[0];
+                    const files = Array.from(e.target.files ?? []);
                     e.target.value = "";
-                    if (file) void uploadDocument(file);
+                    if (files.length > 0) void enqueueDocumentFiles(files);
                   }}
                   className="w-full rounded border px-3 py-1.5 text-sm disabled:opacity-50"
                 />
               </div>
             </div>
-            {docUploading && <p className="mt-2 text-xs font-medium text-primary">Dosya yükleniyor, lütfen bekleyin...</p>}
-            {docUploadError && <p className="mt-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700">{docUploadError}</p>}
+            {docUploadQueue.length > 0 && (
+              <div className="mt-2 space-y-2">
+                {docUploadQueue.map((item) => (
+                  <div
+                    key={item.key}
+                    className={
+                      "rounded-lg border px-3 py-2.5 " +
+                      (item.status === "error" ? "border-red-200 bg-red-50" : item.status === "canceled" ? "border-slate-200 bg-slate-50" : item.status === "done" ? "border-emerald-200 bg-emerald-50" : "border-primary/20 bg-primary/5")
+                    }
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="min-w-0 truncate text-xs font-bold text-slate-800">{item.name}</p>
+                      <span className="shrink-0 text-[11px] font-semibold text-slate-500">
+                        {(item.size / 1024 / 1024).toFixed(1)} MB
+                      </span>
+                    </div>
+                    {item.status === "uploading" && (
+                      <>
+                        <div className="mt-1.5 flex items-center gap-2">
+                          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-primary/15">
+                            {item.progress === null ? (
+                              <div className="h-full w-1/3 animate-[ui-upload-indeterminate_1.1s_ease-in-out_infinite] rounded-full bg-primary" />
+                            ) : (
+                              <div
+                                className="h-full rounded-full bg-primary transition-[width] duration-150 ease-out"
+                                style={{ width: `${item.progress}%` }}
+                              />
+                            )}
+                          </div>
+                          <span className="w-9 shrink-0 text-right text-[11px] font-bold tabular-nums text-primary">
+                            {item.progress === null ? "…" : `${item.progress}%`}
+                          </span>
+                          <button type="button" onClick={() => cancelUpload(item.key)} className="shrink-0 text-[11px] font-semibold text-slate-500 hover:text-red-600">
+                            İptal
+                          </button>
+                        </div>
+                        <p className="mt-1 text-[11px] font-medium text-primary/80">
+                          {item.progress === null ? "Yükleniyor…" : item.progress < 100 ? "Yükleniyor…" : "Sunucuda işleniyor…"}
+                        </p>
+                      </>
+                    )}
+                    {(item.status === "error" || item.status === "canceled") && (
+                      <div className="mt-1.5 flex items-center justify-between gap-2">
+                        <p className="text-[11px] font-semibold text-red-700">{item.status === "canceled" ? "Yükleme iptal edildi" : item.error}</p>
+                        <div className="flex shrink-0 gap-2">
+                          <button type="button" onClick={() => retryUpload(item.key)} className="text-[11px] font-bold text-primary hover:underline">
+                            Tekrar Dene
+                          </button>
+                          <button type="button" onClick={() => dismissUploadItem(item.key)} className="text-[11px] font-semibold text-slate-500 hover:text-slate-700">
+                            Kapat
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    {item.status === "done" && <p className="mt-1.5 text-[11px] font-semibold text-emerald-700">Yüklendi ✓</p>}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
-          <div className="rounded-lg border bg-white p-4">
+          <div className="ui-surface p-4">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="font-semibold text-slate-900">Yüklü Belgeler</h3>
               <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{documents.length} kayıt</span>

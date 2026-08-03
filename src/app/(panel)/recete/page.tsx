@@ -9,6 +9,7 @@ import { formatDate } from "@/lib/format";
 import { cachedGet } from "@/lib/client-cache";
 import { shouldHidePatientPhone } from "@/lib/patient-visibility";
 import { Button } from "@/components/ui/Button";
+import { Spinner } from "@/components/ui/Spinner";
 import { Printer } from "lucide-react";
 
 type Setting = {
@@ -100,7 +101,7 @@ export default function PrescriptionPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-40">
-        <div className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+        <Spinner className="h-6 w-6 text-primary" />
       </div>
     );
   }

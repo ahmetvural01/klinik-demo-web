@@ -76,7 +76,7 @@ export default function AdminsPage() {
         body: JSON.stringify({ modules, isActive: editIsActive }),
       });
       if (!res.ok) throw new Error("Kaydedilemedi");
-      showToastSafe({ title: "Kaydedildi", message: "Admin bilgileri güncellendi", type: "success" });
+      showToastSafe({ title: "Kaydedildi", message: "Admin bilgileri güncellendi", type: "success", icon: "settings" });
       setSelected(null);
       load();
     } catch (e) {
@@ -119,7 +119,7 @@ export default function AdminsPage() {
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.message || "Oluşturulamadı");
-      showToastSafe({ title: "Oluşturuldu", message: `${d.fullName} admin olarak eklendi`, type: "success" });
+      showToastSafe({ title: "Oluşturuldu", message: `${d.fullName} admin olarak eklendi`, type: "success", icon: "person" });
       setShowCreate(false);
       setCreateForm({ fullName: "", identityNo: "", email: "", password: "" });
       setCreateModules(ALL_MODULES.map((m) => m.key));

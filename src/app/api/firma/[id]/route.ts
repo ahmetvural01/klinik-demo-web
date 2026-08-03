@@ -38,7 +38,11 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     if (auth.error) return auth.error;
     
     const body = await req.json();
-    const { kategori, paymentTerms, customPaymentDays, ...rest } = body;
+    const { kategori, paymentTerms, customPaymentDays, name, phone, iban, ibanName, notes, isActive } = body;
+    // Body'den yalnızca izin verilen alanlar alınır — önceden `...rest` ile
+    // gövdenin TAMAMI Prisma update'ine geçiyordu; bir kullanıcı body'ye
+    // `institutionId` ekleyerek kendi kurumuna ait bir firma kaydını başka
+    // bir kuruma taşıyabilirdi (bkz. denetim raporu, IDOR).
     const existing = await (prisma as any).firma.findFirst({
       where: {
         id: params.id,
@@ -63,7 +67,12 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     const firma = await (prisma as any).firma.update({
       where: { id: existing.id },
       data: {
-        ...rest,
+        ...(typeof name === "string" ? { name } : {}),
+        ...(typeof phone === "string" ? { phone } : {}),
+        ...(typeof iban === "string" ? { iban } : {}),
+        ...(typeof ibanName === "string" ? { ibanName } : {}),
+        ...(typeof notes === "string" ? { notes } : {}),
+        ...(typeof isActive === "boolean" ? { isActive } : {}),
         kategori: kategori || undefined,
         paymentTerms: paymentTerms || undefined,
         customPaymentDays: customPaymentDays || undefined

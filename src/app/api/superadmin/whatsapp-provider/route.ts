@@ -3,6 +3,28 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { encryptField } from "@/lib/field-crypto";
 
+// GET zaten hassas alanları maskeliyordu ama POST/PUT şifreli (plaintext
+// değil, ama yine de gereksiz) değerleri client'a olduğu gibi dönüyordu —
+// aynı response şekli tüm uçlarda tutarlı olmalı (bkz. denetim raporu).
+function maskWhatsappProvider<T extends {
+  password: string | null;
+  apiKey: string | null;
+  verifyToken: string | null;
+  appSecret: string | null;
+}>(p: T) {
+  return {
+    ...p,
+    password: p.password ? "********" : "",
+    apiKey: p.apiKey ? "********" : "",
+    verifyToken: p.verifyToken ? "********" : "",
+    appSecret: p.appSecret ? "********" : "",
+    hasPassword: Boolean(p.password),
+    hasApiKey: Boolean(p.apiKey),
+    hasVerifyToken: Boolean(p.verifyToken),
+    hasAppSecret: Boolean(p.appSecret),
+  };
+}
+
 export async function GET() {
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;
@@ -105,7 +127,7 @@ export async function POST(request: NextRequest) {
   });
 
   await writeAudit(auth.user.id, "SUPERADMIN_WHATSAPP_PROVIDER_CREATE", `${created.name} WhatsApp sağlayıcısı oluşturuldu${created.isActive ? " ve aktif edildi" : ""}`);
-  return NextResponse.json(created);
+  return NextResponse.json(maskWhatsappProvider(created));
 }
 
 export async function PUT(request: NextRequest) {
@@ -195,5 +217,5 @@ export async function PUT(request: NextRequest) {
   });
 
   await writeAudit(auth.user.id, "SUPERADMIN_WHATSAPP_PROVIDER_UPDATE", `${updated.name} WhatsApp sağlayıcısı güncellendi${updated.isActive ? " (aktif)" : ""}`);
-  return NextResponse.json(updated);
+  return NextResponse.json(maskWhatsappProvider(updated));
 }

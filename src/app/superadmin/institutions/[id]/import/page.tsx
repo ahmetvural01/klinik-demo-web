@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Download, FileSpreadsheet, CheckCircle2, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { Spinner } from "@/components/ui/Spinner";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 
@@ -132,7 +133,7 @@ export default function InstitutionImportPage() {
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.message || "Aktarım başarısız");
       setResult(data);
-      showToastSafe({ title: "Tamamlandı", message: "Veri aktarımı tamamlandı", type: "success" });
+      showToastSafe({ title: "Tamamlandı", message: "Veri aktarımı tamamlandı", type: "success", icon: "institutions" });
     } catch (error) {
       showToastSafe({ title: "Hata", message: error instanceof Error ? error.message : "Aktarım başarısız", type: "error" });
     } finally {
@@ -199,7 +200,7 @@ export default function InstitutionImportPage() {
 
         {previewing && (
           <div className="mt-4 flex items-center justify-center gap-2 py-4 text-sm text-slate-500">
-            <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+            <Spinner className="h-5 w-5 text-primary" />
             Dosya inceleniyor...
           </div>
         )}

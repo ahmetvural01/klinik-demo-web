@@ -96,13 +96,19 @@ async function main() {
   // Not: identityNo artık sadece kurum içinde benzersiz (bkz. schema notu), bu yüzden
   // institutionId=null olan superadmin hesapları için upsert yerine findFirst+create/update
   // kullanılıyor (compound unique key non-null institutionId gerektiriyor).
+  //
+  // GÜVENLİK: Superadmin zaten varsa seed onun passwordHash'ini asla değiştirmemeli —
+  // aksi halde SUPERADMIN_PASSWORD env değeri sonraki bir deploy'da değişirse, mevcut
+  // hesabın gerçek şifresi sessizce geçersiz kılınır (bkz. bu depoda daha önce yaşanan
+  // "stale seed vs current env" giriş uyuşmazlığı). Şifre değişikliği yalnız açık bir
+  // CLI aracıyla (scripts/fix-superadmin-user.cjs, scripts/create-superadmin.mts) yapılmalı.
   const existingSystemSuperadmin = await prisma.user.findFirst({
     where: { identityNo: superadminIdentityNo, role: Role.SUPERADMIN },
   });
   const systemSuperadmin = existingSystemSuperadmin
     ? await prisma.user.update({
         where: { id: existingSystemSuperadmin.id },
-        data: { fullName: superadminFullName, role: Role.SUPERADMIN, institutionId: null, passwordHash: superadminPass, isActive: true },
+        data: { fullName: superadminFullName, role: Role.SUPERADMIN, institutionId: null, isActive: true },
       })
     : await prisma.user.create({
         data: {
@@ -122,7 +128,7 @@ async function main() {
   const ahmetSuperadmin = existingAhmetSuperadmin
     ? await prisma.user.update({
         where: { id: existingAhmetSuperadmin.id },
-        data: { fullName: requestedSuperadminFullName, role: Role.SUPERADMIN, institutionId: null, passwordHash: superadminPass, isActive: true },
+        data: { fullName: requestedSuperadminFullName, role: Role.SUPERADMIN, institutionId: null, isActive: true },
       })
     : await prisma.user.create({
         data: {

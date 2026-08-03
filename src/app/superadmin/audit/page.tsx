@@ -85,7 +85,7 @@ export default function AuditPage() {
   const copyEntry = async (log: AuditEntry) => {
     try {
       await navigator.clipboard.writeText(formatEntryText(log));
-      showToastSafe({ title: "Kopyalandı", message: "Kayıt panoya kopyalandı", type: "success" });
+      showToastSafe({ title: "Kopyalandı", message: "Kayıt panoya kopyalandı", type: "success", icon: "log" });
     } catch {
       showToastSafe({ title: "Hata", message: "Kopyalanamadı", type: "error" });
     }

@@ -10,6 +10,11 @@ import {
 } from "lucide-react";
 import { ListTable } from "@/components/ui/ListTable";
 import { Badge } from "@/components/ui/Badge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
+import { Spinner } from "@/components/ui/Spinner";
+
+const ReportsEmptyIcon = createModuleEmptyIcon("rapor");
 
 // Bu sayfa daha önce API'nin hiç döndürmediği alanları (totalInstitutions,
 // totalUsers, monthlyRevenue, topInstitutions vb.) okuyordu — her istatistik
@@ -38,16 +43,14 @@ export default function ReportsPage() {
   if (loading) {
     return (
       <div className="flex items-center justify-center py-32">
-        <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+        <Spinner className="h-10 w-10 text-primary" />
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm font-semibold text-red-700">
-        Raporlar yüklenemedi.
-      </div>
+      <EmptyState icon={ReportsEmptyIcon} illustrative title="Raporlar yüklenemedi" description="Rapor verileri şu anda alınamıyor. Lütfen daha sonra tekrar deneyin." />
     );
   }
 

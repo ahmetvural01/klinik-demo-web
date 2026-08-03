@@ -6,6 +6,11 @@ import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { Button } from "@/components/ui/Button";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
+import { Spinner } from "@/components/ui/Spinner";
+
+const RolePermissionsEmptyIcon = createModuleEmptyIcon("settings");
 
 type Role = "YONETICI" | "DOKTOR" | "ASISTAN" | "BANKO" | "MUHASEBE";
 type Category = "tumu" | "klinik" | "finans" | "yonetim" | "iletisim" | "sistem";
@@ -138,46 +143,54 @@ export default function RolePermissionsPage() {
     if (!payload) return;
     if (!(await confirmDialog({ message: "Yetki değişiklikleri kaydedilsin mi? Bu değişiklik anında platformdaki TÜM kliniklerin her API/sayfa yetki kontrolüne yansır.", danger: true, confirmText: "Kaydet" }))) return;
     setSaving(true);
-    const res = await fetch("/api/superadmin/role-permissions", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ map }),
-    });
-    if (!res.ok) {
-      showToastSafe({ title: "Hata", message: "Kaydetme sırasında hata oluştu.", type: "error" });
+    try {
+      const res = await fetch("/api/superadmin/role-permissions", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ map }),
+      });
+      if (!res.ok) {
+        showToastSafe({ title: "Hata", message: "Kaydetme sırasında hata oluştu.", type: "error" });
+        return;
+      }
+      const d = await res.json();
+      setPayload(prev => prev ? { ...prev, version: d.version, updatedAt: d.updatedAt, updatedBy: d.updatedBy } : prev);
+      setSavedMap(map);
+      showToastSafe({ title: "Kaydedildi", message: `Yetkiler kaydedildi. Sürüm: ${d.version}`, type: "success", icon: "settings" });
+    } catch {
+      showToastSafe({ title: "Hata", message: "Bağlantı hatası — yetkiler kaydedilemedi. Lütfen tekrar deneyin.", type: "error" });
+    } finally {
       setSaving(false);
-      return;
     }
-    const d = await res.json();
-    setPayload(prev => prev ? { ...prev, version: d.version, updatedAt: d.updatedAt, updatedBy: d.updatedBy } : prev);
-    setSavedMap(map);
-    showToastSafe({ title: "Kaydedildi", message: `Yetkiler kaydedildi. Sürüm: ${d.version}`, type: "success" });
-    setSaving(false);
   };
 
   const resetDefaults = async () => {
     if (!(await confirmDialog({ message: "Tüm rol izinleri varsayılan değerlere dönsün mü?", danger: true, confirmText: "Sıfırla" }))) return;
     setSaving(true);
-    const res = await fetch("/api/superadmin/role-permissions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "reset" }),
-    });
-    if (!res.ok) {
-      showToastSafe({ title: "Hata", message: "Sıfırlama sırasında hata oluştu.", type: "error" });
+    try {
+      const res = await fetch("/api/superadmin/role-permissions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "reset" }),
+      });
+      if (!res.ok) {
+        showToastSafe({ title: "Hata", message: "Sıfırlama sırasında hata oluştu.", type: "error" });
+        return;
+      }
+      await load();
+      showToastSafe({ title: "Sıfırlandı", message: "Varsayılan yetkiler yüklendi.", type: "success", icon: "settings" });
+    } catch {
+      showToastSafe({ title: "Hata", message: "Bağlantı hatası — sıfırlanamadı. Lütfen tekrar deneyin.", type: "error" });
+    } finally {
       setSaving(false);
-      return;
     }
-    await load();
-    showToastSafe({ title: "Sıfırlandı", message: "Varsayılan yetkiler yüklendi.", type: "success" });
-    setSaving(false);
   };
 
   if (loading) {
     return (
       <div className="flex min-h-[400px] items-center justify-center rounded-2xl border border-slate-100 bg-white shadow-sm">
         <div className="flex flex-col items-center gap-3">
-          <div className="h-10 w-10 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
+          <Spinner className="h-10 w-10 text-primary" />
           <p className="text-sm text-slate-500">Yetki haritası yükleniyor…</p>
         </div>
       </div>
@@ -286,8 +299,8 @@ export default function RolePermissionsPage() {
 
       {/* ── YETKİ GRUPLARI ─────────────────────────────────────────────── */}
       {filteredGroups.length === 0 && (
-        <div className="rounded-2xl border border-slate-100 bg-white p-10 text-center text-sm text-slate-400 shadow-sm">
-          Arama kriterlerine uyan yetki bulunamadı.
+        <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
+          <EmptyState icon={RolePermissionsEmptyIcon} illustrative title="Yetki bulunamadı" description="Arama kriterlerine uyan yetki bulunamadı." />
         </div>
       )}
 

@@ -37,7 +37,7 @@ export function ListPager({
             <select
               value={pageSize}
               onChange={(event) => onPageSizeChange(Number(event.target.value))}
-              className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              className="rounded-md border border-slate-200 bg-white px-2 py-1.5 text-xs outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
             >
               {pageSizeOptions.map((size) => (
                 <option key={size} value={size}>{size}</option>
@@ -51,7 +51,7 @@ export function ListPager({
           type="button"
           disabled={page <= 1 || loading}
           onClick={() => onPageChange(Math.max(1, page - 1))}
-          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-40"
+          className="inline-flex min-h-9 items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition-[border-color,background-color,color,box-shadow] duration-150 hover:border-primary/30 hover:bg-primary/[0.04] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 disabled:pointer-events-none disabled:opacity-40"
         >
           <ChevronLeft className="h-4 w-4" />
           Önceki
@@ -60,7 +60,7 @@ export function ListPager({
           type="button"
           disabled={page >= pageCount || loading}
           onClick={() => onPageChange(Math.min(pageCount, page + 1))}
-          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 disabled:opacity-40"
+          className="inline-flex min-h-9 items-center gap-1 rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition-[border-color,background-color,color,box-shadow] duration-150 hover:border-primary/30 hover:bg-primary/[0.04] hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/25 disabled:pointer-events-none disabled:opacity-40"
         >
           Sonraki
           <ChevronRight className="h-4 w-4" />

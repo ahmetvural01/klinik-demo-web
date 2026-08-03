@@ -1,8 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import type { ComponentType } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
+import type { IconAccent } from "@/components/ui/IconFrame";
 import {
   ColumnDef,
   SortingState,
@@ -17,6 +19,9 @@ type ProfessionalDataTableProps<TData> = {
   data: TData[];
   columns: ColumnDef<TData, unknown>[];
   emptyText?: string;
+  emptyAccent?: IconAccent;
+  emptyIcon?: ComponentType<{ className?: string }>;
+  emptyIllustrative?: boolean;
   pageSize?: number;
   onRowClick?: (item: TData) => void;
   getRowAriaLabel?: (item: TData) => string;
@@ -26,6 +31,9 @@ export function ProfessionalDataTable<TData>({
   data,
   columns,
   emptyText = "Kayıt bulunamadı",
+  emptyAccent,
+  emptyIcon,
+  emptyIllustrative = false,
   pageSize = 15,
   onRowClick,
   getRowAriaLabel,
@@ -51,12 +59,12 @@ export function ProfessionalDataTable<TData>({
         <table className="min-w-[760px] w-full text-sm">
           <thead className="sticky top-0 z-10">
             {table.getHeaderGroups().map((headerGroup) => (
-              <tr key={headerGroup.id} className="bg-slate-50/90 text-left">
+              <tr key={headerGroup.id} className="border-b-2 border-slate-100 bg-white text-left">
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
-                    className={`whitespace-nowrap px-3 py-2.5 text-xs font-bold uppercase tracking-normal text-slate-500 sm:px-4 ${
-                      header.column.id === "actions" ? "md:sticky md:right-0 md:z-10 md:bg-slate-50/95 md:shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.08)]" : ""
+                    className={`whitespace-nowrap px-3 py-2.5 text-xs font-bold uppercase tracking-wide text-slate-500 sm:px-4 ${
+                      header.column.id === "actions" ? "md:sticky md:right-0 md:z-10 md:bg-white/95 md:shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.08)]" : ""
                     }`}
                   >
                     {header.isPlaceholder ? null : (
@@ -64,7 +72,7 @@ export function ProfessionalDataTable<TData>({
                         type="button"
                         onClick={header.column.getToggleSortingHandler()}
                         disabled={!header.column.getCanSort()}
-                        className="flex items-center gap-1 text-left disabled:cursor-default"
+                        className="flex items-center gap-1 text-left uppercase tracking-wide disabled:cursor-default"
                       >
                         {flexRender(header.column.columnDef.header, header.getContext())}
                         {header.column.getCanSort() && (
@@ -85,11 +93,11 @@ export function ProfessionalDataTable<TData>({
             {rows.length === 0 ? (
               <tr>
                 <td colSpan={table.getAllLeafColumns().length}>
-                  <EmptyState title={emptyText} compact />
+                  <EmptyState title={emptyText} accent={emptyAccent} icon={emptyIcon} illustrative={emptyIllustrative} compact />
                 </td>
               </tr>
             ) : (
-              rows.map((row) => (
+              rows.map((row, rowIndex) => (
                 <tr
                   key={row.id}
                   tabIndex={onRowClick ? 0 : undefined}
@@ -102,7 +110,8 @@ export function ProfessionalDataTable<TData>({
                       onRowClick(row.original);
                     }
                   } : undefined}
-                  className={`group transition-colors hover:bg-primary/[0.045] ${onRowClick ? "cursor-pointer focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25" : ""}`}
+                  style={{ ["--row-delay" as string]: `${Math.min(rowIndex, 14) * 18}ms` }}
+                  className={`ui-row-in group transition-colors hover:bg-primary/[0.045] ${onRowClick ? "cursor-pointer focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25" : ""}`}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <td

@@ -12,6 +12,9 @@ import { Modal } from "@/components/ui/Modal";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+
+const TaskEmptyIcon = createSceneIllustration("gorevler");
 
 type Staff = { id: string; fullName: string; role: string };
 type PatientOption = { id: string; fullName: string; phone?: string | null };
@@ -158,7 +161,7 @@ export default function GorevlerPage() {
       setTasks((prev) => [data as StaffTask, ...prev]);
       resetCreateForm();
       setShowCreate(false);
-      showToastSafe({ title: "Görev oluşturuldu", message: "Görev listeye eklendi.", type: "success" });
+      showToastSafe({ title: "Görev oluşturuldu", message: "Görev listeye eklendi.", type: "success", icon: "clipboard" });
     } catch {
       showToastSafe({ title: "Görev oluşturulamadı", message: "Bağlantı hatası oluştu.", type: "error" });
     } finally {
@@ -393,6 +396,8 @@ export default function GorevlerPage() {
         rowKey={(t) => t.id}
         loading={loading}
         emptyText="Gösterilecek görev bulunmadı."
+        emptyIcon={TaskEmptyIcon}
+        emptyIllustrative
       />
 
       <Modal

@@ -14,6 +14,13 @@ type StockMovementInput = {
   lotNo?: string | null;
   receivedAt?: Date | string | null;
   expiresAt?: Date | string | null;
+  /**
+   * İstemcinin ürettiği tekrar-önleme anahtarı (manuel stok GİRİŞ/ÇIKIŞ formu).
+   * Aynı requestKey ile ikinci bir çağrı (çift tıklama, ağ hatası sonrası
+   * retry) stok miktarını TEKRAR değiştirmez — mevcut hareket olduğu gibi
+   * döndürülür (bkz. denetim raporu, PATCH /api/stock/[id] idempotency eksikliği).
+   */
+  requestKey?: string | null;
 };
 
 function dateOrNull(value?: Date | string | null) {
@@ -99,6 +106,7 @@ export async function applyStockMovement({
   lotNo,
   receivedAt,
   expiresAt,
+  requestKey,
 }: StockMovementInput) {
   if (!stockItemId) throw new Error("Stok kalemi zorunlu");
   if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("Miktar pozitif olmalı");
@@ -113,6 +121,23 @@ export async function applyStockMovement({
 
   if (!item) throw new Error("Stok kalemi bulunamadı");
   if (!item.isActive) throw new Error("Pasif stok kalemi güncellenemez");
+
+  // Satır kilidi alındıktan SONRA kontrol edilir: aynı requestKey ile eşzamanlı
+  // gelen ikinci istek, birincisi commit olana kadar burada bekler (FOR UPDATE),
+  // sonra bu kontrolde mevcut hareketi bulup miktarı TEKRAR değiştirmeden döner.
+  if (requestKey) {
+    const existingMovement = await tx.stockMovement.findFirst({
+      where: { institutionId: item.institutionId, requestKey },
+    });
+    if (existingMovement) {
+      return {
+        item,
+        movement: existingMovement,
+        isCritical: Number(item.quantity) < Number(item.minQuantity),
+        duplicate: true,
+      };
+    }
+  }
 
   if (type === "CIKIS" && Number(item.quantity) < quantity) {
     throw new Error(`Yetersiz stok. Mevcut: ${Number(item.quantity)}, İstenen çıkış: ${quantity}`);
@@ -130,6 +155,8 @@ export async function applyStockMovement({
   const movement = await tx.stockMovement.create({
     data: {
       stockItemId,
+      institutionId: item.institutionId,
+      requestKey: requestKey || null,
       type,
       quantity,
       note: note || null,

@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
     const items = await prisma.patientFollowUp.findMany({
       where: whereClauses.length > 0 ? { AND: whereClauses } : undefined,
       include: {
-        patient: { select: { id: true, fullName: true, phone: true } },
+        patient: { select: { id: true, fullName: true, phone: true, whatsappOptInAt: true, whatsappOptOutAt: true } },
         appointment: {
           select: {
             id: true,
@@ -175,7 +175,7 @@ export async function POST(request: NextRequest) {
         status: "ACIK",
       },
       include: {
-        patient: { select: { id: true, fullName: true, phone: true } },
+        patient: { select: { id: true, fullName: true, phone: true, whatsappOptInAt: true, whatsappOptOutAt: true } },
         appointment: {
           select: {
             id: true,

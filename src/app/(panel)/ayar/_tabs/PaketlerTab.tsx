@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
-import { Modal } from "@/components/ui/Modal";
+import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
 import { showToastSafe } from "@/lib/toast-client";
 import { confirmDialog } from "@/lib/confirm-client";
 
@@ -38,17 +38,28 @@ export default function PaketlerTab() {
 
   useEffect(() => { void load(); }, []);
 
-  const openCreate = () => { setEditing(null); setForm(EMPTY_FORM); setShowForm(true); };
+  const formSnapshotRef = useRef(JSON.stringify(EMPTY_FORM));
+  const openCreate = () => { setEditing(null); setForm(EMPTY_FORM); formSnapshotRef.current = JSON.stringify(EMPTY_FORM); setShowForm(true); };
   const openEdit = (item: PackageDefinition) => {
     setEditing(item);
-    setForm({
+    const next = {
       name: item.name,
       treatmentType: item.treatmentType || "",
       sessionCount: String(item.sessionCount),
       price: String(item.price),
       validityDays: String(item.validityDays),
-    });
+    };
+    setForm(next);
+    formSnapshotRef.current = JSON.stringify(next);
     setShowForm(true);
+  };
+  const formDirty = showForm && JSON.stringify(form) !== formSnapshotRef.current;
+  const requestCloseForm = async () => {
+    if (formDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE, danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) return;
+    setShowForm(false);
   };
 
   const save = async () => {
@@ -80,22 +91,40 @@ export default function PaketlerTab() {
   };
 
   const toggleActive = async (item: PackageDefinition) => {
-    await fetch(`/api/package-definitions/${item.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: item.name, treatmentType: item.treatmentType, sessionCount: item.sessionCount,
-        price: Number(item.price), validityDays: item.validityDays, isActive: !item.isActive,
-      }),
-    });
-    await load();
+    try {
+      const r = await fetch(`/api/package-definitions/${item.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: item.name, treatmentType: item.treatmentType, sessionCount: item.sessionCount,
+          price: Number(item.price), validityDays: item.validityDays, isActive: !item.isActive,
+        }),
+      });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        showToastSafe({ title: "Hata", message: e.message || "Paket durumu değiştirilemedi.", type: "error" });
+        return;
+      }
+      await load();
+    } catch {
+      showToastSafe({ title: "Hata", message: "Bağlantı hatası — paket durumu değiştirilemedi.", type: "error" });
+    }
   };
 
   const remove = async (item: PackageDefinition) => {
     if (!(await confirmDialog({ message: `"${item.name}" paketi pasifleştirilsin mi? Daha önce satılmış paketler etkilenmez.`, danger: true, confirmText: "Pasifleştir" }))) return;
-    await fetch(`/api/package-definitions/${item.id}`, { method: "DELETE" });
-    showToastSafe({ title: "Pasifleştirildi", message: `${item.name} artık satılamaz.`, type: "success" });
-    await load();
+    try {
+      const r = await fetch(`/api/package-definitions/${item.id}`, { method: "DELETE" });
+      if (!r.ok) {
+        const e = await r.json().catch(() => ({}));
+        showToastSafe({ title: "Hata", message: e.message || "Paket pasifleştirilemedi.", type: "error" });
+        return;
+      }
+      showToastSafe({ title: "Pasifleştirildi", message: `${item.name} artık satılamaz.`, type: "success" });
+      await load();
+    } catch {
+      showToastSafe({ title: "Hata", message: "Bağlantı hatası — paket pasifleştirilemedi.", type: "error" });
+    }
   };
 
   return (
@@ -139,10 +168,11 @@ export default function PaketlerTab() {
       <Modal
         open={showForm}
         onClose={() => setShowForm(false)}
+        isDirty={formDirty}
         title={editing ? "Paketi Düzenle" : "Yeni Paket Şablonu"}
         footer={(
           <>
-            <Button variant="secondary" onClick={() => setShowForm(false)}>Vazgeç</Button>
+            <Button variant="secondary" onClick={() => void requestCloseForm()}>Vazgeç</Button>
             <Button loading={saving} onClick={save}>{editing ? "Güncelle" : "Kaydet"}</Button>
           </>
         )}

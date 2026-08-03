@@ -200,12 +200,16 @@ function FiyatManagement() {
 	};
 
 	const addCustom = async (code: string, treatment: string, amount: string) => {
-		const res = await fetch("/api/prices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, treatment, amount: parseFloat(amount), isCustom: true }) });
-		if (res.ok) {
-			showToast("success", "Fiyat eklendi");
-			void loadAll();
-		} else {
-			showToast("error", "Fiyat eklenemedi");
+		try {
+			const res = await fetch("/api/prices", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, treatment, amount: parseFloat(amount), isCustom: true }) });
+			if (res.ok) {
+				showToast("success", "Fiyat eklendi");
+				void loadAll();
+			} else {
+				showToast("error", "Fiyat eklenemedi");
+			}
+		} catch {
+			showToast("error", "Bağlantı hatası — fiyat eklenemedi. Lütfen tekrar deneyin.");
 		}
 	};
 
@@ -231,20 +235,24 @@ function FiyatManagement() {
 	const saveEdit = async () => {
 		if (!editItem || !editAmount) return;
 		const isTemplate = editItem.isTemplate || editItem.id.startsWith("custom-template-") || editItem.id.startsWith("tdb-");
-		const res = isTemplate
-			? await fetch("/api/prices", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ code: editItem.code, treatment: editItem.treatment, amount: parseFloat(editAmount), isCustom: true }),
-				})
-			: await fetch("/api/prices/" + editItem.id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount: parseFloat(editAmount) }) });
-		if (res.ok) {
-			setEditItem(null);
-			setEditAmount("");
-			showToast("success", "Fiyat güncellendi");
-			void loadAll();
-		} else {
-			showToast("error", "Güncelleme başarısız");
+		try {
+			const res = isTemplate
+				? await fetch("/api/prices", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ code: editItem.code, treatment: editItem.treatment, amount: parseFloat(editAmount), isCustom: true }),
+					})
+				: await fetch("/api/prices/" + editItem.id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount: parseFloat(editAmount) }) });
+			if (res.ok) {
+				setEditItem(null);
+				setEditAmount("");
+				showToast("success", "Fiyat güncellendi");
+				void loadAll();
+			} else {
+				showToast("error", "Güncelleme başarısız");
+			}
+		} catch {
+			showToast("error", "Bağlantı hatası — fiyat güncellenemedi. Lütfen tekrar deneyin.");
 		}
 	};
 

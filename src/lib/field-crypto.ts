@@ -16,6 +16,16 @@ let warnedMissingKey = false;
 function getKey(): Buffer | null {
   const raw = process.env.FIELD_ENCRYPTION_KEY;
   if (!raw) {
+    // Üretimde sessiz düz-metin fallback KABUL EDİLEMEZ (KVKK m.6 özel nitelikli
+    // veri) — anahtar eksikken hassas alan okuma/yazma işlemi burada kesin
+    // olarak reddedilir. Development/test'te (NODE_ENV !== "production")
+    // eski davranış (uyar + düz metin) korunur, bkz. denetim raporu.
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "FIELD_ENCRYPTION_KEY üretimde tanımlı değil — hassas veri işlemi güvenlik nedeniyle reddedildi. " +
+          "node -e \"console.log(require('crypto').randomBytes(32).toString('base64'))\" ile üretip ortam değişkeni olarak ayarlayın."
+      );
+    }
     if (!warnedMissingKey) {
       warnedMissingKey = true;
       console.warn(

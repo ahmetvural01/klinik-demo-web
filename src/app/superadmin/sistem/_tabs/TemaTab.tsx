@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { THEME_PACKAGES, type ThemePackage } from "@/lib/theme-packages";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { Spinner } from "@/components/ui/Spinner";
 import { showToastSafe } from "@/lib/toast-client";
 
 export default function TemaTab() {
@@ -30,7 +31,7 @@ export default function TemaTab() {
       });
       if (res.ok) {
         setActiveTheme(pkg.id);
-        showToastSafe({ title: "Uygulandı", message: `"${pkg.name}" sistem geneli aktif tema oldu. Sayfayı yenileyen herkes yeni görünümü görecek.`, type: "success" });
+        showToastSafe({ title: "Uygulandı", message: `"${pkg.name}" sistem geneli aktif tema oldu. Sayfayı yenileyen herkes yeni görünümü görecek.`, type: "success", icon: "settings" });
       } else {
         showToastSafe({ title: "Hata", message: "Tema uygulanamadı", type: "error" });
       }
@@ -47,7 +48,7 @@ export default function TemaTab() {
 
       {loading ? (
         <div className="flex items-center justify-center py-16">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+          <Spinner className="h-8 w-8 text-primary" />
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">

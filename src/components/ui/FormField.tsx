@@ -1,4 +1,5 @@
-import type { ComponentType, ReactNode } from "react";
+import { cloneElement, isValidElement, type ComponentType, type ReactElement, type ReactNode } from "react";
+import { Check } from "lucide-react";
 import { IconFrame } from "@/components/ui/IconFrame";
 
 export interface FormFieldProps {
@@ -7,24 +8,51 @@ export interface FormFieldProps {
   required?: boolean;
   error?: string;
   hint?: string;
+  /** Alan geçerli/onaylanmış olduğunda kısa bir check ikonu + yeşil kontur
+   * gösterir (ör. TC kimlik doğrulaması tamamlandığında). `error` varsa
+   * yok sayılır. */
+  success?: boolean;
   children: ReactNode;
 }
 
 // Not: bu bileşen kendi input'unu icat etmez, mevcut heterojen inputları
 // (native input/select, PhoneInput, SearchSelect, checkbox) sarar — label,
 // zorunlu-alan işareti, hata ve ipucu metnini tek bir standarda taşır.
-export function FormField({ label, htmlFor, required, error, hint, children }: FormFieldProps) {
+export function FormField({ label, htmlFor, required, error, hint, success, children }: FormFieldProps) {
+  // Hata/ipucu metni önceden yalnızca görsel (kırmızı border + ayrı bir <p>)
+  // olarak bağlıydı — screen reader input'a odaklanınca bunu hiç duymuyordu
+  // (bkz. denetim raporu). `htmlFor` verilmişse ve tek bir input elemanı
+  // sarmalanıyorsa aria-invalid/aria-describedby otomatik bağlanır.
+  const errorId = htmlFor && error ? `${htmlFor}-error` : undefined;
+  const hintId = htmlFor && hint && !error ? `${htmlFor}-hint` : undefined;
+  const describedBy = errorId || hintId;
+  const showSuccess = success && !error;
+
+  const content = (describedBy || showSuccess) && isValidElement(children)
+    ? cloneElement(children as ReactElement<Record<string, unknown>>, {
+        "aria-invalid": error ? true : undefined,
+        "data-success": showSuccess ? "true" : undefined,
+        "aria-describedby": [
+          (children as ReactElement<{ "aria-describedby"?: string }>).props["aria-describedby"],
+          describedBy,
+        ].filter(Boolean).join(" ") || undefined,
+      })
+    : children;
+
   return (
     <label htmlFor={htmlFor} className="block">
-      <span className="mb-1.5 block text-xs font-semibold text-slate-700">
+      <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-800">
         {label}
-        {required && <span className="text-red-500"> *</span>}
+        {required && <span className="text-red-500">*</span>}
+        {showSuccess && (
+          <Check className="ui-field-success-check h-3 w-3 text-emerald-600" strokeWidth={3} aria-hidden="true" />
+        )}
       </span>
-      {children}
+      {content}
       {error ? (
-        <p className="mt-1.5 text-xs font-medium text-red-600">{error}</p>
+        <p id={errorId} role="alert" className="ui-field-message mt-1.5 text-xs font-medium text-red-600">{error}</p>
       ) : hint ? (
-        <p className="mt-1.5 text-xs text-slate-400">{hint}</p>
+        <p id={hintId} className="mt-1.5 text-xs text-slate-400">{hint}</p>
       ) : null}
     </label>
   );

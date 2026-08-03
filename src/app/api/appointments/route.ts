@@ -217,7 +217,7 @@ export const GET = withApiTiming("appointments", async function GET(request: Nex
         doctorId: true,
         patientId: true,
         clinicUnitId: true,
-        patient: { select: { id: true, fullName: true, phone: true, tcNo: true, hasContagiousDisease: true, contagiousDiseaseNote: true } },
+        patient: { select: { id: true, fullName: true, phone: true, tcNo: true, hasContagiousDisease: true, contagiousDiseaseNote: true, whatsappOptInAt: true, whatsappOptOutAt: true } },
         doctor: { select: { id: true, fullName: true, role: true } },
         clinicUnit: { select: { id: true, name: true, code: true } },
       },

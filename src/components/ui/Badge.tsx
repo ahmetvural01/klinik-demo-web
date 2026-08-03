@@ -36,10 +36,11 @@ export interface BadgeProps {
   icon?: ComponentType<{ className?: string }>;
   size?: "sm" | "md";
   title?: string;
+  className?: string;
   children: ReactNode;
 }
 
-export function Badge({ tone = "neutral", solid = false, icon: Icon, size = "sm", title, children }: BadgeProps) {
+export function Badge({ tone = "neutral", solid = false, icon: Icon, size = "sm", title, className, children }: BadgeProps) {
   return (
     <span
       title={title}
@@ -47,6 +48,7 @@ export function Badge({ tone = "neutral", solid = false, icon: Icon, size = "sm"
         "inline-flex items-center gap-1 rounded-full leading-none",
         solid ? SOLID_CLASS[tone] : SUBTLE_CLASS[tone],
         SIZE_CLASS[size],
+        className || "",
       ].join(" ")}
     >
       {Icon && <Icon className="h-3 w-3 shrink-0" />}

@@ -5,6 +5,7 @@ import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
+import { PageHeader } from "@/components/ui/PageHeader";
 import FiyatPage from "../fiyat/page";
 import UnitelerTab from "./_tabs/UnitelerTab";
 
@@ -355,12 +356,12 @@ export default function AyarPage() {
 
   return (
     <section className="space-y-5" aria-busy={loading}>
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-black text-slate-900">Ayarlar</h1>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{TABS.find(t => t.id === activeTab)?.label}</span>
-        </div>
-      </div>
+      <PageHeader
+        icon="settings"
+        title="Ayarlar"
+        description="Klinik tercihlerini, tedavi türlerini ve fiyat listesini buradan yönetin."
+        actions={<span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{TABS.find(t => t.id === activeTab)?.label}</span>}
+      />
 
       <div className="rounded-2xl border border-slate-100 bg-white p-2 shadow-sm">
         <div className="flex gap-1 overflow-x-auto">

@@ -160,8 +160,13 @@ export async function DELETE(request: NextRequest) {
   if (!body.id) return NextResponse.json({ message: "id zorunlu" }, { status: 400 });
 
   const existing = await prisma.advertisement.findUnique({ where: { id: body.id }, select: { title: true } });
-  await prisma.institutionAdAssignment.deleteMany({ where: { advertisementId: body.id } });
-  await prisma.advertisement.delete({ where: { id: body.id } });
+  // İki ayrı silme çağrısı arada hata alırsa (ör. DB kesintisi) atamalar
+  // silinmiş ama reklam kaydı kalmış "yarım" bir durum oluşabilirdi — tek
+  // transaction içinde atomik yapılır (bkz. denetim raporu).
+  await prisma.$transaction([
+    prisma.institutionAdAssignment.deleteMany({ where: { advertisementId: body.id } }),
+    prisma.advertisement.delete({ where: { id: body.id } }),
+  ]);
 
   await writeAudit(auth.user.id, "SUPERADMIN_AD_DELETE", `Reklam silindi: ${existing?.title || body.id}`);
   return NextResponse.json({ ok: true });

@@ -5,7 +5,7 @@ import { requireAuth } from "@/lib/api";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  const auth = await requireAuth("dashboard:read");
+  const auth = await requireAuth("dashboard:stats");
   if (auth.error) return auth.error;
 
   const isSuperAdmin = auth.user.role === "SUPERADMIN";

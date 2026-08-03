@@ -50,16 +50,29 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     if (body.status !== undefined) data.status = body.status;
 
     const islem = await (prisma as any).$transaction(async (tx: any) => {
-      const updated = await tx.firmaIslem.update({
+      if (isCancelling) {
+        // İki eşzamanlı iptal isteği, ikisi de transaction dışında okunan
+        // `existing.status !== "IPTAL"` kontrolünü geçip stok/gider geri
+        // alımını İKİ KEZ tetikleyebilirdi (bkz. denetim raporu). Durumu
+        // burada, tek bir UPDATE ile atomik olarak "AKTIF -> IPTAL" şartıyla
+        // talep ediyoruz — Postgres bu satırda ikinci eşzamanlı isteği
+        // birincisi commit olana kadar bekletir, sonra WHERE'i tekrar
+        // değerlendirip 0 satır etkiler.
+        const claim = await tx.firmaIslem.updateMany({
+          where: { id: params.iid, status: { not: "IPTAL" } },
+          data,
+        });
+        if (claim.count === 0) {
+          throw new Error("ALREADY_CANCELLED");
+        }
+        await reverseFirmaIslemIntegration(tx, auth.user.id, params.iid);
+        return tx.firmaIslem.findUniqueOrThrow({ where: { id: params.iid } });
+      }
+
+      return tx.firmaIslem.update({
         where: { id: params.iid },
         data
       });
-
-      if (isCancelling) {
-        await reverseFirmaIslemIntegration(tx, auth.user.id, params.iid);
-      }
-
-      return updated;
     });
 
     if (isCancelling) {

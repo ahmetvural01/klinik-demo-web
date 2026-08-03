@@ -33,8 +33,8 @@ async function checkSuperadmin() {
     console.log('Superadmin users found:', superadmins.length);
     for (const u of superadmins) {
       console.log(`\n  - TC: ${u.identityNo}, Name: ${u.fullName}, Active: ${u.isActive}`);
-      console.log(`    Hash: ${u.passwordHash?.substring(0, 20)}...`);
-      
+      console.log(`    Hash set: ${Boolean(u.passwordHash)}`);
+
       // Test password verification
       const testPassword = process.env.TEST_SUPERADMIN_PASSWORD || "";
       if (!testPassword) {

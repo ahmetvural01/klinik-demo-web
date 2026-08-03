@@ -6,6 +6,7 @@ import type { ConsistencyPayload } from "@/lib/data-consistency";
 import { CONSISTENCY_SEVERITY_STYLE } from "@/lib/consistency-ui";
 import { SLOW_ROUTE_WARNING_MS, SLOW_ROUTE_CRITICAL_MS } from "@/lib/system-alert-thresholds";
 import { Badge } from "@/components/ui/Badge";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
 
 type MetricsResponse = {
   counters: Record<string, number>;
@@ -55,7 +56,10 @@ export default function SistemIzlemePage() {
     };
 
     void load();
+    // Sekme arka plandayken de 15sn'de bir 3 endpoint'e istek atmaya devam
+    // ediyordu (bkz. denetim raporu) — gizli sekmede sorgu atlanır.
     const timer = setInterval(() => {
+      if (typeof document !== "undefined" && document.hidden) return;
       void load();
     }, 15000);
 
@@ -69,9 +73,12 @@ export default function SistemIzlemePage() {
 
   return (
     <section className="space-y-4">
-      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <h1 className="text-lg font-black text-slate-900">Sistem İzleme</h1>
-        <p className="text-sm text-slate-500">Canlı metrikler, alarm durumları ve operasyonel sağlık görünümü.</p>
+      <div className="ui-surface flex items-center gap-3 p-4 sm:p-5">
+        <ModuleIcon module="chart" size="lg" />
+        <div>
+          <h1 className="font-display text-xl font-black tracking-tight text-slate-900">Sistem İzleme</h1>
+          <p className="text-xs font-medium text-slate-500">Canlı metrikler, alarm durumları ve operasyonel sağlık görünümü.</p>
+        </div>
       </div>
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}

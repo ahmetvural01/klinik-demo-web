@@ -2,7 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { encryptField, decryptField } from "@/lib/field-crypto";
 
 // KVKK m.6 özel nitelikli hasta verisi — bkz. src/lib/field-crypto.ts
-const ENCRYPTED_PATIENT_FIELDS = ["surgeries", "medications", "otherDiseases", "notes"] as const;
+const ENCRYPTED_PATIENT_FIELDS = ["surgeries", "medications", "otherDiseases", "notes", "contagiousDiseaseNote"] as const;
 
 function encryptPatientWriteData(data: unknown) {
   if (!data || typeof data !== "object") return;

@@ -5,11 +5,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Eye, Plus } from "lucide-react";
 import { cachedGet } from "@/lib/client-cache";
+import { confirmDialog } from "@/lib/confirm-client";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { FormField, inputErrorClass } from "@/components/ui/FormField";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
+
+const InstitutionEmptyIcon = createModuleEmptyIcon("institutions");
 
 type Institution = {
   id: string;
@@ -67,18 +71,23 @@ export default function InstitutionsPage() {
 
   const load = async () => {
     setLoading(true);
-    const res = await fetch("/api/superadmin/institutions");
-    if (res.ok) {
-      setItems(await res.json());
-    } else {
-      setMessage("Klinik listesi alınamadı");
+    try {
+      const res = await fetch("/api/superadmin/institutions");
+      if (res.ok) {
+        setItems(await res.json());
+      } else {
+        setMessage("Klinik listesi alınamadı");
+      }
+    } catch {
+      setMessage("Bağlantı hatası — klinik listesi alınamadı.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => {
     const bootstrap = async () => {
-      const meData = await cachedGet<{ role?: string } | null>("/api/auth/me", 60_000);
+      const meData = await cachedGet<{ role?: string } | null>("/api/auth/me?surface=superadmin", 60_000);
       if (!meData) {
         router.replace("/superadmin");
         return;
@@ -107,46 +116,69 @@ export default function InstitutionsPage() {
   const createInstitution = async () => {
     setSaving(true);
     setMessage(null);
+    try {
+      const res = await fetch("/api/superadmin/institutions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      });
 
-    const res = await fetch("/api/superadmin/institutions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form),
-    });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Oluşturma başarısız" }));
+        setMessage(err.message || "Oluşturma başarısız");
+        return;
+      }
 
-    setSaving(false);
+      setMessage("Klinik oluşturuldu");
+      setShowNew(false);
+      setForm(emptyForm);
+      void load();
+    } catch {
+      setMessage("Bağlantı hatası — klinik oluşturulamadı. Lütfen tekrar deneyin.");
+    } finally {
+      setSaving(false);
+    }
+  };
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: "Oluşturma başarısız" }));
-      setMessage(err.message || "Oluşturma başarısız");
+  // Çok alanlı bir form — ESC/dış tıklama ile yanlışlıkla kapatılırsa
+  // girilen klinik bilgileri sessizce kaybolmamalı (bkz. denetim raporu).
+  const requestCloseNew = async () => {
+    const isDirty = Object.entries(form).some(([key, value]) => value !== emptyForm[key as keyof FormState]);
+    if (isDirty && !(await confirmDialog({
+      message: "Kaydedilmemiş değişiklikler var. Kapatılsın mı? Girdiğiniz bilgiler kaybolacak.",
+      danger: true,
+      confirmText: "Kapat, Değişiklikleri Kaybet",
+    }))) {
       return;
     }
-
-    setMessage("Klinik oluşturuldu");
     setShowNew(false);
     setForm(emptyForm);
-    void load();
   };
 
   const enterAsGhost = async () => {
     if (!ghostTarget || !ghostPassword) return;
     setGhostLoading(true);
     setGhostError(null);
-    const res = await fetch("/api/auth/superadmin/impersonate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ institutionId: ghostTarget.id, password: ghostPassword }),
-    });
-    setGhostLoading(false);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: "Hata" }));
-      setGhostError(err.message || "Giriş başarısız");
-      return;
+    try {
+      const res = await fetch("/api/auth/superadmin/impersonate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ institutionId: ghostTarget.id, password: ghostPassword }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Hata" }));
+        setGhostError(err.message || "Giriş başarısız");
+        return;
+      }
+      // Ghost token set edildi, klinik paneline yönlendir
+      window.open("/anasayfa", "_blank");
+      setGhostTarget(null);
+      setGhostPassword("");
+    } catch {
+      setGhostError("Bağlantı hatası — giriş yapılamadı. Lütfen tekrar deneyin.");
+    } finally {
+      setGhostLoading(false);
     }
-    // Ghost token set edildi, klinik paneline yönlendir
-    window.open("/anasayfa", "_blank");
-    setGhostTarget(null);
-    setGhostPassword("");
   };
 
   const columns: ListTableColumn<Institution>[] = [
@@ -196,13 +228,17 @@ export default function InstitutionsPage() {
   return (
     <>
     <section className="space-y-4">
-      <header className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+      <header className="ui-surface p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-black text-slate-900">Klinik Yönetimi</h1>
-            <p className="text-sm text-slate-500">Tüm klinikleri buradan yönetin.</p>
+          <div className="flex items-center gap-3">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/icons/modules/superadmin-institutions.svg" alt="" width={32} height={32} className="module-icon-img" />
+            <div>
+              <h1 className="text-2xl font-black text-slate-900">Klinik Yönetimi</h1>
+              <p className="text-sm text-slate-500">Tüm klinikleri buradan yönetin.</p>
+            </div>
           </div>
-          <Button variant="primary" size="sm" icon={Plus} onClick={() => setShowNew((v) => !v)}>
+          <Button variant="primary" size="sm" icon={Plus} onClick={() => (showNew ? void requestCloseNew() : setShowNew(true))}>
             {showNew ? "Formu Kapat" : "Yeni Klinik"}
           </Button>
         </div>
@@ -217,7 +253,7 @@ export default function InstitutionsPage() {
         </div>
       </header>
 
-      {message && <div className="rounded-xl border border-slate-100 bg-white p-3 text-sm text-slate-700 shadow-sm">{message}</div>}
+      {message && <div className="ui-surface p-3 text-sm text-slate-700">{message}</div>}
 
       <ListTable<Institution>
         columns={columns}
@@ -225,13 +261,14 @@ export default function InstitutionsPage() {
         rowKey={(inst) => inst.id}
         loading={loading}
         emptyText="Klinik bulunamadı"
+        emptyIcon={InstitutionEmptyIcon} emptyIllustrative
       />
     </section>
 
       {/* Yeni klinik oluşturma modal */}
       <Modal
         open={showNew}
-        onClose={() => setShowNew(false)}
+        onClose={() => void requestCloseNew()}
         title="Yeni Klinik Oluştur"
         size="lg"
         footer={

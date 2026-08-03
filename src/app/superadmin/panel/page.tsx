@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { AlertTriangle, Activity, Building2, CalendarDays, FileWarning, MessageSquare, Stethoscope, Users, Wallet } from "lucide-react";
 import { cachedGet } from "@/lib/client-cache";
 import { Badge } from "@/components/ui/Badge";
+import { CountUp } from "@/components/ui/CountUp";
+import { Spinner } from "@/components/ui/Spinner";
 
 type Dashboard = {
   totalInstitutions: number;
@@ -58,7 +60,7 @@ export default function SuperadminPanelPage() {
 
   useEffect(() => {
     const run = async () => {
-      const meData = await cachedGet<{ role?: string } | null>("/api/auth/me", 60_000);
+      const meData = await cachedGet<{ role?: string } | null>("/api/auth/me?surface=superadmin", 60_000);
       if (!meData) {
         router.replace("/superadmin");
         return;
@@ -98,7 +100,7 @@ export default function SuperadminPanelPage() {
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+        <Spinner className="h-8 w-8 text-primary" />
       </div>
     );
   }
@@ -118,10 +120,10 @@ export default function SuperadminPanelPage() {
   const totalStaff = stats?.totalStaff ?? 0;
 
   const metricCards = [
-    { label: "Toplam Hasta", value: totalPatients.toLocaleString("tr-TR"), icon: Users, tone: "bg-primary/10 text-primary" },
-    { label: "Toplam Randevu", value: totalAppointments.toLocaleString("tr-TR"), icon: CalendarDays, tone: "bg-sky-50 text-sky-600" },
-    { label: "Aktif Personel", value: totalStaff.toLocaleString("tr-TR"), icon: Activity, tone: "bg-emerald-50 text-emerald-600" },
-    { label: "Muayene Sayısı", value: totalExaminations.toLocaleString("tr-TR"), icon: Stethoscope, tone: "bg-violet-50 text-violet-600" },
+    { label: "Toplam Hasta", value: totalPatients, icon: Users, tone: "bg-primary/10 text-primary" },
+    { label: "Toplam Randevu", value: totalAppointments, icon: CalendarDays, tone: "bg-sky-50 text-sky-600" },
+    { label: "Aktif Personel", value: totalStaff, icon: Activity, tone: "bg-emerald-50 text-emerald-600" },
+    { label: "Muayene Sayısı", value: totalExaminations, icon: Stethoscope, tone: "bg-violet-50 text-violet-600" },
   ];
 
   return (
@@ -132,46 +134,46 @@ export default function SuperadminPanelPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+        <article className="ui-interactive ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "0ms" }}>
           <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><Building2 className="h-4 w-4" /></span>
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam Klinik</p>
-          <p className="mt-1 text-2xl font-black text-slate-900">{data.totalInstitutions}</p>
+          <p className="mt-1 text-2xl font-black text-slate-900"><CountUp value={data.totalInstitutions} /></p>
           <p className="mt-1 text-xs font-semibold text-slate-500">
             <span className="text-emerald-600">{data.activeInstitutions} aktif</span>
-            {data.suspendedInstitutions > 0 && <span className="text-amber-600"> · {data.suspendedInstitutions} askıda</span>}
+            {data.suspendedInstitutions > 0 && <span className={`text-amber-600 ${data.suspendedInstitutions > 0 ? "ui-badge-pulse" : ""}`}> · {data.suspendedInstitutions} askıda</span>}
           </p>
         </article>
 
-        <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+        <article className="ui-interactive ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "40ms" }}>
           <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600"><FileWarning className="h-4 w-4" /></span>
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Bekleyen Fatura</p>
-          <p className="mt-1 text-2xl font-black text-slate-900">{data.pendingInvoices}</p>
-          <p className="mt-1 text-xs font-semibold text-red-600">{data.overdueInvoices} gecikmiş</p>
+          <p className="mt-1 text-2xl font-black text-slate-900"><CountUp value={data.pendingInvoices} /></p>
+          <p className={`mt-1 text-xs font-semibold text-red-600 ${data.overdueInvoices > 0 ? "ui-badge-pulse" : ""}`}>{data.overdueInvoices} gecikmiş</p>
         </article>
 
-        <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+        <article className="ui-interactive ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "80ms" }}>
           <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><MessageSquare className="h-4 w-4" /></span>
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Platform SMS Stoku</p>
-          <p className="mt-1 text-2xl font-black text-slate-900">{data.platformSmsStock.toLocaleString("tr-TR")}</p>
+          <p className="mt-1 text-2xl font-black text-slate-900"><CountUp value={data.platformSmsStock} /></p>
           <p className="mt-1 text-xs font-semibold text-slate-500">Kliniklere ayrılan: {data.totalSmsBalance.toLocaleString("tr-TR")}</p>
         </article>
 
-        <article className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+        <article className="ui-interactive ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "120ms" }}>
           <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><Wallet className="h-4 w-4" /></span>
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam Gelir</p>
-          <p className="mt-1 text-2xl font-black text-emerald-600">₺{data.totalRevenue.toLocaleString("tr-TR")}</p>
+          <p className="mt-1 text-2xl font-black text-emerald-600"><CountUp value={data.totalRevenue} formatter={(n) => `₺${n.toLocaleString("tr-TR")}`} /></p>
           {data.unpaidAmount > 0 && <p className="mt-1 text-xs font-semibold text-red-600">₺{data.unpaidAmount.toLocaleString("tr-TR")} tahsil edilmedi</p>}
         </article>
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        {metricCards.map((card) => {
+        {metricCards.map((card, idx) => {
           const Icon = card.icon;
           return (
-            <article key={card.label} className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+            <article key={card.label} className="ui-interactive ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: `${idx * 40}ms` }}>
               <span className={`mb-2 flex h-8 w-8 items-center justify-center rounded-lg ${card.tone}`}><Icon className="h-4 w-4" /></span>
               <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{card.label}</p>
-              <p className="mt-1 text-2xl font-black text-slate-900">{card.value}</p>
+              <p className="mt-1 text-2xl font-black text-slate-900"><CountUp value={card.value} /></p>
             </article>
           );
         })}

@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, PenSquare, PlusCircle, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
+import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
 import { FormField } from "@/components/ui/FormField";
 import { SmsMessageEditor } from "@/components/sms/SmsMessageEditor";
 import { showToastSafe } from "@/lib/toast-client";
@@ -67,17 +67,21 @@ export default function TemplatesTab() {
 
   const previewContext = { institutionName: institutionName || undefined, institutionPhone: institutionPhone || undefined };
 
+  const formSnapshotRef = useRef(JSON.stringify(emptyForm));
   const openCreate = () => {
     setEditing(null);
     setIsNewCustom(true);
     setForm(emptyForm);
+    formSnapshotRef.current = JSON.stringify(emptyForm);
     setShowForm(true);
   };
 
   const openEditCustom = (t: Template) => {
     setEditing(t);
     setIsNewCustom(false);
-    setForm({ code: t.code, title: t.title, content: toReadableText(t.content), isActive: t.isActive });
+    const next = { code: t.code, title: t.title, content: toReadableText(t.content), isActive: t.isActive };
+    setForm(next);
+    formSnapshotRef.current = JSON.stringify(next);
     setShowForm(true);
   };
 
@@ -87,8 +91,18 @@ export default function TemplatesTab() {
   const switchToCustom = (t: Template) => {
     setEditing(t);
     setIsNewCustom(false);
-    setForm({ code: t.code, title: t.title, content: toReadableText(t.content), isActive: t.isActive });
+    const next = { code: t.code, title: t.title, content: toReadableText(t.content), isActive: t.isActive };
+    setForm(next);
+    formSnapshotRef.current = JSON.stringify(next);
     setShowForm(true);
+  };
+  const templateFormDirty = showForm && JSON.stringify(form) !== formSnapshotRef.current;
+  const requestCloseTemplateForm = async () => {
+    if (templateFormDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE, danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) return;
+    setShowForm(false);
   };
 
   const switchToDefault = async (t: Template) => {
@@ -238,13 +252,15 @@ export default function TemplatesTab() {
       </div>
 
       <Modal
+        module="sms"
         open={showForm}
         onClose={() => setShowForm(false)}
+        isDirty={templateFormDirty}
         title={isNewCustom ? "Yeni Özel Şablon" : `Düzenle: ${editing?.title ?? ""}`}
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowForm(false)}>İptal</Button>
+            <Button variant="secondary" onClick={() => void requestCloseTemplateForm()}>İptal</Button>
             <Button loading={saving} onClick={submit}>Kaydet</Button>
           </>
         }

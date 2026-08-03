@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { decodeTokenUser, setAuthCookie, signToken, verifyPassword } from "@/lib/auth";
+import { decodeTokenUser, setGhostAuthCookie, signToken, verifyPassword } from "@/lib/auth";
 import { writeAudit } from "@/lib/api";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 
@@ -85,7 +85,10 @@ export async function POST(request: NextRequest) {
     tokenVersion: targetUser.tokenVersion,
   });
 
-  await setAuthCookie(token);
+  // Ayrı çerezde tutulur — süperadmin'in kendi klinik_token'ının üzerine
+  // YAZILMAZ, aksi halde başka bir sekmedeki /superadmin oturumu da anında
+  // bu ghost kimliğine dönerdi (bkz. src/lib/auth.ts notu).
+  await setGhostAuthCookie(token);
 
   await writeAudit(
     targetUser.id,

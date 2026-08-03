@@ -1,12 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Headset, Reply, Trash2 } from "lucide-react";
+import { Reply, Trash2 } from "lucide-react";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { showToastSafe } from "@/lib/toast-client";
 import { confirmDialog } from "@/lib/confirm-client";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
+import { Spinner } from "@/components/ui/Spinner";
+
+const SupportEmptyIcon = createModuleEmptyIcon("support");
 
 // SupportTicket modelinde status/priority/institution alanları YOK (bkz.
 // prisma/schema.prisma) — sadece answer (nullable). "Açık/Yanıtlandı" ayrımı
@@ -58,7 +63,7 @@ export default function SupportPage() {
         body: JSON.stringify({ id: replyTicket.id, answer: replyText.trim() }),
       });
       if (!res.ok) throw new Error("Yanıt gönderilemedi");
-      showToastSafe({ title: "Gönderildi", message: "Yanıt kaydedildi.", type: "success" });
+      showToastSafe({ title: "Gönderildi", message: "Yanıt kaydedildi.", type: "success", icon: "support" });
       setReplyTicket(null);
       load();
     } catch (e) {
@@ -123,17 +128,14 @@ export default function SupportPage() {
       <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
         {loading ? (
           <div className="flex items-center justify-center py-16">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+            <Spinner className="h-6 w-6 text-primary" />
           </div>
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-16 text-slate-400">
-            <Headset className="mb-2 h-10 w-10 text-slate-200" />
-            <p className="text-sm">Talep bulunamadı</p>
-          </div>
+          <EmptyState icon={SupportEmptyIcon} illustrative title="Talep bulunamadı" description="Seçilen filtrede destek talebi yok." />
         ) : (
           <div className="divide-y divide-slate-100">
-            {filtered.map((t) => (
-              <div key={t.id} className="p-4">
+            {filtered.map((t, tIdx) => (
+              <div key={t.id} style={{ ["--row-delay" as string]: `${Math.min(tIdx, 14) * 18}ms` }} className="ui-row-in p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="mb-1 flex flex-wrap items-center gap-2">

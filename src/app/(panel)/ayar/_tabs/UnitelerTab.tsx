@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
-import { Modal } from "@/components/ui/Modal";
+import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
 import { showToastSafe } from "@/lib/toast-client";
+import { confirmDialog } from "@/lib/confirm-client";
 
 type ClinicUnit = {
   id: string;
@@ -34,16 +35,28 @@ export default function UnitelerTab() {
 
   useEffect(() => { void load(); }, []);
 
+  const formSnapshotRef = useRef(JSON.stringify(EMPTY_FORM));
   const openCreate = () => {
     setEditing(null);
     setForm(EMPTY_FORM);
+    formSnapshotRef.current = JSON.stringify(EMPTY_FORM);
     setShowForm(true);
   };
 
   const openEdit = (item: ClinicUnit) => {
     setEditing(item);
-    setForm({ name: item.name, code: item.code || "" });
+    const next = { name: item.name, code: item.code || "" };
+    setForm(next);
+    formSnapshotRef.current = JSON.stringify(next);
     setShowForm(true);
+  };
+  const formDirty = showForm && JSON.stringify(form) !== formSnapshotRef.current;
+  const requestCloseForm = async () => {
+    if (formDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE, danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) return;
+    setShowForm(false);
   };
 
   const save = async () => {
@@ -121,8 +134,9 @@ export default function UnitelerTab() {
       <Modal
         open={showForm}
         onClose={() => setShowForm(false)}
+        isDirty={formDirty}
         title={editing ? "Tedavi Alanını Düzenle" : "Yeni Tedavi Alanı"}
-        footer={<><Button variant="secondary" onClick={() => setShowForm(false)}>Vazgeç</Button><Button onClick={save} loading={saving}>{editing ? "Güncelle" : "Kaydet"}</Button></>}
+        footer={<><Button variant="secondary" onClick={() => void requestCloseForm()}>Vazgeç</Button><Button onClick={save} loading={saving}>{editing ? "Güncelle" : "Kaydet"}</Button></>}
       >
         <div className="space-y-4">
           <FormField label="Koltuk / Oda Adı" required>

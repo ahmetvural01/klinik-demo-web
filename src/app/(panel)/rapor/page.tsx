@@ -6,6 +6,10 @@ import { RefreshCw } from "lucide-react";
 import type { ConsistencyPayload } from "@/lib/data-consistency";
 import { Button } from "@/components/ui/Button";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
+import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
+
+const RaporEmptyIcon = createSceneIllustration("rapor", 130);
 
 type DoctorReport = {
   id: string; fullName: string;
@@ -158,9 +162,12 @@ export default function RaporPage() {
     <section className="space-y-5">
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-black text-slate-900">Raporlar</h1>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">Seçili dönem</span>
+        <div className="flex flex-wrap items-center gap-3">
+          <ModuleIcon module="rapor" size="lg" />
+          <div>
+            <h1 className="font-display text-xl font-black tracking-tight text-slate-900">Raporlar</h1>
+            <p className="text-xs font-medium text-slate-500">Ciro, gider ve performans verilerini dönem bazında inceleyin.</p>
+          </div>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
           {/* Hızlı dönem butonları */}
@@ -549,7 +556,7 @@ export default function RaporPage() {
                   );
                 })}
               </div>
-            ) : <p className="py-8 text-center text-sm text-slate-400">Veri yok</p>}
+            ) : <div className="flex flex-col items-center py-8 text-center"><RaporEmptyIcon className="ui-empty-illustration mb-2" /><p className="text-sm text-slate-400">Veri yok</p></div>}
           </div>
           <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
             <h3 className="mb-3 text-sm font-bold text-slate-800">En Çok İşlem Gören Dişler</h3>
@@ -571,7 +578,7 @@ export default function RaporPage() {
                   );
                 })}
               </div>
-            ) : <p className="py-8 text-center text-sm text-slate-400">Veri yok</p>}
+            ) : <div className="flex flex-col items-center py-8 text-center"><RaporEmptyIcon className="ui-empty-illustration mb-2" /><p className="text-sm text-slate-400">Veri yok</p></div>}
           </div>
         </div>
         </div>

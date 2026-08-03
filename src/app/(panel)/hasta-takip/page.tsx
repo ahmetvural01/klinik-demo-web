@@ -25,7 +25,7 @@ type Appointment = {
   endAt: string;
   status: string;
   note?: string | null;
-  patient?: { id: string; fullName: string; phone?: string | null };
+  patient?: { id: string; fullName: string; phone?: string | null; whatsappOptInAt?: string | null; whatsappOptOutAt?: string | null };
   doctor?: { id: string; fullName: string };
 };
 
@@ -44,7 +44,7 @@ type ManualFollowUp = {
   closedAt?: string | null;
   createdAt: string;
   updatedAt: string;
-  patient?: { id: string; fullName: string; phone?: string | null };
+  patient?: { id: string; fullName: string; phone?: string | null; whatsappOptInAt?: string | null; whatsappOptOutAt?: string | null };
   appointment?: {
     id: string;
     startAt: string;
@@ -86,6 +86,7 @@ type FollowItem = {
   patientId: string;
   patientName: string;
   patientPhone?: string | null;
+  patientWhatsappConsent?: boolean;
   doctorId?: string;
   doctorName: string;
   type: string;
@@ -655,6 +656,7 @@ export default function HastaTakipPage() {
           patientId: a.patient?.id || "",
           patientName: a.patient?.fullName || "Hasta",
           patientPhone: a.patient?.phone || null,
+          patientWhatsappConsent: Boolean(a.patient?.whatsappOptInAt && !a.patient?.whatsappOptOutAt),
           doctorId: a.doctor?.id,
           doctorName: a.doctor?.fullName || "Doktor atanmamis",
           type: followType,
@@ -684,6 +686,7 @@ export default function HastaTakipPage() {
         patientId: f.patientId,
         patientName: f.patient?.fullName || "Hasta",
         patientPhone: f.patient?.phone || null,
+        patientWhatsappConsent: Boolean(f.patient?.whatsappOptInAt && !f.patient?.whatsappOptOutAt),
         doctorId: f.doctorId || f.appointment?.doctor?.id || undefined,
         doctorName: f.assignedDoctor?.fullName || f.appointment?.doctor?.fullName || "Doktor atanmamis",
         type: f.type,
@@ -1538,7 +1541,20 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                 {!hidePhone && detailItem.patientPhone && (
                   <div className="mt-2 flex flex-wrap gap-2">
                     <a href={`tel:${detailItem.patientPhone}`} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Ara</a>
-                    <a href={`https://wa.me/90${detailItem.patientPhone.replace(/\D/g, "").replace(/^0/, "")}`} target="_blank" rel="noreferrer" className="rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">WhatsApp</a>
+                    {detailItem.patientWhatsappConsent ? (
+                      <a href={`https://wa.me/90${detailItem.patientPhone.replace(/\D/g, "").replace(/^0/, "")}`} target="_blank" rel="noreferrer" className="rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">WhatsApp</a>
+                    ) : (
+                      // Hasta WhatsApp/mesajlaşma iznini vermemiş (veya hiç sorulmamış) —
+                      // önceden bu buton rıza kontrolünü tamamen atlayıp doğrudan
+                      // WhatsApp'ı açıyordu (bkz. denetim raporu, KVKK/rıza mimarisi
+                      // ihlali). İzin yoksa buton devre dışı, nedeni tooltip'te.
+                      <span
+                        title="Bu hasta WhatsApp ile iletişim için onay vermemiş"
+                        className="cursor-not-allowed rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-400"
+                      >
+                        WhatsApp (izin yok)
+                      </span>
+                    )}
                   </div>
                 )}
               </div>

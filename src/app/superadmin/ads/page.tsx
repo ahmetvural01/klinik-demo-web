@@ -6,8 +6,12 @@ import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { FormField } from "@/components/ui/FormField";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
 import { showToastSafe } from "@/lib/toast-client";
 import { confirmDialog } from "@/lib/confirm-client";
+
+const AdsEmptyIcon = createModuleEmptyIcon("log");
 
 type Ad = {
   id: string;
@@ -61,7 +65,7 @@ export default function AdsPage() {
         body: JSON.stringify({ id: ad.id, isActive: !ad.isActive }),
       });
       if (!res.ok) throw new Error("Güncellenemedi");
-      showToastSafe({ title: ad.isActive ? "Durduruldu" : "Yayınlandı", message: "Reklam durumu güncellendi", type: "success" });
+      showToastSafe({ title: ad.isActive ? "Durduruldu" : "Yayınlandı", message: "Reklam durumu güncellendi", type: "success", icon: "log" });
       load();
     } catch {
       showToastSafe({ title: "Hata", message: "Reklam durumu güncellenemedi", type: "error" });
@@ -115,7 +119,7 @@ export default function AdsPage() {
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.message || "Kaydedilemedi");
-      showToastSafe({ title: "Kaydedildi", message: `${d.title} reklamı kaydedildi`, type: "success" });
+      showToastSafe({ title: "Kaydedildi", message: `${d.title} reklamı kaydedildi`, type: "success", icon: "log" });
       setShowForm(false);
       load();
     } catch (e) {
@@ -141,7 +145,7 @@ export default function AdsPage() {
         body: JSON.stringify({ id: ad.id }),
       });
       if (!res.ok) throw new Error("Silinemedi");
-      showToastSafe({ title: "Silindi", message: "Reklam silindi", type: "success" });
+      showToastSafe({ title: "Silindi", message: "Reklam silindi", type: "success", icon: "log" });
       load();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
@@ -169,11 +173,11 @@ export default function AdsPage() {
             ))}
           </div>
         ) : ads.length === 0 ? (
-          <div className="px-6 py-14 text-center text-sm text-slate-400">Reklam bulunamadı</div>
+          <EmptyState icon={AdsEmptyIcon} illustrative title="Reklam bulunamadı" description="Henüz hiç reklam oluşturulmadı." />
         ) : (
           <div className="divide-y divide-slate-100">
-            {ads.map((ad) => (
-              <div key={ad.id} className="flex items-start justify-between gap-4 p-4 transition hover:bg-slate-50/80">
+            {ads.map((ad, adIdx) => (
+              <div key={ad.id} style={{ ["--row-delay" as string]: `${Math.min(adIdx, 14) * 18}ms` }} className="ui-row-in flex items-start justify-between gap-4 p-4 transition hover:bg-slate-50/80">
                 <div className="min-w-0 flex-1">
                   <div className="mb-1.5 flex flex-wrap items-center gap-2">
                     <span className="font-bold text-slate-900">{ad.title}</span>

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { invalidateInstitutionCache, requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { syncInstitutionPaymentGate } from "@/lib/billing";
 
@@ -24,13 +24,34 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
     return NextResponse.json({ message: "Fatura bulunamadı" }, { status: 404 });
   }
 
-  const invoice = await prisma.invoice.update({
-    where: { id: params.id },
-    data: {
-      status: body.status,
-      paidAt: body.status === "PAID" ? new Date() : null,
-    },
+  // Fatura durumu güncellemesi ile kurumun paymentGraceUntil senkronu TEK
+  // transaction içinde yapılır: sync adımı (ör. geçici DB hatası) başarısız
+  // olursa fatura durumu da güncellenmemiş sayılır — "fatura PAID ama kurum
+  // hâlâ kısıtlı görünüyor" gibi atomik olmayan bir tutarsızlık oluşmaz
+  // (bkz. denetim raporu, önceden `.catch(() => {})` ile hata sessizce
+  // yutuluyordu).
+  const invoice = await prisma.$transaction(async (tx) => {
+    const updated = await tx.invoice.update({
+      where: { id: params.id },
+      data: {
+        status: body.status,
+        paidAt: body.status === "PAID" ? new Date() : null,
+      },
+    });
+
+    // Ödendi/iptal işaretlendiğinde veya tekrar açıldığında kurumun yazma
+    // kısıtlaması (paymentGraceUntil) kalan ödenmemiş faturalara göre yeniden
+    // hesaplanır — süperadmin ayrıca elle kısıtlamayı kaldırmak zorunda kalmaz.
+    await syncInstitutionPaymentGate(updated.institutionId, tx);
+
+    return updated;
   });
+
+  // requireAuth() kurum kısıtlama durumunu 60sn'lik in-process cache'ten
+  // okuyor — bu invalidasyon olmadan süperadmin faturayı "Ödendi" işaretleyip
+  // kliniğe "artık yazabilirsiniz" dese bile klinik en fazla 60sn boyunca
+  // hâlâ kilitli görünürdü (bkz. denetim raporu).
+  invalidateInstitutionCache(invoice.institutionId);
 
   // Bir faturanın ödendi/iptal olarak işaretlenmesi elle yapılan, gerçek
   // ödeme doğrulaması olmayan bir işlemdir ve önceden hiçbir denetim
@@ -41,11 +62,6 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
     "SUPERADMIN_INVOICE_STATUS_UPDATE",
     `Fatura durumu değişti: ${existing.status} → ${invoice.status} (${Number(existing.amount)} TL, kurum: ${existing.institutionId})`,
   );
-
-  // Ödendi/iptal işaretlendiğinde veya tekrar açıldığında kurumun yazma
-  // kısıtlaması (paymentGraceUntil) kalan ödenmemiş faturalara göre yeniden
-  // hesaplanır — süperadmin ayrıca elle kısıtlamayı kaldırmak zorunda kalmaz.
-  await syncInstitutionPaymentGate(invoice.institutionId).catch(() => {});
 
   return NextResponse.json(invoice);
 }

@@ -231,7 +231,7 @@ export default function InstitutionDetailPage() {
 
   useEffect(() => {
     const bootstrap = async () => {
-      const meData = await cachedGet<{ role?: string } | null>("/api/auth/me", 60_000);
+      const meData = await cachedGet<{ role?: string } | null>("/api/auth/me?surface=superadmin", 60_000);
       if (!meData || meData.role !== "SUPERADMIN") {
         router.replace("/superadmin");
         return;
@@ -268,39 +268,44 @@ export default function InstitutionDetailPage() {
   const saveEdit = async () => {
     if (!editForm || !institution) return;
     setSaving(true);
-    const body: Record<string, unknown> = {
-      name: editForm.name,
-      email: editForm.email,
-      phone: editForm.phone,
-      address: editForm.address,
-      taxNo: editForm.taxNo,
-      website: editForm.website,
-      subscriptionPlan: editForm.subscriptionPlan,
-      billingCycle: editForm.billingCycle,
-      isActive: editForm.isActive,
-      serviceMode: editForm.serviceMode,
-      serviceNote: editForm.serviceNote,
-      suspendedUntil: editForm.suspendedUntil ? new Date(editForm.suspendedUntil).toISOString() : null,
-      maxActiveUsers: editForm.maxActiveUsers ? Number(editForm.maxActiveUsers) : null,
-      maxActiveDoctors: editForm.maxActiveDoctors ? Number(editForm.maxActiveDoctors) : null,
-      adsEnabled: editForm.adsEnabled,
-      adIntensity: editForm.adIntensity,
-      whatsappEnabled: editForm.whatsappEnabled,
-    };
-    const res = await fetch(`/api/superadmin/institutions/${institution.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    setSaving(false);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: "Güncelleme başarısız" }));
-      showToastSafe({ message: err.message || "Güncelleme başarısız", type: "error" });
-      return;
+    try {
+      const body: Record<string, unknown> = {
+        name: editForm.name,
+        email: editForm.email,
+        phone: editForm.phone,
+        address: editForm.address,
+        taxNo: editForm.taxNo,
+        website: editForm.website,
+        subscriptionPlan: editForm.subscriptionPlan,
+        billingCycle: editForm.billingCycle,
+        isActive: editForm.isActive,
+        serviceMode: editForm.serviceMode,
+        serviceNote: editForm.serviceNote,
+        suspendedUntil: editForm.suspendedUntil ? new Date(editForm.suspendedUntil).toISOString() : null,
+        maxActiveUsers: editForm.maxActiveUsers ? Number(editForm.maxActiveUsers) : null,
+        maxActiveDoctors: editForm.maxActiveDoctors ? Number(editForm.maxActiveDoctors) : null,
+        adsEnabled: editForm.adsEnabled,
+        adIntensity: editForm.adIntensity,
+        whatsappEnabled: editForm.whatsappEnabled,
+      };
+      const res = await fetch(`/api/superadmin/institutions/${institution.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Güncelleme başarısız" }));
+        showToastSafe({ message: err.message || "Güncelleme başarısız", type: "error" });
+        return;
+      }
+      showToastSafe({ message: "Klinik güncellendi", type: "success", icon: "institutions" });
+      setEditOpen(false);
+      void load();
+    } catch {
+      showToastSafe({ message: "Bağlantı hatası — klinik güncellenemedi. Lütfen tekrar deneyin.", type: "error" });
+    } finally {
+      setSaving(false);
     }
-    showToastSafe({ message: "Klinik güncellendi", type: "success" });
-    setEditOpen(false);
-    void load();
   };
 
   const openInvoiceModal = () => {
@@ -329,26 +334,31 @@ export default function InstitutionDetailPage() {
       return;
     }
     setInvoiceSaving(true);
-    const res = await fetch("/api/superadmin/invoices", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        institutionId: institution.id,
-        amount: amountNum,
-        description: invoiceDescription,
-        dueDate: new Date(invoiceDueDate).toISOString(),
-        status: "PENDING",
-      }),
-    });
-    setInvoiceSaving(false);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: "Fatura oluşturulamadı" }));
-      showToastSafe({ message: err.message || "Fatura oluşturulamadı", type: "error" });
-      return;
+    try {
+      const res = await fetch("/api/superadmin/invoices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          institutionId: institution.id,
+          amount: amountNum,
+          description: invoiceDescription,
+          dueDate: new Date(invoiceDueDate).toISOString(),
+          status: "PENDING",
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Fatura oluşturulamadı" }));
+        showToastSafe({ message: err.message || "Fatura oluşturulamadı", type: "error" });
+        return;
+      }
+      showToastSafe({ message: "Fatura oluşturuldu", type: "success", icon: "finance" });
+      setInvoiceOpen(false);
+      void load();
+    } catch {
+      showToastSafe({ message: "Bağlantı hatası — fatura oluşturulamadı. Lütfen tekrar deneyin.", type: "error" });
+    } finally {
+      setInvoiceSaving(false);
     }
-    showToastSafe({ message: "Fatura oluşturuldu", type: "success" });
-    setInvoiceOpen(false);
-    void load();
   };
 
   const markPaid = async (invoiceId: string) => {
@@ -359,19 +369,24 @@ export default function InstitutionDetailPage() {
     });
     if (!ok) return;
     setMarkingPaidId(invoiceId);
-    const res = await fetch(`/api/superadmin/invoices/${invoiceId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "PAID" }),
-    });
-    setMarkingPaidId(null);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: "İşlem başarısız" }));
-      showToastSafe({ message: err.message || "İşlem başarısız", type: "error" });
-      return;
+    try {
+      const res = await fetch(`/api/superadmin/invoices/${invoiceId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "PAID" }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "İşlem başarısız" }));
+        showToastSafe({ message: err.message || "İşlem başarısız", type: "error" });
+        return;
+      }
+      showToastSafe({ message: "Fatura ödendi olarak işaretlendi", type: "success", icon: "finance" });
+      void load();
+    } catch {
+      showToastSafe({ message: "Bağlantı hatası — işlem yapılamadı. Lütfen tekrar deneyin.", type: "error" });
+    } finally {
+      setMarkingPaidId(null);
     }
-    showToastSafe({ message: "Fatura ödendi olarak işaretlendi", type: "success" });
-    void load();
   };
 
   const adjustSmsCredit = async () => {
@@ -391,20 +406,25 @@ export default function InstitutionDetailPage() {
     });
     if (!ok) return;
     setSmsCreditSaving(true);
-    const res = await fetch(`/api/superadmin/institutions/${institution.id}/sms-credit`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ amount }),
-    });
-    const data = await res.json().catch(() => ({}));
-    setSmsCreditSaving(false);
-    if (!res.ok) {
-      showToastSafe({ message: data.message || "SMS kredisi güncellenemedi", type: "error" });
-      return;
+    try {
+      const res = await fetch(`/api/superadmin/institutions/${institution.id}/sms-credit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ amount }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToastSafe({ message: data.message || "SMS kredisi güncellenemedi", type: "error" });
+        return;
+      }
+      showToastSafe({ message: `SMS bakiyesi güncellendi: ${data.smsBalance}`, type: "success", icon: "sms" });
+      setSmsCreditAmount("");
+      void load();
+    } catch {
+      showToastSafe({ message: "Bağlantı hatası — SMS kredisi güncellenemedi. Lütfen tekrar deneyin.", type: "error" });
+    } finally {
+      setSmsCreditSaving(false);
     }
-    showToastSafe({ message: `SMS bakiyesi güncellendi: ${data.smsBalance}`, type: "success" });
-    setSmsCreditAmount("");
-    void load();
   };
 
   const deactivate = async () => {
@@ -417,51 +437,66 @@ export default function InstitutionDetailPage() {
     });
     if (!ok) return;
     setDeactivating(true);
-    const res = await fetch(`/api/superadmin/institutions/${institution.id}`, { method: "DELETE" });
-    setDeactivating(false);
-    if (!res.ok) {
-      showToastSafe({ message: "İşlem başarısız", type: "error" });
-      return;
+    try {
+      const res = await fetch(`/api/superadmin/institutions/${institution.id}`, { method: "DELETE" });
+      if (!res.ok) {
+        showToastSafe({ message: "İşlem başarısız", type: "error" });
+        return;
+      }
+      showToastSafe({ message: "Klinik pasife alındı", type: "success", icon: "institutions" });
+      void load();
+    } catch {
+      showToastSafe({ message: "Bağlantı hatası — işlem yapılamadı. Lütfen tekrar deneyin.", type: "error" });
+    } finally {
+      setDeactivating(false);
     }
-    showToastSafe({ message: "Klinik pasife alındı", type: "success" });
-    void load();
   };
 
   const activate = async () => {
     if (!institution) return;
     setDeactivating(true);
-    const res = await fetch(`/api/superadmin/institutions/${institution.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isActive: true }),
-    });
-    setDeactivating(false);
-    if (!res.ok) {
-      showToastSafe({ message: "İşlem başarısız", type: "error" });
-      return;
+    try {
+      const res = await fetch(`/api/superadmin/institutions/${institution.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: true }),
+      });
+      if (!res.ok) {
+        showToastSafe({ message: "İşlem başarısız", type: "error" });
+        return;
+      }
+      showToastSafe({ message: "Klinik aktif edildi", type: "success", icon: "institutions" });
+      void load();
+    } catch {
+      showToastSafe({ message: "Bağlantı hatası — işlem yapılamadı. Lütfen tekrar deneyin.", type: "error" });
+    } finally {
+      setDeactivating(false);
     }
-    showToastSafe({ message: "Klinik aktif edildi", type: "success" });
-    void load();
   };
 
   const enterAsGhost = async () => {
     if (!institution || !ghostPassword) return;
     setGhostLoading(true);
     setGhostError(null);
-    const res = await fetch("/api/auth/superadmin/impersonate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ institutionId: institution.id, password: ghostPassword }),
-    });
-    setGhostLoading(false);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ message: "Hata" }));
-      setGhostError(err.message || "Giriş başarısız");
-      return;
+    try {
+      const res = await fetch("/api/auth/superadmin/impersonate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ institutionId: institution.id, password: ghostPassword }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Hata" }));
+        setGhostError(err.message || "Giriş başarısız");
+        return;
+      }
+      window.open("/anasayfa", "_blank");
+      setGhostOpen(false);
+      setGhostPassword("");
+    } catch {
+      setGhostError("Bağlantı hatası — giriş yapılamadı. Lütfen tekrar deneyin.");
+    } finally {
+      setGhostLoading(false);
     }
-    window.open("/anasayfa", "_blank");
-    setGhostOpen(false);
-    setGhostPassword("");
   };
 
   const userColumns: ListTableColumn<UserRow>[] = [
@@ -552,7 +587,12 @@ export default function InstitutionDetailPage() {
                 <h1 className="text-2xl font-black text-slate-900">{institution.name}</h1>
                 <Badge tone={institution.isActive ? "success" : "critical"}>{institution.isActive ? "Aktif" : "Pasif"}</Badge>
                 {institution.serviceMode !== "NORMAL" && (
-                  <Badge tone={SERVICE_MODE_TONE[institution.serviceMode]} title={SERVICE_MODE_HINTS[institution.serviceMode]}>
+                  <Badge
+                    tone={SERVICE_MODE_TONE[institution.serviceMode]}
+                    solid={institution.serviceMode === "SUSPENDED"}
+                    className={institution.serviceMode === "SUSPENDED" ? "ui-badge-pulse" : ""}
+                    title={SERVICE_MODE_HINTS[institution.serviceMode]}
+                  >
                     {institution.serviceMode}
                   </Badge>
                 )}
@@ -961,7 +1001,7 @@ export default function InstitutionDetailPage() {
 
 function StatBox({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+    <div className="ui-interactive ui-kpi-in rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
       <p className="mt-0.5 text-sm font-black text-slate-900">{value}</p>
     </div>

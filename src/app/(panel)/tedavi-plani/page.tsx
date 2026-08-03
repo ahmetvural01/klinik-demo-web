@@ -1,14 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Plus } from "lucide-react";
 import { cachedGet } from "@/lib/client-cache";
 import { confirmDialog } from "@/lib/confirm-client";
 import { Button } from "@/components/ui/Button";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
 import { SearchSelect } from "@/components/ui/SearchSelect";
 import { showToastSafe } from "@/lib/toast-client";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+
+const TedaviEmptyIcon = createSceneIllustration("tedavi");
 
 type PlanStatus = "PLANLANDI" | "DEVAM_EDIYOR" | "TAMAMLANDI" | "IPTAL";
 type StepStatus = "BEKLIYOR" | "YAPILDI" | "IPTAL";
@@ -46,6 +52,8 @@ const CURRENCY = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "
 const EMPTY_STATUS_COUNTS: Record<PlanStatus, number> = { PLANLANDI: 0, DEVAM_EDIYOR: 0, TAMAMLANDI: 0, IPTAL: 0 };
 
 export default function TedaviPlaniPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [plans,    setPlans]    = useState<Plan[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [filter,   setFilter]   = useState<"" | PlanStatus>("");
@@ -72,6 +80,34 @@ export default function TedaviPlaniPage() {
   const [newSteps,  setNewSteps]  = useState([{ treatmentName: "", toothNo: "", amount: "" }]);
   const [saving,    setSaving]    = useState(false);
   const [patientQuery, setPatientQuery] = useState("");
+  // ASISTAN/BANKO/MUHASEBE'nin treatment:write izni yok — API bunu zaten
+  // reddediyor ama önceden buton herkese görünüyordu, kullanıcı tüm formu
+  // doldurup en sonda genel bir hata alıyordu (bkz. denetim raporu).
+  const [canCreatePlan, setCanCreatePlan] = useState(true);
+
+  useEffect(() => {
+    cachedGet<{ role?: string } | null>("/api/auth/me", 60_000)
+      .then((d) => setCanCreatePlan(!["ASISTAN", "BANKO", "MUHASEBE"].includes(d?.role || "")))
+      .catch(() => {});
+  }, []);
+
+  // Hasta detayından "Yeni Tedavi Planı" ile gelindiğinde hasta ikinci kez
+  // aranmasın diye form önceden dolu açılır (bkz. denetim raporu — randevu
+  // sayfasında zaten kurulan aynı desen).
+  useEffect(() => {
+    const qpPatientId = searchParams.get("patientId");
+    const qpPatientName = searchParams.get("patientName");
+    if (qpPatientId) {
+      setNewPlan((p) => ({ ...p, patientId: qpPatientId }));
+      setPatientQuery(qpPatientName || "");
+      setShowNew(true);
+      const next = new URLSearchParams(Array.from(searchParams.entries()));
+      next.delete("patientId");
+      next.delete("patientName");
+      router.replace(`?${next.toString()}`, { scroll: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   useEffect(() => {
     cachedGet<unknown>("/api/staff", 60_000).then(d => setDoctors((Array.isArray(d) ? d : []).filter((u: Doctor) => u.role === "DOKTOR" || (u.role === "YONETICI" && u.profile?.hideAsDoctor === false)))).catch(() => {});
@@ -113,17 +149,47 @@ export default function TedaviPlaniPage() {
 
   const filtered = plans;
 
-  async function submitNew() {
-    if (!newPlan.patientId || !newPlan.doctorId || !newPlan.title) return;
-    setSaving(true);
-    const steps = newSteps.filter(s => s.treatmentName.trim()).map(s => ({ ...s, amount: Number(s.amount) || 0 }));
-    await fetch("/api/treatment-plans", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...newPlan, steps }) }).catch(() => {});
+  // Çok alanlı bir form — ESC/İptal ile yanlışlıkla kapatılırsa girilen
+  // hasta/doktor/adım bilgileri sessizce kaybolmamalı (bkz. denetim raporu).
+  async function requestCloseNewPlan() {
+    const isDirty = Boolean(
+      newPlan.patientId || newPlan.doctorId || newPlan.title.trim() || newPlan.notes.trim() ||
+      newSteps.some(s => s.treatmentName.trim() || s.toothNo.trim() || s.amount.trim())
+    );
+    if (isDirty && !(await confirmDialog({
+      message: "Kaydedilmemiş değişiklikler var. Kapatılsın mı? Girdiğiniz bilgiler kaybolacak.",
+      danger: true,
+      confirmText: "Kapat, Değişiklikleri Kaybet",
+    }))) {
+      return;
+    }
     setShowNew(false);
     setNewPlan({ patientId: "", doctorId: "", title: "", notes: "" });
     setNewSteps([{ treatmentName: "", toothNo: "", amount: "" }]);
     setPatientQuery("");
-    setSaving(false);
-    fetchPlans();
+  }
+
+  async function submitNew() {
+    if (!newPlan.patientId || !newPlan.doctorId || !newPlan.title) return;
+    setSaving(true);
+    try {
+      const steps = newSteps.filter(s => s.treatmentName.trim()).map(s => ({ ...s, amount: Number(s.amount) || 0 }));
+      const res = await fetch("/api/treatment-plans", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...newPlan, steps }) });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        showToastSafe({ message: data?.message || data?.error || "Tedavi planı oluşturulamadı", type: "error" });
+        return;
+      }
+      setShowNew(false);
+      setNewPlan({ patientId: "", doctorId: "", title: "", notes: "" });
+      setNewSteps([{ treatmentName: "", toothNo: "", amount: "" }]);
+      setPatientQuery("");
+      fetchPlans();
+    } catch {
+      showToastSafe({ message: "Bağlantı hatası — tedavi planı oluşturulamadı. Lütfen tekrar deneyin.", type: "error" });
+    } finally {
+      setSaving(false);
+    }
   }
 
   async function updateStatus(planId: string, status: string) {
@@ -131,7 +197,7 @@ export default function TedaviPlaniPage() {
     const res = await fetch(`/api/treatment-plans/${planId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }).catch(() => null);
     if (!res?.ok) {
       const data = await res?.json().catch(() => null);
-      showToastSafe({ message: data?.error || "Durum güncellenemedi", type: "error" });
+      showToastSafe({ message: data?.message || data?.error || "Durum güncellenemedi", type: "error" });
       return;
     }
     fetchPlans();
@@ -142,7 +208,7 @@ export default function TedaviPlaniPage() {
     const res = await fetch(`/api/treatment-plans/${planId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stepUpdates: [{ id: stepId, status }] }) }).catch(() => null);
     if (!res?.ok) {
       const data = await res?.json().catch(() => null);
-      showToastSafe({ message: data?.error || "Adım güncellenemedi", type: "error" });
+      showToastSafe({ message: data?.message || data?.error || "Adım güncellenemedi", type: "error" });
       return;
     }
     setSelected(s => {
@@ -155,7 +221,11 @@ export default function TedaviPlaniPage() {
   async function deleteStep(planId: string, stepId: string) {
     if (!(await confirmDialog({ message: "Bu tedavi adımı silinsin mi?", danger: true, confirmText: "Sil" }))) return;
     const res = await fetch(`/api/treatment-plans/${planId}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ stepDeletes: [stepId] }) }).catch(() => null);
-    if (!res?.ok) return;
+    if (!res?.ok) {
+      const data = await res?.json().catch(() => null);
+      showToastSafe({ message: data?.message || data?.error || "Tedavi adımı silinemedi", type: "error" });
+      return;
+    }
     const updated = await res.json().catch(() => null);
     setSelected(s => {
       if (!s) return null;
@@ -169,16 +239,20 @@ export default function TedaviPlaniPage() {
   return (
     <div className="space-y-5">
       {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-black text-slate-900">Tedavi Planları</h1>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{stats.total} plan</span>
-          <span className="rounded-full bg-amber-50 px-3 py-1 text-sm font-semibold text-amber-700">{stats.byStatus.DEVAM_EDIYOR} devam ediyor</span>
-        </div>
-        <Button variant="primary" icon={Plus} onClick={() => setShowNew(true)}>
-          Yeni Tedavi Planı
-        </Button>
-      </div>
+      <PageHeader
+        icon="tedavi"
+        title="Tedavi Planları"
+        description="Hasta tedavi süreçlerini adım adım planlayın ve ilerlemesini takip edin."
+        stats={[
+          { label: "Toplam Plan", value: stats.total },
+          { label: "Devam Eden", value: stats.byStatus.DEVAM_EDIYOR, color: "text-amber-600" },
+        ]}
+        actions={canCreatePlan && (
+          <Button variant="primary" icon={Plus} onClick={() => setShowNew(true)}>
+            Yeni Tedavi Planı
+          </Button>
+        )}
+      />
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
@@ -220,9 +294,13 @@ export default function TedaviPlaniPage() {
       {/* Plans Grid */}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" aria-busy={loading}>
           {filtered.length === 0 && (
-            <div className="col-span-full flex flex-col items-center py-16 text-slate-300">
-              <svg className="mb-3 h-12 w-12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/></svg>
-              <p className="text-sm text-slate-400">Tedavi planı bulunamadı</p>
+            <div className="col-span-full">
+              <EmptyState
+                icon={TedaviEmptyIcon}
+                illustrative
+                title="Tedavi planı bulunamadı"
+                description="Seçilen filtrede kayıtlı bir tedavi planı yok. Yeni bir hasta için çok adımlı tedavi planı oluşturabilirsiniz."
+              />
             </div>
           )}
           {filtered.map(plan => {
@@ -243,9 +321,20 @@ export default function TedaviPlaniPage() {
                     <span>{done}/{plan.steps.length} adım</span>
                     <span>{pct}%</span>
                   </div>
-                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                    <div className="h-full rounded-full bg-primary transition-all" style={{ width: `${pct}%` }} />
-                  </div>
+                  <svg className="h-1.5 w-full" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true">
+                    <line x1="1" y1="2" x2="99" y2="2" stroke="rgb(var(--color-slate-100))" strokeWidth="4" strokeLinecap="round" />
+                    {pct > 0 && (
+                      <line
+                        key={pct}
+                        className="ui-progress-line"
+                        x1="1" y1="2" x2={1 + (98 * pct) / 100} y2="2"
+                        stroke="rgb(var(--app-primary))"
+                        strokeWidth="4"
+                        strokeLinecap="round"
+                        style={{ ["--progress-len" as string]: (98 * pct) / 100 }}
+                      />
+                    )}
+                  </svg>
                 </div>
                 <div className="flex items-center justify-between">
                   <p className="text-xs text-slate-400">{plan.doctor.fullName}</p>
@@ -331,7 +420,7 @@ export default function TedaviPlaniPage() {
       </Modal>
 
       {/* New Plan Modal */}
-      <Modal open={showNew} onClose={() => setShowNew(false)} title="Yeni Tedavi Planı" size="md">
+      <Modal open={showNew} onClose={() => void requestCloseNewPlan()} title="Yeni Tedavi Planı" size="md">
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
@@ -383,7 +472,7 @@ export default function TedaviPlaniPage() {
             <textarea value={newPlan.notes} onChange={e => setNewPlan(p => ({ ...p, notes: e.target.value }))} rows={2} className={inp + " w-full resize-none"} placeholder="İsteğe bağlı not…" />
           </div>
           <div className="flex gap-3 pt-2">
-            <Button variant="secondary" onClick={() => setShowNew(false)} fullWidth>İptal</Button>
+            <Button variant="secondary" onClick={() => void requestCloseNewPlan()} fullWidth>İptal</Button>
             <Button variant="primary" onClick={() => void submitNew()} loading={saving} fullWidth>
               Oluştur
             </Button>

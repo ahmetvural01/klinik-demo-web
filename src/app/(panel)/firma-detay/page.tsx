@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, Suspense } from "react";
+import { useState, useEffect, useCallback, useRef, Suspense } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -7,7 +7,7 @@ import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { ProfessionalDataTable } from "@/components/ui/ProfessionalDataTable";
 import { Button } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
+import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
 import {
@@ -161,21 +161,36 @@ function FirmaDetayContent() {
   const [editForm, setEditForm] = useState({
     name: "", phone: "", iban: "", ibanName: "", notes: "", kategori: "TEDARICI", paymentTerms: "NET_30"
   });
+  const editFirmaSnapshotRef = useRef("");
   const openEditFirma = () => {
     if (!firma) return;
-    setEditForm({
+    const next = {
       name: firma.name, phone: firma.phone || "", iban: firma.iban || "", ibanName: firma.ibanName || "",
       notes: firma.notes || "", kategori: firma.kategori, paymentTerms: firma.paymentTerms,
-    });
+    };
+    setEditForm(next);
+    editFirmaSnapshotRef.current = JSON.stringify(next);
     setShowEditFirma(true);
+  };
+  const editFirmaDirty = showEditFirma && JSON.stringify(editForm) !== editFirmaSnapshotRef.current;
+  const requestCloseEditFirma = async () => {
+    if (editFirmaDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE, danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) return;
+    setShowEditFirma(false);
   };
   const handleEditFirma = async () => {
     if (!firma) return;
-    const r = await fetch(`/api/firma/${firma.id}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editForm),
-    });
-    if (r.ok) { setShowEditFirma(false); showToast("success", "Firma güncellendi"); await loadFirma(); }
-    else { const e = await r.json(); showToast("error", e.error || "Hata oluştu"); }
+    try {
+      const r = await fetch(`/api/firma/${firma.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editForm),
+      });
+      if (r.ok) { setShowEditFirma(false); showToast("success", "Firma güncellendi"); await loadFirma(); }
+      else { const e = await r.json().catch(() => ({})); showToast("error", e.error || "Hata oluştu"); }
+    } catch {
+      showToast("error", "Bağlantı hatası — firma güncellenemedi. Lütfen tekrar deneyin.");
+    }
   };
 
   const toggleFirmaActive = async () => {
@@ -183,83 +198,126 @@ function FirmaDetayContent() {
     const nextActive = !firma.isActive;
     const message = nextActive ? "Firma tekrar aktif edilsin mi?" : "Firma pasife alınsın mı? Pasif firmalar yeni alım/hizmet kaydında listelenmez.";
     if (!(await confirmDialog({ message, danger: !nextActive, confirmText: nextActive ? "Aktif Et" : "Pasife Al" }))) return;
-    const r = await fetch(`/api/firma/${firma.id}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: nextActive }),
-    });
-    if (r.ok) { showToast("success", nextActive ? "Firma aktif edildi" : "Firma pasife alındı"); await loadFirma(); }
-    else { const e = await r.json().catch(() => ({})); showToast("error", e.error || "Hata oluştu"); }
+    try {
+      const r = await fetch(`/api/firma/${firma.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: nextActive }),
+      });
+      if (r.ok) { showToast("success", nextActive ? "Firma aktif edildi" : "Firma pasife alındı"); await loadFirma(); }
+      else { const e = await r.json().catch(() => ({})); showToast("error", e.error || "Hata oluştu"); }
+    } catch {
+      showToast("error", "Bağlantı hatası — firma durumu değiştirilemedi. Lütfen tekrar deneyin.");
+    }
   };
 
   const cancelIslem = async (iid: string) => {
     if (!firma) return;
     if (!(await confirmDialog({ message: "Bu işlemi iptal etmek istediğinizden emin misiniz?", danger: true, confirmText: "İptal Et" }))) return;
-    const r = await fetch(`/api/firma/${firma.id}/islemler/${iid}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "IPTAL" }),
-    });
-    const data = await r.json();
-    showToast(r.ok ? "success" : "error", data.message || data.error || (r.ok ? "İşlem iptal edildi" : "İşlem iptal edilemedi"));
-    await Promise.all([loadEkstre(), loadFirma(), loadStockItems()]);
+    try {
+      const r = await fetch(`/api/firma/${firma.id}/islemler/${iid}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "IPTAL" }),
+      });
+      const data = await r.json().catch(() => ({}));
+      showToast(r.ok ? "success" : "error", data.message || data.error || (r.ok ? "İşlem iptal edildi" : "İşlem iptal edilemedi"));
+      await Promise.all([loadEkstre(), loadFirma(), loadStockItems()]);
+    } catch {
+      showToast("error", "Bağlantı hatası — işlem iptal edilemedi. Lütfen tekrar deneyin.");
+    }
   };
 
   // ── Kontakt Ekle modal ────────────────────────────────────────────────────
   const [showAddKontakt, setShowAddKontakt] = useState(false);
   const [isSubmittingKontakt, setIsSubmittingKontakt] = useState(false);
   const [kontaktForm, setKontaktForm] = useState({ ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false });
+  const kontaktFormDirty = Boolean(
+    kontaktForm.ad.trim() || kontaktForm.unvan.trim() || kontaktForm.email.trim() || kontaktForm.telefon.trim() || kontaktForm.rol.trim() || kontaktForm.isPrimary
+  );
+  const requestCloseAddKontakt = async () => {
+    if (kontaktFormDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE, danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) return;
+    setShowAddKontakt(false);
+  };
   const handleAddKontakt = async () => {
     if (!firma || !kontaktForm.ad.trim()) { showToast("error", "Kontakt adı zorunlu"); return; }
     if (isSubmittingKontakt) return;
     setIsSubmittingKontakt(true);
-    const r = await fetch(`/api/firma/${firma.id}/kontaktler`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(kontaktForm),
-    });
-    if (r.ok) {
-      setShowAddKontakt(false);
-      setKontaktForm({ ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false });
-      showToast("success", "Kontakt eklendi");
-      await loadKontaktler();
-    } else {
-      const e = await r.json();
-      showToast("error", e.error || "Kontakt eklenemedi");
+    try {
+      const r = await fetch(`/api/firma/${firma.id}/kontaktler`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(kontaktForm),
+      });
+      if (r.ok) {
+        setShowAddKontakt(false);
+        setKontaktForm({ ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false });
+        showToast("success", "Kontakt eklendi");
+        await loadKontaktler();
+      } else {
+        const e = await r.json().catch(() => ({}));
+        showToast("error", e.error || "Kontakt eklenemedi");
+      }
+    } catch {
+      showToast("error", "Bağlantı hatası — kontakt eklenemedi. Lütfen tekrar deneyin.");
+    } finally {
+      setIsSubmittingKontakt(false);
     }
-    setIsSubmittingKontakt(false);
   };
 
   const [editingKontakt, setEditingKontakt] = useState<FirmaKontakt | null>(null);
   const [editKontaktForm, setEditKontaktForm] = useState({ ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false });
   const [isSavingKontakt, setIsSavingKontakt] = useState(false);
 
+  const editKontaktSnapshotRef = useRef("");
   const openEditKontakt = (k: FirmaKontakt) => {
     setEditingKontakt(k);
-    setEditKontaktForm({ ad: k.ad, unvan: k.unvan || "", email: k.email || "", telefon: k.telefon || "", rol: k.rol || "", isPrimary: k.isPrimary });
+    const next = { ad: k.ad, unvan: k.unvan || "", email: k.email || "", telefon: k.telefon || "", rol: k.rol || "", isPrimary: k.isPrimary };
+    setEditKontaktForm(next);
+    editKontaktSnapshotRef.current = JSON.stringify(next);
+  };
+  const editKontaktDirty = Boolean(editingKontakt) && JSON.stringify(editKontaktForm) !== editKontaktSnapshotRef.current;
+  const requestCloseEditKontakt = async () => {
+    if (editKontaktDirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE, danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) return;
+    setEditingKontakt(null);
   };
 
   const handleSaveKontakt = async () => {
     if (!firma || !editingKontakt || !editKontaktForm.ad.trim()) { showToast("error", "Kontakt adı zorunlu"); return; }
     if (isSavingKontakt) return;
     setIsSavingKontakt(true);
-    const r = await fetch(`/api/firma/${firma.id}/kontaktler/${editingKontakt.id}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editKontaktForm),
-    });
-    if (r.ok) {
-      setEditingKontakt(null);
-      showToast("success", "Kontakt güncellendi");
-      await loadKontaktler();
-    } else {
-      const e = await r.json().catch(() => ({}));
-      showToast("error", e.error || "Kontakt güncellenemedi");
+    try {
+      const r = await fetch(`/api/firma/${firma.id}/kontaktler/${editingKontakt.id}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editKontaktForm),
+      });
+      if (r.ok) {
+        setEditingKontakt(null);
+        showToast("success", "Kontakt güncellendi");
+        await loadKontaktler();
+      } else {
+        const e = await r.json().catch(() => ({}));
+        showToast("error", e.error || "Kontakt güncellenemedi");
+      }
+    } catch {
+      showToast("error", "Bağlantı hatası — kontakt güncellenemedi. Lütfen tekrar deneyin.");
+    } finally {
+      setIsSavingKontakt(false);
     }
-    setIsSavingKontakt(false);
   };
 
   const handleDeleteKontakt = async (k: FirmaKontakt) => {
     if (!firma) return;
     if (!(await confirmDialog({ message: `${k.ad} kontaktı silinsin mi?`, danger: true, confirmText: "Sil" }))) return;
-    const r = await fetch(`/api/firma/${firma.id}/kontaktler/${k.id}`, { method: "DELETE" });
-    if (r.ok) {
-      showToast("success", "Kontakt silindi");
-      await loadKontaktler();
-    } else {
-      showToast("error", "Kontakt silinemedi");
+    try {
+      const r = await fetch(`/api/firma/${firma.id}/kontaktler/${k.id}`, { method: "DELETE" });
+      if (r.ok) {
+        showToast("success", "Kontakt silindi");
+        await loadKontaktler();
+      } else {
+        showToast("error", "Kontakt silinemedi");
+      }
+    } catch {
+      showToast("error", "Bağlantı hatası — kontakt silinemedi. Lütfen tekrar deneyin.");
     }
   };
 
@@ -519,12 +577,14 @@ function FirmaDetayContent() {
 
       {/* Modal: Firma Düzenle */}
       <Modal
+        module="firma"
         open={showEditFirma}
         onClose={() => setShowEditFirma(false)}
+        isDirty={editFirmaDirty}
         title="Firma Bilgilerini Düzenle"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowEditFirma(false)}>Vazgeç</Button>
+            <Button variant="secondary" onClick={() => void requestCloseEditFirma()}>Vazgeç</Button>
             <Button onClick={handleEditFirma}>Güncelle</Button>
           </>
         }
@@ -552,12 +612,14 @@ function FirmaDetayContent() {
       </Modal>
 
       <Modal
+        module="firma"
         open={showAddKontakt}
         onClose={() => setShowAddKontakt(false)}
+        isDirty={kontaktFormDirty}
         title="Kontakt Ekle"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowAddKontakt(false)}>Vazgeç</Button>
+            <Button variant="secondary" onClick={() => void requestCloseAddKontakt()}>Vazgeç</Button>
             <Button onClick={handleAddKontakt} loading={isSubmittingKontakt}>Kaydet</Button>
           </>
         }
@@ -586,12 +648,14 @@ function FirmaDetayContent() {
       </Modal>
 
       <Modal
+        module="firma"
         open={Boolean(editingKontakt)}
         onClose={() => setEditingKontakt(null)}
+        isDirty={editKontaktDirty}
         title="Kontaktı Düzenle"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setEditingKontakt(null)}>Vazgeç</Button>
+            <Button variant="secondary" onClick={() => void requestCloseEditKontakt()}>Vazgeç</Button>
             <Button onClick={handleSaveKontakt} loading={isSavingKontakt}>Kaydet</Button>
           </>
         }

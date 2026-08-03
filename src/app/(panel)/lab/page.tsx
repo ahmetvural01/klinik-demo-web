@@ -14,7 +14,12 @@ import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
 import { ListTable } from "@/components/ui/ListTable";
 import type { ListTableColumn } from "@/components/ui/ListTable";
-import { Plus } from "lucide-react";
+import { Plus, CheckCircle2, TriangleAlert, FlaskConical, Stethoscope, CircleDashed } from "lucide-react";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
+import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+import { Tooltip } from "@/components/ui/Tooltip";
+
+const LabEmptyIcon = createSceneIllustration("lab");
 import { confirmDialog } from "@/lib/confirm-client";
 
 type LabInvoice = {
@@ -835,17 +840,19 @@ export default function LabPage() {
     const queryLab = knownLabs.find((lab) => lab === prefillLabName);
     const currentLab = activeLab !== "all" && knownLabs.includes(activeLab) ? activeLab : "";
 
-    setOrderForm({
+    const initialOrderForm = {
       ...emptyOrderForm,
       patientId: patientExists ? prefillPatientId : "",
       doctorId: defaultDoctorId,
       labName: queryLab || currentLab || knownLabs[0] || "",
-    });
+    };
+    setOrderForm(initialOrderForm);
     setOrderPatientSearch(patientExists ? patients.find((patient) => patient.id === prefillPatientId)?.fullName || "" : "");
     setOrderDoctorSearch(doctors.find((doctor) => doctor.id === defaultDoctorId)?.fullName || "");
     setOrderLabSearch(queryLab || currentLab || knownLabs[0] || "");
     setOrderLabTypeSearch("");
     orderRequestKeyRef.current = "";
+    modalSnapshotRef.current = JSON.stringify(initialOrderForm);
     setModal("new");
     prefillHandledRef.current = true;
 
@@ -969,12 +976,40 @@ export default function LabPage() {
     [orders, detailOrderId],
   );
 
+  // Modal açılırken formun o anki (başlangıç) halinin JSON anlık görüntüsü
+  // buraya yazılır; kapatma isteğinde güncel formla karşılaştırılır. Çok
+  // alanlı lab modalleri (sipariş/gönderim/adım düzenleme) ESC/dış tıklama
+  // ile yanlışlıkla kapatılırsa girilen bilgiler sessizce kaybolmamalı (bkz.
+  // denetim raporu — form güvenilirliği standardı tüm uygulamada aynı olmalı).
+  const modalSnapshotRef = useRef<string>("");
+
   const closeModal = () => {
     setModal(null);
     setActiveOrder(null);
     setActiveTrip(null);
     setEditingInvoiceId(null);
   };
+
+  async function requestCloseModal() {
+    const currentByModal: Partial<Record<NonNullable<typeof modal>, unknown>> = {
+      new: orderForm,
+      trip: tripForm,
+      receive: receiveForm,
+      invoice: invoiceForm,
+      editInvoice: invoiceForm,
+      editTrip: editTripForm,
+    };
+    const current = modal ? currentByModal[modal] : undefined;
+    const isDirty = current !== undefined && JSON.stringify(current) !== modalSnapshotRef.current;
+    if (isDirty && !(await confirmDialog({
+      message: "Kaydedilmemiş değişiklikler var. Kapatılsın mı? Girdiğiniz bilgiler kaybolacak.",
+      danger: true,
+      confirmText: "Kapat, Değişiklikleri Kaybet",
+    }))) {
+      return;
+    }
+    closeModal();
+  }
 
   async function createOrder() {
     if (saving || !orderForm.patientId || !orderForm.doctorId || !resolvedLabName || !orderForm.labType || !orderForm.sentItem) return;
@@ -1066,7 +1101,7 @@ export default function LabPage() {
       setTripForm({ ...emptyTripForm, sentAt: today() });
       closeModal();
       dispatchRealtimeSync();
-      showToastSafe({ title: "Laboratuvara gönderildi", message: "İş yeni adımıyla ekranda.", type: "success" });
+      showToastSafe({ title: "Laboratuvara gönderildi", message: "İş yeni adımıyla ekranda.", type: "success", icon: "flask" });
     } catch (error) {
       showToastSafe({ title: "İşlem yapılamadı", message: error instanceof Error ? error.message : "Lütfen tekrar deneyin.", type: "error" });
     } finally {
@@ -1220,7 +1255,7 @@ export default function LabPage() {
       if (!res.ok) throw new Error(payload?.error || "İş tamamlanamadı.");
       replaceOrder(payload as LabOrder);
       dispatchRealtimeSync();
-      showToastSafe({ title: "Laboratuvar işi tamamlandı", message: "İş tamamlananlara taşındı.", type: "success" });
+      showToastSafe({ title: "Laboratuvar işi tamamlandı", message: "İş tamamlananlara taşındı.", type: "success", icon: "flask" });
     } catch (error) {
       showToastSafe({ title: "İşlem yapılamadı", message: error instanceof Error ? error.message : "Lütfen tekrar deneyin.", type: "error" });
     } finally {
@@ -1275,7 +1310,9 @@ export default function LabPage() {
 
   const openTripModal = (order: LabOrder) => {
     setActiveOrder(order);
-    setTripForm({ ...emptyTripForm, sentAt: today() });
+    const initial = { ...emptyTripForm, sentAt: today() };
+    setTripForm(initial);
+    modalSnapshotRef.current = JSON.stringify(initial);
     setModal("trip");
   };
 
@@ -1283,7 +1320,9 @@ export default function LabPage() {
     setActiveOrder(order);
     setEditingInvoiceId(null);
     invoiceRequestKeyRef.current = "";
-    setInvoiceForm({ ...emptyInvoiceForm, item: order.labType, issuedAt: today() });
+    const initial = { ...emptyInvoiceForm, item: order.labType, issuedAt: today() };
+    setInvoiceForm(initial);
+    modalSnapshotRef.current = JSON.stringify(initial);
     setModal("invoice");
   };
 
@@ -1291,13 +1330,15 @@ export default function LabPage() {
     setActiveOrder(order);
     setEditingInvoiceId(invoice.id);
     invoiceRequestKeyRef.current = "";
-    setInvoiceForm({
+    const initial = {
       item: invoice.item,
       amount: String(invoice.amount),
       invoiceNo: invoice.invoiceNo || "",
       issuedAt: invoice.issuedAt.slice(0, 10),
       note: invoice.note || "",
-    });
+    };
+    setInvoiceForm(initial);
+    modalSnapshotRef.current = JSON.stringify(initial);
     setModal("editInvoice");
   };
 
@@ -1334,13 +1375,15 @@ export default function LabPage() {
   const openReceiveModal = (order: LabOrder, trip: LabTrip) => {
     setActiveTrip({ ...trip, labOrder: order });
     const parts = parseDesc(trip.description);
-    setReceiveForm({
+    const initial = {
       ...emptyReceiveForm,
       receivedAt: today(),
       receivedItem: getReceivedItemFromNote(trip.receivedNote, parts.requestedItem || parts.sentItem),
       receivedNote: cleanReceivedNote(trip.receivedNote),
       needsAppointment: needsProvaAppointment(trip.receivedNote) || true,
-    });
+    };
+    setReceiveForm(initial);
+    modalSnapshotRef.current = JSON.stringify(initial);
     setModal("receive");
   };
 
@@ -1348,7 +1391,7 @@ export default function LabPage() {
     setActiveTrip({ ...trip, labOrder: order });
     const { sentItem, requestedItem } = parseDesc(trip.description);
     const parsedSent = parseMeasurementFromSentNote(trip.sentNote);
-    setEditTripForm({
+    const initial = {
       sentItem,
       requestedItem,
       impressionMethod: parsedSent.method,
@@ -1357,7 +1400,9 @@ export default function LabPage() {
       hasReceived: Boolean(trip.receivedAt),
       receivedAt: trip.receivedAt ? new Date(trip.receivedAt).toISOString().slice(0, 10) : today(),
       receivedNote: trip.receivedNote || "",
-    });
+    };
+    setEditTripForm(initial);
+    modalSnapshotRef.current = JSON.stringify(initial);
     setModal("editTrip");
   };
 
@@ -1427,7 +1472,16 @@ export default function LabPage() {
           : summary.totalCount > 0
           ? "info"
           : "neutral";
-        return <Badge tone={statusTone}>{statusLabel}</Badge>;
+        const statusIcon = summary.isDone
+          ? CheckCircle2
+          : summary.pendingTrip
+          ? summary.pendingDays >= 4
+            ? TriangleAlert
+            : FlaskConical
+          : summary.totalCount > 0
+          ? Stethoscope
+          : CircleDashed;
+        return <Badge tone={statusTone} icon={statusIcon}>{statusLabel}</Badge>;
       },
     },
     {
@@ -1452,16 +1506,60 @@ export default function LabPage() {
         );
       },
     },
+    {
+      key: "quickAction",
+      header: "",
+      // Satırdan çıkmadan tek tıkla en sık iki aksiyon — önceden bu ikonlar
+      // yalnızca detay modalinin içinde vardı, kullanıcı "geldi" işaretlemek
+      // için bile satırı açıp modal içinde adımı bulmak zorundaydı (bkz.
+      // ürün denetimi).
+      render: (order) => {
+        const summary = getOrderSummary(order);
+        if (summary.isDone) return null;
+        return (
+          <div className="flex shrink-0 items-center justify-end gap-1">
+            {!summary.pendingTrip && (
+              <ActionBtn onClick={(e) => { e.stopPropagation(); openTripModal(order); }} title="Laboratuvara gönderim ekle">
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+              </ActionBtn>
+            )}
+            {summary.pendingTrip && (
+              <ActionBtn onClick={(e) => { e.stopPropagation(); openReceiveModal(order, summary.pendingTrip!); }} title="Laboratuvardan geldi" accent="emerald">
+                <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              </ActionBtn>
+            )}
+          </div>
+        );
+      },
+    },
   ];
 
   return (
     <div className="mx-auto max-w-7xl space-y-3 pb-8">
+      <div className="ui-surface p-4 sm:p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex items-center gap-3">
+            <ModuleIcon module="flask" size="lg" />
+            <div>
+              <h1 className="font-display text-xl font-black tracking-tight text-slate-900">Laboratuvar Takibi</h1>
+              <p className="text-xs font-medium text-slate-500">Dış laboratuvar işlerini ve teslim sürecini takip edin.</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <Badge tone="neutral">{filteredOrders.length} iş</Badge>
+            {allPendingTrips.length > 0 && (
+              <Badge tone="warning">{allPendingTrips.length} bekleyen adım</Badge>
+            )}
+          </div>
+        </div>
+      </div>
+
       <div className="sticky top-0 z-20 mb-0 space-y-2 rounded-lg border border-slate-200/80 bg-white px-2 py-2 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone="neutral">{filteredOrders.length} iş</Badge>
-          {allPendingTrips.length > 0 && (
-            <Badge tone="warning">{allPendingTrips.length} bekleyen adım</Badge>
-          )}
           <div className="ml-auto">
             <Button
               size="sm"
@@ -1469,15 +1567,17 @@ export default function LabPage() {
               disabled={knownLabs.length === 0}
               onClick={() => {
                 const defaultLab = activeLab !== "all" ? activeLab : knownLabs[0] || "";
-                setOrderForm({
+                const initial = {
                   ...emptyOrderForm,
                   labName: defaultLab,
-                });
+                };
+                setOrderForm(initial);
                 setOrderPatientSearch("");
                 setOrderDoctorSearch("");
                 setOrderLabSearch(defaultLab);
                 setOrderLabTypeSearch("");
                 orderRequestKeyRef.current = "";
+                modalSnapshotRef.current = JSON.stringify(initial);
                 setModal("new");
               }}
             >
@@ -1539,7 +1639,7 @@ export default function LabPage() {
 
       {/* ── List ── */}
       {loadError ? (
-        <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+        <div className="ui-surface overflow-hidden">
           <div className="flex min-h-40 flex-col items-center justify-center gap-3 px-6 py-8 text-center">
             <p className="text-sm font-semibold text-slate-800">Laboratuvar verileri yüklenemedi</p>
             <p className="text-sm text-slate-500">{loadError}</p>
@@ -1554,6 +1654,8 @@ export default function LabPage() {
           loading={loading}
           skeletonRows={5}
           emptyText="Bu filtrede laboratuvar işi yok"
+          emptyAccent="purple"
+          emptyIcon={LabEmptyIcon} emptyIllustrative
           onRowClick={openOrderDetail}
         />
       )}
@@ -1581,7 +1683,7 @@ export default function LabPage() {
       )}
 
       {modal === "new" && (
-        <Modal title="Yeni Laboratuvar İşi" onClose={closeModal} wide>
+        <Modal title="Yeni Laboratuvar İşi" onClose={() => void requestCloseModal()} wide>
           <LabOrderForm
             patientSearch={orderPatientSearch}
             onPatientSearchChange={(value) => {
@@ -1667,23 +1769,23 @@ export default function LabPage() {
             notes={orderForm.notes}
             onNotesChange={(value) => setOrderForm((p) => ({ ...p, notes: value }))}
           />
-          <ModalActions onClose={closeModal} onSave={createOrder} saving={saving} saveText="Oluştur" disabled={!orderForm.patientId || !orderForm.doctorId || !knownLabs.includes(resolvedLabName) || !orderForm.labType || !orderForm.sentItem} />
+          <ModalActions onClose={() => void requestCloseModal()} onSave={createOrder} saving={saving} saveText="Oluştur" disabled={!orderForm.patientId || !orderForm.doctorId || !knownLabs.includes(resolvedLabName) || !orderForm.labType || !orderForm.sentItem} />
         </Modal>
       )}
 
       {modal === "trip" && activeOrder && (
-        <Modal title="Laboratuvara Gönderim Ekle" subtitle={`${activeOrder.patient.fullName} · ${activeOrder.labName} · ${activeOrder.labType}`} onClose={closeModal}>
+        <Modal title="Laboratuvara Gönderim Ekle" subtitle={`${activeOrder.patient.fullName} · ${activeOrder.labName} · ${activeOrder.labType}`} onClose={() => void requestCloseModal()}>
           <TripFormContent
             order={activeOrder}
             tripForm={tripForm}
             setTripForm={setTripForm}
           />
-          <ModalActions onClose={closeModal} onSave={createTrip} saving={saving} saveText="Gönderimi Kaydet" disabled={!tripForm.sentItem} />
+          <ModalActions onClose={() => void requestCloseModal()} onSave={createTrip} saving={saving} saveText="Gönderimi Kaydet" disabled={!tripForm.sentItem} />
         </Modal>
       )}
 
       {modal === "receive" && activeTrip && (
-        <Modal title="Laboratuvardan Geldi" subtitle={`${activeTrip.labOrder.patient.fullName} · ${parseDesc(activeTrip.description).sentItem}${parseDesc(activeTrip.description).requestedItem ? " → " + parseDesc(activeTrip.description).requestedItem : ""}`} onClose={closeModal}>
+        <Modal title="Laboratuvardan Geldi" subtitle={`${activeTrip.labOrder.patient.fullName} · ${parseDesc(activeTrip.description).sentItem}${parseDesc(activeTrip.description).requestedItem ? " → " + parseDesc(activeTrip.description).requestedItem : ""}`} onClose={() => void requestCloseModal()}>
           <div className="space-y-3">
             {(() => {
               const parts = parseDesc(activeTrip.description);
@@ -1722,12 +1824,12 @@ export default function LabPage() {
               <input value={receiveForm.receivedNote} onChange={(e) => setReceiveForm((p) => ({ ...p, receivedNote: e.target.value }))} className="field" placeholder="Prova hazır, küçük düzeltme gerekli…" />
             </FormField>
           </div>
-          <ModalActions onClose={closeModal} onSave={markTripReceived} saving={saving} saveText="Gelişi Kaydet" />
+          <ModalActions onClose={() => void requestCloseModal()} onSave={markTripReceived} saving={saving} saveText="Gelişi Kaydet" />
         </Modal>
       )}
 
       {(modal === "invoice" || modal === "editInvoice") && activeOrder && (
-        <Modal title={modal === "editInvoice" ? "Faturayı Düzenle" : "Fatura Kalemi"} subtitle={`${activeOrder.patient.fullName} · ${activeOrder.labName}`} onClose={closeModal}>
+        <Modal title={modal === "editInvoice" ? "Faturayı Düzenle" : "Fatura Kalemi"} subtitle={`${activeOrder.patient.fullName} · ${activeOrder.labName}`} onClose={() => void requestCloseModal()}>
           <div className="space-y-3">
             <FormField label="Kalem" required>
               <input value={invoiceForm.item} onChange={(e) => setInvoiceForm((p) => ({ ...p, item: e.target.value }))} className="field" placeholder="Zirkon alt yapı, glaze…" />
@@ -1748,7 +1850,7 @@ export default function LabPage() {
             </FormField>
           </div>
           <ModalActions
-            onClose={closeModal}
+            onClose={() => void requestCloseModal()}
             onSave={saveInvoice}
             saving={saving}
             saveText={modal === "editInvoice" ? "Değişiklikleri Kaydet" : "Ekle"}
@@ -1758,7 +1860,7 @@ export default function LabPage() {
       )}
 
       {modal === "editTrip" && activeTrip && (
-        <Modal title="Adımı Düzenle" subtitle={`${activeTrip.labOrder.patient.fullName} · ${activeTrip.labOrder.labType} · Adım #${activeTrip.order}`} onClose={closeModal}>
+        <Modal title="Adımı Düzenle" subtitle={`${activeTrip.labOrder.patient.fullName} · ${activeTrip.labOrder.labType} · Adım #${activeTrip.order}`} onClose={() => void requestCloseModal()}>
           <div className="space-y-3">
             <FormField label="Gönderilen" required>
               <input
@@ -1820,7 +1922,7 @@ export default function LabPage() {
               </div>
             )}
           </div>
-          <ModalActions onClose={closeModal} onSave={updateTrip} saving={saving} saveText="Güncelle" disabled={!editTripForm.sentItem} />
+          <ModalActions onClose={() => void requestCloseModal()} onSave={updateTrip} saving={saving} saveText="Güncelle" disabled={!editTripForm.sentItem} />
         </Modal>
       )}
 
@@ -1976,7 +2078,7 @@ function OrderRow({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-[13px] font-semibold text-slate-900">{order.patient.fullName}</span>
-            <span className={`rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wide ${statusConfig.pill}`}>
+            <span className={`rounded-md px-2 py-1 text-xs font-semibold uppercase tracking-wide ${statusConfig.pill} ${statusConfig.label === "Gecikiyor" ? "ui-badge-pulse" : ""}`}>
               {statusConfig.label}
             </span>
             {pendingDays >= 4 && !isDone && (
@@ -2231,11 +2333,12 @@ function ActionBtn({
       : accent === "slate"
       ? "text-slate-800 hover:bg-slate-200"
       : "text-slate-500 hover:bg-slate-100 hover:text-slate-700";
-  return (
-    <button onClick={onClick} title={title} aria-label={title} disabled={disabled} className={`${base} ${colors}`}>
+  const button = (
+    <button onClick={onClick} aria-label={title} disabled={disabled} className={`${base} ${colors}`}>
       {children}
     </button>
   );
+  return title ? <Tooltip label={title}>{button}</Tooltip> : button;
 }
 
 function SpoonRequestQuickPicks({
@@ -2295,7 +2398,7 @@ function Modal({
   title: string; subtitle?: string; onClose: () => void; children: React.ReactNode; wide?: boolean;
 }) {
   return (
-    <SharedModal open onClose={onClose} title={title} description={subtitle} size={wide ? "xl" : "md"}>
+    <SharedModal open onClose={onClose} title={title} description={subtitle} size={wide ? "xl" : "md"} module="flask">
       {children}
     </SharedModal>
   );

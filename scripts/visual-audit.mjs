@@ -13,11 +13,21 @@ if (!visualPassword) {
   throw new Error("VISUAL_PASSWORD veya DEMO_ADMIN_PASSWORD ayarlayın.");
 }
 
-const viewports = [
-  { name: "desktop", width: 1440, height: 900 },
-  { name: "tablet", width: 1024, height: 768 },
-  { name: "mobile", width: 390, height: 844 },
+const allViewports = [
+  { name: "desktop-1366", width: 1366, height: 768 },
+  { name: "desktop-1920", width: 1920, height: 1080 },
+  { name: "tablet-768", width: 768, height: 1024 },
+  { name: "mobile-375", width: 375, height: 812 },
 ];
+const requestedViewports = new Set(
+  String(process.env.VISUAL_VIEWPORTS || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+const viewports = requestedViewports.size > 0
+  ? allViewports.filter((viewport) => requestedViewports.has(viewport.name))
+  : allViewports;
 
 const baseRoutes = [
   { name: "anasayfa", path: "/anasayfa" },
@@ -35,6 +45,15 @@ const publicRoutes = [
   { name: "tanitim", path: "/" },
   { name: "klinik-giris", path: "/klinik/giris" },
 ];
+const requestedRoutes = new Set(
+  String(process.env.VISUAL_ROUTES || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+const selectRoutes = (routes) => requestedRoutes.size > 0
+  ? routes.filter((route) => requestedRoutes.has(route.name))
+  : routes;
 
 await mkdir(outputDir, { recursive: true });
 
@@ -76,7 +95,7 @@ try {
       locale: "tr-TR",
     });
     const publicPage = await publicContext.newPage();
-    for (const route of publicRoutes) {
+    for (const route of selectRoutes(publicRoutes)) {
       const publicErrors = [];
       const publicFailedResponses = [];
       publicPage.removeAllListeners();
@@ -160,7 +179,7 @@ try {
     const patientName =
       patientRows[0]?.fullName ||
       [patientRows[0]?.firstName, patientRows[0]?.lastName].filter(Boolean).join(" ");
-    const routes = patientId
+    const routes = selectRoutes(patientId
       ? [
           ...baseRoutes,
           {
@@ -168,7 +187,7 @@ try {
             path: `/hasta-detay?id=${encodeURIComponent(patientId)}&tab=bilgi`,
           },
         ]
-      : baseRoutes;
+      : baseRoutes);
 
     const page = await context.newPage();
     const consoleErrors = [];
@@ -190,6 +209,11 @@ try {
       await page
         .waitForFunction(() => !document.querySelector("[aria-busy='true']"), null, {
           timeout: 10_000,
+        })
+        .catch(() => {});
+      await page
+        .waitForFunction(() => document.querySelectorAll(".animate-pulse").length === 0, null, {
+          timeout: 5_000,
         })
         .catch(() => {});
       if (route.name === "hasta-detay" && patientName) {
@@ -270,6 +294,8 @@ try {
             return rect.width < 32 || rect.height < 32;
           }).length;
 
+        const loadingSkeletons = document.querySelectorAll(".animate-pulse").length;
+
         return {
           viewportWidth,
           documentWidth: Math.max(root.scrollWidth, body.scrollWidth),
@@ -278,6 +304,7 @@ try {
           outside,
           tinyText,
           smallTargets,
+          loadingSkeletons,
         };
       });
 
@@ -308,6 +335,7 @@ const problems = report.filter(
   (item) =>
     item.status >= 400 ||
     item.horizontalOverflow ||
+    item.loadingSkeletons > 0 ||
     item.outside.length > 0 ||
     item.consoleErrors.length > 0 ||
     item.failedResponses.length > 0,
@@ -317,7 +345,7 @@ console.log(`Görsel denetim: ${report.length} ekran, ${problems.length} sorunlu
 console.log(`Rapor: ${reportPath}`);
 for (const item of problems) {
   console.log(
-    `- ${item.viewport} ${item.route}: HTTP ${item.status}, taşma=${item.horizontalOverflow}, dışarıda=${item.outside.length}, konsol=${item.consoleErrors.length}, sunucu=${item.failedResponses.length}`,
+    `- ${item.viewport} ${item.route}: HTTP ${item.status}, taşma=${item.horizontalOverflow}, skeleton=${item.loadingSkeletons || 0}, dışarıda=${item.outside.length}, konsol=${item.consoleErrors.length}, sunucu=${item.failedResponses.length}`,
   );
 }
 

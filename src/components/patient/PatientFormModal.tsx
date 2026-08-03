@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, FileText, Info, ShieldAlert, UserRound, WalletCards } from "lucide-react";
-import { Modal } from "@/components/ui/Modal";
+import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { confirmDialog } from "@/lib/confirm-client";
 import { FormField, FormSection, FormErrorBanner, inputErrorClass } from "@/components/ui/FormField";
 import { PhoneCountrySelect } from "@/components/ui/PhoneCountrySelect";
 import { isValidTurkishIdentityNumber } from "@/lib/tc-kimlik";
@@ -103,12 +104,16 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [duplicates, setDuplicates] = useState<DuplicatePatient[]>([]);
   const initialTcNoRef = useRef("");
+  // Uzun, çok alanlı bir form — ESC/dış tıklama ile yanlışlıkla kapatılırsa
+  // kullanıcı yazdığı hasta bilgilerini kaybetmemeli (bkz. denetim raporu).
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
     setFieldErrors({});
     setDuplicates([]);
+    setDirty(false);
     if (!patientId) {
       initialTcNoRef.current = "";
       setForm(INITIAL_FORM);
@@ -180,12 +185,30 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
 
   function setField<K extends keyof PatientFormState>(field: K, value: PatientFormState[K]) {
     setForm((current) => ({ ...current, [field]: value }));
+    setDirty(true);
     setFieldErrors((current) => {
       if (!current[field as string]) return current;
       const next = { ...current };
       delete next[field as string];
       return next;
     });
+  }
+
+  // Vazgeç butonu Modal'ın kendi ESC/X akışıyla aynı onay metnini kullanır
+  // (bkz. src/components/ui/Modal.tsx isDirty) — backdrop tıklaması bu
+  // fonksiyonu ÇAĞIRMAZ (orası sessizce reddedip dikkat animasyonu gösterir),
+  // burası yalnızca açık bir "İptal" niyeti için kullanılır.
+  async function cancelWithConfirm() {
+    if (saving) return;
+    if (dirty && !(await confirmDialog({
+      message: DIRTY_CONFIRM_MESSAGE,
+      danger: true,
+      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
+      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
+    }))) {
+      return;
+    }
+    onClose();
   }
 
   function validate() {
@@ -251,13 +274,18 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
   return (
     <Modal
       open={open}
+      // Kaydetme isteği sürerken kapatmayı tamamen engelle — dirty-onay akışı
+      // "evet çık" dese bile yarım kalmış bir save isteğiyle modalın
+      // kapanması state güncellemesi çakışmasına yol açabilir.
       onClose={() => { if (!saving) onClose(); }}
+      isDirty={dirty}
       title={isEdit ? "Hasta Bilgilerini Düzenle" : "Yeni Hasta Kaydı"}
       description="Kimlik, iletişim, medikal anamnez ve finansal notları tek standart formda yönetin."
+      module="users"
       size="xl"
       footer={(
         <>
-          <Button variant="secondary" onClick={onClose} disabled={saving}>Vazgeç</Button>
+          <Button variant="secondary" onClick={() => void cancelWithConfirm()} disabled={saving}>Vazgeç</Button>
           <Button variant="primary" loading={saving} onClick={save}>{isEdit ? "Güncelle" : "Kaydet ve Kartı Aç"}</Button>
         </>
       )}
@@ -421,7 +449,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
                 </select>
               </FormField>
               <FormField label="İndirim Oranı (%)">
-                <input type="number" min={0} max={100} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" value={form.discountRate} onChange={(e) => setField("discountRate", Math.min(100, Math.max(0, Number(e.target.value || 0))))} />
+                <input type="number" min={0} max={100} step={1} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" value={form.discountRate} onChange={(e) => setField("discountRate", Math.min(100, Math.max(0, Math.round(Number(e.target.value || 0)))))} />
               </FormField>
               <FormField label="Adres">
                 <textarea rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Adres" value={form.address} onChange={(e) => setField("address", e.target.value)} />
