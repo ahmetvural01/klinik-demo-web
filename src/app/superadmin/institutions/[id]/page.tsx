@@ -651,9 +651,9 @@ export default function InstitutionDetailPage() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <StatBox label="Plan" value={`${SUBSCRIPTION_PLANS[institution.subscriptionPlan].label} · ${institution.billingCycle === "YILLIK" ? "Yıllık" : "Aylık"}`} />
             <StatBox label="Tutar" value={price != null ? formatMoney(price) : "Özel Teklif"} />
-            <StatBox label="Gecikmiş Fatura" value={String(institution.paymentSummary.overdueCount)} />
-            <StatBox label="Bekleyen Fatura" value={String(institution.paymentSummary.pendingCount)} />
-            <StatBox label="Ödenmemiş Toplam" value={formatMoney(institution.paymentSummary.unpaidTotal)} />
+            <StatBox label="Gecikmiş Fatura" value={String(institution.paymentSummary.overdueCount)} tone={institution.paymentSummary.overdueCount > 0 ? "critical" : "neutral"} />
+            <StatBox label="Bekleyen Fatura" value={String(institution.paymentSummary.pendingCount)} tone={institution.paymentSummary.pendingCount > 0 ? "warning" : "neutral"} />
+            <StatBox label="Ödenmemiş Toplam" value={formatMoney(institution.paymentSummary.unpaidTotal)} tone={institution.paymentSummary.unpaidTotal > 0 ? "critical" : "neutral"} />
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 px-4 py-3">
             <span className="text-xs font-semibold text-slate-500">Sıradaki Vade:</span>
@@ -999,9 +999,10 @@ export default function InstitutionDetailPage() {
   );
 }
 
-function StatBox({ label, value }: { label: string; value: string }) {
+function StatBox({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "warning" | "critical" }) {
+  const toneClass = tone === "critical" ? "ui-surface-critical" : tone === "warning" ? "ui-surface-warning" : "border border-slate-100 bg-slate-50";
   return (
-    <div className="ui-interactive ui-kpi-in rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5">
+    <div className={`ui-kpi-in rounded-xl px-3 py-2.5 ${toneClass}`}>
       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
       <p className="mt-0.5 text-sm font-black text-slate-900">{value}</p>
     </div>

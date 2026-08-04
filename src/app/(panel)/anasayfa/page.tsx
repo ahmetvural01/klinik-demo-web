@@ -706,7 +706,7 @@ export default function AnasayfaPage() {
       </div>
 
       {canSeeInstallments && (installmentAgenda.overdue.length > 0 || installmentAgenda.upcoming.length > 0) && (
-        <div className="ui-surface">
+        <div className={installmentAgenda.overdue.length > 0 ? "ui-surface-critical" : "ui-surface-warning"}>
           <div className="flex items-center justify-between border-b border-slate-100/80 px-5 py-3">
             <div>
               <h2 className="text-sm font-bold text-slate-800">Taksit Takvimi</h2>

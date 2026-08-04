@@ -134,7 +134,7 @@ export default function SuperadminPanelPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <article className="ui-interactive ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "0ms" }}>
+        <article className="ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "0ms" }}>
           <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><Building2 className="h-4 w-4" /></span>
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam Klinik</p>
           <p className="mt-1 text-2xl font-black text-slate-900"><CountUp value={data.totalInstitutions} /></p>
@@ -144,21 +144,21 @@ export default function SuperadminPanelPage() {
           </p>
         </article>
 
-        <article className="ui-interactive ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "40ms" }}>
+        <article className="ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "40ms" }}>
           <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600"><FileWarning className="h-4 w-4" /></span>
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Bekleyen Fatura</p>
           <p className="mt-1 text-2xl font-black text-slate-900"><CountUp value={data.pendingInvoices} /></p>
           <p className={`mt-1 text-xs font-semibold text-red-600 ${data.overdueInvoices > 0 ? "ui-badge-pulse" : ""}`}>{data.overdueInvoices} gecikmiş</p>
         </article>
 
-        <article className="ui-interactive ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "80ms" }}>
+        <article className="ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "80ms" }}>
           <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><MessageSquare className="h-4 w-4" /></span>
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Platform SMS Stoku</p>
           <p className="mt-1 text-2xl font-black text-slate-900"><CountUp value={data.platformSmsStock} /></p>
           <p className="mt-1 text-xs font-semibold text-slate-500">Kliniklere ayrılan: {data.totalSmsBalance.toLocaleString("tr-TR")}</p>
         </article>
 
-        <article className="ui-interactive ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "120ms" }}>
+        <article className="ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "120ms" }}>
           <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><Wallet className="h-4 w-4" /></span>
           <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam Gelir</p>
           <p className="mt-1 text-2xl font-black text-emerald-600"><CountUp value={data.totalRevenue} formatter={(n) => `₺${n.toLocaleString("tr-TR")}`} /></p>
@@ -170,7 +170,7 @@ export default function SuperadminPanelPage() {
         {metricCards.map((card, idx) => {
           const Icon = card.icon;
           return (
-            <article key={card.label} className="ui-interactive ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: `${idx * 40}ms` }}>
+            <article key={card.label} className="ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: `${idx * 40}ms` }}>
               <span className={`mb-2 flex h-8 w-8 items-center justify-center rounded-lg ${card.tone}`}><Icon className="h-4 w-4" /></span>
               <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{card.label}</p>
               <p className="mt-1 text-2xl font-black text-slate-900"><CountUp value={card.value} /></p>

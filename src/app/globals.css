@@ -167,6 +167,22 @@ body {
   box-shadow: var(--shadow-rest);
 }
 
+.ui-surface-critical {
+  border: 1px solid rgb(var(--color-danger) / 0.28);
+  border-radius: var(--radius-surface);
+  background: rgb(var(--color-danger) / 0.05);
+  box-shadow: var(--shadow-rest);
+}
+
+/* "info" — Badge'in "info" tonuyla aynı dil: marka/birincil renk (bkz.
+   src/components/ui/Badge.tsx yorumu), ayrı bir mavi token icat edilmedi. */
+.ui-surface-info {
+  border: 1px solid rgb(var(--app-primary) / 0.18);
+  border-radius: var(--radius-surface);
+  background: rgb(var(--app-primary) / 0.05);
+  box-shadow: var(--shadow-rest);
+}
+
 /* Kendi rengini (ör. Tailwind `border-emerald-200 bg-emerald-50` gibi
    "tone" class'ları) zaten taşıyan kartlar için — yalnızca hover/press/focus
    HAREKETİ ekler, border/background rengine dokunmaz (aksi halde cascade

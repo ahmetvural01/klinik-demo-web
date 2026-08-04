@@ -1,7 +1,8 @@
 "use client";
 import { useRef, useState } from "react";
 import { confirmDialog } from "@/lib/confirm-client";
-import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
+import { Modal } from "@/components/ui/Modal";
+import { Button } from "@/components/ui/Button";
 
 export type StockItem = { id: string; name: string; quantity: number; unit: string };
 
@@ -40,7 +41,6 @@ export const fmt = (n: number) =>
 export const fmtDate = (d: string) => new Date(d).toLocaleDateString("tr-TR");
 export const formLabel = "mb-1.5 block text-sm font-semibold text-slate-700";
 export const formInput = "w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30 disabled:bg-slate-100";
-export const modalAction = "flex-1 rounded-xl px-4 py-3 text-sm font-bold transition";
 const PAYMENT_METHODS = [
   { value: "NAKIT", label: "Nakit" },
   { value: "KREDI_KARTI", label: "Kredi Kartı" },
@@ -254,11 +254,6 @@ export function usePurchaseModals({
     items: [] as PurchaseLineForm[],
   });
   const [isSubmittingPurchaseEdit, setIsSubmittingPurchaseEdit] = useState(false);
-
-  useEscapeClose(() => setShowAddPurchase(false), showAddPurchase);
-  useEscapeClose(() => setShowPurchaseDetail(false), showPurchaseDetail);
-  useEscapeClose(() => setShowReceivePurchase(false), showReceivePurchase);
-  useEscapeClose(() => setShowEditPurchase(false), showEditPurchase);
 
   const openAddPurchase = (firmaId?: string) => {
     const targetFirma = firmaId ? firmas.find(f => f.id === firmaId) : null;
@@ -493,16 +488,24 @@ export function usePurchaseModals({
   const modals = (
     <>
       {/* Modal: Satın Alma Ekle (çok kalemli) */}
-      {showAddPurchase && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" {...backdropClose(() => setShowAddPurchase(false))}>
-          <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl space-y-4">
-            <div>
-              <h3 className="text-xl font-black text-slate-900">Satın Alma Kaydı</h3>
-              <p className="mt-1 text-sm text-slate-500">
-                Sipariş ile teslimatı ayırın; stok ve firma borcu yalnızca ürünler kliniğe ulaştığında oluşur.
-              </p>
-            </div>
-
+      <Modal
+        open={showAddPurchase}
+        onClose={() => setShowAddPurchase(false)}
+        module="firma"
+        title="Satın Alma Kaydı"
+        description="Sipariş ile teslimatı ayırın; stok ve firma borcu yalnızca ürünler kliniğe ulaştığında oluşur."
+        size="xl"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowAddPurchase(false)}>Vazgeç</Button>
+            <Button variant="primary" onClick={submitPurchase} loading={isSubmittingPurchase}>
+              {purchaseForm.receiptStatus === "SIPARIS_VERILDI" ? "Siparişi Kaydet" : "Satın Almayı Kaydet"}
+            </Button>
+          </>
+        }
+      >
+        {showAddPurchase && (
+          <div className="space-y-4">
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-1">
               <div className="grid grid-cols-2 gap-1">
                 <button
@@ -638,41 +641,48 @@ export function usePurchaseModals({
               )}
             </div>
             )}
-
-            <div className="flex gap-2 pt-1">
-              <button onClick={() => setShowAddPurchase(false)}
-                className={`${modalAction} border border-slate-200 text-slate-700 hover:bg-slate-50`}>Vazgeç</button>
-              <button onClick={submitPurchase} disabled={isSubmittingPurchase}
-                className={`${modalAction} bg-red-600 text-white hover:bg-red-700 disabled:opacity-60`}>
-                {isSubmittingPurchase
-                  ? "Kaydediliyor..."
-                  : purchaseForm.receiptStatus === "SIPARIS_VERILDI"
-                    ? "Siparişi Kaydet"
-                    : "Satın Almayı Kaydet"}
-              </button>
-            </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
       {/* Modal: Satın Alma Detayı */}
-      {showPurchaseDetail && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" {...backdropClose(() => setShowPurchaseDetail(false))}>
+      <Modal
+        open={showPurchaseDetail}
+        onClose={() => setShowPurchaseDetail(false)}
+        module="firma"
+        title={viewingPurchase ? `Satın Alma Detayı — ${viewingPurchase.firma?.name || ""}` : "Satın Alma Detayı"}
+        size="lg"
+        footer={viewingPurchase && !purchaseDetailLoading ? (
+          <>
+            {viewingPurchase.status === "AKTIF" && (
+              <>
+                <Button variant="secondary" onClick={() => { setShowPurchaseDetail(false); void openPurchaseEdit(viewingPurchase.id); }}>
+                  Düzenle
+                </Button>
+                <Button variant="danger" onClick={() => { setShowPurchaseDetail(false); void cancelPurchase(viewingPurchase.id, viewingPurchase.firmaId); }}>
+                  İptal
+                </Button>
+              </>
+            )}
+            <Button variant="secondary" onClick={() => setShowPurchaseDetail(false)}>Kapat</Button>
+          </>
+        ) : (
+          <Button variant="secondary" onClick={() => setShowPurchaseDetail(false)}>Kapat</Button>
+        )}
+      >
+        {showPurchaseDetail && (
           <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl space-y-4">
             {purchaseDetailLoading ? (
               <div className="py-10 text-center text-sm text-slate-500">Yükleniyor…</div>
             ) : !viewingPurchase ? (
               <div className="py-10 text-center text-sm text-slate-500">Detay yüklenemedi</div>
             ) : (
-              <>
-                <div>
-                  <h3 className="text-xl font-black text-slate-900">Satın Alma Detayı — {viewingPurchase.firma?.name}</h3>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {fmtDate(viewingPurchase.tarih)}{viewingPurchase.faturaNo ? ` · Fatura: ${viewingPurchase.faturaNo}` : ""}
-                    {viewingPurchase.status !== "AKTIF" ? " · İPTAL EDİLDİ" : ""}
-                  </p>
-                  {viewingPurchase.aciklama && <p className="mt-1 text-sm italic text-slate-500">{viewingPurchase.aciklama}</p>}
-                </div>
+              <div className="space-y-4">
+                <p className="text-sm text-slate-500">
+                  {fmtDate(viewingPurchase.tarih)}{viewingPurchase.faturaNo ? ` · Fatura: ${viewingPurchase.faturaNo}` : ""}
+                  {viewingPurchase.status !== "AKTIF" ? " · İPTAL EDİLDİ" : ""}
+                </p>
+                {viewingPurchase.aciklama && <p className="text-sm italic text-slate-500">{viewingPurchase.aciklama}</p>}
                 {viewingPurchase.receiptStatus === "SIPARIS_VERILDI" ? (
                   <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
                     <div>
@@ -748,45 +758,30 @@ export function usePurchaseModals({
                     ))}
                   </p>
                 </div>
-                <div className="flex flex-wrap justify-end gap-2">
-                  {viewingPurchase.status === "AKTIF" && (
-                    <>
-                      <button
-                        onClick={() => { setShowPurchaseDetail(false); void openPurchaseEdit(viewingPurchase.id); }}
-                        className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50"
-                      >
-                        Düzenle
-                      </button>
-                      <button
-                        onClick={() => { setShowPurchaseDetail(false); void cancelPurchase(viewingPurchase.id, viewingPurchase.firmaId); }}
-                        className="rounded-xl border border-red-200 bg-red-50 px-4 py-2.5 text-sm font-bold text-red-700 hover:bg-red-100"
-                      >
-                        İptal
-                      </button>
-                    </>
-                  )}
-                  <button onClick={() => setShowPurchaseDetail(false)}
-                    className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-bold text-slate-700 hover:bg-slate-50">Kapat</button>
-                </div>
-              </>
+              </div>
             )}
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
       {/* Modal: Siparişi Teslim Al */}
-      {showReceivePurchase && receivingPurchase && (
-        <div className="fixed inset-0 z-[320] flex items-center justify-center bg-black/45 p-4" {...backdropClose(() => setShowReceivePurchase(false))}>
-          <div className="w-full max-w-xl space-y-4 rounded-2xl bg-white p-6 shadow-2xl">
-            <div>
-              <h3 className="text-xl font-black text-slate-900">Siparişi Teslim Al</h3>
-              <p className="mt-1 text-sm text-slate-500">
-                {receivingPurchase.firma?.name} · {(receivingPurchase.items || []).length} kalem ·{" "}
-                {fmt((receivingPurchase.items || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0))}
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+      <Modal
+        open={showReceivePurchase && Boolean(receivingPurchase)}
+        onClose={() => setShowReceivePurchase(false)}
+        module="firma"
+        title="Siparişi Teslim Al"
+        description={receivingPurchase ? `${receivingPurchase.firma?.name} · ${(receivingPurchase.items || []).length} kalem · ${fmt((receivingPurchase.items || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0))}` : undefined}
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowReceivePurchase(false)}>Vazgeç</Button>
+            <Button variant="primary" onClick={submitReceivePurchase} loading={isReceivingPurchase}>Teslimatı Onayla</Button>
+          </>
+        }
+      >
+        {showReceivePurchase && receivingPurchase && (
+          <div className="space-y-4">
+            <div className="ui-surface-info rounded-xl px-4 py-3 text-sm text-primary-strong">
               Onaylandığında ürünler stoğa girer ve toplam tutar firma borcuna eklenir.
             </div>
 
@@ -882,28 +877,27 @@ export function usePurchaseModals({
                 </div>
               )}
             </div>
-
-            <div className="flex gap-2">
-              <button onClick={() => setShowReceivePurchase(false)} className={`${modalAction} border border-slate-200 text-slate-700 hover:bg-slate-50`}>
-                Vazgeç
-              </button>
-              <button onClick={submitReceivePurchase} disabled={isReceivingPurchase} className={`${modalAction} bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50`}>
-                {isReceivingPurchase ? "İşleniyor..." : "Teslimatı Onayla"}
-              </button>
-            </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
 
       {/* Modal: Satın Almayı Düzelt */}
-      {showEditPurchase && (
-        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" {...backdropClose(() => setShowEditPurchase(false))}>
-          <div className="max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl space-y-4">
-            <div>
-              <h3 className="text-xl font-black text-slate-900">Satın Almayı Düzelt</h3>
-              <p className="mt-1 text-sm text-slate-500">Miktar/fiyat/ürün değişiklikleri stok ve firma bakiyesine otomatik yansır.</p>
-            </div>
-
+      <Modal
+        open={showEditPurchase}
+        onClose={() => setShowEditPurchase(false)}
+        module="firma"
+        title="Satın Almayı Düzelt"
+        description="Miktar/fiyat/ürün değişiklikleri stok ve firma bakiyesine otomatik yansır."
+        size="xl"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setShowEditPurchase(false)}>Vazgeç</Button>
+            <Button variant="primary" onClick={submitPurchaseEdit} loading={isSubmittingPurchaseEdit}>Düzeltmeyi Kaydet</Button>
+          </>
+        }
+      >
+        {showEditPurchase && (
+          <div className="space-y-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label className={formLabel}>Tarih *</label>
@@ -930,18 +924,9 @@ export function usePurchaseModals({
               setItems={updater => setEditPurchaseForm(f => ({ ...f, items: updater(f.items) }))}
               stockItems={stockItems}
             />
-
-            <div className="flex gap-2 pt-1">
-              <button onClick={() => setShowEditPurchase(false)}
-                className={`${modalAction} border border-slate-200 text-slate-700 hover:bg-slate-50`}>Vazgeç</button>
-              <button onClick={submitPurchaseEdit} disabled={isSubmittingPurchaseEdit}
-                className={`${modalAction} bg-primary text-white hover:bg-primary-strong disabled:opacity-60`}>
-                {isSubmittingPurchaseEdit ? "Kaydediliyor..." : "Düzeltmeyi Kaydet"}
-              </button>
-            </div>
           </div>
-        </div>
-      )}
+        )}
+      </Modal>
     </>
   );
 
