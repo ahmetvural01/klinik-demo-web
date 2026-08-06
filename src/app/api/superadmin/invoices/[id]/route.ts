@@ -12,7 +12,10 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
   }
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek gövdesi" }, { status: 400 });
+  }
 
   const VALID_STATUSES = new Set(["PENDING", "PAID", "OVERDUE", "CANCELLED"]);
   if (typeof body.status !== "string" || !VALID_STATUSES.has(body.status)) {
@@ -23,6 +26,10 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
   if (!existing) {
     return NextResponse.json({ message: "Fatura bulunamadı" }, { status: 404 });
   }
+  if (existing.status === body.status) {
+    const current = await prisma.invoice.findUnique({ where: { id: params.id } });
+    return NextResponse.json(current);
+  }
 
   // Fatura durumu güncellemesi ile kurumun paymentGraceUntil senkronu TEK
   // transaction içinde yapılır: sync adımı (ör. geçici DB hatası) başarısız
@@ -31,6 +38,7 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
   // (bkz. denetim raporu, önceden `.catch(() => {})` ile hata sessizce
   // yutuluyordu).
   const invoice = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Institution" WHERE id = ${existing.institutionId} FOR UPDATE`;
     const updated = await tx.invoice.update({
       where: { id: params.id },
       data: {

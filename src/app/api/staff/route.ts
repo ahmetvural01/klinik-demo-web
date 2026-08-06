@@ -7,6 +7,8 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { checkStaffLimit } from "@/lib/staff-limits";
 import { TC_NO_REGEX, TC_NO_MESSAGE } from "@/lib/validators";
 
+const STAFF_ROLES = new Set<Role>(["YONETICI", "DOKTOR", "ASISTAN", "BANKO", "MUHASEBE"]);
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireAuth("staff:read");
@@ -64,9 +66,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Kurum bilgisi olmadan personel oluşturulamaz." }, { status: 403 });
   }
 
-  const body = await request.json();
-  if (body.role === "SUPERADMIN") {
-    return NextResponse.json({ message: "Bu rol oluşturulamaz." }, { status: 403 });
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek gövdesi." }, { status: 400 });
+  }
+  const role = (body.role || "ASISTAN") as Role;
+  const fullName = typeof body.fullName === "string" ? body.fullName.trim() : "";
+  if (!STAFF_ROLES.has(role)) {
+    return NextResponse.json({ message: "Geçersiz personel rolü." }, { status: 400 });
+  }
+  if (fullName.length < 2 || fullName.length > 120) {
+    return NextResponse.json({ message: "Ad soyad 2-120 karakter olmalıdır." }, { status: 400 });
   }
 
   // Kimlik no daha önce hiç doğrulanmıyordu — 11 haneden farklı ya da harf
@@ -77,8 +87,14 @@ export async function POST(request: NextRequest) {
 
   // bkz. src/app/api/staff/[id]/route.ts PUT — YONETICI (tüm yetkiler) rolü
   // sadece zaten YONETICI/SUPERADMIN olan bir aktör tarafından atanabilir.
-  if (body.role === "YONETICI" && auth.user.role !== "SUPERADMIN" && auth.user.role !== "YONETICI") {
+  if (role === "YONETICI" && auth.user.role !== "SUPERADMIN" && auth.user.role !== "YONETICI") {
     return NextResponse.json({ message: "Bu rol için yetkiniz yok" }, { status: 403 });
+  }
+  if (body.password !== undefined && (typeof body.password !== "string" || body.password.length < 8 || body.password.length > 72)) {
+    return NextResponse.json({ message: "Şifre 8-72 karakter olmalıdır." }, { status: 400 });
+  }
+  if (body.hideAsDoctor !== undefined && typeof body.hideAsDoctor !== "boolean") {
+    return NextResponse.json({ message: "Doktor görünürlüğü geçersiz." }, { status: 400 });
   }
   const workStart = typeof body.workStart === "string" ? body.workStart : "08:30";
   const workEnd = typeof body.workEnd === "string" ? body.workEnd : "18:00";
@@ -88,15 +104,8 @@ export async function POST(request: NextRequest) {
   }
 
   const targetInstitutionId = auth.user.institutionId || body.institutionId || null;
-  if (targetInstitutionId) {
-    const limitError = await checkStaffLimit({
-      institutionId: targetInstitutionId,
-      role: body.role || "ASISTAN",
-      isActive: true,
-    });
-    if (limitError) {
-      return NextResponse.json({ message: limitError }, { status: 409 });
-    }
+  if (!targetInstitutionId || typeof targetInstitutionId !== "string") {
+    return NextResponse.json({ message: "Personelin bağlı olacağı kurum zorunludur." }, { status: 400 });
   }
 
   // Personel eklerken şifre sorulmadan, sistem akıcı olsun diye varsayılan
@@ -107,8 +116,21 @@ export async function POST(request: NextRequest) {
 
   let created;
   try {
-    created = await prisma.user.create({
-      data: {
+    created = await prisma.$transaction(async (tx) => {
+      const institutions = await tx.$queryRaw<Array<{ id: string; isActive: boolean }>>`
+        SELECT id, "isActive" FROM "Institution" WHERE id = ${targetInstitutionId} FOR UPDATE
+      `;
+      if (!institutions[0]?.isActive) throw new Error("INSTITUTION_INACTIVE");
+
+      const limitError = await checkStaffLimit({
+        institutionId: targetInstitutionId,
+        role,
+        isActive: true,
+      }, tx);
+      if (limitError) throw new Error(`STAFF_LIMIT:${limitError}`);
+
+      return tx.user.create({
+        data: {
         // Oturumun kendi institutionId'si her zaman önceliklidir — bir SUPERADMIN
         // "gizli erişim" ile bir kliniğe girip personel eklerse token institutionId
         // taşır ve o kliniğe atanmalıdır. Sadece gerçekten kurum bağlamı olmayan
@@ -118,8 +140,8 @@ export async function POST(request: NextRequest) {
         // — bu personel daha sonra o kliniğe giriş yapamıyordu ("Kullanıcı bulunamadı").
         institutionId: targetInstitutionId,
         identityNo: body.identityNo,
-        fullName: body.fullName,
-        role: (body.role || "ASISTAN") as Role,
+        fullName,
+        role,
         passwordHash,
         mustChangePassword: usingDefaultPassword,
         profile: {
@@ -128,7 +150,7 @@ export async function POST(request: NextRequest) {
             workEnd,
             // Yönetici rolündeki personel varsayılan olarak randevu ekranındaki
             // doktor listesinde görünmez; tedavi de veriyorsa formdan işaretlenerek gösterilebilir.
-            hideAsDoctor: body.role === "YONETICI" ? (typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : true) : false,
+            hideAsDoctor: role === "YONETICI" ? (typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : true) : false,
           }
         }
       },
@@ -141,9 +163,16 @@ export async function POST(request: NextRequest) {
         isActive: true,
         createdAt: true,
         profile: { select: { workStart: true, workEnd: true, photoUrl: true, hideAsDoctor: true } },
-      },
+        },
+      });
     });
   } catch (error) {
+    if (error instanceof Error && error.message === "INSTITUTION_INACTIVE") {
+      return NextResponse.json({ message: "Kurum bulunamadı veya pasif durumda." }, { status: 404 });
+    }
+    if (error instanceof Error && error.message.startsWith("STAFF_LIMIT:")) {
+      return NextResponse.json({ message: error.message.slice("STAFF_LIMIT:".length) }, { status: 409 });
+    }
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
       return NextResponse.json({ message: "Bu TC kimlik numarası kurumda zaten kayıtlı." }, { status: 409 });
     }

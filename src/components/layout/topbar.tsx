@@ -31,6 +31,7 @@ import { UserCheck } from "lucide-react";
 import { PatientFormModal } from "@/components/patient/PatientFormModal";
 import { ModuleIcon, type ModuleKey } from "@/components/ui/ModuleIcon";
 import { Spinner } from "@/components/ui/Spinner";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 
 type Props = { user: { fullName: string; role: string; photoUrl?: string | null } };
 
@@ -127,6 +128,19 @@ type TopbarPageConfig = {
   quickActions: TopbarQuickAction[];
 };
 
+// src/lib/role-permissions.ts'teki DEFAULT_ROLE_PERMISSIONS ile aynı gerçeği
+// yansıtır (MUHASEBE'de patients:write/appointments:write yok, DOKTOR'da
+// patients:write yok) — "Hasta Ekle"/"Randevu Oluştur" hızlı erişim butonları
+// önceden her rolde koşulsuz gösteriliyordu; tıklayan bir Muhasebe/Doktor
+// formu doldurup gönderdikten SONRA "yetkiniz yok" hatası alıyordu (bkz.
+// proje tasarım ilkesi: geçersiz/işe yaramayacak aksiyon hiç gösterilmemeli).
+function getQuickActionPermissions(can: (permission: string) => boolean) {
+  return {
+    canCreatePatient: can("patients:write"),
+    canCreateAppointment: can("appointments:write"),
+  };
+}
+
 function getTopbarConfig(pathname: string): TopbarPageConfig {
   const base: TopbarPageConfig = {
     showDateTime: true,
@@ -195,6 +209,7 @@ function Clock() {
 }
 
 export function Topbar({ user }: Props) {
+  const { permissions, can } = usePermissions();
   const router = useRouter();
   const pathname = usePathname();
   const baseTitleRef = useRef<string>("Klinik Yönetim Paneli");
@@ -216,9 +231,10 @@ export function Topbar({ user }: Props) {
       window.removeEventListener("preview-role-change", onStorage);
     };
   }, [getEffectiveRole]);
-  const hidePhone = effectiveRole === "DOKTOR" || effectiveRole === "ASISTAN";
-  const alerts = usePanelAlerts(effectiveRole);
-  const { canSeeTaksit, canSeeStok, canSeeLab, canSeeWaiting } = getAlertPermissions(effectiveRole);
+  const hidePhone = !can("patients:phone");
+  const alerts = usePanelAlerts(effectiveRole, permissions);
+  const { canSeeTaksit, canSeeStok, canSeeLab, canSeeWaiting, canSeeTasks } = getAlertPermissions(effectiveRole, permissions);
+  const { canCreatePatient, canCreateAppointment } = getQuickActionPermissions(can);
 
   useEffect(() => {
     if (!canSeeWaiting) return;
@@ -251,7 +267,18 @@ export function Topbar({ user }: Props) {
   const waitingRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
   const today = new Date().toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" });
-  const pageConfig = getTopbarConfig(pathname || "");
+  const rawPageConfig = getTopbarConfig(pathname || "");
+  const pageConfig = {
+    ...rawPageConfig,
+    quickActions: rawPageConfig.quickActions.filter((action) => {
+      if (action.href === "/hasta-ekle") return canCreatePatient;
+      if (action.href === "/randevu" && action.label !== "Randevular") return canCreateAppointment;
+      if (action.href === "/randevu") return can("appointments:read");
+      if (action.href === "/gorevler") return can("clinictasks:read");
+      if (action.href === "/hasta-takip") return can("hastatracking:read");
+      return true;
+    }),
+  };
 
   // Sayfa başlığı
   const pageTitle = PAGE_TITLES[pathname ?? ""] ?? "";
@@ -436,7 +463,7 @@ export function Topbar({ user }: Props) {
     if (q.trim()) router.push(`/hasta?q=${encodeURIComponent(q.trim())}`);
   };
 
-  const totalAlerts = alerts.taksit + alerts.stok + alerts.lab;
+  const totalAlerts = alerts.taksit + alerts.stok + alerts.lab + alerts.tasks;
   const displayName = user.fullName || "Kullanıcı";
   const initials = displayName.split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase();
   const displayRole = roleLabel[effectiveRole] || user.role;
@@ -459,7 +486,7 @@ export function Topbar({ user }: Props) {
             <span className="font-display text-[15px] font-bold text-slate-900">{pageTitle}</span>
           </span>
         )}
-        {pageConfig.showSearch && <div className="relative flex min-w-0 max-w-sm flex-1">
+        {pageConfig.showSearch && can("patients:read") && <div className="relative flex min-w-0 max-w-sm flex-1">
           <form onSubmit={search} className="min-w-0 w-full">
             <div ref={searchRef} className="relative flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 shadow-[var(--shadow-rest)] transition focus-within:border-primary/35 focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/12">
               <Search className="h-4 w-4 shrink-0 text-slate-400" />
@@ -701,8 +728,26 @@ export function Topbar({ user }: Props) {
                     <p className="text-sm text-slate-600">Bekleyen lab siparişi yok</p>
                   </div>
                 ))}
+                {canSeeTasks && (alerts.tasks > 0 ? (
+                  <a href="/gorevler" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 transition hover:bg-slate-50">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-50">
+                      <ClipboardList className="h-4 w-4 text-rose-500" />
+                    </span>
+                    <div>
+                      <p className="text-sm font-semibold text-slate-800">{alerts.tasks} Görev Aksiyon Bekliyor</p>
+                      <p className="text-xs text-slate-500">Atanan görevleri aç</p>
+                    </div>
+                  </a>
+                ) : (
+                  <div className="flex items-center gap-3 px-4 py-3">
+                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                    </span>
+                    <p className="text-sm text-slate-600">Aksiyon bekleyen görev yok</p>
+                  </div>
+                ))}
                 {/* Hiçbir bildirim grubu yoksa */}
-                {!canSeeTaksit && !canSeeStok && !canSeeLab && (
+                {!canSeeTaksit && !canSeeStok && !canSeeLab && !canSeeTasks && (
                   <div className="px-4 py-6 text-center">
                     <p className="text-sm text-slate-400">Bu rol için sistem uyarısı bulunmuyor</p>
                   </div>

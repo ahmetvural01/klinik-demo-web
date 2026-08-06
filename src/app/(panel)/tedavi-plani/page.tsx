@@ -17,7 +17,7 @@ import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 const TedaviEmptyIcon = createSceneIllustration("tedavi");
 
 type PlanStatus = "PLANLANDI" | "DEVAM_EDIYOR" | "TAMAMLANDI" | "IPTAL";
-type StepStatus = "BEKLIYOR" | "YAPILDI" | "IPTAL";
+type StepStatus = "BEKLIYOR" | "YAPILDI" | "TAMAMLANDI" | "IPTAL";
 
 type Step = {
   id: string; order: number; treatmentName: string; toothNo?: string;
@@ -44,6 +44,7 @@ const STATUS_CFG: Record<PlanStatus, { label: string; bg: string; text: string; 
 const STEP_STATUS: Record<StepStatus, { label: string; tone: BadgeTone }> = {
   BEKLIYOR: { label: "Bekliyor", tone: "neutral" },
   YAPILDI:  { label: "Yapıldı",  tone: "success" },
+  TAMAMLANDI: { label: "Yapıldı", tone: "success" },
   IPTAL:    { label: "İptal",    tone: "critical" },
 };
 
@@ -149,20 +150,15 @@ export default function TedaviPlaniPage() {
 
   const filtered = plans;
 
+  const newPlanDirty = showNew && (
+    Boolean(newPlan.patientId || newPlan.doctorId || newPlan.title.trim() || newPlan.notes.trim())
+    || newSteps.some((step) => Boolean(step.treatmentName.trim() || step.toothNo.trim() || step.amount))
+    || newSteps.length > 1
+  );
+
   // Çok alanlı bir form — ESC/İptal ile yanlışlıkla kapatılırsa girilen
   // hasta/doktor/adım bilgileri sessizce kaybolmamalı (bkz. denetim raporu).
-  async function requestCloseNewPlan() {
-    const isDirty = Boolean(
-      newPlan.patientId || newPlan.doctorId || newPlan.title.trim() || newPlan.notes.trim() ||
-      newSteps.some(s => s.treatmentName.trim() || s.toothNo.trim() || s.amount.trim())
-    );
-    if (isDirty && !(await confirmDialog({
-      message: "Kaydedilmemiş değişiklikler var. Kapatılsın mı? Girdiğiniz bilgiler kaybolacak.",
-      danger: true,
-      confirmText: "Kapat, Değişiklikleri Kaybet",
-    }))) {
-      return;
-    }
+  function requestCloseNewPlan() {
     setShowNew(false);
     setNewPlan({ patientId: "", doctorId: "", title: "", notes: "" });
     setNewSteps([{ treatmentName: "", toothNo: "", amount: "" }]);
@@ -305,7 +301,7 @@ export default function TedaviPlaniPage() {
           )}
           {filtered.map(plan => {
             const cfg = STATUS_CFG[plan.status];
-            const done = plan.steps.filter(s => s.status === "YAPILDI").length;
+            const done = plan.steps.filter(s => s.status === "YAPILDI" || s.status === "TAMAMLANDI").length;
             const pct  = plan.steps.length > 0 ? Math.round((done / plan.steps.length) * 100) : 0;
             return (
               <button key={plan.id} onClick={() => setSelected(plan)} className="cursor-pointer rounded-2xl border border-slate-100 bg-white p-5 text-left shadow-sm transition hover:border-primary/20 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary/30">
@@ -420,7 +416,7 @@ export default function TedaviPlaniPage() {
       </Modal>
 
       {/* New Plan Modal */}
-      <Modal open={showNew} onClose={() => void requestCloseNewPlan()} title="Yeni Tedavi Planı" size="md">
+      <Modal open={showNew} onClose={() => void requestCloseNewPlan()} isDirty={newPlanDirty} title="Yeni Tedavi Planı" size="md">
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2">
             <div>

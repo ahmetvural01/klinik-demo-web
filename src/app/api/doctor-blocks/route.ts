@@ -110,8 +110,12 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const [overlappingBlock, overlappingAppointment] = await Promise.all([
-      prisma.doctorBlock.findFirst({
+    const block = await prisma.$transaction(async (tx) => {
+      // Randevu oluşturma ve taşıma da aynı doktor satırını kilitler. Saat
+      // kapatma ile randevu kaydı eşzamanlı gelirse işlemler sıraya girer.
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${doctorId} FOR UPDATE`;
+      const [overlappingBlock, overlappingAppointment] = await Promise.all([
+      tx.doctorBlock.findFirst({
         where: {
           doctorId,
           date,
@@ -120,7 +124,7 @@ export async function POST(request: NextRequest) {
         },
         select: { id: true, startTime: true, endTime: true },
       }),
-      prisma.appointment.findFirst({
+      tx.appointment.findFirst({
         where: {
           doctorId,
           status: { notIn: ["IPTAL", "GELMEDI"] },
@@ -134,27 +138,31 @@ export async function POST(request: NextRequest) {
           patient: { select: { fullName: true } },
         },
       }),
-    ]);
+      ]);
 
-    if (overlappingBlock) {
-      return NextResponse.json({
-        message: `Bu saat aralığı ${overlappingBlock.startTime}–${overlappingBlock.endTime} zaman kapatma kaydıyla çakışıyor.`,
-      }, { status: 409 });
-    }
-    if (overlappingAppointment) {
-      return NextResponse.json({
-        message: `${overlappingAppointment.patient?.fullName || "Hasta"} için bu saat aralığında randevu var. Önce randevuyu taşıyın veya iptal edin.`,
-      }, { status: 409 });
-    }
+      if (overlappingBlock) throw new Error(`BLOCK_CONFLICT|${overlappingBlock.startTime}|${overlappingBlock.endTime}`);
+      if (overlappingAppointment) throw new Error(`APPOINTMENT_CONFLICT:${overlappingAppointment.patient?.fullName || "Hasta"}`);
 
-    const block = await prisma.doctorBlock.create({
-      data: { doctorId, date, startTime, endTime, reason: reason || null },
+      return tx.doctorBlock.create({
+      data: { doctorId, date, startTime, endTime, reason: typeof reason === "string" ? reason.trim().slice(0, 500) || null : null },
       include: { doctor: { select: { id: true, fullName: true } } },
-    });
+      });
+    }, { isolationLevel: "Serializable" });
 
     await writeAudit(auth.user.id, "DOCTOR_BLOCK_CREATE", `${date} ${startTime}-${endTime}`);
     return NextResponse.json(block, { status: 201 });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message.startsWith("BLOCK_CONFLICT|")) {
+      const [, conflictStart, conflictEnd] = message.split("|");
+      return NextResponse.json({ message: `Bu saat aralığı ${conflictStart}–${conflictEnd} zaman kapatma kaydıyla çakışıyor.` }, { status: 409 });
+    }
+    if (message.startsWith("APPOINTMENT_CONFLICT:")) {
+      return NextResponse.json({ message: `${message.slice("APPOINTMENT_CONFLICT:".length)} için bu saat aralığında randevu var. Önce randevuyu taşıyın veya iptal edin.` }, { status: 409 });
+    }
+    if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2034") {
+      return NextResponse.json({ message: "Takvim aynı anda başka bir işlemle değişti. Tekrar deneyin." }, { status: 409 });
+    }
     console.error("[doctor-blocks POST] fallback:", error);
     return NextResponse.json({ message: "Zaman kapatma kaydı oluşturulamadı." }, { status: 503 });
   }

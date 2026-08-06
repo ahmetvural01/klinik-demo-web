@@ -52,7 +52,7 @@ export function Button({
   ) : null;
 
   const classes = [
-    "inline-flex items-center justify-center gap-2 whitespace-nowrap transition-[background-color,border-color,color,box-shadow,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 active:translate-y-px disabled:cursor-not-allowed",
+    "ui-button-premium relative isolate overflow-hidden inline-flex items-center justify-center gap-2 whitespace-nowrap transition-[background-color,border-color,color,box-shadow,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 active:translate-y-px disabled:cursor-not-allowed",
     VARIANT_CLASS[variant],
     SIZE_CLASS[size],
     fullWidth ? "w-full" : "",
@@ -62,6 +62,7 @@ export function Button({
   if (href && !disabled && !loading) {
     return (
       <Link href={href} className={classes}>
+        <span className="ui-button-premium-shine" aria-hidden="true" />
         {iconEl && iconPosition === "left" && iconEl}
         {children}
         {iconEl && iconPosition === "right" && iconEl}
@@ -76,6 +77,7 @@ export function Button({
       className={classes}
       {...rest}
     >
+      <span className="ui-button-premium-shine" aria-hidden="true" />
       {iconEl && iconPosition === "left" && iconEl}
       {children}
       {iconEl && iconPosition === "right" && iconEl}
@@ -125,7 +127,7 @@ export function IconButton({
   tooltipSide = "top",
 }: IconButtonProps) {
   const classes = [
-    "inline-flex shrink-0 items-center justify-center rounded-md transition-[background-color,border-color,color,box-shadow,transform] duration-150 hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0",
+    "ui-icon-button-premium inline-flex shrink-0 items-center justify-center rounded-md transition-[background-color,border-color,color,box-shadow,transform] duration-150 hover:-translate-y-px focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:translate-y-0",
     ICON_TONE_CLASS[tone],
     ICON_BUTTON_SIZE_CLASS[size],
     className,

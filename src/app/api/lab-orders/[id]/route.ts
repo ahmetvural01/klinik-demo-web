@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
 import { reverseLabInvoiceFirmaIntegration } from "@/lib/lab-firma-integration";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+
+const VALID_LAB_ORDER_STATUSES = new Set(["DEVAM_EDIYOR", "HASTAYA_TAKILDI", "IPTAL"]);
 
 export const dynamic = "force-dynamic";
 
@@ -41,7 +43,7 @@ export async function GET(_: NextRequest, props: { params: Promise<{ id: string 
 
   if (!order) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
 
-  const hidePhone = shouldHidePatientPhone(user.role);
+  const hidePhone = await shouldHidePatientPhoneForRole(user.role);
   if (hidePhone && order.patient) {
     return NextResponse.json(toPublicOrder({
       ...order,
@@ -57,8 +59,17 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
 
-  const body = await req.json();
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Geçersiz istek gövdesi" }, { status: 400 });
+  }
   const { status, price, invoiceNo, appendInvoice, action, reason, restartDescription } = body;
+  if (status !== undefined && (typeof status !== "string" || !VALID_LAB_ORDER_STATUSES.has(status))) {
+    return NextResponse.json({ error: "Geçersiz laboratuvar siparişi durumu" }, { status: 400 });
+  }
+  if (action !== undefined && action !== "RPT_REOPEN") {
+    return NextResponse.json({ error: "Geçersiz laboratuvar işlemi" }, { status: 400 });
+  }
 
   // Mevcut siparişi al — firma entegrasyonu için önceki fatura durumuna bakıyoruz
   const existing = await (prisma as any).labOrder.findFirst({
@@ -91,7 +102,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   }
 
   if (action === "RPT_REOPEN") {
-    if (!reason || typeof reason !== "string") {
+    if (typeof reason !== "string" || reason.trim().length < 3 || reason.length > 1000) {
       return NextResponse.json({ error: "RPT nedeni zorunludur" }, { status: 400 });
     }
     const timestamp = new Date().toISOString();
@@ -147,7 +158,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         data: {
           labOrderId: params.id,
           order: nextOrder,
-          description: restartDescription || "Ölçü",
+          description: typeof restartDescription === "string" && restartDescription.trim() ? restartDescription.trim().slice(0, 180) : "Ölçü",
           sentAt: new Date(),
           sentNote: `RPT_RESET_START | ${rptNote}`,
         },

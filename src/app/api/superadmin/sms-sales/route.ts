@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 
@@ -24,8 +25,11 @@ export async function POST(request: NextRequest) {
   const quantity = Number(body.quantity ?? 1);
   const dueDays = Number(body.dueDays ?? 7);
 
-  if (!Number.isInteger(quantity) || quantity < 1) {
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10000) {
     return NextResponse.json({ message: "Geçersiz adet" }, { status: 400 });
+  }
+  if (!Number.isInteger(dueDays) || dueDays < 1 || dueDays > 3650) {
+    return NextResponse.json({ message: "Vade günü 1-3650 arasında tam sayı olmalı" }, { status: 400 });
   }
 
   const [institution, smsPackage] = await Promise.all([
@@ -33,35 +37,44 @@ export async function POST(request: NextRequest) {
     prisma.smsPackage.findUnique({ where: { id: body.smsPackageId } }),
   ]);
 
-  if (!institution || !smsPackage) {
+  if (!institution || !smsPackage || !institution.isActive || !smsPackage.isActive) {
     return NextResponse.json({ message: "Klinik veya paket bulunamadi" }, { status: 404 });
   }
 
   const smsToAdd = smsPackage.smsCount * quantity;
   const totalPrice = Number(smsPackage.price) * quantity;
-  const before = institution.smsBalance;
-  const after = before + smsToAdd;
-
-  const wallet = await prisma.platformSmsWallet.upsert({
-    where: { id: 1 },
-    update: {},
-    create: { id: 1, availableBalance: 0 },
-  });
-
   const dueDate = new Date();
   dueDate.setDate(dueDate.getDate() + dueDays);
 
-  const invoiceNo = `INV-${Date.now()}`;
+  const invoiceNo = `INV-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`;
 
   let result;
   try {
     result = await prisma.$transaction(async (tx) => {
+      const wallet = await tx.platformSmsWallet.upsert({
+        where: { id: 1 },
+        update: {},
+        create: { id: 1, availableBalance: 0 },
+      });
+      await tx.$queryRaw`SELECT "id" FROM "PlatformSmsWallet" WHERE "id" = ${wallet.id} FOR UPDATE`;
+      await tx.$queryRaw`SELECT "id" FROM "Institution" WHERE "id" = ${institution.id} FOR UPDATE`;
+
+      const [currentInstitution, currentPackage] = await Promise.all([
+        tx.institution.findUnique({ where: { id: institution.id } }),
+        tx.smsPackage.findUnique({ where: { id: smsPackage.id } }),
+      ]);
+      if (!currentInstitution?.isActive || !currentPackage?.isActive) {
+        throw new Error("SALE_TARGET_INACTIVE");
+      }
+      const currentSmsToAdd = currentPackage.smsCount * quantity;
+      const currentTotalPrice = Number(currentPackage.price) * quantity;
+
       // Bakiye kontrolü ile düşme aynı atomik güncellemede yapılır — aksi
       // halde iki eşzamanlı satış isteği ikisi de "yeterli bakiye var"
       // kontrolünü geçip cüzdanı negatife düşürebilir (TOCTOU yarış koşulu).
       const decremented = await tx.platformSmsWallet.updateMany({
-        where: { id: wallet.id, availableBalance: { gte: smsToAdd } },
-        data: { availableBalance: { decrement: smsToAdd } },
+        where: { id: wallet.id, availableBalance: { gte: currentSmsToAdd } },
+        data: { availableBalance: { decrement: currentSmsToAdd } },
       });
 
       if (decremented.count === 0) {
@@ -73,17 +86,18 @@ export async function POST(request: NextRequest) {
 
       const updatedInstitution = await tx.institution.update({
         where: { id: institution.id },
-        data: { smsBalance: after },
+        data: { smsBalance: { increment: currentSmsToAdd } },
       });
+      const balanceBefore = updatedInstitution.smsBalance - currentSmsToAdd;
 
       const transaction = await tx.smsTransaction.create({
         data: {
           institutionId: institution.id,
           smsPackageId: smsPackage.id,
           quantity,
-          totalPrice,
-          balanceBefore: before,
-          balanceAfter: after,
+          totalPrice: currentTotalPrice,
+          balanceBefore,
+          balanceAfter: updatedInstitution.smsBalance,
           status: "COMPLETED",
         },
       });
@@ -92,8 +106,8 @@ export async function POST(request: NextRequest) {
         data: {
           institutionId: institution.id,
           invoiceNo,
-          amount: totalPrice,
-          description: `${smsPackage.name} paketi x ${quantity} adet`,
+          amount: currentTotalPrice,
+          description: `${currentPackage.name} paketi x ${quantity} adet`,
           status: "PENDING",
           dueDate,
         },
@@ -108,6 +122,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         message: `Platform SMS stogu yetersiz. Gerekli: ${smsToAdd}, Mevcut: ${current}`,
       }, { status: 400 });
+    }
+    if (msg === "SALE_TARGET_INACTIVE") {
+      return NextResponse.json({ message: "Klinik veya SMS paketi artık aktif değil" }, { status: 409 });
+    }
+    if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2034") {
+      return NextResponse.json({ message: "SMS satışı başka bir işlemle çakıştı. Tekrar deneyin." }, { status: 409 });
     }
     throw error;
   }

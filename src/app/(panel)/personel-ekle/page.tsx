@@ -10,6 +10,7 @@ import { invalidateCachedGet } from "@/lib/client-cache";
 import { Button } from "@/components/ui/Button";
 import { FormField, FormSection, FormErrorBanner, inputErrorClass } from "@/components/ui/FormField";
 import { Spinner } from "@/components/ui/Spinner";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
 
 const isEffectiveDoctorRole = (role: string, showAsDoctor: boolean) => role === "DOKTOR" || (role === "YONETICI" && showAsDoctor);
 
@@ -155,9 +156,12 @@ function PersonelEkleContent() {
         Personellere Dön
       </Link>
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div>
-          <h1 className="text-lg font-black text-slate-900">{isEdit ? "Personel Düzenle" : "Yeni Personel Ekle"}</h1>
-          <p className="mt-0.5 text-sm text-slate-500">{isEdit ? "Personel bilgilerini, mesai saatlerini ve durumunu buradan yönetin" : "Yeni personel bilgilerini girin"}</p>
+        <div className="flex items-center gap-3">
+          <ModuleIcon module="person" size="lg" />
+          <div>
+            <h1 className="font-display text-xl font-black tracking-tight text-slate-900">{isEdit ? "Personel Düzenle" : "Yeni Personel Ekle"}</h1>
+            <p className="text-xs font-medium text-slate-500">{isEdit ? "Personel bilgilerini, mesai saatlerini ve durumunu buradan yönetin" : "Yeni personel bilgilerini girin"}</p>
+          </div>
         </div>
         {isEdit && (
           <Button variant={form.isActive ? "danger" : "primary"} size="sm" onClick={togglePasif}>

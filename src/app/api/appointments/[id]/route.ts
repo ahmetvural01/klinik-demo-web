@@ -1,6 +1,6 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { appointmentSchema } from "@/lib/validators";
+import { APPOINTMENT_STATUS_VALUES, appointmentSchema } from "@/lib/validators";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
 import { getDailySchedules, checkWorkingHoursInterval } from "@/lib/working-hours";
@@ -83,7 +83,7 @@ async function isEligibleClinicUnit(clinicUnitId: string | null | undefined, ins
 function appointmentTenantWhere(id: string, role: string, institutionId: string | null | undefined) {
   return {
     id,
-    ...(role !== "SUPERADMIN" ? { patient: { institutionId } } : {}),
+    ...(role !== "SUPERADMIN" && institutionId ? { patient: { institutionId } } : {}),
   };
 }
 
@@ -128,10 +128,14 @@ export async function GET(_: NextRequest, props: Params) {
 
 export async function PUT(request: NextRequest, props: Params) {
   const params = await props.params;
-  const auth = await requireAuth("appointments:write");
-  if (auth.error) return auth.error;
-
   const body = await request.json();
+  const keys = Object.keys(body);
+  const isPartialStatusOrNote = keys.length > 0 && keys.every((key) => ["status", "note"].includes(key));
+  const permission = isPartialStatusOrNote && body.status === "IPTAL"
+    ? "appointments:approve"
+    : "appointments:write";
+  const auth = await requireAuth(permission);
+  if (auth.error) return auth.error;
 
   const existing = await prisma.appointment.findFirst({
     where: appointmentTenantWhere(params.id, auth.user.role, auth.user.institutionId),
@@ -142,10 +146,11 @@ export async function PUT(request: NextRequest, props: Params) {
     return NextResponse.json({ message: "Randevu bulunamadı" }, { status: 404 });
   }
 
-  const keys = Object.keys(body);
-
   // Sadece status / note güncellemesi için partial update destekle
-  if (keys.length > 0 && keys.every((key) => ["status", "note"].includes(key))) {
+  if (isPartialStatusOrNote) {
+    if (typeof body.status === "string" && !APPOINTMENT_STATUS_VALUES.includes(body.status as typeof APPOINTMENT_STATUS_VALUES[number])) {
+      return NextResponse.json({ message: "Geçersiz randevu durumu" }, { status: 400 });
+    }
     const appointment = await prisma.appointment.update({
       where: { id: params.id },
       data: {
@@ -235,6 +240,11 @@ export async function PUT(request: NextRequest, props: Params) {
   const timeChanged   = parsed.data.startAt !== existing.startAt.toISOString() || parsed.data.endAt !== existing.endAt.toISOString();
   const doctorChanged = parsed.data.doctorId !== existing.doctorId;
   const unitChanged = requestedClinicUnitId !== (existing.clinicUnitId || null);
+  const patientChanged = parsed.data.patientId !== existing.patientId;
+  const inactiveStatuses = new Set(["IPTAL", "GELMEDI"]);
+  const existingIsActive = !inactiveStatuses.has(existing.status);
+  const targetIsActive = !inactiveStatuses.has(parsed.data.status);
+  const reactivating = !existingIsActive && targetIsActive;
 
   if (timeChanged && newStart.getTime() <= Date.now()) {
     return NextResponse.json({ message: "Randevu geçmiş bir tarih veya saate taşınamaz." }, { status: 400 });
@@ -247,7 +257,7 @@ export async function PUT(request: NextRequest, props: Params) {
       return NextResponse.json({ message: workingHoursError }, { status: 400 });
     }
   }
-  if (timeChanged || doctorChanged) {
+  if (targetIsActive && (timeChanged || doctorChanged || reactivating)) {
     const doctorHoursError = checkDoctorWorkingHoursInterval(
       newStart,
       newEnd,
@@ -260,7 +270,7 @@ export async function PUT(request: NextRequest, props: Params) {
     }
   }
 
-  if (selectedUnit && (timeChanged || unitChanged)) {
+  if (targetIsActive && selectedUnit && (timeChanged || unitChanged || reactivating)) {
     const unitConflict = await prisma.appointment.findFirst({
       where: {
         id: { not: params.id },
@@ -277,8 +287,29 @@ export async function PUT(request: NextRequest, props: Params) {
     }
   }
 
+  if (targetIsActive && (timeChanged || patientChanged || reactivating)) {
+    const patientConflict = await prisma.appointment.findFirst({
+      where: {
+        id: { not: params.id },
+        patientId: parsed.data.patientId,
+        status: { notIn: ["IPTAL", "GELMEDI"] },
+        AND: [{ startAt: { lt: newEnd } }, { endAt: { gt: newStart } }],
+      },
+      select: { id: true, startAt: true, endAt: true },
+    });
+    if (patientConflict) {
+      const cs = patientConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+      const ce = patientConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+      return NextResponse.json({
+        message: `Bu hastanın ${cs}–${ce} saatleri arası başka bir randevusu mevcut`,
+        conflictId: patientConflict.id,
+      }, { status: 409 });
+    }
+  }
+
   let conflictOverridden = false;
-  if ((timeChanged || doctorChanged) && !overrideDoctorConflict) {
+  const doctorConflictCheckNeeded = targetIsActive && (timeChanged || doctorChanged || reactivating);
+  if (doctorConflictCheckNeeded && !overrideDoctorConflict) {
     const conflict = await prisma.appointment.findFirst({
       where: {
         id: { not: params.id },
@@ -297,13 +328,13 @@ export async function PUT(request: NextRequest, props: Params) {
         requiresConfirmation: true,
       }, { status: 409 });
     }
-  } else if ((timeChanged || doctorChanged) && overrideDoctorConflict) {
+  } else if (doctorConflictCheckNeeded && overrideDoctorConflict) {
     conflictOverridden = true;
   }
 
   // Doktor bloke saati (izin/mola vb.) çakışma onayından bağımsız — fiziksel
   // olarak doktor o saatte hiç müsait değildir, override edilemez.
-  if (timeChanged || doctorChanged) {
+  if (targetIsActive && (timeChanged || doctorChanged || reactivating)) {
     const blockConflict = await findDoctorBlockConflict(parsed.data.doctorId, newStart, newEnd);
     if (blockConflict) {
       return NextResponse.json({
@@ -318,7 +349,12 @@ export async function PUT(request: NextRequest, props: Params) {
     // anda iki kullanıcı randevuyu taşıdığında hem doktor hem seçili ünite
     // tekrar sorgulanır. Böylece ekran boş görünse bile çift atama oluşmaz.
     appointment = await prisma.$transaction(async (tx) => {
-      if ((timeChanged || doctorChanged) && !overrideDoctorConflict) {
+      if (targetIsActive && (timeChanged || doctorChanged || reactivating)) {
+        await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${parsed.data.doctorId} FOR UPDATE`;
+        const blockConflictRecheck = await findDoctorBlockConflict(parsed.data.doctorId, newStart, newEnd, tx);
+        if (blockConflictRecheck) throw new Error("DOCTOR_BLOCK_RECHECK");
+      }
+      if (doctorConflictCheckNeeded && !overrideDoctorConflict) {
         const doctorConflictRecheck = await tx.appointment.findFirst({
           where: {
             id: { not: params.id },
@@ -330,7 +366,7 @@ export async function PUT(request: NextRequest, props: Params) {
         });
         if (doctorConflictRecheck) throw new Error("DOCTOR_CONFLICT_RECHECK");
       }
-      if (selectedUnit && (timeChanged || unitChanged)) {
+      if (targetIsActive && selectedUnit && (timeChanged || unitChanged || reactivating)) {
         const unitConflictRecheck = await tx.appointment.findFirst({
           where: {
             id: { not: params.id },
@@ -341,6 +377,18 @@ export async function PUT(request: NextRequest, props: Params) {
           select: { id: true },
         });
         if (unitConflictRecheck) throw new Error("CLINIC_UNIT_CONFLICT_RECHECK");
+      }
+      if (targetIsActive && (timeChanged || patientChanged || reactivating)) {
+        const patientConflictRecheck = await tx.appointment.findFirst({
+          where: {
+            id: { not: params.id },
+            patientId: parsed.data.patientId,
+            status: { notIn: ["IPTAL", "GELMEDI"] },
+            AND: [{ startAt: { lt: newEnd } }, { endAt: { gt: newStart } }],
+          },
+          select: { id: true },
+        });
+        if (patientConflictRecheck) throw new Error("PATIENT_CONFLICT_RECHECK");
       }
       return tx.appointment.update({
         where: { id: params.id },
@@ -363,11 +411,17 @@ export async function PUT(request: NextRequest, props: Params) {
       });
     }, { isolationLevel: "Serializable" });
   } catch (error) {
+    if (error instanceof Error && error.message === "DOCTOR_BLOCK_RECHECK") {
+      return NextResponse.json({ message: "Doktorun bu saat aralığı az önce kapatıldı. Takvimi yenileyip başka bir saat seçin." }, { status: 409 });
+    }
     if (error instanceof Error && error.message === "DOCTOR_CONFLICT_RECHECK") {
       return NextResponse.json({ message: "Bu doktor için bu saat aralığı az önce başka bir kullanıcı tarafından dolduruldu. Lütfen tekrar deneyin." }, { status: 409 });
     }
     if (error instanceof Error && error.message === "CLINIC_UNIT_CONFLICT_RECHECK") {
       return NextResponse.json({ message: "Bu tedavi alanı aynı saat aralığında başka bir randevuya ayrıldı. Lütfen tekrar deneyin." }, { status: 409 });
+    }
+    if (error instanceof Error && error.message === "PATIENT_CONFLICT_RECHECK") {
+      return NextResponse.json({ message: "Bu hastanın aynı saat aralığında başka bir randevusu az önce oluşturuldu. Lütfen tekrar deneyin." }, { status: 409 });
     }
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2034") {
       return NextResponse.json({ message: "Randevu aynı anda başka bir işlemle çakıştı. Lütfen tekrar deneyin." }, { status: 409 });

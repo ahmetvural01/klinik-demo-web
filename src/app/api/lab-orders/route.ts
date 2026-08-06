@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { bumpRealtimeInstitution, requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { applyLabInvoiceFirmaIntegration } from "@/lib/lab-firma-integration";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { formatZodError, labInvoiceCreateSchema } from "@/lib/validators";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,9 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status");
   const limit = Number(searchParams.get("limit") || searchParams.get("take") || 0);
+  if (status && !new Set(["BEKLIYOR", "DEVAM_EDIYOR", "HASTAYA_TAKILDI", "IPTAL"]).has(status)) {
+    return NextResponse.json({ message: "Geçersiz laboratuvar durumu" }, { status: 400 });
+  }
 
   // Yeni iş formlarında laboratuvar kaynağı geçmiş sipariş isimleri değil,
   // firma kartında Laboratuvar olarak işaretlenen aktif firmalardır.
@@ -77,7 +81,7 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
     );
   }
 
-  const hidePhone = shouldHidePatientPhone(user.role);
+  const hidePhone = await shouldHidePatientPhoneForRole(user.role);
   const publicOrders = orders.map(toPublicOrder);
   const masked = hidePhone
     ? publicOrders.map((o: any) => ({ ...o, patient: o.patient ? { ...o.patient, phone: "***" } : o.patient }))
@@ -89,19 +93,65 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
 export async function POST(req: NextRequest) {
   const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
-  const user = auth.user;
-  const requestKey = req.headers.get("Idempotency-Key")?.trim().slice(0, 180) || null;
+  if (!auth.user.institutionId) {
+    return NextResponse.json({ error: "Laboratuvar işlemi için klinik bağlamı zorunlu." }, { status: 403 });
+  }
+  const rawRequestKey = req.headers.get("Idempotency-Key")?.trim() || null;
+  if (rawRequestKey && (rawRequestKey.length < 8 || rawRequestKey.length > 180)) {
+    return NextResponse.json({ error: "İşlem anahtarı geçersiz." }, { status: 400 });
+  }
+  const requestKey = rawRequestKey;
 
   const body = await req.json();
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Geçersiz istek." }, { status: 400 });
+  }
   const { patientId, doctorId, labName, labType, teeth, notes, price, invoiceNo, firstTrip, firstInvoice } = body;
 
-  if (!patientId || !doctorId || !labName || !labType) {
+  const normalizedLabType = typeof labType === "string" ? labType.trim() : "";
+  const normalizedTeeth = typeof teeth === "string" ? teeth.trim() : "";
+  const normalizedNotes = typeof notes === "string" ? notes.trim() : "";
+  const normalizedInvoiceNo = typeof invoiceNo === "string" ? invoiceNo.trim() : "";
+
+  if (typeof patientId !== "string" || !patientId.trim() || typeof doctorId !== "string" || !doctorId.trim() || typeof labName !== "string" || !labName.trim() || !normalizedLabType) {
     return NextResponse.json({ error: "Hasta, doktor, laboratuvar ve iş türü zorunludur." }, { status: 400 });
+  }
+  if (normalizedLabType.length > 180 || normalizedTeeth.length > 200 || normalizedNotes.length > 2000 || normalizedInvoiceNo.length > 80) {
+    return NextResponse.json({ error: "Laboratuvar alanlarından biri izin verilen uzunluğu aşıyor." }, { status: 400 });
+  }
+
+  const normalizedPrice = price === undefined || price === null || price === "" ? null : Number(price);
+  if (normalizedPrice !== null && (!Number.isFinite(normalizedPrice) || normalizedPrice <= 0 || normalizedPrice > 100_000_000)) {
+    return NextResponse.json({ error: "Geçerli bir laboratuvar tutarı girin." }, { status: 400 });
+  }
+
+  const hasFirstInvoice = Boolean(firstInvoice && typeof firstInvoice === "object" && (firstInvoice.item || firstInvoice.amount));
+  const parsedFirstInvoice = hasFirstInvoice ? labInvoiceCreateSchema.safeParse(firstInvoice) : null;
+  if (parsedFirstInvoice && !parsedFirstInvoice.success) {
+    return NextResponse.json({ error: "İlk fatura bilgileri geçersiz.", errors: formatZodError(parsedFirstInvoice.error) }, { status: 400 });
+  }
+  const normalizedFirstInvoice = parsedFirstInvoice?.success ? parsedFirstInvoice.data : null;
+  if (normalizedFirstInvoice && normalizedPrice !== null && Math.abs(normalizedFirstInvoice.amount - normalizedPrice) > 0.009) {
+    return NextResponse.json({ error: "Sipariş tutarı ile ilk fatura tutarı aynı olmalı." }, { status: 400 });
+  }
+
+  let normalizedFirstTrip: { description: string; sentAt: Date; sentNote: string | null } | null = null;
+  if (firstTrip !== undefined && firstTrip !== null) {
+    if (!firstTrip || typeof firstTrip !== "object" || Array.isArray(firstTrip)) {
+      return NextResponse.json({ error: "İlk gönderim bilgisi geçersiz." }, { status: 400 });
+    }
+    const description = typeof firstTrip.description === "string" ? firstTrip.description.trim() : "";
+    const sentNote = typeof firstTrip.sentNote === "string" ? firstTrip.sentNote.trim() : "";
+    const sentAt = firstTrip.sentAt ? new Date(firstTrip.sentAt) : new Date();
+    if (!description || description.length > 180 || sentNote.length > 1000 || Number.isNaN(sentAt.getTime())) {
+      return NextResponse.json({ error: "İlk gönderim açıklaması veya tarihi geçersiz." }, { status: 400 });
+    }
+    normalizedFirstTrip = { description, sentAt, sentNote: sentNote || null };
   }
 
   const labFirma = await prisma.firma.findFirst({
     where: {
-      ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      institutionId: auth.user.institutionId,
       isActive: true,
       kategori: "LAB",
       name: { equals: String(labName).trim(), mode: "insensitive" },
@@ -134,7 +184,7 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  if (auth.user.institutionId) {
+  {
     const [patient, doctor] = await Promise.all([
       prisma.patient.findFirst({
         where: { id: patientId, institutionId: auth.user.institutionId, archivedAt: null },
@@ -162,36 +212,36 @@ export async function POST(req: NextRequest) {
           doctorId,
           labName: normalizedLabName,
           firmaId: labFirma.id,
-          labType,
-          teeth,
-          notes,
-          price:     price ? Number(price) : firstInvoice?.amount ? Number(firstInvoice.amount) : null,
-          invoiceNo: invoiceNo || firstInvoice?.invoiceNo || null,
-          invoices: firstInvoice?.item && firstInvoice?.amount ? {
+          labType: normalizedLabType,
+          teeth: normalizedTeeth || null,
+          notes: normalizedNotes || null,
+          price: normalizedFirstInvoice?.amount ?? normalizedPrice,
+          invoiceNo: normalizedFirstInvoice?.invoiceNo || normalizedInvoiceNo || null,
+          invoices: normalizedFirstInvoice ? {
             create: [{
               requestKey: requestKey ? `${requestKey}:invoice` : null,
-              item: firstInvoice.item,
-              amount: Number(firstInvoice.amount),
-              invoiceNo: firstInvoice.invoiceNo || null,
-              issuedAt: firstInvoice.issuedAt ? new Date(firstInvoice.issuedAt) : new Date(),
-              note: firstInvoice.note || null,
+              item: normalizedFirstInvoice.item,
+              amount: normalizedFirstInvoice.amount,
+              invoiceNo: normalizedFirstInvoice.invoiceNo || null,
+              issuedAt: normalizedFirstInvoice.issuedAt ? new Date(normalizedFirstInvoice.issuedAt) : new Date(),
+              note: normalizedFirstInvoice.note || null,
             }],
-          } : price ? {
+          } : normalizedPrice !== null ? {
             create: [{
               requestKey: requestKey ? `${requestKey}:invoice` : null,
-              item: labType,
-              amount: Number(price),
-              invoiceNo: invoiceNo || null,
+              item: normalizedLabType,
+              amount: normalizedPrice,
+              invoiceNo: normalizedInvoiceNo || null,
               issuedAt: new Date(),
               note: null,
             }],
           } : undefined,
-          trips: firstTrip?.description ? {
+          trips: normalizedFirstTrip ? {
             create: [{
               order:       1,
-              description: firstTrip.description,
-              sentAt:      firstTrip.sentAt     ? new Date(firstTrip.sentAt)     : new Date(),
-              sentNote:    firstTrip.sentNote || null,
+              description: normalizedFirstTrip.description,
+              sentAt: normalizedFirstTrip.sentAt,
+              sentNote: normalizedFirstTrip.sentNote,
             }],
           } : undefined,
         },
@@ -211,11 +261,11 @@ export async function POST(req: NextRequest) {
           userId: auth.user.id,
           institutionId: auth.user.institutionId || null,
           labName: normalizedLabName,
-          labType,
+          labType: normalizedLabType,
           patientName: createdOrder.patient?.fullName || null,
-          item: firstCreatedInvoice.item || labType,
+          item: firstCreatedInvoice.item || normalizedLabType,
           amount: Number(firstCreatedInvoice.amount),
-          invoiceNo: firstCreatedInvoice.invoiceNo || invoiceNo || null,
+          invoiceNo: firstCreatedInvoice.invoiceNo || normalizedInvoiceNo || null,
           issuedAt: firstCreatedInvoice.issuedAt,
           note: firstCreatedInvoice.note || null,
           labOrderId: createdOrder.id,
@@ -257,7 +307,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Laboratuvar kaydı oluşturulamadı" }, { status: 503 });
   }
 
-  await writeAudit(auth.user.id, "LAB_ORDER_CREATE", `${normalizedLabName} (${labType}) laboratuvar siparişi oluşturuldu`);
+  await writeAudit(auth.user.id, "LAB_ORDER_CREATE", `${normalizedLabName} (${normalizedLabType}) laboratuvar siparişi oluşturuldu`);
   await bumpRealtimeInstitution(auth.user.institutionId || null);
   return NextResponse.json({ ...toPublicOrder(order), firmaIntegration }, { status: 201 });
 }

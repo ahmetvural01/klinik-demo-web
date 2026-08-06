@@ -8,6 +8,7 @@ import { checkWorkingDay } from "@/lib/working-hours-core";
 import { turkeyDateKey } from "@/lib/tz";
 import { maskPatientName, maskPatientPhone } from "@/lib/audit-mask";
 import { verifyPublicBookingOtp } from "@/lib/public-booking-otp";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 export async function POST(req: NextRequest) {
   const ip = getClientIpFromHeaders(req.headers);
@@ -58,7 +59,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (doctorId) {
-      const doctor = await prisma.user.findFirst({ where: { id: doctorId, institutionId: institution.id, isActive: true }, select: { id: true } });
+      const doctor = await prisma.user.findFirst({ where: { id: doctorId, ...effectiveDoctorWhere(institution.id) }, select: { id: true } });
       if (!doctor) return NextResponse.json({ error: "Doktor bulunamadı" }, { status: 404 });
     }
 

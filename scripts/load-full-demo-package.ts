@@ -1,10 +1,11 @@
-import { Prisma, PrismaClient, Role } from "@prisma/client";
+import { AppointmentStatus, Prisma, PrismaClient, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
 const MARKER = "[DEMO_PAKET_20260506]";
 const DEMO_PASSWORD = process.env.DEMO_PASSWORD || "demo-password-change-me";
+const demoIdentityNo = (index: number) => `9000000000${index}`;
 
 async function cleanupVisibleMarkerText() {
   const targets: Array<{ table: string; column: string }> = [
@@ -69,11 +70,11 @@ async function main() {
   });
 
   const demoUsers = [
-    { identityNo: "90000000001", fullName: `Demo Yonetici ${MARKER}`, role: Role.YONETICI, email: "demo-yonetici@klinik.local" },
-    { identityNo: "90000000002", fullName: `Demo Doktor ${MARKER}`, role: Role.DOKTOR, email: "demo-doktor@klinik.local" },
-    { identityNo: "90000000003", fullName: `Demo Asistan ${MARKER}`, role: Role.ASISTAN, email: "demo-asistan@klinik.local" },
-    { identityNo: "90000000004", fullName: `Demo Banko ${MARKER}`, role: Role.BANKO, email: "demo-banko@klinik.local" },
-    { identityNo: "90000000005", fullName: `Demo Muhasebe ${MARKER}`, role: Role.MUHASEBE, email: "demo-muhasebe@klinik.local" },
+    { identityNo: demoIdentityNo(1), fullName: `Demo Yonetici ${MARKER}`, role: Role.YONETICI, email: "demo-yonetici@klinik.local" },
+    { identityNo: demoIdentityNo(2), fullName: `Demo Doktor ${MARKER}`, role: Role.DOKTOR, email: "demo-doktor@klinik.local" },
+    { identityNo: demoIdentityNo(3), fullName: `Demo Asistan ${MARKER}`, role: Role.ASISTAN, email: "demo-asistan@klinik.local" },
+    { identityNo: demoIdentityNo(4), fullName: `Demo Banko ${MARKER}`, role: Role.BANKO, email: "demo-banko@klinik.local" },
+    { identityNo: demoIdentityNo(5), fullName: `Demo Muhasebe ${MARKER}`, role: Role.MUHASEBE, email: "demo-muhasebe@klinik.local" },
   ] as const;
 
   const createdUsers: Record<string, { id: string; fullName: string; role: Role }> = {};
@@ -306,7 +307,7 @@ async function main() {
 
   const stock = await upsertStockItemByMarker(`${MARKER}-STOCK-1`, managerId, institution.id);
 
-  await upsertStockMovement(stock.id, managerId, `${MARKER}-MOVE-1`);
+  await upsertStockMovement(stock.id, institution.id, managerId, `${MARKER}-MOVE-1`);
 
   const taksitPlan = await upsertTaksitPlanByMarker({
     patientId: createdPatients[3].id,
@@ -472,7 +473,7 @@ async function upsertAppointmentByMarker(args: {
   marker: string;
   startAt: Date;
   endAt: Date;
-  status: string;
+  status: AppointmentStatus;
   type: "STANDART" | "KONTROL" | "ACIL";
 }) {
   const existing = await prisma.appointment.findFirst({
@@ -823,6 +824,7 @@ async function upsertStockItemByMarker(marker: string, userId: string, instituti
   await prisma.stockMovement.create({
     data: {
       stockItemId: item.id,
+      institutionId,
       type: "GIRIS",
       quantity: 120,
       note: `${marker} Ilk stok girisi`,
@@ -833,7 +835,7 @@ async function upsertStockItemByMarker(marker: string, userId: string, instituti
   return item;
 }
 
-async function upsertStockMovement(stockItemId: string, userId: string, marker: string) {
+async function upsertStockMovement(stockItemId: string, institutionId: string, userId: string, marker: string) {
   const existing = await prisma.stockMovement.findFirst({
     where: { stockItemId, note: { contains: marker } },
   });
@@ -842,6 +844,7 @@ async function upsertStockMovement(stockItemId: string, userId: string, marker: 
   await prisma.stockMovement.create({
     data: {
       stockItemId,
+      institutionId,
       type: "CIKIS",
       quantity: 8,
       note: `${marker} Demo kullanim`,
@@ -1300,7 +1303,7 @@ async function upsertStockScenario(args: {
   const existingMove = await prisma.stockMovement.findFirst({ where: { stockItemId: item.id, note: { contains: args.marker } } });
   if (!existingMove) {
     await prisma.stockMovement.create({
-      data: { stockItemId: item.id, type: "GIRIS", quantity: args.quantity, note: `${args.marker} Senaryo stok hareketi`, userId: args.userId },
+      data: { stockItemId: item.id, institutionId: args.institutionId, type: "GIRIS", quantity: args.quantity, note: `${args.marker} Senaryo stok hareketi`, userId: args.userId },
     });
   }
 }

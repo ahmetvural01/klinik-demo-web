@@ -47,18 +47,20 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
   }
 
-  const { text } = await req.json();
-  if (!text?.trim()) return NextResponse.json({ error: "Duyuru boş olamaz" }, { status: 400 });
+  const body = await req.json().catch(() => null);
+  const text = typeof body?.text === "string" ? body.text.trim() : "";
+  if (!text) return NextResponse.json({ error: "Duyuru boş olamaz" }, { status: 400 });
+  if (text.length > 2_000) return NextResponse.json({ error: "Duyuru en fazla 2000 karakter olabilir" }, { status: 400 });
 
   try {
     const ann = await prisma.announcement.create({
       data: {
         institutionId: auth.user.institutionId,
-        text: text.trim(),
+        text,
         createdById: auth.user.id,
       },
     });
-    await writeAudit(auth.user.id, "ANNOUNCEMENT_CREATE", text.trim());
+    await writeAudit(auth.user.id, "ANNOUNCEMENT_CREATE", text);
     return NextResponse.json(ann);
   } catch (error) {
     console.error("[announcements POST] fallback:", error);
@@ -73,12 +75,17 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
   }
 
-  const { id } = await req.json();
+  const body = await req.json().catch(() => null);
+  const id = typeof body?.id === "string" ? body.id.trim() : "";
+  if (!id) return NextResponse.json({ error: "Duyuru kimliği zorunludur" }, { status: 400 });
   try {
-    await prisma.announcement.updateMany({
+    const result = await prisma.announcement.updateMany({
       where: { id, institutionId: auth.user.institutionId },
       data: { isActive: false },
     });
+    if (result.count !== 1) {
+      return NextResponse.json({ error: "Duyuru bulunamadı" }, { status: 404 });
+    }
     await writeAudit(auth.user.id, "ANNOUNCEMENT_DELETE", id);
     return NextResponse.json({ ok: true });
   } catch (error) {

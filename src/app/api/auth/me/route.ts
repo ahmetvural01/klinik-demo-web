@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { decodeTokenUserFromToken, getVisibleRole } from "@/lib/auth";
+import { requireAuth } from "@/lib/api";
+import { getPermissionMap } from "@/lib/role-permission-store";
+import type { Role } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -36,8 +39,22 @@ function isSuperadminCaller(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
-  const ghostToken = !isSuperadminCaller(request) ? readCookie(request.headers, "klinik_ghost_token") : null;
-  const token = ghostToken || readCookie(request.headers, "klinik_token");
+  if (!isSuperadminCaller(request)) {
+    const auth = await requireAuth();
+    if (auth.error) return auth.error;
+    const permissionMap = await getPermissionMap();
+    const permissions = auth.user.ghost ? ["*"] : (permissionMap[auth.user.role as Role] || []);
+    return NextResponse.json({
+      id: auth.user.id,
+      fullName: auth.user.fullName,
+      role: auth.user.role,
+      actualRole: auth.user.actualRole,
+      institutionId: auth.user.institutionId,
+      permissions,
+    });
+  }
+
+  const token = readCookie(request.headers, "klinik_token");
   const user = token ? decodeTokenUserFromToken(token) : null;
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   // SUPERADMIN rolü olduğu gibi döndürülür (superadmin panel sayfaları bu değeri kontrol eder)
@@ -49,5 +66,6 @@ export async function GET(request: NextRequest) {
     role,
     institutionId: user.institutionId,
     superadminModules: user.superadminModules ?? null,
+    permissions: ["*"],
   });
 }

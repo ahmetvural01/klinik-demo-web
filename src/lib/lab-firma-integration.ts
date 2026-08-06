@@ -128,7 +128,8 @@ async function findOrCreateLabFirma(tx: TxClient, labName: string, institutionId
 
 export async function applyLabInvoiceFirmaIntegration(input: LabFirmaInput): Promise<LabFirmaIntegrationResult | null> {
   const labName = input.labName?.trim();
-  if (!labName || !input.item?.trim() || !Number(input.amount)) return null;
+  const amount = Number(input.amount);
+  if (!labName || !input.item?.trim() || !Number.isFinite(amount) || amount <= 0) return null;
 
   const transactionDate = input.issuedAt ? new Date(input.issuedAt) : new Date();
   const { firma, created } = await findOrCreateLabFirma(input.tx, labName, input.institutionId, input.firmaId);
@@ -170,7 +171,7 @@ export async function applyLabInvoiceFirmaIntegration(input: LabFirmaInput): Pro
       islemTipi: "HIZMET",
       urunHizmet: `Lab: ${input.item || input.labType || "Laboratuvar hizmeti"}${patientPart}`,
       aciklama: refs || null,
-      tutar: Number(input.amount),
+      tutar: amount,
       faturaNo: input.invoiceNo || null,
       dueDate: null,
       status: "AKTIF",

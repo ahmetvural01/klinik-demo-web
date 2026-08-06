@@ -22,10 +22,22 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
-    const { name, isDoctorPayout } = await req.json();
-    if (!name) return NextResponse.json({ error: "İsim zorunlu" }, { status: 400 });
+    if (!auth.user.institutionId) {
+      return NextResponse.json({ error: "Gider kategorisi için kurum bağlamı zorunlu" }, { status: 403 });
+    }
+    const body = await req.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Geçersiz istek" }, { status: 400 });
+    }
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name || name.length > 120) {
+      return NextResponse.json({ error: "Kategori adı 1-120 karakter olmalı" }, { status: 400 });
+    }
+    if (body.isDoctorPayout !== undefined && typeof body.isDoctorPayout !== "boolean") {
+      return NextResponse.json({ error: "Hakediş kategorisi bilgisi geçersiz" }, { status: 400 });
+    }
     const cat = await (prisma as any).expenseCategory.create({
-      data: { name, institutionId: auth.user.institutionId, isDoctorPayout: Boolean(isDoctorPayout) },
+      data: { name, institutionId: auth.user.institutionId, isDoctorPayout: body.isDoctorPayout ?? false },
     });
     await writeAudit(auth.user.id, "EXPENSE_CATEGORY_CREATE", name);
     return NextResponse.json(cat, { status: 201 });

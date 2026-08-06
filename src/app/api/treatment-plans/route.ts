@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { parsePagination } from "@/lib/pagination";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 
 const PLAN_STATUSES = ["PLANLANDI", "DEVAM_EDIYOR", "TAMAMLANDI", "IPTAL"] as const;
 
@@ -19,6 +19,9 @@ export const GET = withApiTiming("treatment-plans", async function GET(req: Next
   const status    = searchParams.get("status");
   const doctorId  = searchParams.get("doctorId");
   const q         = (searchParams.get("q") || "").trim();
+  if (status && !PLAN_STATUSES.includes(status as (typeof PLAN_STATUSES)[number])) {
+    return NextResponse.json({ error: "Geçersiz tedavi planı durumu" }, { status: 400 });
+  }
   const { page, take, skip, pageCount } = parsePagination(searchParams, { defaultTake: 30, maxTake: 100 });
 
   const baseWhere: Record<string, unknown> = {
@@ -61,7 +64,7 @@ export const GET = withApiTiming("treatment-plans", async function GET(req: Next
   for (const row of statusCountsRaw) statusCounts[row.status] = row._count._all;
   const totalAll = Object.values(statusCounts).reduce((s, n) => s + n, 0);
 
-  const hidePhone = shouldHidePatientPhone(user.role);
+  const hidePhone = await shouldHidePatientPhoneForRole(user.role);
   const items = hidePhone
     ? plans.map((p: any) => ({
         ...p,
@@ -86,39 +89,95 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
   }
 
-  const body = await req.json();
-  const { patientId, doctorId, title, notes, steps = [] } = body;
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Geçersiz istek gövdesi" }, { status: 400 });
+  }
 
-  if (!patientId || !doctorId || !title) {
+  const { patientId, doctorId, title, notes, steps = [] } = body as {
+    patientId?: unknown;
+    doctorId?: unknown;
+    title?: unknown;
+    notes?: unknown;
+    steps?: unknown;
+  };
+
+  if (typeof patientId !== "string" || !patientId.trim() || typeof doctorId !== "string" || !doctorId.trim() || typeof title !== "string" || !title.trim()) {
     return NextResponse.json({ error: "patientId, doctorId ve title zorunlu" }, { status: 400 });
   }
 
-  if (user.role !== "SUPERADMIN") {
-    const [patient, doctor] = await Promise.all([
-      (prisma as any).patient.findFirst({
-        where: { id: patientId, institutionId: user.institutionId, archivedAt: null },
-        select: { id: true },
-      }),
-      (prisma as any).user.findFirst({
-        where: { id: doctorId, institutionId: user.institutionId, isActive: true },
-        select: { id: true },
-      }),
-    ]);
-    if (!patient) return NextResponse.json({ error: "Hasta bulunamadı" }, { status: 404 });
-    if (!doctor) return NextResponse.json({ error: "Doktor bulunamadı" }, { status: 404 });
+  if (title.trim().length > 200 || (notes !== undefined && notes !== null && typeof notes !== "string")) {
+    return NextResponse.json({ error: "Plan başlığı veya notu geçersiz" }, { status: 400 });
   }
 
-  const totalCost = steps.reduce((sum: number, s: { amount?: number }) => sum + (Number(s.amount) || 0), 0);
+  if (!Array.isArray(steps) || steps.length > 100) {
+    return NextResponse.json({ error: "Tedavi adımları geçersiz veya çok fazla" }, { status: 400 });
+  }
+
+  const normalizedSteps: Array<{ treatmentName: string; toothNo?: string; amount: number; note?: string }> = [];
+  for (const [index, rawStep] of steps.entries()) {
+    if (!rawStep || typeof rawStep !== "object" || Array.isArray(rawStep)) {
+      return NextResponse.json({ error: `${index + 1}. tedavi adımı geçersiz` }, { status: 400 });
+    }
+    const step = rawStep as { treatmentName?: unknown; toothNo?: unknown; amount?: unknown; note?: unknown };
+    const treatmentName = typeof step.treatmentName === "string" ? step.treatmentName.trim() : "";
+    const amount = Number(step.amount ?? 0);
+    if (!treatmentName || treatmentName.length > 200) {
+      return NextResponse.json({ error: `${index + 1}. tedavi adımının adı zorunludur` }, { status: 400 });
+    }
+    if (!Number.isFinite(amount) || amount < 0 || amount > 100_000_000) {
+      return NextResponse.json({ error: `${index + 1}. tedavi adımının tutarı geçersiz` }, { status: 400 });
+    }
+    if (step.toothNo !== undefined && step.toothNo !== null && typeof step.toothNo !== "string") {
+      return NextResponse.json({ error: `${index + 1}. tedavi adımının diş numarası geçersiz` }, { status: 400 });
+    }
+    if (step.note !== undefined && step.note !== null && typeof step.note !== "string") {
+      return NextResponse.json({ error: `${index + 1}. tedavi adımının notu geçersiz` }, { status: 400 });
+    }
+    normalizedSteps.push({
+      treatmentName,
+      toothNo: typeof step.toothNo === "string" && step.toothNo.trim() ? step.toothNo.trim() : undefined,
+      amount,
+      note: typeof step.note === "string" ? step.note.trim() || undefined : undefined,
+    });
+  }
+
+  const [patient, doctor] = await Promise.all([
+    (prisma as any).patient.findFirst({
+      where: {
+        id: patientId,
+        archivedAt: null,
+        ...(user.role !== "SUPERADMIN" ? { institutionId: user.institutionId } : {}),
+      },
+      select: { id: true },
+    }),
+    (prisma as any).user.findFirst({
+      where: {
+        id: doctorId,
+        isActive: true,
+        ...(user.role !== "SUPERADMIN" ? { institutionId: user.institutionId } : {}),
+        OR: [
+          { role: { in: ["DOKTOR", "ADMIN", "SUPERADMIN"] } },
+          { role: "YONETICI", profile: { hideAsDoctor: false } },
+        ],
+      },
+      select: { id: true },
+    }),
+  ]);
+  if (!patient) return NextResponse.json({ error: "Hasta bulunamadı" }, { status: 404 });
+  if (!doctor) return NextResponse.json({ error: "Doktor bulunamadı" }, { status: 404 });
+
+  const totalCost = normalizedSteps.reduce((sum, step) => sum + step.amount, 0);
 
   const plan = await (prisma as any).treatmentPlan.create({
     data: {
       patientId,
       doctorId,
-      title,
-      notes,
+      title: title.trim(),
+      notes: typeof notes === "string" ? notes.trim() || null : null,
       totalCost,
       steps: {
-        create: steps.map((s: { treatmentName: string; toothNo?: string; amount: number; note?: string }, i: number) => ({
+        create: normalizedSteps.map((s, i) => ({
           order:         i + 1,
           treatmentName: s.treatmentName,
           toothNo:       s.toothNo,

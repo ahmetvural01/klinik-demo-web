@@ -96,14 +96,19 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     const institutionId = auth.user.institutionId;
     const firma = purchase.firma;
     const isReceived = purchase.receiptStatus === "TESLIM_ALINDI";
+    const purchaseItemIds = new Set(purchase.items.map((item: any) => item.id));
+    const incomingIds = items.filter((item) => item.id).map((item) => item.id as string);
+    if (new Set(incomingIds).size !== incomingIds.length || incomingIds.some((id) => !purchaseItemIds.has(id))) {
+      return NextResponse.json({ error: "Satın alma satırlarından biri bu siparişe ait değil veya tekrar edilmiş" }, { status: 400 });
+    }
 
     const updated = await (prisma as any).$transaction(async (tx: any) => {
       const existingById = new Map<string, any>(purchase.items.map((i: any) => [i.id, i]));
-      const incomingIds = new Set(items.filter((i) => i.id).map((i) => i.id));
+      const incomingIdSet = new Set(incomingIds);
 
       // Silinen satırlar: stoğu geri al, kaydı sil.
       for (const existing of purchase.items) {
-        if (incomingIds.has(existing.id)) continue;
+        if (incomingIdSet.has(existing.id)) continue;
         if (isReceived) {
           await reversePurchaseItemStock({
             tx,

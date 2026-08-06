@@ -17,12 +17,13 @@ async function main() {
   if (!user?.institutionId) {
     throw new Error("Stok testi için aktif kurum kullanıcısı bulunamadı.");
   }
+  const institutionId: string = user.institutionId;
 
   try {
     await prisma.$transaction(async (tx) => {
       const item = await tx.stockItem.create({
         data: {
-          institutionId: user.institutionId,
+          institutionId,
           name: `Stok Testi ${Date.now()}`,
           category: "SARF",
           unit: "adet",
@@ -34,7 +35,7 @@ async function main() {
       await applyStockMovement({
         tx,
         stockItemId: item.id,
-        institutionId: user.institutionId,
+        institutionId,
         userId: user.id,
         type: "GIRIS",
         quantity: 10,
@@ -47,7 +48,7 @@ async function main() {
       await applyStockMovement({
         tx,
         stockItemId: item.id,
-        institutionId: user.institutionId,
+        institutionId,
         userId: user.id,
         type: "GIRIS",
         quantity: 10,
@@ -60,7 +61,7 @@ async function main() {
       const result = await applyStockMovement({
         tx,
         stockItemId: item.id,
-        institutionId: user.institutionId,
+        institutionId,
         userId: user.id,
         type: "CIKIS",
         quantity: 12,

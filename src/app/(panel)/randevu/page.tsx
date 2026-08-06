@@ -8,14 +8,16 @@ import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { cachedGet } from "@/lib/client-cache";
 import { canMarkNoShow, getDisplayAppointmentStatus, isStaleWaitingAppointment } from "@/lib/appointment-status";
-import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
+import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
 import { CalendarClock, CheckCircle2, Clock, XCircle, Ban } from "lucide-react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
 import { STATUS_ACTION_ICON } from "@/lib/status-actions";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 
 const AgendaEmptyIcon = createSceneIllustration("randevu");
 import {
@@ -51,6 +53,12 @@ type Appointment = {
   patient?: { id: string; fullName: string; hasContagiousDisease?: boolean; contagiousDiseaseNote?: string | null };
   doctor?: { id: string; fullName: string };
   clinicUnit?: { id: string; name: string; code?: string | null } | null;
+};
+
+type AppointmentLayout = {
+  lane: number;
+  laneCount: number;
+  spanSlots: number;
 };
 
 type Staff = { id: string; fullName: string; role: string; profile?: { workStart?: string | null; workEnd?: string | null; hideAsDoctor?: boolean } | null };
@@ -193,8 +201,6 @@ type WaitlistEntry = {
   createdAt: string;
 };
 
-const APPOINTMENT_CREATOR_ROLES = new Set(["DOKTOR", "YONETICI", "ASISTAN", "BANKO", "ADMIN", "SUPERADMIN"]);
-
 type RandevuCache = {
   appointments?: Appointment[];
   doctorBlocks?: DoctorBlock[];
@@ -232,6 +238,11 @@ function readRandevuCache(cacheKey: string) {
 export default function RandevuPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { can } = usePermissions();
+  const canCreateAppointments = can("appointments:write");
+  const canCancelAppointments = can("appointments:delete");
+  const canApproveAppointments = can("appointments:approve");
+  const canSeePatientPhone = can("patients:phone");
   const [view, setView] = useState<"GUN" | "HAFTA" | "AY" | "AJANDA">("GUN");
   const [date, setDate] = useState(() => new Date());
   const [doctorId, setDoctorId] = useState("");
@@ -242,10 +253,10 @@ export default function RandevuPage() {
   const getTreatmentMeta = useCallback((key: AppointmentTreatmentKey) => getTreatmentMetaBase(key, treatmentOptions), [treatmentOptions]);
   const parseAppointmentNote = useCallback((note?: string | null) => parseAppointmentNoteBase(note, treatmentOptions), [treatmentOptions]);
   const [currentUserRole, setCurrentUserRole] = useState("");
-  const [canCreateAppointments, setCanCreateAppointments] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [newAppointmentTouched, setNewAppointmentTouched] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // Hasta arama (combobox)
@@ -309,6 +320,7 @@ export default function RandevuPage() {
   const [blockStartTime, setBlockStartTime] = useState("13:00");
   const [blockEndTime, setBlockEndTime] = useState("17:00");
   const [blockReason, setBlockReason] = useState("");
+  const blockSnapshotRef = useRef("");
   const [blockSaving, setBlockSaving] = useState(false);
   const [blockSubmitError, setBlockSubmitError] = useState<string | null>(null);
   const [calendarSettings, setCalendarSettings] = useState<CalendarSettings>({
@@ -330,15 +342,17 @@ export default function RandevuPage() {
   const [wlTo, setWlTo] = useState("");
   const [wlNote, setWlNote] = useState("");
   const [wlSaving, setWlSaving] = useState(false);
+  const [wlActionId, setWlActionId] = useState<string | null>(null);
+  const wlActionRef = useRef(false);
 
   const loadWaitlist = useCallback(async () => {
     try {
       const res = await fetch("/api/waitlist", { cache: "no-store" });
-      if (!res.ok) { setError("Bekleme listesi yüklenemedi."); setWaitlist([]); return; }
-      const json = await res.json().catch(() => []);
-      setWaitlist(Array.isArray(json) ? json : []);
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !Array.isArray(json)) { setError("Bekleme listesi yüklenemedi; mevcut liste korundu."); return; }
+      setWaitlist(json);
     } catch {
-      setWaitlist([]);
+      setError("Bekleme listesi yüklenemedi; mevcut liste korundu.");
     }
   }, []);
 
@@ -388,20 +402,14 @@ export default function RandevuPage() {
     wlSelectedPatient || wlPatientSearch.trim() || wlDoctorId || wlFrom || wlTo || wlNote.trim()
   );
 
-  async function requestCloseWaitlistModal() {
-    if (waitlistFormDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE,
-      danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
-      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) {
-      return;
-    }
+  function requestCloseWaitlistModal() {
     setShowWaitlistModal(false);
+    resetWaitlistForm();
   }
 
   const submitWaitlist = async () => {
     if (!wlSelectedPatient) { showToastSafe({ title: "Hata", message: "Lütfen bir hasta seçin", type: "error" }); return; }
+    if (wlFrom && wlTo && wlFrom > wlTo) { showToastSafe({ title: "Hata", message: "Son tarih, tercih edilen tarihten önce olamaz", type: "error" }); return; }
     setWlSaving(true);
     try {
       const res = await fetch("/api/waitlist", {
@@ -423,12 +431,15 @@ export default function RandevuPage() {
       setWaitlist((prev) => [...prev, json as WaitlistEntry]);
       resetWaitlistForm();
       showToastSafe({ title: "Eklendi", message: "Hasta bekleme listesine eklendi.", type: "success" });
+    } catch {
+      showToastSafe({ title: "Bağlantı hatası", message: "Bekleme listesine eklenemedi. Lütfen tekrar deneyin.", type: "error" });
     } finally {
       setWlSaving(false);
     }
   };
 
   const updateWaitlistStatus = async (entryId: string, status: WaitlistEntry["status"]) => {
+    if (wlActionRef.current) return;
     if (status === "YERLESTIRILDI") {
       // "Yerleştirildi" = fiilen randevu oluşturma. Durum, randevu formu
       // başarıyla kaydedilene kadar değişmez (bkz. createAppointment).
@@ -452,21 +463,44 @@ export default function RandevuPage() {
       return;
     }
 
-    const res = await fetch(`/api/waitlist/${entryId}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
-    });
-    if (!res.ok) { showToastSafe({ title: "Hata", message: "Güncellenemedi", type: "error" }); return; }
-    const json = await res.json();
-    setWaitlist((prev) => prev.map((w) => (w.id === entryId ? json : w)));
+    wlActionRef.current = true;
+    setWlActionId(entryId);
+    try {
+      const res = await fetch(`/api/waitlist/${entryId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.error || "Güncellenemedi");
+      setWaitlist((prev) => prev.map((w) => (w.id === entryId ? json : w)));
+    } catch (error) {
+      showToastSafe({ title: "Hata", message: error instanceof Error ? error.message : "Bekleme kaydı güncellenemedi.", type: "error" });
+    } finally {
+      wlActionRef.current = false;
+      setWlActionId(null);
+    }
   };
 
   const removeWaitlistEntry = async (entryId: string) => {
-    if (!(await confirmDialog({ message: "Bu kayıt bekleme listesinden kaldırılsın mı?", danger: true, confirmText: "Kaldır" }))) return;
-    const res = await fetch(`/api/waitlist/${entryId}`, { method: "DELETE" });
-    if (!res.ok) { showToastSafe({ title: "Hata", message: "Kaldırılamadı", type: "error" }); return; }
-    setWaitlist((prev) => prev.filter((w) => w.id !== entryId));
+    if (wlActionRef.current) return;
+    wlActionRef.current = true;
+    if (!(await confirmDialog({ message: "Bu kayıt bekleme listesinden kaldırılsın mı?", danger: true, confirmText: "Kaldır" }))) {
+      wlActionRef.current = false;
+      return;
+    }
+    setWlActionId(entryId);
+    try {
+      const res = await fetch(`/api/waitlist/${entryId}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Kaldırılamadı");
+      setWaitlist((prev) => prev.map((w) => (w.id === entryId ? { ...w, status: "IPTAL" } : w)));
+    } catch (error) {
+      showToastSafe({ title: "Hata", message: error instanceof Error ? error.message : "Bekleme kaydı kaldırılamadı.", type: "error" });
+    } finally {
+      wlActionRef.current = false;
+      setWlActionId(null);
+    }
   };
 
   const activeWaitlist = useMemo(() => waitlist.filter((w) => w.status === "BEKLIYOR" || w.status === "ARANDI"), [waitlist]);
@@ -483,11 +517,11 @@ export default function RandevuPage() {
   const loadBookingRequests = useCallback(async () => {
     try {
       const res = await fetch("/api/booking-requests", { cache: "no-store" });
-      if (!res.ok) { setError("Online randevu talepleri yüklenemedi."); setBookingRequests([]); return; }
-      const json = await res.json().catch(() => []);
-      setBookingRequests(Array.isArray(json) ? json : []);
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !Array.isArray(json)) { setError("Online randevu talepleri yüklenemedi; mevcut liste korundu."); return; }
+      setBookingRequests(json);
     } catch {
-      setBookingRequests([]);
+      setError("Online randevu talepleri yüklenemedi; mevcut liste korundu.");
     }
   }, []);
 
@@ -850,7 +884,6 @@ export default function RandevuPage() {
           if (Array.isArray(cached.doctorBlocks)) setDoctorBlocks(cached.doctorBlocks);
           if (Array.isArray(cached.staff) && cached.staff.length > 0) setStaff(cached.staff);
           if (cached.role) setCurrentUserRole(cached.role);
-          if (typeof cached.canCreate === "boolean") setCanCreateAppointments(cached.canCreate);
           if (cached.settings) setCalendarSettings(cached.settings);
         } catch {}
       }
@@ -879,7 +912,6 @@ export default function RandevuPage() {
 
       const role = getEffectiveRole() || meJson?.role || "";
       setCurrentUserRole(role);
-      setCanCreateAppointments(APPOINTMENT_CREATOR_ROLES.has(role));
 
       void Promise.allSettled([
         cachedGet<any>("/api/staff", 60_000)
@@ -1051,25 +1083,13 @@ export default function RandevuPage() {
     if (selectedDoctor) setDoctorQuery(selectedDoctor.fullName);
   }, [newDoctorId, staff]);
 
-  // "Yeni Randevu" formu gerçek veri girişi içerir — ESC/dış tıklama ile
-  // yanlışlıkla kapatılırsa girilen hasta/hekim/not bilgileri sessizce
-  // kaybolmamalı (bkz. src/components/ui/Modal.tsx isDirty sözleşmesi).
-  // startAt/durationMinutes dahil EDİLMEZ: bunlar tıklanan takvim hücresinden
-  // otomatik dolduruluyor, kullanıcı hiçbir şey yazmasa bile her zaman
-  // değerli olur — dirty sayılırsa modal her açılışta "kirli" görünürdü.
-  const newAppointmentDirty = Boolean(
-    patientId || patientSearch.trim() || newDoctorId || note.trim() || treatmentKey !== "MUAYENE"
-  );
+  // Yeni Randevu açılırken tarih/saat, tek doktor, bekleme listesi veya online
+  // talep gibi değerler sistem tarafından doldurulabilir. Bunlar kullanıcı
+  // değişikliği değildir; yalnızca kullanıcının form alanlarına dokunması dirty
+  // kabul edilir. Böylece yanlışlıkla açılan form uyarısız kapanır.
+  const newAppointmentDirty = showForm && newAppointmentTouched;
 
-  async function requestCloseNewAppointment() {
-    if (newAppointmentDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE,
-      danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
-      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) {
-      return;
-    }
+  function requestCloseNewAppointment() {
     setShowForm(false);
     resetForm();
   }
@@ -1077,6 +1097,7 @@ export default function RandevuPage() {
   const resetForm = () => {
     setPatientId(""); setPatientSearch(""); setPatientResults([]); setPatientDropdownOpen(false);
     setNewDoctorId(""); setNewClinicUnitId(""); setNote(""); setConflictWarning(null); setConflictSuggestions([]); setTreatmentKey("MUAYENE");
+    setNewAppointmentTouched(false);
     setTreatmentQuery(getTreatmentMeta("MUAYENE").label);
     setDoctorQuery(""); setDoctorDropdownOpen(false); setTreatmentDropdownOpen(false);
     setDurationMinutes(slotInterval);
@@ -1105,27 +1126,11 @@ export default function RandevuPage() {
     durationMinutes: editDurationMinutes,
   }) !== editSnapshotRef.current;
 
-  async function requestCloseAppointmentModal() {
-    if (editAppointmentDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE,
-      danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
-      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) {
-      return;
-    }
+  function requestCloseAppointmentModal() {
     closeAppointmentModal();
   }
 
-  async function requestCancelEdit() {
-    if (editAppointmentDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE,
-      danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
-      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) {
-      return;
-    }
+  function requestCancelEdit() {
     setEditMode(false);
     setError(null);
   }
@@ -1189,26 +1194,36 @@ export default function RandevuPage() {
         return;
       }
 
+      const sourceLinkWarnings: string[] = [];
+
       if (pendingBookingRequestId) {
         const requestId = pendingBookingRequestId;
         setPendingBookingRequestId(null);
-        await fetch(`/api/booking-requests/${requestId}`, {
+        const linkResponse = await fetch(`/api/booking-requests/${requestId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status: "ONAYLANDI", appointmentId: responseBody.id }),
-        }).catch(() => {});
-        setBookingRequests((prev) => prev.filter((r) => r.id !== requestId));
+        }).catch(() => null);
+        if (linkResponse?.ok) {
+          setBookingRequests((prev) => prev.filter((r) => r.id !== requestId));
+        } else {
+          sourceLinkWarnings.push("Online talep onaylandı olarak işaretlenemedi; talep listede tutuldu.");
+        }
       }
 
       if (pendingWaitlistId) {
         const waitlistId = pendingWaitlistId;
         setPendingWaitlistId(null);
-        await fetch(`/api/waitlist/${waitlistId}`, {
+        const linkResponse = await fetch(`/api/waitlist/${waitlistId}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status: "YERLESTIRILDI", appointmentId: responseBody.id }),
-        }).catch(() => {});
-        setWaitlist((prev) => prev.filter((w) => w.id !== waitlistId));
+        }).catch(() => null);
+        if (linkResponse?.ok) {
+          setWaitlist((prev) => prev.filter((w) => w.id !== waitlistId));
+        } else {
+          sourceLinkWarnings.push("Bekleme listesi kaydı yerleştirildi olarak işaretlenemedi; kayıt listede tutuldu.");
+        }
       }
 
       setShowForm(false); resetForm();
@@ -1220,8 +1235,8 @@ export default function RandevuPage() {
       ].filter(Boolean).join(" ");
       showToastSafe({
         title: "Randevu oluşturuldu",
-        message: smsMessages || "Randevu takvime eklendi.",
-        type: smsStatus?.info === "failed" ? "error" : "success",
+        message: [smsMessages || "Randevu takvime eklendi.", ...sourceLinkWarnings].join(" "),
+        type: smsStatus?.info === "failed" ? "error" : sourceLinkWarnings.length ? "info" : "success",
         icon: STATUS_ACTION_ICON["appointment-created"],
       });
       await load();
@@ -1480,6 +1495,71 @@ export default function RandevuPage() {
       return !startsAtSlot && start < slotStart && end > slotStart;
     });
   };
+
+  const appointmentLayouts = useMemo(() => {
+    type LayoutItem = { appt: Appointment; startMs: number; endMs: number };
+
+    const buildLayouts = (keyFor: (appt: Appointment, start: Date) => string | null) => {
+      const grouped = new Map<string, LayoutItem[]>();
+      appointments.forEach((appt) => {
+        if (appt.status === "IPTAL") return;
+        const start = new Date(appt.startAt);
+        const end = new Date(appt.endAt);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return;
+        const groupKey = keyFor(appt, start);
+        if (!groupKey) return;
+        const list = grouped.get(groupKey) || [];
+        list.push({ appt, startMs: start.getTime(), endMs: end.getTime() });
+        grouped.set(groupKey, list);
+      });
+
+      const layouts = new Map<string, AppointmentLayout>();
+      const slotMs = Math.max(1, slotInterval) * 60_000;
+      const commitGroup = (items: LayoutItem[]) => {
+        const laneEnds: number[] = [];
+        const assigned: Array<{ id: string; lane: number; spanSlots: number }> = [];
+
+        items.forEach((item) => {
+          const reusableLane = laneEnds.findIndex((endMs) => endMs <= item.startMs);
+          const lane = reusableLane >= 0 ? reusableLane : laneEnds.length;
+          laneEnds[lane] = item.endMs;
+          assigned.push({
+            id: item.appt.id,
+            lane,
+            spanSlots: Math.max(1, Math.ceil((item.endMs - item.startMs) / slotMs)),
+          });
+        });
+
+        const laneCount = Math.max(1, laneEnds.length);
+        assigned.forEach((item) => layouts.set(item.id, { ...item, laneCount }));
+      };
+
+      grouped.forEach((items) => {
+        const sorted = [...items].sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+        let current: LayoutItem[] = [];
+        let currentEnd = 0;
+
+        sorted.forEach((item) => {
+          if (current.length > 0 && item.startMs >= currentEnd) {
+            commitGroup(current);
+            current = [];
+            currentEnd = 0;
+          }
+          current.push(item);
+          currentEnd = Math.max(currentEnd, item.endMs);
+        });
+
+        if (current.length > 0) commitGroup(current);
+      });
+
+      return layouts;
+    };
+
+    return {
+      byDoctorDay: buildLayouts((appt, start) => appt.doctor?.id ? `${appt.doctor.id}|${toLocalDateKey(start)}` : null),
+      byDay: buildLayouts((_appt, start) => toLocalDateKey(start)),
+    };
+  }, [appointments, slotInterval]);
 
   const getApptForDay = (d: Date) => appointments.filter(a => {
     if (a.status === "IPTAL") return false;
@@ -2050,23 +2130,33 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
     await load();
   };
 
-  // blockDate/Start/End her zaman anlamlı bir varsayılana sahip (bugün,
-  // 13:00-17:00), bu yüzden dirty sinyali olarak kullanılmazlar (aksi halde
-  // modal her açılışta "kirli" görünürdü) — doktor seçimi ve neden metni
-  // gerçek kullanıcı girdisidir.
-  const blockModalDirty = Boolean(blockDoctorId || blockReason.trim());
-
-  async function requestCloseBlockModal() {
-    if (blockModalDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE,
-      danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
-      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) {
-      return;
-    }
-    setShowBlockModal(false);
+  const resetBlockForm = () => {
+    setBlockDoctorId("");
+    setBlockDate(toLocalDateKey(new Date()));
+    setBlockStartTime("13:00");
+    setBlockEndTime("17:00");
+    setBlockReason("");
     setBlockSubmitError(null);
+    blockSnapshotRef.current = "";
+  };
+
+  const openBlockModal = () => {
+    const initial = { doctorId: "", date: toLocalDateKey(new Date()), startTime: "13:00", endTime: "17:00", reason: "" };
+    setBlockDoctorId(initial.doctorId);
+    setBlockDate(initial.date);
+    setBlockStartTime(initial.startTime);
+    setBlockEndTime(initial.endTime);
+    setBlockReason(initial.reason);
+    setBlockSubmitError(null);
+    blockSnapshotRef.current = JSON.stringify(initial);
+    setShowBlockModal(true);
+  };
+
+  const blockModalDirty = showBlockModal && JSON.stringify({ doctorId: blockDoctorId, date: blockDate, startTime: blockStartTime, endTime: blockEndTime, reason: blockReason }) !== blockSnapshotRef.current;
+
+  function requestCloseBlockModal() {
+    setShowBlockModal(false);
+    resetBlockForm();
   }
 
   const saveBlock = async () => {
@@ -2084,9 +2174,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
     });
     setBlockSaving(false);
     if (res.ok) {
-      setShowBlockModal(false);
-      setBlockReason("");
-      setBlockSubmitError(null);
+      requestCloseBlockModal();
       await load();
     } else {
       const body = await res.json().catch(() => ({ message: "Zaman kapatma kaydı eklenemedi." }));
@@ -2094,18 +2182,46 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
     }
   };
 
-  const apptBlock = (a: Appointment, enableDrag = false) => (
+  // Uzun randevu tek karttır: kart yalnız başlangıç slotunda render edilir ve
+  // hesaplanan yüksekliğiyle sonraki 15dk satırlarının üzerine devam eder.
+  // Aynı doktor/gün içinde çakışan randevular aynı dikey alanda yan yana
+  // daralarak gösterilir; hasta bilgisi devam slotlarında tekrar basılmaz.
+  const apptBlock = (a: Appointment, enableDrag = false, isContinuation = false, layout?: AppointmentLayout) => (
     (() => {
       const parsed = parseAppointmentNote(a.note);
       const meta = getFollowUpMeta(parsed.followUp);
       const treatmentMeta = getTreatmentMeta(parsed.treatment);
       const displayStatus = getDisplayAppointmentStatus(a.status, a.startAt);
       const stale = isStaleWaitingAppointment(a.status, a.startAt);
-      const a11yLabel = `${a.patient?.fullName || "Hasta belirtilmemiş"}, ${STATUS_LABELS[displayStatus] || displayStatus}, ${new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}${a.patient?.hasContagiousDisease ? ", bulaşıcı hastalık uyarısı" : ""}${stale ? ", geçmiş tarihli durum işaretlenmemiş" : ""}`;
+      const a11yLabel = `${a.patient?.fullName || "Hasta belirtilmemiş"}, ${STATUS_LABELS[displayStatus] || displayStatus}, ${new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}${a.patient?.hasContagiousDisease ? ", bulaşıcı hastalık uyarısı" : ""}${stale ? ", geçmiş tarihli durum işaretlenmemiş" : ""}${isContinuation ? ", devam ediyor" : ""}`;
+      const layoutStyle = layout ? {
+        position: "absolute" as const,
+        top: 2,
+        left: `calc(${(layout.lane / layout.laneCount) * 100}% - ${(layout.lane / layout.laneCount) * 30}px + 2px)`,
+        width: `calc(${100 / layout.laneCount}% - ${30 / layout.laneCount + 4}px)`,
+        height: `${layout.spanSlots * 36 - 4}px`,
+        zIndex: 6 + layout.lane,
+      } : undefined;
+      if (isContinuation) {
+        return (
+          <div key={a.id + "-cont"}
+            role="button"
+            tabIndex={0}
+            aria-label={a11yLabel}
+            onClick={() => setSelectedAppt(a)}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedAppt(a); } }}
+            title={`${a.patient?.fullName || "-"} — devam ediyor`}
+            className={"mb-1 flex h-6 cursor-pointer items-center rounded-md border px-2 opacity-70 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 " + (STATUS_COLORS[displayStatus] || "bg-primary/5 border-l-4 border-l-primary")}
+          >
+            <span className="text-[9px] leading-none text-slate-400" aria-hidden="true">⋮</span>
+          </div>
+        );
+      }
       return (
     <div key={a.id}
       role="button"
       tabIndex={0}
+      style={layoutStyle}
       aria-label={a11yLabel}
       draggable={enableDrag}
       onDragStart={enableDrag ? (e) => { e.stopPropagation(); e.dataTransfer.effectAllowed = "move"; setDraggedApptId(a.id); } : undefined}
@@ -2113,21 +2229,21 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
       onClick={() => setSelectedAppt(a)}
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedAppt(a); } }}
       title={`${a.patient?.fullName || "-"}${a.patient?.hasContagiousDisease ? ` — ⚠ Bulaşıcı Hastalık${a.patient.contagiousDiseaseNote ? `: ${a.patient.contagiousDiseaseNote}` : ""}` : ""} - ${new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}${stale ? " — Geçmiş tarihli, durum işaretlenmemiş" : ""}`}
-      className={"randevu-appt-card mb-1 cursor-pointer rounded-md border px-2 py-1 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 " + (enableDrag ? "cursor-grab active:cursor-grabbing " : "") + (STATUS_COLORS[displayStatus] || "bg-primary/5 border-l-4 border-l-primary") + (stale ? " ring-1 ring-orange-400" : "") + (draggedApptId === a.id ? " is-dragging" : "") + (justMovedApptId === a.id ? " ui-settle-in" : "") + (dropRejectedApptId === a.id ? " ui-drop-shake" : "")}>
-      <div className="flex items-center gap-1">
+      className={"randevu-appt-card " + (layout ? "randevu-appt-card-spanning " : "mb-1 ") + "cursor-pointer rounded-md border px-2 py-1 shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 " + (enableDrag ? "cursor-grab active:cursor-grabbing " : "") + (layout && layout.laneCount > 1 ? "randevu-appt-card-compact " : "") + (STATUS_COLORS[displayStatus] || "bg-primary/5 border-l-4 border-l-primary") + (stale ? " ring-1 ring-orange-400" : "") + (draggedApptId === a.id ? " is-dragging" : "") + (justMovedApptId === a.id ? " ui-settle-in" : "") + (dropRejectedApptId === a.id ? " ui-drop-shake" : "")}>
+      <div className="randevu-appt-card-main flex items-center gap-1">
         <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: treatmentMeta.color }} />
         <span className="shrink-0 text-[10px] leading-none" title={STATUS_LABELS[displayStatus] || displayStatus} aria-hidden="true">{STATUS_ICON[displayStatus] || ""}</span>
         {a.patient?.hasContagiousDisease && <span className="shrink-0 text-[11px]" title="Bulaşıcı Hastalık">⚠</span>}
-        <p className="min-w-0 flex-1 truncate text-[11px] font-semibold text-gray-800">{a.patient?.fullName || "-"}</p>
+        <p className="randevu-appt-patient min-w-0 flex-1 truncate text-[11px] font-semibold text-gray-800">{a.patient?.fullName || "-"}</p>
         {stale && <span className="shrink-0 text-[11px]" title="Geçmiş tarihli, durum işaretlenmemiş">⚠</span>}
-        <span className="shrink-0 text-[10px] font-bold text-slate-500">
+        <span className="randevu-appt-time shrink-0 text-[10px] font-bold text-slate-500">
           {new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}
         </span>
         {parsed.followUp !== "YOK" && (
           <span className={"inline-flex rounded-full px-1 py-0.5 text-[9px] font-semibold " + meta.badge}>T</span>
         )}
       </div>
-      <p className="mt-0.5 truncate pl-3 text-[9px] leading-tight text-gray-500">{treatmentMeta.label}</p>
+      <p className="randevu-appt-treatment mt-0.5 truncate pl-3 text-[9px] leading-tight text-gray-500">{treatmentMeta.label}</p>
     </div>
       );
     })()
@@ -2136,6 +2252,10 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
   return (
     <section className="randevu-page space-y-2">
       <div className="randevu-toolbar ui-sidebar-card sticky top-0 z-40 flex flex-wrap items-center gap-2 rounded-xl px-2.5 py-2.5">
+        <div className="flex shrink-0 items-center gap-2 pr-1">
+          <ModuleIcon module="calendar" size="md" />
+          <h1 className="hidden font-display text-base font-black tracking-tight text-slate-900 lg:inline">Randevular</h1>
+        </div>
         {/* Tarih navigasyonu — tek rafine kontrol grubu */}
         <div className="flex h-9 items-center overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[var(--shadow-rest)]">
           <button onClick={() => nav(-1)} aria-label="Önceki tarih aralığı" className="flex h-9 w-8 items-center justify-center text-slate-500 transition hover:bg-slate-50 hover:text-slate-900">‹</button>
@@ -2170,22 +2290,24 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
           </span>
         )}
 
-        <button onClick={() => setShowForm(true)} disabled={!canCreateAppointments} className="ui-interactive h-9 rounded-lg bg-gradient-to-b from-primary to-primary-strong px-3.5 text-sm font-bold text-white shadow-[0_2px_8px_rgb(var(--app-primary)/0.35)] disabled:cursor-not-allowed disabled:opacity-50">+ Yeni Randevu</button>
         {canCreateAppointments && (
-          <button onClick={() => { setBlockSubmitError(null); setShowBlockModal(true); }} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 shadow-[var(--shadow-rest)] transition hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700">Zamanı Kapat</button>
+          <button onClick={() => setShowForm(true)} className="ui-interactive h-9 rounded-lg bg-gradient-to-b from-primary to-primary-strong px-3.5 text-sm font-bold text-white shadow-[0_2px_8px_rgb(var(--app-primary)/0.35)]">+ Yeni Randevu</button>
         )}
-        <button onClick={() => setShowWaitlistModal(true)} className="relative h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 shadow-[var(--shadow-rest)] transition hover:border-purple-200 hover:bg-purple-50 hover:text-purple-700" title="Randevu bekleme listesini aç">
+        {canCreateAppointments && (
+          <button onClick={openBlockModal} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 shadow-[var(--shadow-rest)] transition hover:border-orange-200 hover:bg-orange-50 hover:text-orange-700">Zamanı Kapat</button>
+        )}
+        {canCreateAppointments && <button onClick={() => { resetWaitlistForm(); setShowWaitlistModal(true); }} className="relative h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 shadow-[var(--shadow-rest)] transition hover:border-purple-200 hover:bg-purple-50 hover:text-purple-700" title="Randevu bekleme listesini aç">
           Bekleme
           {activeWaitlist.length > 0 && (
             <span className="ml-1.5 rounded-full bg-purple-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{activeWaitlist.length}</span>
           )}
-        </button>
-        <button onClick={() => setShowBookingRequestsModal(true)} className="relative h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 shadow-[var(--shadow-rest)] transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700" title="Online randevu taleplerini aç">
+        </button>}
+        {canApproveAppointments && <button onClick={() => setShowBookingRequestsModal(true)} className="relative h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-600 shadow-[var(--shadow-rest)] transition hover:border-cyan-200 hover:bg-cyan-50 hover:text-cyan-700" title="Online randevu taleplerini aç">
           Online Talepler
           {bookingRequests.length > 0 && (
             <span className="ml-1.5 rounded-full bg-cyan-600 px-1.5 py-0.5 text-[10px] font-bold text-white">{bookingRequests.length}</span>
           )}
-        </button>
+        </button>}
         <details className="relative">
           <summary className="flex h-9 cursor-pointer list-none items-center rounded-lg border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-[var(--shadow-rest)] hover:bg-slate-50">
             Dışa Aktar
@@ -2260,6 +2382,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                     key={slot}
                     type="button"
                     onClick={() => {
+                      setNewAppointmentTouched(true);
                       const d = new Date(startAt);
                       const [h, m] = slot.split(":").map(Number);
                       d.setHours(h, m, 0, 0);
@@ -2286,6 +2409,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                   placeholder={patientId ? undefined : "Hasta adı, TC veya telefon ile ara..."}
                   value={patientId ? patientSearch : patientSearch}
                   onChange={e => {
+                    setNewAppointmentTouched(true);
                     setPatientSearch(e.target.value);
                     setPatientDropdownOpen(true);
                     if (!e.target.value) { setPatientId(""); }
@@ -2294,7 +2418,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                   className="flex-1 bg-transparent text-sm outline-none"
                 />
                 {patientId && (
-                  <button type="button" onClick={() => { setPatientId(""); setPatientSearch(""); setPatientResults([]); }}
+                  <button type="button" onClick={() => { setNewAppointmentTouched(true); setPatientId(""); setPatientSearch(""); setPatientResults([]); }}
                     aria-label="Hasta seçimini temizle"
                     className="flex shrink-0 items-center justify-center border-0 bg-transparent p-0 text-base leading-none text-slate-400 hover:text-red-500">
                     ×
@@ -2311,6 +2435,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                         className="flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm hover:bg-primary/5 transition"
                         onMouseDown={e => e.preventDefault()}
                         onClick={() => {
+                          setNewAppointmentTouched(true);
                           setPatientId(p.id);
                           setPatientSearch(p.fullName);
                           setPatientResults([]);
@@ -2336,6 +2461,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                 placeholder="Doktor ara veya seç"
                 value={doctorQuery}
                 onChange={(e) => {
+                  setNewAppointmentTouched(true);
                   setDoctorQuery(e.target.value);
                   setNewDoctorId("");
                   setDoctorDropdownOpen(true);
@@ -2355,6 +2481,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                         type="button"
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => {
+                          setNewAppointmentTouched(true);
                           setNewDoctorId(item.id);
                           setDoctorQuery(item.fullName);
                           setDoctorDropdownOpen(false);
@@ -2377,6 +2504,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                 placeholder="Tedavi ara veya seç"
                 value={treatmentQuery}
                 onChange={(e) => {
+                  setNewAppointmentTouched(true);
                   const value = e.target.value;
                   setTreatmentQuery(value);
                   setTreatmentDropdownOpen(true);
@@ -2403,6 +2531,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                         type="button"
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => {
+                          setNewAppointmentTouched(true);
                           setTreatmentKey(item.value);
                           setTreatmentQuery(item.label);
                           setTreatmentDropdownOpen(false);
@@ -2422,7 +2551,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                 <span className="mb-1.5 block text-xs font-bold text-slate-600">Tedavi alanı <span className="font-medium text-slate-400">(isteğe bağlı)</span></span>
                 <select
                   value={newClinicUnitId}
-                  onChange={(event) => setNewClinicUnitId(event.target.value)}
+                  onChange={(event) => { setNewAppointmentTouched(true); setNewClinicUnitId(event.target.value); }}
                   className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
                   aria-label="Tedavi alanı"
                 >
@@ -2433,11 +2562,11 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
             )}
             <label>
               <span className="mb-1.5 block text-xs font-bold text-slate-600">Tarih ve saat <span className="text-red-500">*</span></span>
-              <input type="datetime-local" className="w-full rounded-lg border px-3 py-2 text-sm" value={startAt} onChange={e => setStartAt(e.target.value)} />
+              <input type="datetime-local" className="w-full rounded-lg border px-3 py-2 text-sm" value={startAt} onChange={e => { setNewAppointmentTouched(true); setStartAt(e.target.value); }} />
             </label>
             <label>
               <span className="mb-1.5 block text-xs font-bold text-slate-600">Süre</span>
-              <select className="w-full rounded-lg border px-3 py-2 text-sm" value={durationMinutes} onChange={e => setDurationMinutes(Number(e.target.value))}>
+              <select className="w-full rounded-lg border px-3 py-2 text-sm" value={durationMinutes} onChange={e => { setNewAppointmentTouched(true); setDurationMinutes(Number(e.target.value)); }}>
                 {durationOptions.map((option) => (
                   <option key={option} value={option}>{option} dk</option>
                 ))}
@@ -2458,12 +2587,12 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
           )}
           <label className="mt-3 block">
             <span className="mb-1.5 block text-xs font-bold text-slate-600">Randevu notu <span className="font-medium text-slate-400">(isteğe bağlı)</span></span>
-            <textarea value={note} onChange={e => setNote(e.target.value)} placeholder="Kısa bir not ekleyin" rows={2} className="w-full rounded-lg border px-3 py-2 text-sm" />
+            <textarea value={note} onChange={e => { setNewAppointmentTouched(true); setNote(e.target.value); }} placeholder="Kısa bir not ekleyin" rows={2} className="w-full rounded-lg border px-3 py-2 text-sm" />
           </label>
           <div className="mt-2 flex flex-wrap gap-4">
             {[["smsInfo","Bilgilendirme SMS",smsInfo,setSmsInfo],["smsReminder","Hatırlatma SMS",smsReminder,setSmsReminder],["smsSurvey","Değerlendirme SMS",smsSurvey,setSmsSurvey]].map(([k,lbl,val,set]:any) => (
               <label key={k} className="flex items-center gap-1 text-sm cursor-pointer">
-                <input type="checkbox" checked={val} onChange={e => set(e.target.checked)} className="accent-primary" />{lbl}
+                <input type="checkbox" checked={val} onChange={e => { setNewAppointmentTouched(true); set(e.target.checked); }} className="accent-primary" />{lbl}
               </label>
             ))}
           </div>
@@ -2526,15 +2655,15 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                       <td
                         key={d.id}
                         title={outsideHours ? "Doktorun mesai saati dışında" : undefined}
-                        className={"group h-9 border p-0.5 align-top transition-colors " + (continuingAppts.length > 0 ? "bg-slate-50 " : outsideHours ? "bg-slate-50/70 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-primary/10 ring-2 ring-inset ring-primary ui-drop-target" : dragOverInvalid === dropKey ? "ui-drop-reject" : "")}
+                        className={"group relative h-9 overflow-visible border p-0.5 align-top transition-colors " + (continuingAppts.length > 0 ? "bg-slate-50 " : outsideHours ? "bg-slate-50/70 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-primary/10 ring-2 ring-inset ring-primary ui-drop-target" : dragOverInvalid === dropKey ? "ui-drop-reject" : "")}
                         onDragOver={(e) => {
                           if (!draggedApptId) return;
                           e.preventDefault();
-                          if (!blocked && continuingAppts.length === 0) { setDragOverKey(dropKey); setDragOverInvalid(null); }
+                          if (!blocked) { setDragOverKey(dropKey); setDragOverInvalid(null); }
                           else { setDragOverInvalid(dropKey); setDragOverKey(prev => prev === dropKey ? null : prev); }
                         }}
                         onDragLeave={() => { setDragOverKey(prev => prev === dropKey ? null : prev); setDragOverInvalid(prev => prev === dropKey ? null : prev); }}
-                        onDrop={(e) => { if (!blocked && continuingAppts.length === 0) { e.preventDefault(); void handleDropOnSlot(date, slot, d.id); } }}
+                        onDrop={(e) => { if (!blocked) { e.preventDefault(); void handleDropOnSlot(date, slot, d.id); } }}
                       >
                         {blocked ? (
                           <div className="flex items-center gap-1 rounded bg-orange-100 border border-orange-200 px-1 py-0.5 text-[10px] text-orange-700">
@@ -2542,33 +2671,30 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                             <span className="truncate">{blockInfo?.reason || "Kapalı zaman"}</span>
                             {canCreateAppointments && <button onClick={() => blockInfo && deleteBlockSlot(blockInfo.id, slot)} aria-label="Bu saati aç" title="Bu saati aç" className="ml-auto text-red-400 hover:text-red-600">✕</button>}
                           </div>
-                        ) : continuingAppts.length > 0 ? (
-                          continuingAppts.map(a => apptBlock(a, false))
                         ) : (
                           <>
                             {outsideHours && slotAppts.length === 0 && (
                               <p className="truncate text-[9px] font-semibold text-slate-400">Mesai dışı</p>
                             )}
-                            {/* Birden fazla randevu aynı saate yığılınca (çakışma onayıyla oluşturulmuş),
-                                satır uzayıp altındaki sonraki saatlerle görsel olarak iç içe geçebiliyor —
-                                hepsinin AYNI saatte olduğunu netleştirmek için bir grup etiketi ekleniyor
-                                (bkz. kullanıcı geri bildirimi: "09:15'e üç hasta yazınca 09:30'a
-                                yazamıyormuşuz gibi görünüyor"). */}
-                            {slotAppts.length > 1 && (
-                              <p className="mb-0.5 truncate rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-800">
-                                ⚠ {slotAppts.length} randevu aynı saatte ({slot})
-                              </p>
-                            )}
-                            {slotAppts.map(a => apptBlock(a, canCreateAppointments))}
+                            {slotAppts.map(a => apptBlock(a, canCreateAppointments, false, appointmentLayouts.byDoctorDay.get(a.id)))}
                             {slotAppts.length === 0 ? (
                               outsideHours ? (
                                 <div className="h-7" />
+                              ) : continuingAppts.length > 0 && canCreateAppointments ? (
+                                <button
+                                  onClick={() => openQuickCreate(slot, date, d.id)}
+                                  aria-label={`${slot} için ek randevu oluştur`}
+                                  title="Bu saate randevu ekle"
+                                  className="randevu-slot-add-mini"
+                                >
+                                  +
+                                </button>
                               ) : canCreateAppointments ? (
                                 <button
                                   onClick={() => openQuickCreate(slot, date, d.id)}
                                   aria-label={`${slot} için randevu oluştur`}
                                   title="Randevu oluştur"
-                                  className="randevu-slot-create"
+                                  className={"randevu-slot-create " + (continuingAppts.length > 0 ? "randevu-slot-create-secondary randevu-slot-create-floating" : "")}
                                 >
                                   <span aria-hidden="true" className="randevu-slot-create-icon">+</span><span className="randevu-slot-create-label">Randevu oluştur</span>
                                 </button>
@@ -2578,10 +2704,10 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                                 <button
                                   onClick={() => openQuickCreate(slot, date, d.id)}
                                   aria-label={`${slot} için ek randevu oluştur`}
-                                  title="Randevu oluştur"
-                                  className="randevu-slot-create randevu-slot-create-secondary"
+                                  title="Bu saate randevu ekle"
+                                  className="randevu-slot-add-mini"
                                 >
-                                  <span aria-hidden="true" className="randevu-slot-create-icon">+</span><span className="randevu-slot-create-label">Ekle</span>
+                                  +
                                 </button>
                               ) : null
                             )}
@@ -2657,15 +2783,15 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                       <td
                         key={i}
                         title={doctorOutsideHours ? "Doktorun mesai saati dışında" : undefined}
-                        className={"group h-9 border p-0.5 align-top transition-colors " + (haftaOutOfHours || continuingAppts.length > 0 ? "bg-slate-50 " : doctorOutsideHours ? "bg-slate-50/70 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-primary/10 ring-2 ring-inset ring-primary ui-drop-target" : dragOverInvalid === dropKey ? "ui-drop-reject" : "")}
+                        className={"group relative h-9 overflow-visible border p-0.5 align-top transition-colors " + (haftaOutOfHours || continuingAppts.length > 0 ? "bg-slate-50 " : doctorOutsideHours ? "bg-slate-50/70 " : "") + (blocked ? "bg-orange-50" : dragOverKey === dropKey ? "bg-primary/10 ring-2 ring-inset ring-primary ui-drop-target" : dragOverInvalid === dropKey ? "ui-drop-reject" : "")}
                         onDragOver={(e) => {
                           if (!draggedApptId) return;
                           e.preventDefault();
-                          if (!blocked && !haftaOutOfHours && continuingAppts.length === 0) { setDragOverKey(dropKey); setDragOverInvalid(null); }
+                          if (!blocked && !haftaOutOfHours) { setDragOverKey(dropKey); setDragOverInvalid(null); }
                           else { setDragOverInvalid(dropKey); setDragOverKey(prev => prev === dropKey ? null : prev); }
                         }}
                         onDragLeave={() => { setDragOverKey(prev => prev === dropKey ? null : prev); setDragOverInvalid(prev => prev === dropKey ? null : prev); }}
-                        onDrop={(e) => { if (!blocked && !haftaOutOfHours && continuingAppts.length === 0) { e.preventDefault(); void handleDropOnSlot(d, slot); } }}
+                        onDrop={(e) => { if (!blocked && !haftaOutOfHours) { e.preventDefault(); void handleDropOnSlot(d, slot); } }}
                       >
                         {haftaOutOfHours ? (
                           <div className="h-7" />
@@ -2675,28 +2801,30 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                             <span className="truncate">{blockInfo?.reason || "Kapalı zaman"}</span>
                             {canCreateAppointments && <button onClick={() => blockInfo && deleteBlockSlot(blockInfo.id, slot)} aria-label="Bu saati aç" title="Bu saati aç" className="ml-auto text-red-400 hover:text-red-600">✕</button>}
                           </div>
-                        ) : continuingAppts.length > 0 ? (
-                          continuingAppts.map(a => apptBlock(a, false))
                         ) : (
                           <>
                             {doctorOutsideHours && slotAppts.length === 0 && (
                               <p className="truncate text-[9px] font-semibold text-slate-400">Mesai dışı</p>
                             )}
-                            {slotAppts.length > 1 && (
-                              <p className="mb-0.5 truncate rounded bg-amber-100 px-1 py-0.5 text-[9px] font-bold text-amber-800">
-                                ⚠ {slotAppts.length} randevu aynı saatte ({slot})
-                              </p>
-                            )}
-                            {slotAppts.map(a => apptBlock(a, canCreateAppointments))}
+                            {slotAppts.map(a => apptBlock(a, canCreateAppointments, false, (doctorId ? appointmentLayouts.byDoctorDay : appointmentLayouts.byDay).get(a.id)))}
                             {slotAppts.length === 0 ? (
                               doctorOutsideHours ? (
                                 <div className="h-7" />
+                              ) : continuingAppts.length > 0 && canCreateAppointments ? (
+                                <button
+                                  onClick={() => openQuickCreate(slot, d, doctorId || undefined)}
+                                  aria-label={`${slot} için ek randevu oluştur`}
+                                  title="Bu saate randevu ekle"
+                                  className="randevu-slot-add-mini"
+                                >
+                                  +
+                                </button>
                               ) : canCreateAppointments ? (
                                 <button
                                   onClick={() => openQuickCreate(slot, d, doctorId || undefined)}
                                   aria-label={`${slot} için randevu oluştur`}
                                   title="Randevu oluştur"
-                                  className="randevu-slot-create"
+                                  className={"randevu-slot-create " + (continuingAppts.length > 0 ? "randevu-slot-create-secondary randevu-slot-create-floating" : "")}
                                 >
                                   <span aria-hidden="true" className="randevu-slot-create-icon">+</span><span className="randevu-slot-create-label">Randevu oluştur</span>
                                 </button>
@@ -2706,10 +2834,10 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                                 <button
                                   onClick={() => openQuickCreate(slot, d, doctorId || undefined)}
                                   aria-label={`${slot} için ek randevu oluştur`}
-                                  title="Randevu oluştur"
-                                  className="randevu-slot-create randevu-slot-create-secondary"
+                                  title="Bu saate randevu ekle"
+                                  className="randevu-slot-add-mini"
                                 >
-                                  <span aria-hidden="true" className="randevu-slot-create-icon">+</span><span className="randevu-slot-create-label">Ekle</span>
+                                  +
                                 </button>
                               ) : null
                             )}
@@ -2884,7 +3012,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
       <Modal
         module="calendar"
         open={showBlockModal}
-        onClose={() => { setShowBlockModal(false); setBlockSubmitError(null); }}
+        onClose={requestCloseBlockModal}
         isDirty={blockModalDirty}
         title="Doktorun Zamanını Kapat"
         description="Doktorun randevu kabul etmeyeceği çalışma saati aralığını kaydedin."
@@ -2896,7 +3024,6 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
               onClick={saveBlock}
               disabled={!blockDoctorId || !blockDate || !blockStartTime || !blockEndTime || Boolean(blockValidationError)}
               loading={blockSaving}
-              fullWidth
             >
               {blockSaving ? "Kaydediliyor…" : "Zamanı Kapat"}
             </Button>
@@ -2961,7 +3088,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
       <Modal
         module="calendar"
         open={showWaitlistModal}
-        onClose={() => setShowWaitlistModal(false)}
+        onClose={requestCloseWaitlistModal}
         isDirty={waitlistFormDirty}
         title="Bekleme Listesi"
         description="Uygun randevu bulunamayan veya iptal olan bir slotu doldurmak istediğiniz hastaları buraya ekleyin."
@@ -3048,7 +3175,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                             {w.preferredTo ? ` – ${new Date(w.preferredTo).toLocaleDateString("tr-TR")}` : ""}
                           </p>
                           {w.note && <p className="mt-1 text-xs text-slate-500">{w.note}</p>}
-                          {w.patient.phone && <p className="mt-1 text-xs text-slate-400">📞 {w.patient.phone}</p>}
+                          {canSeePatientPhone && w.patient.phone && <p className="mt-1 text-xs text-slate-400">📞 {w.patient.phone}</p>}
                         </div>
                         <Badge tone={w.status === "ARANDI" ? "warning" : "info"}>
                           {w.status === "ARANDI" ? "Arandı" : "Bekliyor"}
@@ -3056,10 +3183,10 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                       </div>
                       <div className="mt-2 flex gap-2">
                         {w.status === "BEKLIYOR" && (
-                          <button onClick={() => void updateWaitlistStatus(w.id, "ARANDI")} className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100">Arandı olarak işaretle</button>
+                          <button disabled={Boolean(wlActionId)} onClick={() => void updateWaitlistStatus(w.id, "ARANDI")} className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50">Arandı olarak işaretle</button>
                         )}
-                        <button onClick={() => void updateWaitlistStatus(w.id, "YERLESTIRILDI")} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100">Randevuya yerleştirildi</button>
-                        <button onClick={() => void removeWaitlistEntry(w.id)} className="ml-auto rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50">Kaldır</button>
+                        <button disabled={Boolean(wlActionId)} onClick={() => void updateWaitlistStatus(w.id, "YERLESTIRILDI")} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50">Randevuya yerleştirildi</button>
+                        <button disabled={Boolean(wlActionId)} onClick={() => void removeWaitlistEntry(w.id)} className="ml-auto rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-500 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">Kaldır</button>
                       </div>
                     </div>
                   ))}
@@ -3090,7 +3217,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                           Tercih: {new Date(r.preferredFrom).toLocaleDateString("tr-TR")}
                         </p>
                         {r.note && <p className="mt-1 text-xs text-slate-500">{r.note}</p>}
-                        <p className="mt-1 text-xs text-slate-400">📞 {r.phone}{r.tcNo ? ` · TC: ${r.tcNo}` : ""}</p>
+                        {canSeePatientPhone && <p className="mt-1 text-xs text-slate-400">📞 {r.phone}{r.tcNo ? ` · TC: ${r.tcNo}` : ""}</p>}
                       </div>
                       <Badge tone="info">Bekliyor</Badge>
                     </div>
@@ -3246,7 +3373,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                   {parsed.detail && <div className="flex justify-between gap-3"><span className="text-gray-500">Not:</span><span className="max-w-xs text-right">{parsed.detail}</span></div>}
                   {parsed.followUp !== "YOK" && <div className="flex justify-between"><span className="text-gray-500">Takip:</span><span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + meta.badge}>{meta.label}</span></div>}
                 </div>
-                <div className="mt-4">
+                {canCreateAppointments && <div className="mt-4">
                   <p className="text-xs text-gray-500 mb-2 font-semibold">Durum Güncelle:</p>
                   {!detailCanMarkNoShow && (
                     <p className="mb-2 text-xs text-sky-700">Hasta erken gelmiş olabilir, &quot;Bekliyor&quot; (hasta geldi) her zaman işaretlenebilir — &quot;Gelmedi&quot; ise randevu saati geçtikten sonra işaretlenebilir.</p>
@@ -3278,8 +3405,8 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                       );
                     })}
                   </div>
-                </div>
-                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+                </div>}
+                {canCreateAppointments && <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
                   <p className="mb-2 text-xs font-semibold text-slate-600">Takip Notu</p>
                   <select value={followUpStatus} onChange={(e) => setFollowUpStatus(e.target.value as FollowUpKey)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
                     {FOLLOW_UP_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
@@ -3292,10 +3419,10 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                       {detailSaving ? "Kaydediliyor..." : "Takip Notunu Kaydet"}
                     </Button>
                   </div>
-                </div>
+                </div>}
                 <div className="mt-4 flex gap-2">
                   <Button variant="primary" size="sm" href={"/hasta-detay?id=" + selectedAppt.patient?.id}>Hasta Detayı</Button>
-                  <Button
+                  {canCreateAppointments && <Button
                     variant="secondary"
                     size="sm"
                     onClick={openEditMode}
@@ -3303,8 +3430,8 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                     title={selectedAppt.status === "IPTAL" ? "İptal edilmiş randevu düzenlenemez — önce 'Planlandı'ya alın" : "Tarih, doktor veya saat değiştirin — dokunmatik cihazlarda sürükle-bırak yerine kullanılır"}
                   >
                     Taşı / Düzenle
-                  </Button>
-                  <Button
+                  </Button>}
+                  {canCancelAppointments && <Button
                     variant="danger"
                     size="sm"
                     onClick={() => remove(selectedAppt.id)}
@@ -3312,7 +3439,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                     title={selectedAppt.status === "IPTAL" ? "Randevu zaten iptal edilmiş" : "Randevuyu iptal eder — veri silinmez"}
                   >
                     İptal Et
-                  </Button>
+                  </Button>}
                   <Button variant="secondary" size="sm" onClick={closeAppointmentModal} className="ml-auto">Kapat</Button>
                 </div>
               </>

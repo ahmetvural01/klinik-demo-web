@@ -7,6 +7,7 @@ import { useSlashFocus } from "@/lib/use-slash-focus";
 import { SearchSelect } from "@/components/ui/SearchSelect";
 import { LabOrderForm } from "@/components/lab/LabOrderForm";
 import { LabOrderDetailPanel } from "@/components/lab/LabOrderDetailPanel";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 import { cachedGet } from "@/lib/client-cache";
 import { Modal as SharedModal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
@@ -15,9 +16,10 @@ import { FormField } from "@/components/ui/FormField";
 import { ListTable } from "@/components/ui/ListTable";
 import type { ListTableColumn } from "@/components/ui/ListTable";
 import { Plus, CheckCircle2, TriangleAlert, FlaskConical, Stethoscope, CircleDashed } from "lucide-react";
-import { ModuleIcon } from "@/components/ui/ModuleIcon";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { turkeyDateKey } from "@/lib/tz";
 
 const LabEmptyIcon = createSceneIllustration("lab");
 import { confirmDialog } from "@/lib/confirm-client";
@@ -356,7 +358,7 @@ function getNextTemplateStepIndex(labType: string, trips: { description: string;
 const SPOON_REQUEST_OPTIONS = ["Açık Kaşık", "Kişisel Kaşık"];
 
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  return turkeyDateKey();
 }
 
 type ImpressionMethod = "" | "KLASIK_OLCU" | "DIJITAL_TARAMA";
@@ -534,6 +536,9 @@ const emptyEditTripForm = {
 };
 
 export default function LabPage() {
+  const { can } = usePermissions();
+  const canWriteLab = can("lab:write");
+  const canCompleteLab = can("lab:complete");
   const searchParams = useSearchParams();
   const autoNewFromPatient = searchParams.get("new") === "1";
   const prefillPatientId = searchParams.get("patientId") || "";
@@ -832,7 +837,7 @@ export default function LabPage() {
   }, [activeLab, searchedOrders]);
 
   useEffect(() => {
-    if (!autoNewFromPatient || prefillHandledRef.current) return;
+    if (!canWriteLab || !autoNewFromPatient || prefillHandledRef.current) return;
     if (patients.length === 0 || doctors.length === 0) return;
 
     const patientExists = prefillPatientId ? patients.some((patient) => patient.id === prefillPatientId) : false;
@@ -862,7 +867,7 @@ export default function LabPage() {
     params.delete("labName");
     const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
     window.history.replaceState(null, "", nextUrl);
-  }, [autoNewFromPatient, prefillPatientId, prefillLabName, patients, doctors, activeLab, knownLabs]);
+  }, [activeLab, autoNewFromPatient, canWriteLab, doctors, knownLabs, patients, prefillLabName, prefillPatientId]);
 
   useEffect(() => {
     if (!focusOrderId || orders.length === 0) return;
@@ -988,28 +993,29 @@ export default function LabPage() {
     setActiveOrder(null);
     setActiveTrip(null);
     setEditingInvoiceId(null);
+    setOrderForm({ ...emptyOrderForm });
+    setOrderPatientSearch("");
+    setOrderDoctorSearch("");
+    setOrderLabSearch("");
+    setOrderLabTypeSearch("");
+    setTripForm({ ...emptyTripForm, sentAt: today() });
+    setReceiveForm({ ...emptyReceiveForm, receivedAt: today() });
+    setInvoiceForm({ ...emptyInvoiceForm, issuedAt: today() });
+    setEditTripForm({ ...emptyEditTripForm, sentAt: today(), receivedAt: today() });
+    modalSnapshotRef.current = "";
   };
 
-  async function requestCloseModal() {
-    const currentByModal: Partial<Record<NonNullable<typeof modal>, unknown>> = {
-      new: orderForm,
-      trip: tripForm,
-      receive: receiveForm,
-      invoice: invoiceForm,
-      editInvoice: invoiceForm,
-      editTrip: editTripForm,
-    };
-    const current = modal ? currentByModal[modal] : undefined;
-    const isDirty = current !== undefined && JSON.stringify(current) !== modalSnapshotRef.current;
-    if (isDirty && !(await confirmDialog({
-      message: "Kaydedilmemiş değişiklikler var. Kapatılsın mı? Girdiğiniz bilgiler kaybolacak.",
-      danger: true,
-      confirmText: "Kapat, Değişiklikleri Kaybet",
-    }))) {
-      return;
-    }
+  function requestCloseModal() {
     closeModal();
   }
+
+  const modalDirty = Boolean(modal) && JSON.stringify(
+    modal === "new" ? orderForm
+      : modal === "trip" ? tripForm
+      : modal === "receive" ? receiveForm
+      : modal === "invoice" || modal === "editInvoice" ? invoiceForm
+      : editTripForm,
+  ) !== modalSnapshotRef.current;
 
   async function createOrder() {
     if (saving || !orderForm.patientId || !orderForm.doctorId || !resolvedLabName || !orderForm.labType || !orderForm.sentItem) return;
@@ -1380,7 +1386,7 @@ export default function LabPage() {
       receivedAt: today(),
       receivedItem: getReceivedItemFromNote(trip.receivedNote, parts.requestedItem || parts.sentItem),
       receivedNote: cleanReceivedNote(trip.receivedNote),
-      needsAppointment: needsProvaAppointment(trip.receivedNote) || true,
+      needsAppointment: needsProvaAppointment(trip.receivedNote) || !trip.receivedNote,
     };
     setReceiveForm(initial);
     modalSnapshotRef.current = JSON.stringify(initial);
@@ -1395,10 +1401,10 @@ export default function LabPage() {
       sentItem,
       requestedItem,
       impressionMethod: parsedSent.method,
-      sentAt: trip.sentAt ? new Date(trip.sentAt).toISOString().slice(0, 10) : today(),
+      sentAt: trip.sentAt ? turkeyDateKey(new Date(trip.sentAt)) : today(),
       sentNote: parsedSent.cleanNote,
       hasReceived: Boolean(trip.receivedAt),
-      receivedAt: trip.receivedAt ? new Date(trip.receivedAt).toISOString().slice(0, 10) : today(),
+      receivedAt: trip.receivedAt ? turkeyDateKey(new Date(trip.receivedAt)) : today(),
       receivedNote: trip.receivedNote || "",
     };
     setEditTripForm(initial);
@@ -1453,6 +1459,7 @@ export default function LabPage() {
       key: "status",
       header: "Durum",
       render: (order) => {
+        if (!canWriteLab) return null;
         const summary = getOrderSummary(order);
         const statusLabel = summary.isDone
           ? "Tamamlandı"
@@ -1540,27 +1547,19 @@ export default function LabPage() {
 
   return (
     <div className="mx-auto max-w-7xl space-y-3 pb-8">
-      <div className="ui-surface p-4 sm:p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-3">
-            <ModuleIcon module="flask" size="lg" />
-            <div>
-              <h1 className="font-display text-xl font-black tracking-tight text-slate-900">Laboratuvar Takibi</h1>
-              <p className="text-xs font-medium text-slate-500">Dış laboratuvar işlerini ve teslim sürecini takip edin.</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2.5">
-            <Badge tone="neutral">{filteredOrders.length} iş</Badge>
-            {allPendingTrips.length > 0 && (
-              <Badge tone="warning">{allPendingTrips.length} bekleyen adım</Badge>
-            )}
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        icon="flask"
+        title="Laboratuvar Takibi"
+        description="Dış laboratuvar işlerini, prova adımlarını ve teslim sürecini takip edin."
+        stats={[
+          { label: "İş", value: filteredOrders.length },
+          { label: "Bekleyen", value: allPendingTrips.length, color: allPendingTrips.length > 0 ? "text-amber-700" : "text-emerald-700" },
+        ]}
+      />
 
       <div className="sticky top-0 z-20 mb-0 space-y-2 rounded-lg border border-slate-200/80 bg-white px-2 py-2 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
-          <div className="ml-auto">
+          {canWriteLab && <div className="ml-auto">
             <Button
               size="sm"
               icon={Plus}
@@ -1583,7 +1582,7 @@ export default function LabPage() {
             >
               Yeni İş
             </Button>
-          </div>
+          </div>}
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -1670,20 +1669,20 @@ export default function LabPage() {
         >
           <LabOrderDetailPanel
             order={detailOrder}
-            onAddTrip={(order) => openTripModal(order as LabOrder)}
-            onAddInvoice={(order) => openInvoiceModal(order as LabOrder)}
-            onEditInvoice={(order, invoice) => openEditInvoiceModal(order as LabOrder, invoice as LabInvoice)}
-            onDeleteInvoice={(order, invoice) => void deleteInvoice(order as LabOrder, invoice as LabInvoice)}
-            onReceive={(order, trip) => openReceiveModal(order as LabOrder, trip as LabTrip)}
-            onEditTrip={(order, trip) => openEditTripModal(order as LabOrder, trip as LabTrip)}
-            onComplete={(order) => requestComplete(order as LabOrder)}
-            onRpt={(order) => requestRpt(order as LabOrder)}
+            onAddTrip={canWriteLab ? (order) => openTripModal(order as LabOrder) : undefined}
+            onAddInvoice={canWriteLab ? (order) => openInvoiceModal(order as LabOrder) : undefined}
+            onEditInvoice={canWriteLab ? (order, invoice) => openEditInvoiceModal(order as LabOrder, invoice as LabInvoice) : undefined}
+            onDeleteInvoice={canWriteLab ? (order, invoice) => void deleteInvoice(order as LabOrder, invoice as LabInvoice) : undefined}
+            onReceive={canWriteLab ? (order, trip) => openReceiveModal(order as LabOrder, trip as LabTrip) : undefined}
+            onEditTrip={canWriteLab ? (order, trip) => openEditTripModal(order as LabOrder, trip as LabTrip) : undefined}
+            onComplete={canCompleteLab ? (order) => requestComplete(order as LabOrder) : undefined}
+            onRpt={canCompleteLab ? (order) => requestRpt(order as LabOrder) : undefined}
           />
         </Modal>
       )}
 
       {modal === "new" && (
-        <Modal title="Yeni Laboratuvar İşi" onClose={() => void requestCloseModal()} wide>
+        <Modal title="Yeni Laboratuvar İşi" onClose={() => void requestCloseModal()} isDirty={modalDirty} wide>
           <LabOrderForm
             patientSearch={orderPatientSearch}
             onPatientSearchChange={(value) => {
@@ -1774,7 +1773,7 @@ export default function LabPage() {
       )}
 
       {modal === "trip" && activeOrder && (
-        <Modal title="Laboratuvara Gönderim Ekle" subtitle={`${activeOrder.patient.fullName} · ${activeOrder.labName} · ${activeOrder.labType}`} onClose={() => void requestCloseModal()}>
+        <Modal title="Laboratuvara Gönderim Ekle" subtitle={`${activeOrder.patient.fullName} · ${activeOrder.labName} · ${activeOrder.labType}`} onClose={() => void requestCloseModal()} isDirty={modalDirty}>
           <TripFormContent
             order={activeOrder}
             tripForm={tripForm}
@@ -1785,7 +1784,7 @@ export default function LabPage() {
       )}
 
       {modal === "receive" && activeTrip && (
-        <Modal title="Laboratuvardan Geldi" subtitle={`${activeTrip.labOrder.patient.fullName} · ${parseDesc(activeTrip.description).sentItem}${parseDesc(activeTrip.description).requestedItem ? " → " + parseDesc(activeTrip.description).requestedItem : ""}`} onClose={() => void requestCloseModal()}>
+        <Modal title="Laboratuvardan Geldi" subtitle={`${activeTrip.labOrder.patient.fullName} · ${parseDesc(activeTrip.description).sentItem}${parseDesc(activeTrip.description).requestedItem ? " → " + parseDesc(activeTrip.description).requestedItem : ""}`} onClose={() => void requestCloseModal()} isDirty={modalDirty}>
           <div className="space-y-3">
             {(() => {
               const parts = parseDesc(activeTrip.description);
@@ -1829,7 +1828,7 @@ export default function LabPage() {
       )}
 
       {(modal === "invoice" || modal === "editInvoice") && activeOrder && (
-        <Modal title={modal === "editInvoice" ? "Faturayı Düzenle" : "Fatura Kalemi"} subtitle={`${activeOrder.patient.fullName} · ${activeOrder.labName}`} onClose={() => void requestCloseModal()}>
+        <Modal title={modal === "editInvoice" ? "Faturayı Düzenle" : "Fatura Kalemi"} subtitle={`${activeOrder.patient.fullName} · ${activeOrder.labName}`} onClose={() => void requestCloseModal()} isDirty={modalDirty}>
           <div className="space-y-3">
             <FormField label="Kalem" required>
               <input value={invoiceForm.item} onChange={(e) => setInvoiceForm((p) => ({ ...p, item: e.target.value }))} className="field" placeholder="Zirkon alt yapı, glaze…" />
@@ -1860,7 +1859,7 @@ export default function LabPage() {
       )}
 
       {modal === "editTrip" && activeTrip && (
-        <Modal title="Adımı Düzenle" subtitle={`${activeTrip.labOrder.patient.fullName} · ${activeTrip.labOrder.labType} · Adım #${activeTrip.order}`} onClose={() => void requestCloseModal()}>
+        <Modal title="Adımı Düzenle" subtitle={`${activeTrip.labOrder.patient.fullName} · ${activeTrip.labOrder.labType} · Adım #${activeTrip.order}`} onClose={() => void requestCloseModal()} isDirty={modalDirty}>
           <div className="space-y-3">
             <FormField label="Gönderilen" required>
               <input
@@ -2393,12 +2392,12 @@ function ModalActions({
 }
 
 function Modal({
-  title, subtitle, onClose, children, wide,
+  title, subtitle, onClose, children, wide, isDirty,
 }: {
-  title: string; subtitle?: string; onClose: () => void; children: React.ReactNode; wide?: boolean;
+  title: string; subtitle?: string; onClose: () => void; children: React.ReactNode; wide?: boolean; isDirty?: boolean;
 }) {
   return (
-    <SharedModal open onClose={onClose} title={title} description={subtitle} size={wide ? "xl" : "md"} module="flask">
+    <SharedModal open onClose={onClose} isDirty={isDirty} title={title} description={subtitle} size={wide ? "xl" : "md"} module="flask">
       {children}
     </SharedModal>
   );
@@ -2662,4 +2661,3 @@ function TripFormContent({
     </div>
   );
 }
-

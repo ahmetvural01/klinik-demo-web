@@ -5,12 +5,15 @@ import { requireAuth, writeAudit } from "@/lib/api";
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth("payments:write");
   if (auth.error) return auth.error;
+  if (!auth.user.institutionId) {
+    return NextResponse.json({ message: "Kurum bilgisi bulunamadı" }, { status: 403 });
+  }
   const { id } = await params;
 
-  const pkg = await prisma.patientPackage.findFirst({ where: { id, institutionId: auth.user.institutionId ?? undefined } });
+  const pkg = await prisma.patientPackage.findFirst({ where: { id, institutionId: auth.user.institutionId } });
   if (!pkg) return NextResponse.json({ message: "Paket bulunamadı" }, { status: 404 });
   if (pkg.status === "IPTAL") {
-    return NextResponse.json({ message: "Paket zaten iptal edilmiş" }, { status: 400 });
+    return NextResponse.json({ ok: true, alreadyCancelled: true });
   }
 
   // Bağlı ödeme/taksit planı burada dokunulmadan bırakılır — varsa iade,

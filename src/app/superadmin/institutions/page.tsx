@@ -142,15 +142,7 @@ export default function InstitutionsPage() {
 
   // Çok alanlı bir form — ESC/dış tıklama ile yanlışlıkla kapatılırsa
   // girilen klinik bilgileri sessizce kaybolmamalı (bkz. denetim raporu).
-  const requestCloseNew = async () => {
-    const isDirty = Object.entries(form).some(([key, value]) => value !== emptyForm[key as keyof FormState]);
-    if (isDirty && !(await confirmDialog({
-      message: "Kaydedilmemiş değişiklikler var. Kapatılsın mı? Girdiğiniz bilgiler kaybolacak.",
-      danger: true,
-      confirmText: "Kapat, Değişiklikleri Kaybet",
-    }))) {
-      return;
-    }
+  const requestCloseNew = () => {
     setShowNew(false);
     setForm(emptyForm);
   };

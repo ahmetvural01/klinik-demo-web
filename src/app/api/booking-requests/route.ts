@@ -9,6 +9,10 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status");
+  const validStatuses = new Set(["BEKLIYOR", "ONAYLANDI", "REDDEDILDI", "IPTAL"]);
+  if (status && !validStatuses.has(status)) {
+    return NextResponse.json({ error: "Geçersiz randevu talebi durumu" }, { status: 400 });
+  }
 
   try {
     const requests = await prisma.bookingRequest.findMany({

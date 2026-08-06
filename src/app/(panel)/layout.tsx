@@ -10,6 +10,10 @@ import { BillingStatusBanner } from "@/components/layout/billing-status-banner";
 import { GhostModeBanner } from "@/components/layout/ghost-mode-banner";
 import ToastWrapper from "@/components/ui/ToastWrapper";
 import ConfirmProvider from "@/components/ui/ConfirmProvider";
+import { PermissionProvider } from "@/components/auth/PermissionProvider";
+import { PanelRouteGuard } from "@/components/auth/PanelRouteGuard";
+import { getPermissionMap } from "@/lib/role-permission-store";
+import type { Role } from "@prisma/client";
 
 export default async function PanelLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUserFast();
@@ -22,12 +26,15 @@ export default async function PanelLayout({ children }: { children: React.ReactN
   // avatarı için tek, hafif bir DB sorgusuyla ayrıca alınır.
   const profile = await prisma.profile.findUnique({ where: { userId: user.id }, select: { photoUrl: true } }).catch(() => null);
   const photoUrl = profile?.photoUrl || null;
+  const permissionMap = await getPermissionMap();
+  const permissions = user.ghost ? ["*"] : (permissionMap[user.role as Role] || []);
 
   const institutionName = user.ghost
     ? (await prisma.institution.findUnique({ where: { id: user.institution }, select: { name: true } }).catch(() => null))?.name || ""
     : "";
 
   return (
+    <PermissionProvider role={user.role} permissions={permissions}>
     <div className="panel-body flex h-dvh overflow-hidden bg-[rgb(var(--app-bg))]">
       <PanelRealtimeSync />
       <PanelRouteWarmup />
@@ -39,10 +46,11 @@ export default async function PanelLayout({ children }: { children: React.ReactN
         {user.rawRole !== "SUPERADMIN" && <BillingStatusBanner />}
         <main className="panel-content flex-1 overscroll-contain overflow-y-auto px-3 pb-4 pt-0 sm:px-4 sm:pb-5 lg:px-5">
           <ToastWrapper>
-            <ConfirmProvider>{children}</ConfirmProvider>
+            <ConfirmProvider><PanelRouteGuard>{children}</PanelRouteGuard></ConfirmProvider>
           </ToastWrapper>
         </main>
       </div>
     </div>
+    </PermissionProvider>
   );
 }

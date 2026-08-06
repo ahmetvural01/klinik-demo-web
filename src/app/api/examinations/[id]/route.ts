@@ -2,6 +2,7 @@
 import { prisma } from "@/lib/prisma";
 import { examinationSchema } from "@/lib/validators";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -28,7 +29,7 @@ function normalizeOptionalString(value: unknown): string | undefined {
 function examinationTenantWhere(id: string, role: string, institutionId: string | null | undefined) {
   return {
     id,
-    ...(role !== "SUPERADMIN" ? { patient: { institutionId } } : {}),
+    ...(role !== "SUPERADMIN" && institutionId ? { patient: { institutionId } } : {}),
   };
 }
 
@@ -91,14 +92,14 @@ export async function PUT(request: NextRequest, props: Params) {
     const doctorChanged = parsed.data.doctorId !== existing.doctorId;
     if (patientChanged) {
       const patient = await prisma.patient.findFirst({
-        where: { id: parsed.data.patientId, institutionId: auth.user.institutionId, archivedAt: null },
+        where: { id: parsed.data.patientId, institutionId: auth.user.institutionId as string, archivedAt: null },
         select: { id: true },
       });
       if (!patient) return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });
     }
     if (doctorChanged) {
       const doctor = await prisma.user.findFirst({
-        where: { id: parsed.data.doctorId, institutionId: auth.user.institutionId, isActive: true },
+        where: { id: parsed.data.doctorId, ...effectiveDoctorWhere(auth.user.institutionId) },
         select: { id: true },
       });
       if (!doctor) return NextResponse.json({ message: "Doktor kurum kapsamı dışında" }, { status: 403 });

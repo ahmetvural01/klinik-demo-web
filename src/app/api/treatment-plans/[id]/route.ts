@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 
 const PLAN_STATUSES = ["PLANLANDI", "DEVAM_EDIYOR", "TAMAMLANDI", "IPTAL"];
 const CLOSED_PLAN_STATUSES = new Set(["TAMAMLANDI", "IPTAL"]);
+const STEP_STATUSES = new Set(["BEKLIYOR", "YAPILDI", "TAMAMLANDI", "IPTAL"]);
+const COMPLETED_STEP_STATUSES = new Set(["YAPILDI", "TAMAMLANDI"]);
 
 function treatmentPlanTenantWhere(id: string, institutionId: string | null | undefined, role: string) {
   return {
@@ -33,7 +35,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
 
   if (!plan) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
-  const hidePhone = shouldHidePatientPhone(user.role);
+  const hidePhone = await shouldHidePatientPhoneForRole(user.role);
   const result = hidePhone
     ? {
         ...plan,
@@ -52,11 +54,39 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
   }
 
-  const body = await req.json();
-  const { status, stepUpdates, stepDeletes } = body;
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Geçersiz istek gövdesi" }, { status: 400 });
+  }
+  const { status, stepUpdates, stepDeletes } = body as {
+    status?: unknown;
+    stepUpdates?: unknown;
+    stepDeletes?: unknown;
+    force?: unknown;
+  };
 
-  if (status !== undefined && !PLAN_STATUSES.includes(status)) {
+  if (status !== undefined && (typeof status !== "string" || !PLAN_STATUSES.includes(status))) {
     return NextResponse.json({ error: "Geçersiz plan durumu" }, { status: 400 });
+  }
+
+  if (stepUpdates !== undefined && (!Array.isArray(stepUpdates) || stepUpdates.length > 100)) {
+    return NextResponse.json({ error: "Tedavi adımları geçersiz veya çok fazla" }, { status: 400 });
+  }
+  if (stepDeletes !== undefined && (!Array.isArray(stepDeletes) || stepDeletes.length > 100)) {
+    return NextResponse.json({ error: "Silinecek tedavi adımları geçersiz veya çok fazla" }, { status: 400 });
+  }
+
+  const normalizedStepUpdates = (stepUpdates ?? []) as Array<{ id?: unknown; status?: unknown }>;
+  const normalizedStepDeletes = (stepDeletes ?? []) as unknown[];
+  if (normalizedStepUpdates.some((step) => !step || typeof step !== "object" || typeof step.id !== "string" || !step.id || typeof step.status !== "string" || !STEP_STATUSES.has(step.status))) {
+    return NextResponse.json({ error: "Tedavi adımı durumu geçersiz" }, { status: 400 });
+  }
+  if (normalizedStepDeletes.some((id) => typeof id !== "string" || !id)) {
+    return NextResponse.json({ error: "Silinecek tedavi adımı geçersiz" }, { status: 400 });
+  }
+  const deleteIds = new Set(normalizedStepDeletes as string[]);
+  if (normalizedStepUpdates.some((step) => deleteIds.has(step.id as string))) {
+    return NextResponse.json({ error: "Aynı adım aynı istekte hem silinip hem güncellenemez" }, { status: 400 });
   }
 
   const existing = await (prisma as any).treatmentPlan.findFirst({
@@ -65,12 +95,22 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   });
   if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
+  const referencedStepIds = [...new Set([...deleteIds, ...normalizedStepUpdates.map((step) => step.id as string)])];
+  if (referencedStepIds.length > 0) {
+    const existingSteps = await (prisma as any).treatmentStep.findMany({
+      where: { planId: params.id, id: { in: referencedStepIds } },
+      select: { id: true },
+    });
+    if (existingSteps.length !== referencedStepIds.length) {
+      return NextResponse.json({ error: "Tedavi adımlarından biri bu plana ait değil veya bulunamadı" }, { status: 400 });
+    }
+  }
+
   // Tamamlanmış/iptal bir planın adımları, plan aynı istekte yeniden
   // açılmadıkça değiştirilemez (bkz. denetim raporu Tema 5 — önceden sunucu
   // tarafında hiçbir geçiş doğrulaması yoktu).
   const planStaysClosedOrClosing = CLOSED_PLAN_STATUSES.has(status ?? existing.status);
-  const hasStepChanges = (stepUpdates && Array.isArray(stepUpdates) && stepUpdates.length > 0) ||
-    (stepDeletes && Array.isArray(stepDeletes) && stepDeletes.length > 0);
+  const hasStepChanges = normalizedStepUpdates.length > 0 || normalizedStepDeletes.length > 0;
   if (hasStepChanges && planStaysClosedOrClosing) {
     return NextResponse.json(
       { error: "Tamamlanmış/iptal edilmiş planın adımları değiştirilemez. Önce planı yeniden açın." },
@@ -78,7 +118,35 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     );
   }
 
-  if (stepDeletes && Array.isArray(stepDeletes) && stepDeletes.length > 0) {
+  // Bu istekte adımlar değişirken plan aynı anda tamamlanıyorsa koşulu
+  // mutasyondan ÖNCE hesapla. Aksi halde adımlar silinip/güncellenip daha
+  // sonra 400 dönülebilir ve kullanıcı hata görürken veri kısmen değişirdi.
+  if (status === "TAMAMLANDI" && existing.status !== "TAMAMLANDI") {
+    const currentSteps = await (prisma as any).treatmentStep.findMany({
+      where: { planId: params.id },
+      select: { id: true, status: true },
+    });
+    const projectedSteps = currentSteps
+      .filter((step: { id: string }) => !deleteIds.has(step.id))
+      .map((step: { id: string; status: string }) => {
+        const update = normalizedStepUpdates.find((candidate) => candidate.id === step.id);
+        return update ? { status: update.status as string } : { status: step.status };
+      });
+    if (projectedSteps.length === 0) {
+      return NextResponse.json(
+        { error: "Adımı olmayan bir tedavi planı \"Tamamlandı\" olarak işaretlenemez." },
+        { status: 400 }
+      );
+    }
+    if (projectedSteps.some((step: { status: string }) => !COMPLETED_STEP_STATUSES.has(step.status))) {
+      return NextResponse.json(
+        { error: "Bekleyen adımları olan bir tedavi planı \"Tamamlandı\" olarak işaretlenemez. Önce tüm adımları \"Yapıldı\" olarak işaretleyin." },
+        { status: 400 }
+      );
+    }
+  }
+
+  if (normalizedStepDeletes.length > 0) {
     // Payment modeli doğrudan bir tedavi planına bağlı değil (planId FK'sı
     // yok), bu yüzden adım silindiğinde toplam tutar (totalCost) hastanın bu
     // plan oluşturulduktan sonra bu doktora yaptığı tahsilatların altına
@@ -86,9 +154,9 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     // birden fazla plan olabilir) ama ödeme kaydıyla tedavi tutarının
     // sessizce tutarsızlaşmasına karşı en azından bir sinyal veriyor
     // (bkz. denetim raporu — tedavi planı tutarı ödeme defterinden kopuk).
-    if (!body.force) {
+    if (body.force !== true) {
       const deletedTotal = await (prisma as any).treatmentStep.aggregate({
-        where: { id: { in: stepDeletes }, planId: params.id },
+        where: { id: { in: normalizedStepDeletes as string[] }, planId: params.id },
         _sum: { amount: true },
       });
       const newTotalCost = Number(existing.totalCost || 0) - Number(deletedTotal._sum.amount || 0);
@@ -111,17 +179,17 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     }
 
     await (prisma as any).treatmentStep.deleteMany({
-      where: { id: { in: stepDeletes }, planId: params.id },
+      where: { id: { in: normalizedStepDeletes as string[] }, planId: params.id },
     });
   }
 
-  if (stepUpdates && Array.isArray(stepUpdates)) {
-    for (const su of stepUpdates) {
+  if (normalizedStepUpdates.length > 0) {
+    for (const su of normalizedStepUpdates) {
       await (prisma as any).treatmentStep.update({
-        where: { id: su.id, planId: params.id },
+        where: { id: su.id as string, planId: params.id },
         data: {
-          status: su.status,
-          doneAt: su.status === "YAPILDI" ? new Date() : null,
+          status: su.status as string,
+          doneAt: COMPLETED_STEP_STATUSES.has(su.status as string) ? new Date() : null,
         },
       });
     }
@@ -143,7 +211,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         { status: 400 }
       );
     }
-    if (remainingSteps.some((s: { status: string }) => s.status !== "YAPILDI")) {
+    if (remainingSteps.some((s: { status: string }) => !COMPLETED_STEP_STATUSES.has(s.status))) {
       return NextResponse.json(
         { error: "Bekleyen adımları olan bir tedavi planı \"Tamamlandı\" olarak işaretlenemez. Önce tüm adımları \"Yapıldı\" olarak işaretleyin." },
         { status: 400 }
@@ -151,7 +219,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     }
   }
 
-  const recomputedTotalCost = stepDeletes && Array.isArray(stepDeletes) && stepDeletes.length > 0
+  const recomputedTotalCost = normalizedStepDeletes.length > 0
     ? await (prisma as any).treatmentStep.aggregate({ where: { planId: params.id }, _sum: { amount: true } }).then((r: any) => Number(r._sum.amount ?? 0))
     : undefined;
 

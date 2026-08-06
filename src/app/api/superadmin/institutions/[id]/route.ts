@@ -122,6 +122,34 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
 
   const body = await request.json();
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
+  }
+  if (body.name !== undefined && (typeof body.name !== "string" || !body.name.trim() || body.name.trim().length > 160)) {
+    return NextResponse.json({ message: "Klinik adı 1-160 karakter olmalı" }, { status: 400 });
+  }
+  if (body.email !== undefined && body.email !== null && body.email !== "" && (typeof body.email !== "string" || !/^\S+@\S+\.\S+$/.test(body.email.trim()))) {
+    return NextResponse.json({ message: "Geçerli bir e-posta adresi girin" }, { status: 400 });
+  }
+  for (const field of ["isActive", "adsEnabled", "whatsappEnabled"] as const) {
+    if (body[field] !== undefined && typeof body[field] !== "boolean") {
+      return NextResponse.json({ message: `${field} alanı doğru/yanlış olmalı` }, { status: 400 });
+    }
+  }
+
+  const throttleMs = body.throttleMs !== undefined ? Number(body.throttleMs) : undefined;
+  if (throttleMs !== undefined && (!Number.isInteger(throttleMs) || throttleMs < 0 || throttleMs > 3000)) {
+    return NextResponse.json({ message: "İstek gecikmesi 0-3000 ms arasında tam sayı olmalı" }, { status: 400 });
+  }
+  const parseLimit = (value: unknown): number | null => value === null || value === "" ? null : Number(value);
+  const maxActiveUsers = body.maxActiveUsers !== undefined ? parseLimit(body.maxActiveUsers) : undefined;
+  const maxActiveDoctors = body.maxActiveDoctors !== undefined ? parseLimit(body.maxActiveDoctors) : undefined;
+  if (maxActiveUsers !== undefined && maxActiveUsers !== null && (!Number.isInteger(maxActiveUsers) || maxActiveUsers < 1 || maxActiveUsers > 100000)) {
+    return NextResponse.json({ message: "Aktif kullanıcı limiti 1-100000 arasında tam sayı olmalı" }, { status: 400 });
+  }
+  if (maxActiveDoctors !== undefined && maxActiveDoctors !== null && (!Number.isInteger(maxActiveDoctors) || maxActiveDoctors < 1 || maxActiveDoctors > 100000)) {
+    return NextResponse.json({ message: "Aktif doktor limiti 1-100000 arasında tam sayı olmalı" }, { status: 400 });
+  }
   const paymentGraceUntil = body.paymentGraceUntil ? new Date(body.paymentGraceUntil) : null;
   const suspendedUntil = body.suspendedUntil ? new Date(body.suspendedUntil) : null;
 
@@ -155,13 +183,30 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
   // doktor/kullanıcı limitlerine düş — süperadmin özel bir sayı girdiyse
   // (body.maxActiveDoctors/maxActiveUsers gönderildiyse) o değer her zaman kazanır.
   const planLimits = body.subscriptionPlan ? getPlanDefaultLimits(body.subscriptionPlan as SubscriptionPlanId) : null;
+  const nextMaxActiveUsers = maxActiveUsers !== undefined
+    ? maxActiveUsers
+    : planLimits ? planLimits.maxActiveUsers : existing.maxActiveUsers;
+  const nextMaxActiveDoctors = maxActiveDoctors !== undefined
+    ? maxActiveDoctors
+    : planLimits ? planLimits.maxActiveDoctors : existing.maxActiveDoctors;
+  const [activeUserCount, activeDoctorCount] = await Promise.all([
+    prisma.user.count({ where: { institutionId: params.id, isActive: true } }),
+    prisma.user.count({ where: { institutionId: params.id, isActive: true, role: "DOKTOR" } }),
+  ]);
+  if (nextMaxActiveUsers !== null && activeUserCount > nextMaxActiveUsers) {
+    return NextResponse.json({ message: `Klinikte ${activeUserCount} aktif kullanıcı var; limit bunun altına indirilemez.` }, { status: 409 });
+  }
+  if (nextMaxActiveDoctors !== null && activeDoctorCount > nextMaxActiveDoctors) {
+    return NextResponse.json({ message: `Klinikte ${activeDoctorCount} aktif doktor var; limit bunun altına indirilemez.` }, { status: 409 });
+  }
 
   let updated;
   try {
-    updated = await prisma.institution.update({
-    where: { id: params.id },
-    data: {
-      ...(body.name && { name: body.name }),
+    updated = await prisma.$transaction(async (tx) => {
+      const institution = await tx.institution.update({
+      where: { id: params.id },
+      data: {
+      ...(body.name !== undefined && { name: body.name.trim() }),
       ...(body.email && { email: body.email }),
       ...(body.phone !== undefined && { phone: body.phone }),
       ...(body.address !== undefined && { address: body.address }),
@@ -172,33 +217,33 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
       ...(body.isActive !== undefined && { isActive: body.isActive }),
       ...(body.serviceMode && { serviceMode: body.serviceMode }),
       ...(body.serviceNote !== undefined && { serviceNote: body.serviceNote || null }),
-      ...(body.throttleMs !== undefined && { throttleMs: Math.max(0, Math.min(Number(body.throttleMs) || 0, 3000)) }),
+      ...(throttleMs !== undefined && { throttleMs }),
       ...(body.maxActiveUsers !== undefined
-        ? { maxActiveUsers: body.maxActiveUsers ? Number(body.maxActiveUsers) : null }
+        ? { maxActiveUsers }
         : planLimits ? { maxActiveUsers: planLimits.maxActiveUsers } : {}),
       ...(body.maxActiveDoctors !== undefined
-        ? { maxActiveDoctors: body.maxActiveDoctors ? Number(body.maxActiveDoctors) : null }
+        ? { maxActiveDoctors }
         : planLimits ? { maxActiveDoctors: planLimits.maxActiveDoctors } : {}),
-      ...(body.adsEnabled !== undefined && { adsEnabled: Boolean(body.adsEnabled) }),
+      ...(body.adsEnabled !== undefined && { adsEnabled: body.adsEnabled }),
       ...(body.adIntensity !== undefined && { adIntensity: body.adIntensity }),
       ...(body.paymentGraceUntil !== undefined && { paymentGraceUntil }),
       ...(body.suspendedUntil !== undefined && { suspendedUntil }),
       // Yalnızca süperadmin açabilir/kapatabilir — klinik kendi ayarlarından
       // bu bayrağı hiç değiştiremez (bkz. src/lib/notification-dispatch.ts).
-      ...(body.whatsappEnabled !== undefined && { whatsappEnabled: Boolean(body.whatsappEnabled) }),
+      ...(body.whatsappEnabled !== undefined && { whatsappEnabled: body.whatsappEnabled }),
     },
+      });
+      if (body.name !== undefined) {
+        await tx.setting.updateMany({
+          where: { institutionId: params.id },
+          data: { institutionName: body.name.trim() },
+        });
+      }
+      return institution;
     });
   } catch (error) {
     console.error("[superadmin institutions PUT]", error);
     return NextResponse.json({ message: "Klinik güncellenemedi" }, { status: 400 });
-  }
-
-  // Ayarları da güncelle (klinik adı vs.)
-  if (body.name) {
-    await prisma.setting.updateMany({
-      where: { institutionId: params.id },
-      data: { institutionName: body.name },
-    });
   }
 
   // Askıya alma, plan değişikliği, servis modu gibi yüksek etkili işlemler

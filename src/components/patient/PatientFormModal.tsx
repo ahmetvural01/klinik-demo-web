@@ -2,9 +2,8 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, FileText, Info, ShieldAlert, UserRound, WalletCards } from "lucide-react";
-import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
+import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
-import { confirmDialog } from "@/lib/confirm-client";
 import { FormField, FormSection, FormErrorBanner, inputErrorClass } from "@/components/ui/FormField";
 import { PhoneCountrySelect } from "@/components/ui/PhoneCountrySelect";
 import { isValidTurkishIdentityNumber } from "@/lib/tc-kimlik";
@@ -194,20 +193,10 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
     });
   }
 
-  // Vazgeç butonu Modal'ın kendi ESC/X akışıyla aynı onay metnini kullanır
-  // (bkz. src/components/ui/Modal.tsx isDirty) — backdrop tıklaması bu
-  // fonksiyonu ÇAĞIRMAZ (orası sessizce reddedip dikkat animasyonu gösterir),
-  // burası yalnızca açık bir "İptal" niyeti için kullanılır.
-  async function cancelWithConfirm() {
+  // Vazgeç butonu doğrudan kapatır. Kirli formda yalnızca backdrop tıklaması
+  // modalı açık tutar ve kalıcı bir uyarı gösterir.
+  function cancelForm() {
     if (saving) return;
-    if (dirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE,
-      danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
-      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) {
-      return;
-    }
     onClose();
   }
 
@@ -285,7 +274,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
       size="xl"
       footer={(
         <>
-          <Button variant="secondary" onClick={() => void cancelWithConfirm()} disabled={saving}>Vazgeç</Button>
+          <Button variant="secondary" onClick={() => void cancelForm()} disabled={saving}>Vazgeç</Button>
           <Button variant="primary" loading={saving} onClick={save}>{isEdit ? "Güncelle" : "Kaydet ve Kartı Aç"}</Button>
         </>
       )}

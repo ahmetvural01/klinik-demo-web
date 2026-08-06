@@ -45,7 +45,7 @@ export function Badge({ tone = "neutral", solid = false, icon: Icon, size = "sm"
     <span
       title={title}
       className={[
-        "inline-flex items-center gap-1 rounded-full leading-none",
+        "ui-badge-premium inline-flex items-center gap-1 rounded-full leading-none",
         solid ? SOLID_CLASS[tone] : SUBTLE_CLASS[tone],
         SIZE_CLASS[size],
         className || "",

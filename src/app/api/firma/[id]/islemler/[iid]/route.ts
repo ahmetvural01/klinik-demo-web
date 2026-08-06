@@ -10,6 +10,9 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
     const body = await req.json();
+    if (body.status !== undefined && body.status !== "IPTAL") {
+      return NextResponse.json({ error: "Bu uç noktada yalnızca işlem iptali yapılabilir" }, { status: 400 });
+    }
     const existing = await (prisma as any).firmaIslem.findFirst({
       where: {
         id: params.iid,

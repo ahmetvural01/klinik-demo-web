@@ -11,7 +11,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
 
-  const requestKey = req.headers.get("Idempotency-Key")?.trim().slice(0, 180) || null;
+  const requestKey = req.headers.get("Idempotency-Key")?.trim() || null;
+  if (requestKey && (requestKey.length < 8 || requestKey.length > 180)) {
+    return NextResponse.json({ error: "İşlem anahtarı geçersiz" }, { status: 400 });
+  }
   const parsed = labInvoiceCreateSchema.safeParse(await req.json());
   if (!parsed.success) {
     return NextResponse.json(
@@ -63,6 +66,17 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   let invoice;
   try {
     invoice = await (prisma as any).$transaction(async (tx: any) => {
+      await tx.$queryRaw`SELECT "id" FROM "LabOrder" WHERE "id" = ${params.id} FOR UPDATE`;
+      const lockedOrder = await tx.labOrder.findUnique({
+        where: { id: params.id },
+        select: { notes: true, status: true },
+      });
+      if (!lockedOrder || lockedOrder.status === "IPTAL" || lockedOrder.status === "HASTAYA_TAKILDI") {
+        throw new Error("LAB_ORDER_NOT_INVOICEABLE");
+      }
+      if (/(^|\s|\[)RPT(\]|\s|$)/i.test(lockedOrder.notes || "")) {
+        throw new Error("LAB_ORDER_RPT");
+      }
       const createdInvoice = await tx.labOrderInvoice.create({
         data: {
           labOrderId: params.id,
@@ -75,15 +89,22 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         },
       });
 
-      const invoiceTotal = await tx.labOrderInvoice.aggregate({
-        where: { labOrderId: params.id },
-        _sum: { amount: true },
-      });
+      const [invoiceTotal, latestInvoice] = await Promise.all([
+        tx.labOrderInvoice.aggregate({
+          where: { labOrderId: params.id },
+          _sum: { amount: true },
+        }),
+        tx.labOrderInvoice.findFirst({
+          where: { labOrderId: params.id },
+          orderBy: [{ issuedAt: "desc" }, { createdAt: "desc" }],
+          select: { invoiceNo: true },
+        }),
+      ]);
       await tx.labOrder.update({
         where: { id: params.id },
         data: {
           price: Number(invoiceTotal._sum.amount || 0),
-          invoiceNo: invoiceNo || null,
+          invoiceNo: latestInvoice?.invoiceNo || null,
         },
       });
 
@@ -125,6 +146,12 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       return createdInvoice;
     });
   } catch (error) {
+    if (error instanceof Error && error.message === "LAB_ORDER_NOT_INVOICEABLE") {
+      return NextResponse.json({ error: "Sipariş artık fatura eklemeye uygun değil" }, { status: 409 });
+    }
+    if (error instanceof Error && error.message === "LAB_ORDER_RPT") {
+      return NextResponse.json({ error: "RPT işlerde laboratuvar ücreti/fatura eklenemez" }, { status: 409 });
+    }
     if (
       requestKey
       && error

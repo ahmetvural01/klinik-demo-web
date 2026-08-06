@@ -2,8 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { parsePagination } from "@/lib/pagination";
-import { turkeyTodayStartUtc } from "@/lib/tz";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { isValidDateKey, turkeyTodayStartUtc } from "@/lib/tz";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
+import { addInstallmentPeriod, INSTALLMENT_PERIODS } from "@/lib/installment-schedule";
 
 const AGING4_KEYS = ["current", "d0_30", "d31_60", "d60p"] as const;
 
@@ -58,6 +60,9 @@ export const GET = withApiTiming("taksit-plani", async function GET(req: NextReq
 
     const planStatuses = new Set(["AKTIF", "DEVAM_EDIYOR", "TAMAMLANDI", "IPTAL"]);
     const taksitStatuses = new Set(["BEKLIYOR", "ODENDI", "GECIKTI", "IPTAL"]);
+    if (status && status !== "HEPSI" && !planStatuses.has(status) && !taksitStatuses.has(status)) {
+      return NextResponse.json({ error: "Geçersiz taksit durumu" }, { status: 400 });
+    }
 
     const todayStart = turkeyTodayStartUtc();
     const todayEnd = new Date(todayStart.getTime() + 24 * 60 * 60 * 1000 - 1);
@@ -139,7 +144,7 @@ export const GET = withApiTiming("taksit-plani", async function GET(req: NextReq
       }),
     ]);
 
-    const hidePhone = shouldHidePatientPhone(user.role);
+    const hidePhone = await shouldHidePatientPhoneForRole(user.role);
     const withLiveTaksitStatus = (p: any) => ({
       ...p,
       taksitler: (p.taksitler || []).map((t: any) =>
@@ -180,19 +185,34 @@ export async function POST(req: NextRequest) {
     const auth = await requireAuth("installments:write");
     if (auth.error) return auth.error;
     const user = auth.user;
-    if (user.role !== "SUPERADMIN" && !user.institutionId) {
+    if (!user.institutionId) {
       return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
     }
 
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Geçersiz istek gövdesi" }, { status: 400 });
+    }
     const {
       patientId, doctorId, baslik, toplamBorc, pesnat = 0,
       taksitSayisi, period = "AYLIK", startDate, notes,
       taksitler: customTaksitler
     } = body;
 
-    if (!patientId || !doctorId || !toplamBorc) {
+    if (typeof patientId !== "string" || !patientId || typeof doctorId !== "string" || !doctorId || !toplamBorc) {
       return NextResponse.json({ error: "Gerekli alanlar eksik" }, { status: 400 });
+    }
+    if (baslik !== undefined && baslik !== null && (typeof baslik !== "string" || baslik.trim().length > 180)) {
+      return NextResponse.json({ error: "Plan başlığı en fazla 180 karakter olabilir" }, { status: 400 });
+    }
+    if (notes !== undefined && notes !== null && (typeof notes !== "string" || notes.trim().length > 2_000)) {
+      return NextResponse.json({ error: "Plan notu en fazla 2000 karakter olabilir" }, { status: 400 });
+    }
+    if (typeof period !== "string" || !INSTALLMENT_PERIODS.has(period)) {
+      return NextResponse.json({ error: "Geçersiz taksit dönemi" }, { status: 400 });
+    }
+    if (customTaksitler !== undefined && !Array.isArray(customTaksitler)) {
+      return NextResponse.json({ error: "Özel taksit listesi geçersiz" }, { status: 400 });
     }
     if (!customTaksitler?.length && (!taksitSayisi || !startDate)) {
       return NextResponse.json({ error: "Gerekli alanlar eksik" }, { status: 400 });
@@ -202,61 +222,69 @@ export async function POST(req: NextRequest) {
     // açmasın diye burada da (istemcinin yanı sıra) doğrulanıyor.
     const toplamBorcNum = Number(toplamBorc);
     const pesnatNum = Number(pesnat) || 0;
-    if (!Number.isFinite(toplamBorcNum) || toplamBorcNum <= 0) {
+    if (!Number.isFinite(toplamBorcNum) || toplamBorcNum <= 0 || toplamBorcNum > 99_999_999.99) {
       return NextResponse.json({ error: "Toplam borç pozitif bir sayı olmalıdır" }, { status: 400 });
     }
     if (!Number.isFinite(pesnatNum) || pesnatNum < 0) {
       return NextResponse.json({ error: "Peşinat negatif olamaz" }, { status: 400 });
     }
-    if (pesnatNum > toplamBorcNum) {
-      return NextResponse.json({ error: "Peşinat toplam borçtan büyük olamaz" }, { status: 400 });
+    if (pesnatNum >= toplamBorcNum) {
+      return NextResponse.json({ error: "Peşinat toplam borçtan küçük olmalıdır" }, { status: 400 });
     }
     if (!customTaksitler?.length) {
       const taksitSayisiNum = Number(taksitSayisi);
-      if (!Number.isInteger(taksitSayisiNum) || taksitSayisiNum < 1) {
-        return NextResponse.json({ error: "Taksit sayısı en az 1 olmalıdır" }, { status: 400 });
+      if (!Number.isInteger(taksitSayisiNum) || taksitSayisiNum < 1 || taksitSayisiNum > 100) {
+        return NextResponse.json({ error: "Taksit sayısı 1-100 arasında olmalıdır" }, { status: 400 });
+      }
+      if (typeof startDate !== "string" || !isValidDateKey(startDate)) {
+        return NextResponse.json({ error: "Geçerli bir başlangıç tarihi girilmelidir" }, { status: 400 });
       }
     }
 
-    if (user.role !== "SUPERADMIN") {
-      const [patient, doctor] = await Promise.all([
-        (prisma as any).patient.findFirst({
-          where: { id: patientId, institutionId: user.institutionId, archivedAt: null },
-          select: { id: true },
-        }),
-        (prisma as any).user.findFirst({
-          where: { id: doctorId, institutionId: user.institutionId, isActive: true },
-          select: { id: true },
-        }),
-      ]);
-      if (!patient) return NextResponse.json({ error: "Hasta bulunamadı" }, { status: 404 });
-      if (!doctor) return NextResponse.json({ error: "Doktor bulunamadı" }, { status: 404 });
+    if (Array.isArray(customTaksitler) && customTaksitler.length > 100) {
+      return NextResponse.json({ error: "En fazla 100 taksit oluşturulabilir" }, { status: 400 });
     }
+
+    const [patient, doctor] = await Promise.all([
+      (prisma as any).patient.findFirst({
+        where: { id: patientId, institutionId: user.institutionId, archivedAt: null },
+        select: { id: true },
+      }),
+      (prisma as any).user.findFirst({
+        where: { id: doctorId, ...effectiveDoctorWhere(user.institutionId) },
+        select: { id: true },
+      }),
+    ]);
+    if (!patient) return NextResponse.json({ error: "Hasta bulunamadı" }, { status: 404 });
+    if (!doctor) return NextResponse.json({ error: "Doktor bulunamadı" }, { status: 404 });
 
     const kalan = Number(toplamBorc) - Number(pesnat);
 
     let taksitlerCreate: { siraNo: number; vadeDate: Date; tutar: number; odenen: number; kalan: number; status: string }[];
 
     if (Array.isArray(customTaksitler) && customTaksitler.length > 0) {
-      taksitlerCreate = customTaksitler.map((t: { date: string; amount: number }, i: number) => ({
-        siraNo: i + 1,
-        vadeDate: new Date(t.date),
-        tutar: Number(Number(t.amount).toFixed(2)),
-        odenen: 0,
-        kalan: Number(Number(t.amount).toFixed(2)),
-        status: "BEKLIYOR"
-      }));
+      const invalidCustom = customTaksitler.some((t: unknown) => {
+        if (!t || typeof t !== "object") return true;
+        const row = t as { date?: unknown; amount?: unknown };
+        const amount = Number(row.amount);
+        return typeof row.date !== "string" || !isValidDateKey(row.date) || !Number.isFinite(amount) || amount <= 0 || amount > 99_999_999.99;
+      });
+      if (invalidCustom) {
+        return NextResponse.json({ error: "Özel taksitlerin tarih ve tutarları geçersiz" }, { status: 400 });
+      }
+      taksitlerCreate = customTaksitler.map((t: { date: string; amount: number }, i: number) => {
+        const amount = Number(Number(t.amount).toFixed(2));
+        return { siraNo: i + 1, vadeDate: new Date(t.date), tutar: amount, odenen: 0, kalan: amount, status: "BEKLIYOR" };
+      });
+      const datesAreOrdered = taksitlerCreate.every((item, index) => index === 0 || item.vadeDate >= taksitlerCreate[index - 1].vadeDate);
+      if (!datesAreOrdered) {
+        return NextResponse.json({ error: "Taksit vadeleri kronolojik sırada olmalıdır" }, { status: 400 });
+      }
     } else {
       const taksitTutar = Math.round((kalan / Number(taksitSayisi)) * 100) / 100;
-      const periodDays: Record<string, number> = {
-        HAFTALIK: 7, IKIHALFTALIK: 14, AYLIK: 30,
-        IKIAYLIK: 60, UCAYLIK: 90, ALTIAYLIK: 180, YILLIK: 365
-      };
-      const days = periodDays[period] ?? 30;
-      const start = new Date(startDate);
+      const start = new Date(`${startDate}T00:00:00.000Z`);
       taksitlerCreate = Array.from({ length: Number(taksitSayisi) }, (_, i) => {
-        const vadeDate = new Date(start);
-        vadeDate.setDate(vadeDate.getDate() + days * (i + 1));
+        const vadeDate = addInstallmentPeriod(start, period, i);
         const isLast = i === Number(taksitSayisi) - 1;
         const tutar = isLast
           ? Math.round((kalan - taksitTutar * (Number(taksitSayisi) - 1)) * 100) / 100
@@ -276,8 +304,14 @@ export async function POST(req: NextRequest) {
     // toplamı her zaman "kalan" ile birebir eşitlensin — aksi halde hasta hesabında asla
     // kapanmayan bir kuruş bakiyesi oluşur.
     if (taksitlerCreate.length > 0) {
+      if (taksitlerCreate.some((item) => item.tutar < 0.01)) {
+        return NextResponse.json({ error: "Her taksit en az 0,01 TL olmalıdır; taksit sayısını azaltın" }, { status: 400 });
+      }
       const sum = Math.round(taksitlerCreate.reduce((acc, t) => acc + t.tutar, 0) * 100) / 100;
       const diff = Math.round((kalan - sum) * 100) / 100;
+      if (Array.isArray(customTaksitler) && customTaksitler.length > 0 && Math.abs(diff) > 0.01) {
+        return NextResponse.json({ error: "Özel taksitlerin toplamı peşinat sonrası kalan borca eşit olmalıdır" }, { status: 400 });
+      }
       if (diff !== 0) {
         const last = taksitlerCreate[taksitlerCreate.length - 1];
         last.tutar = Math.round((last.tutar + diff) * 100) / 100;
@@ -288,15 +322,17 @@ export async function POST(req: NextRequest) {
     const effectiveTaksitSayisi = Array.isArray(customTaksitler) && customTaksitler.length > 0
       ? customTaksitler.length
       : Number(taksitSayisi);
-    const effectiveStartDate = taksitlerCreate[0]?.vadeDate ?? new Date(startDate);
+    const effectiveStartDate = Array.isArray(customTaksitler) && customTaksitler.length > 0
+      ? taksitlerCreate[0].vadeDate
+      : new Date(`${startDate}T00:00:00.000Z`);
 
     const plan = await (prisma as any).taksitPlan.create({
       data: {
-        patientId, doctorId, baslik: baslik || null,
+        patientId, doctorId, baslik: baslik?.trim() || null,
         toplamBorc: Number(toplamBorc),
         pesnat: Number(pesnat),
         taksitSayisi: effectiveTaksitSayisi,
-        period: period || "AYLIK", startDate: effectiveStartDate, notes: notes || null,
+        period, startDate: effectiveStartDate, notes: notes?.trim() || null,
         status: "AKTIF",
         taksitler: { create: taksitlerCreate }
       },

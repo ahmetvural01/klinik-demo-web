@@ -36,6 +36,14 @@ export async function GET(request: NextRequest) {
   const status = (request.nextUrl.searchParams.get("status") || "").toUpperCase();
   const phone = (request.nextUrl.searchParams.get("phone") || "").trim();
   const mode = request.nextUrl.searchParams.get("mode") || "messages";
+  const validDirections = new Set(["", "ALL", "INBOUND", "OUTBOUND"]);
+  const validStatuses = new Set(["", "ALL", "PENDING", "SENT", "DELIVERED", "READ", "FAILED", "RECEIVED"]);
+  if (!validDirections.has(direction) || !validStatuses.has(status)) {
+    return NextResponse.json({ message: "Geçersiz mesaj filtresi." }, { status: 400 });
+  }
+  if (!["messages", "conversations"].includes(mode)) {
+    return NextResponse.json({ message: "Geçersiz görünüm modu." }, { status: 400 });
+  }
 
   if (mode === "conversations") {
     const where = {
@@ -159,9 +167,13 @@ export async function PATCH(request: NextRequest) {
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 400 });
   }
-  const body = await request.json().catch(() => ({})) as { phone?: string };
+  const body = await request.json().catch(() => null) as { phone?: unknown } | null;
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek gövdesi." }, { status: 400 });
+  }
   const phone = String(body.phone || "").trim();
   if (!phone) return NextResponse.json({ message: "Konuşma telefonu zorunludur." }, { status: 400 });
+  if (phone.length > 30) return NextResponse.json({ message: "Telefon bilgisi geçersiz." }, { status: 400 });
 
   const result = await prisma.whatsappMessage.updateMany({
     where: {
@@ -182,15 +194,22 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 400 });
   }
 
-  const body = await request.json() as { patientId?: string; message?: string; templateName?: string; templateLanguage?: string };
+  const body = await request.json().catch(() => null) as { patientId?: unknown; message?: unknown; templateName?: unknown; templateLanguage?: unknown } | null;
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek gövdesi." }, { status: 400 });
+  }
   const content = String(body.message || "").trim();
   const templateName = String(body.templateName || "").trim();
   const templateLanguage = String(body.templateLanguage || "tr").trim() || "tr";
-  if (!body.patientId || (!content && !templateName)) {
+  const patientId = String(body.patientId || "").trim();
+  if (!patientId || (!content && !templateName)) {
     return NextResponse.json({ message: "Hasta ve mesaj zorunludur." }, { status: 400 });
   }
   if (content.length > 4096) {
     return NextResponse.json({ message: "Mesaj 4096 karakterden uzun olamaz." }, { status: 400 });
+  }
+  if (templateName.length > 180 || templateLanguage.length > 20) {
+    return NextResponse.json({ message: "WhatsApp şablon bilgisi geçersiz." }, { status: 400 });
   }
 
   // Canlı sohbet yanıtı dispatchPatientMessage'ın olay/şablon mimarisine
@@ -207,7 +226,7 @@ export async function POST(request: NextRequest) {
 
   const patient = await prisma.patient.findFirst({
     where: {
-      id: body.patientId,
+      id: patientId,
       institutionId: auth.user.institutionId,
       archivedAt: null,
     },

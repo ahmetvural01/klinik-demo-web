@@ -3,7 +3,7 @@ import { CUSTOM_DENTAL_TREATMENT_TEMPLATES, TDB_2026_CORE_PRICE_CATALOG } from "
 
 const prisma = new PrismaClient();
 
-async function syncStandardPrices(institutionId: string | null) {
+async function syncStandardPrices(institutionId: string) {
   for (const item of TDB_2026_CORE_PRICE_CATALOG) {
     const existing = await prisma.priceItem.findFirst({
       where: { institutionId, code: item.code, treatment: item.treatment },
@@ -21,7 +21,7 @@ async function syncStandardPrices(institutionId: string | null) {
   }
 }
 
-async function syncCustomPrices(institutionId: string | null) {
+async function syncCustomPrices(institutionId: string) {
   const desiredByCode = new Map(CUSTOM_DENTAL_TREATMENT_TEMPLATES.map((item) => [item.code, item]));
   const existing = await prisma.priceItem.findMany({
     where: { institutionId, isCustom: true, code: { startsWith: "OZL-" } }
@@ -54,10 +54,14 @@ async function syncCustomPrices(institutionId: string | null) {
 }
 
 async function main() {
+  // Her PriceItem gerçek bir kuruma ait olmak zorunda (bkz. denetim raporu —
+  // önceden institutionId=null olan "paylaşılan katalog" satırları hiçbir
+  // klinik sorgusunda eşleşmiyor, sessizce sahipsiz/erişilemez kalıyordu).
+  // Kurum yoksa senkronize edilecek bir şey de yok.
   const institutions = await prisma.institution.findMany({ select: { id: true } });
-  const institutionIds = institutions.length > 0 ? institutions.map((item) => item.id) : [null];
 
-  for (const institutionId of institutionIds) {
+  for (const institution of institutions) {
+    const institutionId = institution.id;
     await syncStandardPrices(institutionId);
     await syncCustomPrices(institutionId);
   }

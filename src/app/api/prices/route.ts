@@ -106,14 +106,26 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireAuth("prices:write");
     if (auth.error) return auth.error;
+    if (!auth.user.institutionId) {
+      return NextResponse.json({ message: "Fiyat kaydı için kurum bağlamı zorunlu" }, { status: 403 });
+    }
 
     const body = await request.json();
-    const institutionId = auth.user.institutionId || null;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
+    }
+    const institutionId = auth.user.institutionId;
     const code = String(body.code || "").trim();
     const treatment = String(body.treatment || "").trim();
     const amount = Number(body.amount);
-    if (!code || !treatment || !Number.isFinite(amount) || amount < 0) {
+    if (!code || code.length > 50 || !treatment || treatment.length > 200 || !Number.isFinite(amount) || amount < 0 || amount > 99_999_999.99) {
       return NextResponse.json({ message: "Geçerli kod, tedavi ve tutar zorunlu" }, { status: 400 });
+    }
+    if (body.isFavorite !== undefined && typeof body.isFavorite !== "boolean") {
+      return NextResponse.json({ message: "Favori bilgisi geçersiz" }, { status: 400 });
+    }
+    if (body.isCustom !== undefined && typeof body.isCustom !== "boolean") {
+      return NextResponse.json({ message: "Fiyat türü bilgisi geçersiz" }, { status: 400 });
     }
 
     const existing = await prisma.priceItem.findFirst({
@@ -125,8 +137,8 @@ export async function POST(request: NextRequest) {
           where: { id: existing.id },
           data: {
             amount,
-            isFavorite: body.isFavorite !== undefined ? Boolean(body.isFavorite) : existing.isFavorite,
-            isCustom: body.isCustom !== undefined ? Boolean(body.isCustom) : existing.isCustom,
+            isFavorite: body.isFavorite ?? existing.isFavorite,
+            isCustom: body.isCustom ?? existing.isCustom,
           },
         })
       : await prisma.priceItem.create({
@@ -135,8 +147,8 @@ export async function POST(request: NextRequest) {
             code,
             treatment,
             amount,
-            isFavorite: Boolean(body.isFavorite),
-            isCustom: body.isCustom !== undefined ? Boolean(body.isCustom) : true
+            isFavorite: body.isFavorite ?? false,
+            isCustom: body.isCustom ?? true
           }
         });
 

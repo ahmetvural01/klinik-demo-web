@@ -12,7 +12,10 @@ export async function PATCH(
   const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
 
-  const body = await req.json();
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Geçersiz istek gövdesi" }, { status: 400 });
+  }
 
   const existing = await (prisma as any).labTrip.findFirst({
     where: {
@@ -30,6 +33,7 @@ export async function PATCH(
       labOrder: {
         select: {
           id: true,
+          status: true,
           patientId: true,
           doctorId: true,
           labName: true,
@@ -43,14 +47,42 @@ export async function PATCH(
   if (!existing) {
     return NextResponse.json({ error: "Adım bulunamadı" }, { status: 404 });
   }
+  if (existing.labOrder?.status === "IPTAL") {
+    return NextResponse.json({ error: "İptal edilmiş siparişin laboratuvar adımı düzenlenemez" }, { status: 400 });
+  }
 
   const data: Record<string, any> = {};
 
-  if ("description" in body) data.description = body.description;
-  if ("sentAt" in body) data.sentAt = body.sentAt ? new Date(body.sentAt) : new Date();
-  if ("sentNote" in body) data.sentNote = body.sentNote || null;
-  if ("receivedAt" in body) data.receivedAt = body.receivedAt ? new Date(body.receivedAt) : null;
-  if ("receivedNote" in body) data.receivedNote = body.receivedNote || null;
+  if ("description" in body) {
+    if (typeof body.description !== "string" || !body.description.trim() || body.description.length > 180) {
+      return NextResponse.json({ error: "Adım açıklaması geçersiz" }, { status: 400 });
+    }
+    data.description = body.description.trim();
+  }
+  if ("sentAt" in body) {
+    if (body.sentAt && (typeof body.sentAt !== "string" || Number.isNaN(new Date(body.sentAt).getTime()))) {
+      return NextResponse.json({ error: "Gönderim tarihi geçersiz" }, { status: 400 });
+    }
+    data.sentAt = body.sentAt ? new Date(body.sentAt) : new Date();
+  }
+  if ("sentNote" in body) {
+    if (body.sentNote !== null && body.sentNote !== undefined && (typeof body.sentNote !== "string" || body.sentNote.length > 1000)) {
+      return NextResponse.json({ error: "Gönderim notu geçersiz" }, { status: 400 });
+    }
+    data.sentNote = body.sentNote || null;
+  }
+  if ("receivedAt" in body) {
+    if (body.receivedAt && (typeof body.receivedAt !== "string" || Number.isNaN(new Date(body.receivedAt).getTime()))) {
+      return NextResponse.json({ error: "Teslim tarihi geçersiz" }, { status: 400 });
+    }
+    data.receivedAt = body.receivedAt ? new Date(body.receivedAt) : null;
+  }
+  if ("receivedNote" in body) {
+    if (body.receivedNote !== null && body.receivedNote !== undefined && (typeof body.receivedNote !== "string" || body.receivedNote.length > 1000)) {
+      return NextResponse.json({ error: "Teslim notu geçersiz" }, { status: 400 });
+    }
+    data.receivedNote = body.receivedNote || null;
+  }
 
   // Backward compatibility: legacy receive action sends only receivedAt/receivedNote.
   if (!Object.keys(data).length) {

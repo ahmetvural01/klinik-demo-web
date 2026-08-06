@@ -8,8 +8,7 @@ import { useSlashFocus } from "@/lib/use-slash-focus";
 import { showToastSafe } from "@/lib/toast-client";
 import { Button } from "@/components/ui/Button";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
-import { confirmDialog } from "@/lib/confirm-client";
+import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { FormField, inputErrorClass } from "@/components/ui/FormField";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
@@ -190,12 +189,12 @@ export default function FirmaPage() {
     firmaForm.name.trim() || firmaForm.phone.trim() || firmaForm.iban.trim() || firmaForm.ibanName.trim() || firmaForm.notes.trim()
   );
 
-  async function requestCloseAddFirma() {
-    if (firmaFormDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE, danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) return;
+  function requestCloseAddFirma() {
     setShowAddFirma(false);
+    setFirmaForm({
+      name: "", phone: "", iban: "", ibanName: "", notes: "",
+      kategori: "TEDARICI", paymentTerms: "NET_30",
+    });
   }
 
   const handleAddFirma = async () => {
@@ -314,7 +313,7 @@ export default function FirmaPage() {
       <Modal
         module="firma"
         open={showAddFirma}
-        onClose={() => setShowAddFirma(false)}
+        onClose={() => void requestCloseAddFirma()}
         isDirty={firmaFormDirty}
         title="Yeni Firma Ekle"
         footer={

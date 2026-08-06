@@ -60,8 +60,18 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ message: "Kurum bağlantısı bulunamadı" }, { status: 403 });
     }
 
-    const body = await request.json().catch(() => ({}));
-    const types = normalizeTypes((body as { types?: unknown }).types);
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body) || !Array.isArray((body as { types?: unknown }).types)) {
+      return NextResponse.json({ message: "Takip tipleri bir liste olarak gönderilmelidir" }, { status: 400 });
+    }
+    const rawTypes = (body as { types: unknown[] }).types;
+    if (rawTypes.length > MAX_TYPES) {
+      return NextResponse.json({ message: `En fazla ${MAX_TYPES} takip tipi tanımlanabilir` }, { status: 400 });
+    }
+    if (rawTypes.some((value) => typeof value !== "string" || value.trim().length > MAX_TYPE_LENGTH)) {
+      return NextResponse.json({ message: `Takip tipi adları en fazla ${MAX_TYPE_LENGTH} karakter olmalıdır` }, { status: 400 });
+    }
+    const types = normalizeTypes(rawTypes);
 
     const institution = await prisma.institution.findUnique({
       where: { id: auth.user.institutionId },

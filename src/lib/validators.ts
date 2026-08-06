@@ -45,7 +45,10 @@ export function formatZodError(error: z.ZodError) {
 export const loginSchema = z.object({
   institution: z.string().trim().min(2),
   identityNo: z.string().trim().min(5),
-  password: z.string().min(6)
+  password: z.string().min(6),
+  // "Oturumu açık tut" işaretliyse oturum 24 saat, işaretli değilse 3 saat
+  // sonra sona erer (bkz. src/lib/auth.ts signToken/setAuthCookie).
+  rememberMe: z.boolean().optional(),
 });
 
 // Yabancı uyruklu hastalarda TC kimlik no zorunlu değildir; telefon da
@@ -100,6 +103,17 @@ export const patientSchema = z.object({
   phone: normalizeLocalPhone(data.phone, data.phoneCountryCode),
 }));
 
+export const APPOINTMENT_STATUS_VALUES = [
+  "BEKLIYOR",
+  "GELDI",
+  "TAMAMLANDI",
+  "GELMEDI",
+  "IPTAL",
+  // Eski istemcilerde kullanılan değer; yeni ekranlar ham durum olarak
+  // BEKLIYOR/GELDI değerlerini gönderir.
+  "ONAYLANDI",
+] as const;
+
 export const appointmentSchema = z.object({
   patientId: z.string().min(1),
   doctorId: z.string().min(1),
@@ -109,7 +123,7 @@ export const appointmentSchema = z.object({
   colorCode: z.string().default("#2a9d8f"),
   note: z.string().optional(),
   type: z.enum(["STANDART", "KONTROL", "ACIL"]).default("STANDART"),
-  status: z.string().default("BEKLIYOR"),
+  status: z.enum(APPOINTMENT_STATUS_VALUES).default("BEKLIYOR"),
   smsInfo: z.boolean().default(true),
   smsReminder: z.boolean().default(false),
   smsSurvey: z.boolean().default(false)
@@ -123,14 +137,14 @@ export const prescriptionSchema = z.object({
 });
 
 export const examinationSchema = z.object({
-  patientId: z.string().min(1),
-  doctorId: z.string().min(1),
-  treatmentName: z.string().min(2),
-  toothNo: z.string().optional(),
-  amount: z.number().min(0),
-  status: z.string().min(1),
+  patientId: z.string().trim().min(1).max(80),
+  doctorId: z.string().trim().min(1).max(80),
+  treatmentName: z.string().trim().min(2).max(180),
+  toothNo: z.string().trim().max(120).optional(),
+  amount: z.coerce.number().finite().min(0).max(99_999_999.99),
+  status: z.enum(["PLANLANDI", "DEVAM", "TAMAMLANDI", "IPTAL"]),
   diagnosedAt: z.string().datetime(),
-  note: z.string().optional()
+  note: z.string().trim().max(3000).optional()
 });
 
 export const paymentSchema = z.object({
@@ -138,7 +152,7 @@ export const paymentSchema = z.object({
   doctorId: optionalTrimmed(80),
   posId: optionalTrimmed(80),
   method: z.enum(["NAKIT", "KREDI_KARTI", "HAVALE_EFT", "MAIL_ORDER", "DIGER"]).default("NAKIT"),
-  amount: z.coerce.number().finite().positive("Tutar 0'dan büyük olmalı"),
+  amount: z.coerce.number().finite().positive("Tutar 0'dan büyük olmalı").max(99_999_999.99, "Tutar izin verilen sınırı aşıyor"),
   description: optionalTrimmed(500),
   createdAt: optionalNullableDateString,
 }).refine((data) => Boolean(data.patientId || data.doctorId), {
@@ -349,7 +363,7 @@ export const clinicTaskCreateSchema = z.object({
   dueAt: z.string().datetime().optional(),
   remindAt: z.string().datetime().optional(),
   assignedToId: z.string().optional(),
-  assignedToIds: z.array(z.string()).max(20).optional(),
+  assignedToIds: z.array(z.string()).max(200).optional(),
 });
 
 export const publicBookingSendCodeSchema = z.object({
@@ -378,6 +392,6 @@ export const clinicTaskUpdateSchema = z.object({
   dueAt: z.string().datetime().nullable().optional(),
   remindAt: z.string().datetime().nullable().optional(),
   assignedToId: z.string().nullable().optional(),
-  assignedToIds: z.array(z.string()).max(20).optional(),
+  assignedToIds: z.array(z.string()).max(200).optional(),
   completedAt: z.string().datetime().nullable().optional(),
 });

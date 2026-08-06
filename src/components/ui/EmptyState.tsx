@@ -28,13 +28,13 @@ export function EmptyState({
   compact = false,
 }: EmptyStateProps) {
   return (
-    <div className={`flex flex-col items-center justify-center px-5 text-center ${compact ? "py-8" : "py-12"}`}>
+    <div className={`ui-empty-state flex flex-col items-center justify-center px-5 text-center ${compact ? "py-8" : "py-12"}`}>
       {illustrative ? (
         <Icon className="ui-empty-illustration mb-3" />
       ) : (
         <IconFrame icon={Icon} size="lg" accent={accent} className={accent ? "mb-3" : "mb-3 text-slate-400"} />
       )}
-      <p className="text-sm font-semibold text-slate-800">{title}</p>
+      <p className="text-sm font-extrabold text-slate-800">{title}</p>
       {description && <p className="mt-1 max-w-sm text-xs leading-5 text-slate-500">{description}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>

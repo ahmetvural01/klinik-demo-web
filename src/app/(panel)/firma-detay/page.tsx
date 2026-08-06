@@ -7,8 +7,9 @@ import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { ProfessionalDataTable } from "@/components/ui/ProfessionalDataTable";
 import { Button } from "@/components/ui/Button";
-import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
+import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
 import { FormField } from "@/components/ui/FormField";
 import {
   usePurchaseModals, fmt, fmtDate, formInput,
@@ -173,12 +174,9 @@ function FirmaDetayContent() {
     setShowEditFirma(true);
   };
   const editFirmaDirty = showEditFirma && JSON.stringify(editForm) !== editFirmaSnapshotRef.current;
-  const requestCloseEditFirma = async () => {
-    if (editFirmaDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE, danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) return;
+  const requestCloseEditFirma = () => {
     setShowEditFirma(false);
+    setEditForm({ name: "", phone: "", iban: "", ibanName: "", notes: "", kategori: "TEDARICI", paymentTerms: "NET_30" });
   };
   const handleEditFirma = async () => {
     if (!firma) return;
@@ -231,12 +229,9 @@ function FirmaDetayContent() {
   const kontaktFormDirty = Boolean(
     kontaktForm.ad.trim() || kontaktForm.unvan.trim() || kontaktForm.email.trim() || kontaktForm.telefon.trim() || kontaktForm.rol.trim() || kontaktForm.isPrimary
   );
-  const requestCloseAddKontakt = async () => {
-    if (kontaktFormDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE, danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) return;
+  const requestCloseAddKontakt = () => {
     setShowAddKontakt(false);
+    setKontaktForm({ ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false });
   };
   const handleAddKontakt = async () => {
     if (!firma || !kontaktForm.ad.trim()) { showToast("error", "Kontakt adı zorunlu"); return; }
@@ -274,12 +269,9 @@ function FirmaDetayContent() {
     editKontaktSnapshotRef.current = JSON.stringify(next);
   };
   const editKontaktDirty = Boolean(editingKontakt) && JSON.stringify(editKontaktForm) !== editKontaktSnapshotRef.current;
-  const requestCloseEditKontakt = async () => {
-    if (editKontaktDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE, danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) return;
+  const requestCloseEditKontakt = () => {
     setEditingKontakt(null);
+    setEditKontaktForm({ ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false });
   };
 
   const handleSaveKontakt = async () => {
@@ -383,6 +375,8 @@ function FirmaDetayContent() {
       {/* Header */}
       <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 flex-1 items-start gap-3">
+          <ModuleIcon module="firma" size="lg" />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-lg font-black text-slate-900">{firma.name}</h1>
@@ -398,6 +392,7 @@ function FirmaDetayContent() {
               {firma.iban && <span>IBAN: {firma.iban}{firma.ibanName ? ` (${firma.ibanName})` : ""}</span>}
             </div>
             {firma.notes && <p className="mt-2 text-sm italic text-slate-500">{firma.notes}</p>}
+          </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" href="/firma">Tedarikçi Listesi</Button>
@@ -579,7 +574,7 @@ function FirmaDetayContent() {
       <Modal
         module="firma"
         open={showEditFirma}
-        onClose={() => setShowEditFirma(false)}
+        onClose={() => void requestCloseEditFirma()}
         isDirty={editFirmaDirty}
         title="Firma Bilgilerini Düzenle"
         footer={
@@ -614,7 +609,7 @@ function FirmaDetayContent() {
       <Modal
         module="firma"
         open={showAddKontakt}
-        onClose={() => setShowAddKontakt(false)}
+        onClose={() => void requestCloseAddKontakt()}
         isDirty={kontaktFormDirty}
         title="Kontakt Ekle"
         footer={
@@ -650,7 +645,7 @@ function FirmaDetayContent() {
       <Modal
         module="firma"
         open={Boolean(editingKontakt)}
-        onClose={() => setEditingKontakt(null)}
+        onClose={() => void requestCloseEditKontakt()}
         isDirty={editKontaktDirty}
         title="Kontaktı Düzenle"
         footer={

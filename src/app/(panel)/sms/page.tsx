@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { CountUp } from "@/components/ui/CountUp";
-import { ModuleIcon } from "@/components/ui/ModuleIcon";
 import { CheckCircle2, XCircle, TriangleAlert, CircleDashed } from "lucide-react";
 import type { BadgeTone } from "@/components/ui/Badge";
 
@@ -19,6 +18,8 @@ const SmsEmptyIcon = createSceneIllustration("sms");
 import { showToastSafe } from "@/lib/toast-client";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatsCard } from "@/components/ui/Premium";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { FormField } from "@/components/ui/FormField";
 import { getAuditActionLabel } from "@/lib/audit-labels";
@@ -307,36 +308,23 @@ function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
 
   return (
     <section className="space-y-4">
-      <div className="ui-surface p-4 sm:p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <ModuleIcon module="sms" size="lg" />
-            <div>
-              <h1 className="font-display text-xl font-black tracking-tight text-slate-900">SMS Kayıtları</h1>
-              <p className="text-xs font-medium text-slate-500">Gönderilen SMS hareketleri ve başarısız denemeler.</p>
-            </div>
-          </div>
+      <PageHeader
+        icon="sms"
+        title="SMS Kayıtları"
+        description="Gönderim hareketlerini, izin durumlarını ve başarısız denemeleri tek yerden izleyin."
+        actions={(
           <button onClick={onGoToSettings} title="Ayarlar sekmesine git" className="transition hover:opacity-80">
             <Badge tone={settings.smsEnabled ? "success" : "critical"} icon={settings.smsEnabled ? CheckCircle2 : XCircle} size="md">
               {settings.smsEnabled ? "SMS aktif" : "SMS pasif"}
             </Badge>
           </button>
-        </div>
-      </div>
+        )}
+      />
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <div className="ui-surface ui-kpi-in px-4 py-3" style={{ ["--row-delay" as string]: "0ms" }}>
-          <p className="text-xs font-bold uppercase text-slate-400">Toplam Kayıt</p>
-          <p className="mt-1 text-xl font-black text-slate-900"><CountUp value={deliveryLogs.length} /></p>
-        </div>
-        <div className="ui-kpi-in rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 shadow-sm" style={{ ["--row-delay" as string]: "40ms" }}>
-          <p className="text-xs font-bold uppercase text-emerald-700">Başarılı</p>
-          <p className="mt-1 text-xl font-black text-emerald-800"><CountUp value={successCount} /></p>
-        </div>
-        <div className={`ui-kpi-in rounded-xl border border-red-100 bg-red-50 px-4 py-3 shadow-sm ${failedCount > 0 ? "ui-badge-pulse" : ""}`} style={{ ["--row-delay" as string]: "80ms" }}>
-          <p className="text-xs font-bold uppercase text-red-700">Başarısız</p>
-          <p className="mt-1 text-xl font-black text-red-800"><CountUp value={failedCount} /></p>
-        </div>
+        <StatsCard icon={CircleDashed} label="Toplam Kayıt" value={<CountUp value={deliveryLogs.length} />} tone="neutral" description="Son 150 hareket" />
+        <StatsCard icon={CheckCircle2} label="Başarılı" value={<CountUp value={successCount} />} tone="success" description="Teslim edilen kayıt" />
+        <StatsCard icon={XCircle} label="Başarısız" value={<CountUp value={failedCount} />} tone={failedCount > 0 ? "critical" : "neutral"} badge={failedCount > 0 ? "Kontrol" : undefined} description="Aksiyon bekleyen" />
       </div>
 
       <ConsentSummaryCard />
@@ -451,20 +439,16 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
 
   return (
     <section className="space-y-4" aria-busy={loading}>
-      <div className="ui-surface p-4 sm:p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <ModuleIcon module="settings" size="lg" />
-            <div>
-              <h1 className="font-display text-xl font-black tracking-tight text-slate-900">SMS Ayarları</h1>
-              <p className="text-xs font-medium text-slate-500">SMS gönderim tercihleri, izin akışı ve WhatsApp bağlantı durumu.</p>
-            </div>
-          </div>
+      <PageHeader
+        icon="settings"
+        title="SMS Ayarları"
+        description="Gönderim tercihleri, izin akışı ve WhatsApp bağlantı durumunu yönetin."
+        actions={(
           <Badge tone={settings.smsEnabled ? "success" : "critical"} icon={settings.smsEnabled ? CheckCircle2 : XCircle} size="md">
             {settings.smsEnabled ? "SMS aktif" : "SMS pasif"}
           </Badge>
-        </div>
-      </div>
+        )}
+      />
 
       <div className="ui-surface p-4">
         <div className="grid gap-3 lg:grid-cols-2">

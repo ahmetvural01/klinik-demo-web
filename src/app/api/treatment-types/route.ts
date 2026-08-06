@@ -64,9 +64,14 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
+  }
   const label = String(body.label || "").trim();
   const color = String(body.color || "").trim();
-  if (!label) return NextResponse.json({ message: "Tedavi adı boş olamaz" }, { status: 400 });
+  if (!label || label.length > 120) {
+    return NextResponse.json({ message: "Tedavi adı 1-120 karakter olmalı" }, { status: 400 });
+  }
   if (!/^#[0-9a-fA-F]{6}$/.test(color)) {
     return NextResponse.json({ message: "Geçerli bir renk kodu girin (örn: #2563eb)" }, { status: 400 });
   }

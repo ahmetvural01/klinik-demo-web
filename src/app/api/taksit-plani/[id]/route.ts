@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 import { turkeyTodayStartUtc } from "@/lib/tz";
 
-function taksitPlanTenantWhere(id: string, institutionId: string | null | undefined, role: string) {
+function taksitPlanTenantWhere(id: string, institutionId: string | null | undefined) {
   return {
     id,
-    ...(role !== "SUPERADMIN" ? { patient: { institutionId } } : {}),
+    ...(institutionId ? { patient: { institutionId } } : {}),
   };
 }
 
@@ -22,7 +22,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
     }
 
     const plan = await (prisma as any).taksitPlan.findFirst({
-      where: taksitPlanTenantWhere(params.id, user.institutionId, user.role),
+      where: taksitPlanTenantWhere(params.id, user.institutionId),
       include: {
         patient: { select: { id: true, fullName: true, phone: true } },
         doctor: { select: { id: true, fullName: true } },
@@ -48,7 +48,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       ),
     };
 
-    const hidePhone = shouldHidePatientPhone(user.role);
+    const hidePhone = await shouldHidePatientPhoneForRole(user.role);
     const result = hidePhone
       ? {
           ...planWithLiveStatus,
@@ -71,22 +71,49 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
     }
 
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Geçersiz istek gövdesi" }, { status: 400 });
+    }
     const { status, notes } = body;
+    if (status !== undefined && status !== "IPTAL") {
+      return NextResponse.json({ error: "Plan durumu tahsilatlara göre otomatik hesaplanır; yalnızca iptal işlemi elle yapılabilir." }, { status: 400 });
+    }
+    if (notes !== undefined && notes !== null && (typeof notes !== "string" || notes.trim().length > 2_000)) {
+      return NextResponse.json({ error: "Not en fazla 2000 karakter olabilir" }, { status: 400 });
+    }
+    if (status === undefined && notes === undefined) {
+      return NextResponse.json({ error: "Güncellenecek alan bulunamadı" }, { status: 400 });
+    }
 
     const existing = await (prisma as any).taksitPlan.findFirst({
-      where: taksitPlanTenantWhere(params.id, user.institutionId, user.role),
-      select: { id: true },
+      where: taksitPlanTenantWhere(params.id, user.institutionId),
+      select: { id: true, status: true },
     });
     if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
-    const plan = await (prisma as any).taksitPlan.update({
-      where: { id: params.id },
-      data: {
-        ...(status && { status }),
-        ...(notes !== undefined && { notes })
-      }
-    });
+    const plan = status === "IPTAL"
+      ? await prisma.$transaction(async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "TaksitPlan" WHERE id = ${params.id} FOR UPDATE`;
+          await tx.$queryRaw`SELECT id FROM "Taksit" WHERE "planId" = ${params.id} FOR UPDATE`;
+          if (existing.status !== "IPTAL") {
+            await (tx as any).taksit.updateMany({
+              where: { planId: params.id, status: { in: ["BEKLIYOR", "GECIKTI"] } },
+              data: { status: "IPTAL" },
+            });
+            await (tx as any).reminder.deleteMany({
+              where: { planId: params.id, status: { not: "TAMAMLANDI" } },
+            });
+          }
+          return (tx as any).taksitPlan.update({
+            where: { id: params.id },
+            data: { status: "IPTAL", ...(notes !== undefined && { notes: notes?.trim() || null }) },
+          });
+        }, { isolationLevel: "Serializable" })
+      : await (prisma as any).taksitPlan.update({
+          where: { id: params.id },
+          data: { notes: notes?.trim() || null },
+        });
     await writeAudit(auth.user.id, "TAKSIT_PLAN_UPDATE", `Taksit planı güncellendi (${params.id})`);
     return NextResponse.json(plan);
   } catch (e) {
@@ -104,7 +131,7 @@ export async function DELETE(_: NextRequest, props: { params: Promise<{ id: stri
     }
 
     const existing = await (prisma as any).taksitPlan.findFirst({
-      where: taksitPlanTenantWhere(params.id, auth.user.institutionId, auth.user.role),
+      where: taksitPlanTenantWhere(params.id, auth.user.institutionId),
       select: { id: true },
     });
     if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });

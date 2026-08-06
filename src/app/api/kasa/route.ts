@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
+import { isValidDateKey, turkeyDateKey, turkeyDayRangeUtc } from "@/lib/tz";
 
 export async function GET(req: NextRequest) {
   try {
@@ -20,12 +21,11 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const dateRaw = searchParams.get("date"); // YYYY-MM-DD
-
-    const date  = dateRaw ? new Date(dateRaw) : new Date();
-    const start = new Date(date);
-    start.setHours(0, 0, 0, 0);
-    const end = new Date(date);
-    end.setHours(23, 59, 59, 999);
+    const dateKey = dateRaw || turkeyDateKey();
+    if (!isValidDateKey(dateKey)) {
+      return NextResponse.json({ message: "Geçersiz kasa tarihi" }, { status: 400 });
+    }
+    const { start, end } = turkeyDayRangeUtc(dateKey);
 
     const payments = await prisma.payment.findMany({
       where: {

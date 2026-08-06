@@ -29,7 +29,15 @@ export async function DELETE(req: NextRequest, props: { params: Promise<{ id: st
     }
 
     await prisma.document.delete({ where: { id: document.id } });
-    await deleteDocumentFile(document.storedName, document.storageProvider);
+    try {
+      await deleteDocumentFile(document.storedName, document.storageProvider);
+    } catch (storageError) {
+      // Veritabanındaki belge artık silinmiş durumda; depolama temizliğinin
+      // başarısız olması kullanıcıya işlemin başarısız olduğu izlenimini
+      // vermemeli ve tekrar denemede 404'e düşürmemeli. Artık dosya temizliği
+      // operasyonel logdan takip edilir.
+      console.error("[documents DELETE storage cleanup]", storageError);
+    }
 
     await writeAudit(auth.user.id, "DOCUMENT_DELETE", `${document.category}: ${document.fileName}`);
     return NextResponse.json({ ok: true });

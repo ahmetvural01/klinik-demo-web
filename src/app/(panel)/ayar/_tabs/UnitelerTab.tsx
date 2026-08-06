@@ -3,9 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
-import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
+import { Modal } from "@/components/ui/Modal";
 import { showToastSafe } from "@/lib/toast-client";
-import { confirmDialog } from "@/lib/confirm-client";
 
 type ClinicUnit = {
   id: string;
@@ -24,13 +23,20 @@ export default function UnitelerTab() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [actionId, setActionId] = useState<string | null>(null);
 
   const load = async () => {
     setLoading(true);
-    const response = await fetch("/api/clinic-units", { cache: "no-store" }).catch(() => null);
-    const data = await response?.json().catch(() => []);
-    setItems(Array.isArray(data) ? data : []);
-    setLoading(false);
+    try {
+      const response = await fetch("/api/clinic-units", { cache: "no-store" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(data)) throw new Error("Tedavi alanları yüklenemedi.");
+      setItems(data);
+    } catch (error) {
+      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "Mevcut liste korunarak işlem durduruldu.", type: "error" });
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { void load(); }, []);
@@ -51,17 +57,17 @@ export default function UnitelerTab() {
     setShowForm(true);
   };
   const formDirty = showForm && JSON.stringify(form) !== formSnapshotRef.current;
-  const requestCloseForm = async () => {
-    if (formDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE, danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) return;
+  const requestCloseForm = () => {
     setShowForm(false);
   };
 
   const save = async () => {
     if (form.name.trim().length < 2) {
       showToastSafe({ title: "Eksik bilgi", message: "Tedavi alanı adı en az 2 karakter olmalıdır.", type: "error" });
+      return;
+    }
+    if (form.name.trim().length > 80 || form.code.trim().length > 20) {
+      showToastSafe({ title: "Geçersiz bilgi", message: "Alan adı en fazla 80, kısa kod en fazla 20 karakter olabilir.", type: "error" });
       return;
     }
     setSaving(true);
@@ -86,18 +92,23 @@ export default function UnitelerTab() {
   };
 
   const toggleActive = async (item: ClinicUnit) => {
-    const response = await fetch("/api/clinic-units", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: item.id, isActive: !item.isActive }),
-    }).catch(() => null);
-    const data = await response?.json().catch(() => ({}));
-    if (!response?.ok) {
-      showToastSafe({ title: "Hata", message: data?.message || "Tedavi alanı güncellenemedi.", type: "error" });
-      return;
+    if (actionId) return;
+    setActionId(item.id);
+    try {
+      const response = await fetch("/api/clinic-units", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: item.id, isActive: !item.isActive }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.message || "Tedavi alanı güncellenemedi.");
+      showToastSafe({ title: item.isActive ? "Pasife alındı" : "Aktifleştirildi", message: item.name, type: "success" });
+      await load();
+    } catch (error) {
+      showToastSafe({ title: "Hata", message: error instanceof Error ? error.message : "Tedavi alanı güncellenemedi.", type: "error" });
+    } finally {
+      setActionId(null);
     }
-    showToastSafe({ title: item.isActive ? "Pasife alındı" : "Aktifleştirildi", message: item.name, type: "success" });
-    await load();
   };
 
   return (
@@ -123,8 +134,8 @@ export default function UnitelerTab() {
                 <p className="mt-0.5 text-xs text-slate-500">{item.isActive ? "Randevuda seçilebilir" : "Pasif - yeni randevuda seçilemez"}{item._count?.appointments ? ` · ${item._count.appointments} kayıtla ilişkili` : ""}</p>
               </div>
               <div className="flex shrink-0 gap-2">
-                <Button size="sm" variant="secondary" onClick={() => openEdit(item)}>Düzenle</Button>
-                <Button size="sm" variant="ghost" onClick={() => void toggleActive(item)}>{item.isActive ? "Pasif Yap" : "Aktif Yap"}</Button>
+                <Button size="sm" variant="secondary" disabled={Boolean(actionId)} onClick={() => openEdit(item)}>Düzenle</Button>
+                <Button size="sm" variant="ghost" loading={actionId === item.id} disabled={Boolean(actionId)} onClick={() => void toggleActive(item)}>{item.isActive ? "Pasif Yap" : "Aktif Yap"}</Button>
               </div>
             </div>
           ))}
@@ -140,10 +151,10 @@ export default function UnitelerTab() {
       >
         <div className="space-y-4">
           <FormField label="Koltuk / Oda Adı" required>
-            <input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="Örn: Koltuk 1, Cerrahi Oda" className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
+            <input maxLength={80} value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="Örn: Koltuk 1, Cerrahi Oda" className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
           </FormField>
           <FormField label="Kısa Kod (isteğe bağlı)">
-            <input value={form.code} onChange={(event) => setForm((current) => ({ ...current, code: event.target.value }))} placeholder="Örn: U1" className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm uppercase outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
+            <input maxLength={20} value={form.code} onChange={(event) => setForm((current) => ({ ...current, code: event.target.value }))} placeholder="Örn: U1" className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm uppercase outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
           </FormField>
         </div>
       </Modal>

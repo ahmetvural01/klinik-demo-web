@@ -14,10 +14,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Kod zorunlu" }, { status: 400 });
   }
 
-  const userId = verifyPendingTwoFactorToken(pendingToken);
-  if (!userId) {
+  const pending = verifyPendingTwoFactorToken(pendingToken);
+  if (!pending) {
     return NextResponse.json({ message: "Oturum süresi doldu, tekrar giriş yapın" }, { status: 401 });
   }
+  const { userId, rememberMe } = pending;
 
   const rate = checkRateLimit(`2fa:${getClientIpFromHeaders(req.headers)}:${userId}`, 8, 60_000);
   if (!rate.ok) {
@@ -65,9 +66,9 @@ export async function POST(req: NextRequest) {
     institutionId: user.institutionId,
     fullName: user.fullName,
     tokenVersion: user.tokenVersion,
-  });
+  }, rememberMe);
 
-  await setAuthCookie(token);
+  await setAuthCookie(token, rememberMe);
   await writeAudit(user.id, "LOGIN", usedBackupCode ? "Kullanıcı yedek kod ile giriş yaptı" : "Kullanıcı 2FA ile giriş yaptı");
 
   return NextResponse.json({

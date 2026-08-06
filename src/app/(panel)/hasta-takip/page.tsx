@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FollowUpKey,
   appointmentNeedsFollowUp,
@@ -13,9 +13,10 @@ import { Plus } from "lucide-react";
 import { useToast } from "@/components/ui/ToastProvider";
 import { cachedGet } from "@/lib/client-cache";
 import { confirmDialog } from "@/lib/confirm-client";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
 
@@ -194,6 +195,12 @@ function toIsoInputValue(date: Date) {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function defaultManualNextActionAt() {
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  return toIsoInputValue(date);
+}
+
 function dayDiff(iso: string) {
   const now = Date.now();
   const target = new Date(iso).getTime();
@@ -354,6 +361,8 @@ function readCachedDashboard(rangeDays: string) {
 }
 
 export default function HastaTakipPage() {
+  const { can } = usePermissions();
+  const canWriteFollowUps = can("hastatracking:write");
   const [rangeDays, setRangeDays] = useState<"30" | "60" | "90">("90");
   const cached = useMemo(() => readCachedDashboard(rangeDays), [rangeDays]);
   const [appointments, setAppointments] = useState<Appointment[]>(() => cached.appointments);
@@ -392,11 +401,7 @@ export default function HastaTakipPage() {
   const [manualTypeInput, setManualTypeInput] = useState("Tekrar aranacak");
   const [customTypeOptions, setCustomTypeOptions] = useState<string[]>([]);
   const [manualPriority, setManualPriority] = useState<1 | 2 | 3>(2);
-  const [manualNextActionAt, setManualNextActionAt] = useState(() => {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    return toIsoInputValue(d);
-  });
+  const [manualNextActionAt, setManualNextActionAt] = useState(() => defaultManualNextActionAt());
   const [manualNote, setManualNote] = useState("");
   const [closeNote, setCloseNote] = useState("");
   const [creatingManual, setCreatingManual] = useState(false);
@@ -405,6 +410,7 @@ export default function HastaTakipPage() {
   const [eventsLoading, setEventsLoading] = useState(false);
   const [eventBusy, setEventBusy] = useState(false);
   const [editingEventId, setEditingEventId] = useState("");
+  const eventFormSnapshotRef = useRef("");
   const [eventForm, setEventForm] = useState(() => ({
     occurredAt: toIsoInputValue(new Date()),
     channel: "Telefon",
@@ -414,7 +420,29 @@ export default function HastaTakipPage() {
     nextStep: "",
   }));
 
-  const hidePhone = shouldHidePatientPhone(userRole);
+  const resetManualCreateForm = () => {
+    setSelectedPatient(null);
+    setPatientSearch("");
+    setPatientResults([]);
+    setPatientSearchError("");
+    setManualDoctorId("");
+    setManualTypeInput("Tekrar aranacak");
+    setManualPriority(2);
+    setManualNextActionAt(defaultManualNextActionAt());
+    setManualNote("");
+  };
+
+  const openManualCreate = () => {
+    resetManualCreateForm();
+    setShowManualCreate(true);
+  };
+
+  const closeManualCreate = () => {
+    setShowManualCreate(false);
+    resetManualCreateForm();
+  };
+
+  const hidePhone = !can("patients:phone");
 
   const loadData = useCallback(async () => {
     const cacheKey = `hasta-takip:dashboard:${rangeDays}`;
@@ -907,9 +935,7 @@ export default function HastaTakipPage() {
       setPatientSearchError("");
       setManualNote("");
       setManualTypeInput("Tekrar aranacak");
-      const d = new Date();
-      d.setDate(d.getDate() + 1);
-      setManualNextActionAt(toIsoInputValue(d));
+      setManualNextActionAt(defaultManualNextActionAt());
       setManualPriority(2);
       setShowManualCreate(false);
     } catch {
@@ -1045,6 +1071,18 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
         ? "Takip tipi seçin."
         : "";
 
+  const manualCreateDirty = Boolean(
+    selectedPatient
+    || patientSearch.trim()
+    || manualDoctorId
+    || manualTypeInput !== "Tekrar aranacak"
+    || manualPriority !== 2
+    || manualNextActionAt !== defaultManualNextActionAt()
+    || manualNote.trim()
+  );
+  const eventFormDirty = JSON.stringify(eventForm) !== eventFormSnapshotRef.current;
+  const detailModalDirty = Boolean(closeNote.trim()) || eventFormDirty;
+
   const resetListFilters = () => {
     setQuery("");
     setFollowFilter("TUMU");
@@ -1076,14 +1114,16 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
 
   const resetEventForm = () => {
     setEditingEventId("");
-    setEventForm({
+    const nextForm = {
       occurredAt: toIsoInputValue(new Date()),
       channel: "Telefon",
       summary: "",
       detail: "",
       patientResponse: "",
       nextStep: "",
-    });
+    };
+    setEventForm(nextForm);
+    eventFormSnapshotRef.current = JSON.stringify(nextForm);
   };
 
   const applyEventPreset = (preset: (typeof EVENT_PRESETS)[number]) => {
@@ -1179,14 +1219,16 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
 
   const startEditFollowUpEvent = (event: FollowUpEvent) => {
     setEditingEventId(event.id);
-    setEventForm({
+    const nextForm = {
       occurredAt: toIsoInputValue(new Date(event.occurredAt)),
       channel: event.channel || "",
       summary: event.summary || "",
       detail: event.detail || "",
       patientResponse: event.patientResponse || "",
       nextStep: event.nextStep || "",
-    });
+    };
+    setEventForm(nextForm);
+    eventFormSnapshotRef.current = JSON.stringify(nextForm);
   };
 
   const deleteFollowUpEvent = async (eventId: string) => {
@@ -1278,27 +1320,33 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
 
   return (
     <section className="space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 bg-white px-2 py-2 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{items.length} açık kayıt</span>
-          {stats.overdue > 0 && (
-            <button
-              type="button"
-              onClick={() => setOnlyOverdue((v) => !v)}
-              title="Sonraki adım tarihi geçmiş, hâlâ açık takipler"
-              className={"rounded-full px-2 py-1 text-xs font-bold transition " + (onlyOverdue ? "bg-red-600 text-white" : "bg-red-50 text-red-700 hover:bg-red-100")}
-            >
-              ⚠ {stats.overdue} gecikmiş takip
-            </button>
-          )}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" size="sm" onClick={printReport}>PDF</Button>
-          <Button variant="secondary" size="sm" onClick={downloadExcelReport}>Excel</Button>
-          <Button variant="secondary" size="sm" href="/gorevler">Görev Merkezi</Button>
-          <Button size="sm" href="/randevu">Randevular</Button>
-        </div>
-      </div>
+      <PageHeader
+        icon="follow"
+        title="Hasta Takip"
+        description="Açık takip kayıtlarını, sıradaki adımları ve gecikmiş takipleri buradan yönetin."
+        stats={[
+          { label: "Açık Kayıt", value: items.length },
+          ...(stats.overdue > 0 ? [{ label: "Gecikmiş", value: stats.overdue, color: "text-red-700" }] : []),
+        ]}
+        actions={
+          <>
+            {stats.overdue > 0 && (
+              <button
+                type="button"
+                onClick={() => setOnlyOverdue((v) => !v)}
+                title="Sonraki adım tarihi geçmiş, hâlâ açık takipler"
+                className={"rounded-full px-3 py-1.5 text-xs font-bold transition " + (onlyOverdue ? "bg-red-600 text-white" : "bg-red-50 text-red-700 hover:bg-red-100")}
+              >
+                ⚠ Yalnız Gecikmişler
+              </button>
+            )}
+            <Button variant="secondary" size="sm" onClick={printReport}>PDF</Button>
+            <Button variant="secondary" size="sm" onClick={downloadExcelReport}>Excel</Button>
+            <Button variant="secondary" size="sm" href="/gorevler">Görev Merkezi</Button>
+            <Button size="sm" href="/randevu">Randevular</Button>
+          </>
+        }
+      />
 
       {(error || success) && (
         <div className={"rounded-lg border px-3 py-2 text-sm " + (error ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700")}>
@@ -1318,7 +1366,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
               <Button variant="secondary" size="sm" onClick={() => setShowAdvancedFilters((v) => !v)}>{showAdvancedFilters ? "Filtreleri Gizle" : "Gelişmiş Filtreler"}</Button>
               <Button variant="secondary" size="sm" onClick={() => setDenseView((v) => !v)}>{denseView ? "Detaylı Görünüm" : "Sade Görünüm"}</Button>
               <Button variant="secondary" size="sm" onClick={resetListFilters}>Temizle</Button>
-              <Button size="sm" icon={Plus} onClick={() => { setSelectedPatient(null); setPatientSearch(""); setPatientResults([]); setPatientSearchError(""); setShowManualCreate(true); }}>Manuel Takip Ekle</Button>
+              {canWriteFollowUps && <Button size="sm" icon={Plus} onClick={openManualCreate}>Manuel Takip Ekle</Button>}
             </div>
 
             {showAdvancedFilters && (
@@ -1409,12 +1457,13 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
 
       <Modal
         open={showManualCreate}
-        onClose={() => setShowManualCreate(false)}
+        onClose={closeManualCreate}
+        isDirty={manualCreateDirty}
         title="Manuel Takip Ekle"
         size="xl"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowManualCreate(false)}>İptal</Button>
+            <Button variant="secondary" onClick={closeManualCreate}>İptal</Button>
             <Button onClick={() => void createManualFollowUp()} disabled={Boolean(manualSubmitDisabledReason)} loading={creatingManual}>Kaydet</Button>
           </>
         }
@@ -1474,6 +1523,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
       <Modal
         open={Boolean(detailItem)}
         onClose={closeDetailModal}
+        isDirty={detailModalDirty}
         title={detailItem?.patientName ?? ""}
         description={detailItem ? `${detailItem.followUpLabel} · ${detailItem.statusLabel}` : undefined}
         size="xl"
@@ -1559,7 +1609,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                 )}
               </div>
 
-              <div className="rounded-xl border border-slate-100 px-3 py-3">
+              {canWriteFollowUps && <div className="rounded-xl border border-slate-100 px-3 py-3">
                 <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Bu görüşmenin sonucu</p>
                 {isManual ? (
                   <div className="flex flex-wrap gap-2">
@@ -1591,7 +1641,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                     <Button variant="secondary" size="sm" disabled={busyId === detailItem.key} onClick={() => void markAppointmentNote(detailItem, "GERI_ARA", detailItem.note)}>Notu Geri Ara Yap</Button>
                   </div>
                 )}
-              </div>
+              </div>}
             </div>
 
             {isManual && (
@@ -1601,13 +1651,13 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                   <span className="text-xs text-slate-500">{followUpEvents.length} kayıt</span>
                 </div>
 
-                <div className="mb-3 flex flex-wrap gap-2">
+                {canWriteFollowUps && <div className="mb-3 flex flex-wrap gap-2">
                   {EVENT_PRESETS.map((preset) => (
                     <button key={preset.label} type="button" onClick={() => applyEventPreset(preset)} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50">{preset.label}</button>
                   ))}
-                </div>
+                </div>}
 
-                <div className="grid gap-2 md:grid-cols-3">
+                {canWriteFollowUps && <div className="grid gap-2 md:grid-cols-3">
                   <input type="datetime-local" value={eventForm.occurredAt} onChange={(e) => setEventForm((prev) => ({ ...prev, occurredAt: e.target.value }))} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
                   <select value={eventForm.channel} onChange={(e) => setEventForm((prev) => ({ ...prev, channel: e.target.value }))} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
                     {EVENT_CHANNEL_OPTIONS.map((opt) => (
@@ -1618,12 +1668,12 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                   <textarea value={eventForm.patientResponse} onChange={(e) => setEventForm((prev) => ({ ...prev, patientResponse: e.target.value }))} rows={2} placeholder="Hasta ne söyledi?" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
                   <textarea value={eventForm.nextStep} onChange={(e) => setEventForm((prev) => ({ ...prev, nextStep: e.target.value }))} rows={2} placeholder="Bu hastada sonraki adım ne olacak?" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
                   <textarea value={eventForm.detail} onChange={(e) => setEventForm((prev) => ({ ...prev, detail: e.target.value }))} rows={2} placeholder="Detaylı görüşme notu" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
-                </div>
+                </div>}
 
-                <div className="mt-2 flex flex-wrap gap-2">
+                {canWriteFollowUps && <div className="mt-2 flex flex-wrap gap-2">
                   <Button size="sm" onClick={() => void saveFollowUpEvent()} disabled={eventBusy || eventsLoading} loading={eventBusy}>{editingEventId ? "Hasta Notunu Güncelle" : "Hasta Notu Ekle"}</Button>
                   {editingEventId && <Button variant="secondary" size="sm" onClick={resetEventForm}>Düzenlemeyi İptal Et</Button>}
-                </div>
+                </div>}
 
                 {eventsLoading ? (
                   <div className="mt-3 space-y-2" aria-busy="true">
@@ -1644,10 +1694,10 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                             <p className="text-xs font-semibold text-slate-700">
                               #{followUpEvents.length - idx} · {new Date(ev.occurredAt).toLocaleString("tr-TR")} {ev.channel ? `· ${ev.channel}` : ""}
                             </p>
-                            <div className="flex gap-2">
+                            {canWriteFollowUps && <div className="flex gap-2">
                               <Button variant="secondary" size="sm" onClick={() => startEditFollowUpEvent(ev)}>Düzenle</Button>
                               <Button variant="danger" size="sm" onClick={() => void deleteFollowUpEvent(ev.id)}>Sil</Button>
-                            </div>
+                            </div>}
                           </div>
                           <p className="mt-1 text-sm font-semibold text-slate-800">{ev.summary}</p>
                           {ev.patientResponse && <p className="mt-1 text-xs text-slate-700"><span className="font-semibold">Hasta söyledi:</span> {ev.patientResponse}</p>}

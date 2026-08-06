@@ -127,9 +127,9 @@ async function main() {
   }
 
   const creator = await prisma.user.findFirst({
-    where: { isActive: true },
+    where: { isActive: true, institutionId: { not: null } },
     orderBy: { createdAt: "asc" },
-    select: { id: true, fullName: true },
+    select: { id: true, fullName: true, institutionId: true },
   });
 
   const doctor = await prisma.user.findFirst({
@@ -138,13 +138,14 @@ async function main() {
     select: { id: true, fullName: true },
   });
 
-  if (!creator) {
-    throw new Error("Demo veriler icin kullanici bulunamadi.");
+  if (!creator || !creator.institutionId) {
+    throw new Error("Demo veriler icin kurumu olan bir kullanici bulunamadi.");
   }
 
   for (const item of demoPatients) {
     const patient = await prisma.patient.create({
       data: {
+        institutionId: creator.institutionId,
         tcNo: item.tcNo,
         fullName: item.fullName,
         phone: item.phone,

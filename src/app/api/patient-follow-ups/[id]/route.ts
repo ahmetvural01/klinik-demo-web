@@ -7,7 +7,7 @@ type Params = { params: Promise<{ id: string }> };
 
 export async function PUT(request: NextRequest, props: Params) {
   const params = await props.params;
-  const auth = await requireAuth("appointments:write");
+  const auth = await requireAuth("hastatracking:write");
   if (auth.error) return auth.error;
 
   const body = await request.json();
@@ -19,7 +19,7 @@ export async function PUT(request: NextRequest, props: Params) {
   const existing = await prisma.patientFollowUp.findFirst({
     where: {
       id: params.id,
-      ...(auth.user.role !== "SUPERADMIN" ? { patient: { institutionId: auth.user.institutionId } } : {}),
+      ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
     },
     include: { patient: { select: { fullName: true } } },
   });
@@ -72,13 +72,13 @@ export async function PUT(request: NextRequest, props: Params) {
 
 export async function DELETE(_: NextRequest, props: Params) {
   const params = await props.params;
-  const auth = await requireAuth("appointments:write");
+  const auth = await requireAuth("hastatracking:write");
   if (auth.error) return auth.error;
 
   const existing = await prisma.patientFollowUp.findFirst({
     where: {
       id: params.id,
-      ...(auth.user.role !== "SUPERADMIN" ? { patient: { institutionId: auth.user.institutionId } } : {}),
+      ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
     },
     include: { patient: { select: { fullName: true } } },
   });

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { CheckCircle2, PenSquare, PlusCircle, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
-import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
+import { Modal } from "@/components/ui/Modal";
 import { FormField } from "@/components/ui/FormField";
 import { SmsMessageEditor } from "@/components/sms/SmsMessageEditor";
 import { showToastSafe } from "@/lib/toast-client";
@@ -97,11 +97,7 @@ export default function TemplatesTab() {
     setShowForm(true);
   };
   const templateFormDirty = showForm && JSON.stringify(form) !== formSnapshotRef.current;
-  const requestCloseTemplateForm = async () => {
-    if (templateFormDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE, danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) return;
+  const requestCloseTemplateForm = () => {
     setShowForm(false);
   };
 

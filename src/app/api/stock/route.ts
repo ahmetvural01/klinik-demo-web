@@ -155,6 +155,9 @@ export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireAuth("stock:write");
   if (auth.error) return auth.error;
+  if (!auth.user.institutionId) {
+    return NextResponse.json({ error: "Stok kartı için kurum bağlamı zorunlu" }, { status: 403 });
+  }
 
   const parsed = stockItemCreateSchema.safeParse(await req.json());
   if (!parsed.success) {

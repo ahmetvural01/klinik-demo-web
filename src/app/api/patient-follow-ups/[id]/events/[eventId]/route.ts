@@ -8,14 +8,14 @@ type Params = { params: Promise<{ id: string; eventId: string }> };
 export async function PUT(request: NextRequest, props: Params) {
   const params = await props.params;
   try {
-    const auth = await requireAuth("appointments:write");
+  const auth = await requireAuth("hastatracking:write");
     if (auth.error) return auth.error;
 
     const event = await prisma.patientFollowUpEvent.findFirst({
       where: {
         id: params.eventId,
         followUpId: params.id,
-        ...(auth.user.role !== "SUPERADMIN" ? { followUp: { patient: { institutionId: auth.user.institutionId } } } : {}),
+        ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { followUp: { patient: { institutionId: auth.user.institutionId } } } : {}),
       },
       include: {
         followUp: {
@@ -65,14 +65,14 @@ export async function PUT(request: NextRequest, props: Params) {
 export async function DELETE(_: NextRequest, props: Params) {
   const params = await props.params;
   try {
-    const auth = await requireAuth("appointments:write");
+  const auth = await requireAuth("hastatracking:write");
     if (auth.error) return auth.error;
 
     const event = await prisma.patientFollowUpEvent.findFirst({
       where: {
         id: params.eventId,
         followUpId: params.id,
-        ...(auth.user.role !== "SUPERADMIN" ? { followUp: { patient: { institutionId: auth.user.institutionId } } } : {}),
+        ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { followUp: { patient: { institutionId: auth.user.institutionId } } } : {}),
       },
       include: {
         followUp: {

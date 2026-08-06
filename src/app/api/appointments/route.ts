@@ -5,7 +5,7 @@ import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 import { turkeyDayRangeUtc, turkeyDayBeforeStartUtc } from "@/lib/tz";
 import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 import { getDailySchedules, checkWorkingHoursInterval } from "@/lib/working-hours";
 import { checkDoctorWorkingHoursInterval } from "@/lib/working-hours-core";
 import { resolveSmsTemplate } from "@/lib/sms-templates";
@@ -167,14 +167,6 @@ async function isEligibleClinicUnit(clinicUnitId: string | null | undefined, ins
   });
 }
 
-function canCreateAppointment(role: string) {
-  // ASISTAN ve BANKO zaten "appointments:write" iznine sahip ve mevcut bir
-  // randevuyu düzenleyebiliyordu — ama bu ayrı, daha kısıtlı liste yeni
-  // randevu OLUŞTURMAYI engelliyordu. Ön büroda randevu almak tam olarak bu
-  // rollerin işi olduğundan bu, izin modeliyle çelişen bir hataydı.
-  return ["DOKTOR", "YONETICI", "ASISTAN", "BANKO", "ADMIN", "SUPERADMIN"].includes(role);
-}
-
 export const GET = withApiTiming("appointments", async function GET(request: NextRequest) {
   const auth = await requireAuth("appointments:read");
   if (auth.error) return auth.error;
@@ -229,7 +221,7 @@ export const GET = withApiTiming("appointments", async function GET(request: Nex
     return NextResponse.json({ message: "Randevular yüklenemedi. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });
   }
 
-  const hidePhone = shouldHidePatientPhone(auth.user.role);
+  const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
   const result = hidePhone
     ? appointments.map(a => ({
         ...a,
@@ -243,10 +235,6 @@ export const GET = withApiTiming("appointments", async function GET(request: Nex
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
-
-  if (!canCreateAppointment(auth.user.role)) {
-    return NextResponse.json({ message: "Bu rolde randevu oluşturma yetkiniz yok." }, { status: 403 });
-  }
 
   const body = await request.json();
   const parsed = appointmentSchema.safeParse(body);
@@ -393,6 +381,10 @@ export async function POST(request: NextRequest) {
     // altında çakışan iki eşzamanlı işlemden biri P2034 ile başarısız olur
     // (bkz. denetim raporu — çift randevu yarış koşulu).
     const appointment = await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${parsed.data.doctorId} FOR UPDATE`;
+      const blockConflictRecheck = await findDoctorBlockConflict(parsed.data.doctorId, startAt, endAt, tx);
+      if (blockConflictRecheck) throw new Error("DOCTOR_BLOCK_RECHECK");
+
       const doctorConflictRecheck = overrideDoctorConflict ? null : await tx.appointment.findFirst({
         where: {
           doctorId: parsed.data.doctorId,
@@ -416,6 +408,16 @@ export async function POST(request: NextRequest) {
         });
         if (unitConflictRecheck) throw new Error("CLINIC_UNIT_CONFLICT_RECHECK");
       }
+
+      const patientConflictRecheck = await tx.appointment.findFirst({
+        where: {
+          patientId: parsed.data.patientId,
+          status: { notIn: ["IPTAL", "GELMEDI"] },
+          AND: [{ startAt: { lt: endAt } }, { endAt: { gt: startAt } }],
+        },
+        select: { id: true },
+      });
+      if (patientConflictRecheck) throw new Error("PATIENT_CONFLICT_RECHECK");
 
       const appt = await tx.appointment.create({
         data: { ...parsed.data, clinicUnitId: selectedUnit?.id || null, startAt, endAt },
@@ -466,11 +468,17 @@ export async function POST(request: NextRequest) {
       } satisfies AppointmentSmsStatus,
     }, { status: 201 });
   } catch (error) {
+    if (error instanceof Error && error.message === "DOCTOR_BLOCK_RECHECK") {
+      return NextResponse.json({ message: "Doktorun bu saat aralığı az önce kapatıldı. Takvimi yenileyip başka bir saat seçin." }, { status: 409 });
+    }
     if (error instanceof Error && error.message === "DOCTOR_CONFLICT_RECHECK") {
       return NextResponse.json({ message: "Bu doktor için bu saat aralığı az önce başka bir kullanıcı tarafından dolduruldu. Lütfen tekrar deneyin." }, { status: 409 });
     }
     if (error instanceof Error && error.message === "CLINIC_UNIT_CONFLICT_RECHECK") {
       return NextResponse.json({ message: "Bu tedavi alanı aynı saat aralığında başka bir randevuya ayrıldı. Lütfen tekrar deneyin." }, { status: 409 });
+    }
+    if (error instanceof Error && error.message === "PATIENT_CONFLICT_RECHECK") {
+      return NextResponse.json({ message: "Bu hastanın aynı saat aralığında başka bir randevusu az önce oluşturuldu. Lütfen tekrar deneyin." }, { status: 409 });
     }
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2034") {
       return NextResponse.json({ message: "Bu randevu aynı anda başka bir işlemle çakıştı. Lütfen tekrar deneyin." }, { status: 409 });

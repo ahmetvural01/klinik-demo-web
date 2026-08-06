@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { clinicTaskCreateSchema } from "@/lib/validators";
+import { can } from "@/lib/rbac";
+import type { Role } from "@prisma/client";
 
 export async function GET(request: NextRequest) {
   try {
@@ -18,14 +20,35 @@ export async function GET(request: NextRequest) {
     const scope = sp.get("scope") || "";
     const status = sp.get("status") || undefined;
     const q = (sp.get("q") || "").trim();
-    const take = Math.max(1, Math.min(200, Number(sp.get("take") || 100) || 100));
+    const take = Math.max(1, Math.min(500, Number(sp.get("take") || 100) || 100));
+    if (!["", "mine", "all"].includes(scope)) {
+      return NextResponse.json({ message: "Geçersiz görev kapsamı" }, { status: 400 });
+    }
+    if (scope === "all" && !(await can(auth.user.role as Role, "clinictasks:read-all"))) {
+      return NextResponse.json({ message: "Tüm kurum görevlerini görüntüleme yetkiniz yok" }, { status: 403 });
+    }
+    if (status && !new Set(["ACIK", "BEKLEMEDE", "TAMAMLANDI", "IPTAL"]).has(status)) {
+      return NextResponse.json({ message: "Geçersiz görev durumu" }, { status: 400 });
+    }
 
     const tasks = await prisma.clinicTask.findMany({
       where: {
         institutionId: auth.user.institutionId,
         patientId,
-        assignedToId,
-        assignees: scope === "mine" ? { some: { userId: auth.user.id } } : undefined,
+        AND: [
+          ...(scope === "mine" ? [{
+            OR: [
+              { assignedToId: auth.user.id },
+              { assignees: { some: { userId: auth.user.id } } },
+            ],
+          }] : []),
+          ...(assignedToId ? [{
+            OR: [
+              { assignedToId },
+              { assignees: { some: { userId: assignedToId } } },
+            ],
+          }] : []),
+        ],
         status: status as any,
         OR: q
           ? [
@@ -61,13 +84,54 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Kurum bağlantısı bulunamadı." }, { status: 403 });
   }
 
-  const body = await request.json();
+  const requestKey = request.headers.get("Idempotency-Key")?.trim() || null;
+  if (requestKey && (requestKey.length < 8 || requestKey.length > 180)) {
+    return NextResponse.json({ message: "İşlem anahtarı geçersiz" }, { status: 400 });
+  }
+  if (requestKey) {
+    const existingTask = await prisma.clinicTask.findUnique({
+      where: { requestKey },
+      include: {
+        patient: { select: { id: true, fullName: true, phone: true } },
+        assignedTo: { select: { id: true, fullName: true, isActive: true } },
+        assignees: { include: { user: { select: { id: true, fullName: true, role: true, isActive: true } } } },
+        createdBy: { select: { id: true, fullName: true } },
+      },
+    });
+    if (existingTask) {
+      if (existingTask.institutionId !== auth.user.institutionId) {
+        return NextResponse.json({ message: "İşlem anahtarı başka bir kuruma ait" }, { status: 409 });
+      }
+      return NextResponse.json(existingTask);
+    }
+  }
+
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek gövdesi" }, { status: 400 });
+  }
   const parsed = clinicTaskCreateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ message: "Geçersiz görev verisi" }, { status: 400 });
   }
 
   const p = parsed.data;
+
+  if (p.patientId) {
+    const patient = await prisma.patient.findFirst({
+      where: { id: p.patientId, institutionId: auth.user.institutionId, archivedAt: null },
+      select: { id: true },
+    });
+    if (!patient) {
+      return NextResponse.json({ message: "Hasta bu kuruma bağlı değil veya arşivlenmiş" }, { status: 400 });
+    }
+  }
+  if (p.dueAt && p.remindAt && new Date(p.remindAt) > new Date(p.dueAt)) {
+    return NextResponse.json({ message: "Hatırlatma zamanı son tarihten sonra olamaz" }, { status: 400 });
+  }
+  if (p.dueAt && new Date(p.dueAt).getTime() < Date.now() - 5 * 60 * 1000) {
+    return NextResponse.json({ message: "Yeni görevin son tarihi geçmişte olamaz" }, { status: 400 });
+  }
 
   const requestedAssignees = Array.from(new Set([...(p.assignedToIds || []), ...(p.assignedToId ? [p.assignedToId] : [])].filter(Boolean)));
   if (requestedAssignees.length) {
@@ -86,6 +150,7 @@ export async function POST(request: NextRequest) {
   try {
     task = await prisma.clinicTask.create({
       data: {
+        requestKey,
         institutionId: auth.user.institutionId,
         patientId: p.patientId || null,
         title: p.title,
@@ -111,6 +176,18 @@ export async function POST(request: NextRequest) {
       },
     });
   } catch (error) {
+    if (requestKey && error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
+      const concurrent = await prisma.clinicTask.findUnique({
+        where: { requestKey },
+        include: {
+          patient: { select: { id: true, fullName: true, phone: true } },
+          assignedTo: { select: { id: true, fullName: true, isActive: true } },
+          assignees: { include: { user: { select: { id: true, fullName: true, role: true, isActive: true } } } },
+          createdBy: { select: { id: true, fullName: true } },
+        },
+      });
+      if (concurrent?.institutionId === auth.user.institutionId) return NextResponse.json(concurrent);
+    }
     console.error("[clinic-tasks POST] fallback:", error);
     return NextResponse.json({ message: "Görev oluşturulamadı" }, { status: 503 });
   }

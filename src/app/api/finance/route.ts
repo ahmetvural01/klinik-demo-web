@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming } from "@/lib/api";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { stripSystemTags } from "@/lib/format-text";
+import { isValidDateKey, turkeyDateKey, turkeyDayRangeUtc } from "@/lib/tz";
 
 export const GET = withApiTiming("finance", async function GET(request: NextRequest) {
   const auth = await requireAuth("finance:read");
@@ -14,10 +15,16 @@ export const GET = withApiTiming("finance", async function GET(request: NextRequ
   const rawDoctorId = request.nextUrl.searchParams.get("doctorId") || undefined;
   const fromRaw = request.nextUrl.searchParams.get("from");
   const toRaw = request.nextUrl.searchParams.get("to");
+  if ((fromRaw && !isValidDateKey(fromRaw)) || (toRaw && !isValidDateKey(toRaw))) {
+    return NextResponse.json({ message: "Geçersiz tarih aralığı" }, { status: 400 });
+  }
+  if (fromRaw && toRaw && fromRaw > toRaw) {
+    return NextResponse.json({ message: "Başlangıç tarihi bitiş tarihinden sonra olamaz" }, { status: 400 });
+  }
   // from/to hiç verilmezse tüm geçmiş taranmasın diye içinde bulunulan yıl varsayılır.
-  const currentYearStart = new Date(Date.UTC(new Date().getUTCFullYear(), 0, 1));
-  const fromDate = fromRaw ? new Date(fromRaw + "T00:00:00.000Z") : (toRaw ? undefined : currentYearStart);
-  const toDate = toRaw ? new Date(toRaw + "T23:59:59.999Z") : undefined;
+  const currentYearStart = turkeyDayRangeUtc(`${turkeyDateKey().slice(0, 4)}-01-01`).start;
+  const fromDate = fromRaw ? turkeyDayRangeUtc(fromRaw).start : (toRaw ? undefined : currentYearStart);
+  const toDate = toRaw ? turkeyDayRangeUtc(toRaw).end : undefined;
 
   const dateFilter = fromDate || toDate ? {
     diagnosedAt: { ...(fromDate ? { gte: fromDate } : {}), ...(toDate ? { lte: toDate } : {}) }

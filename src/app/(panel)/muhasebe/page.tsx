@@ -6,7 +6,7 @@ import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { ListPager } from "@/components/ui/ListPager";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
+import { Modal } from "@/components/ui/Modal";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { HakedisMonthlyPanel } from "@/components/hakedis/HakedisMonthlyPanel";
 import { Button, IconButton } from "@/components/ui/Button";
@@ -15,7 +15,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { cachedGet } from "@/lib/client-cache";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { CountUp } from "@/components/ui/CountUp";
+import { turkeyDateKey } from "@/lib/tz";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 
 const FinanceEmptyIcon = createSceneIllustration("muhasebe", 140);
 const StaffEmptyIcon = createSceneIllustration("personel", 140);
@@ -77,7 +80,7 @@ type AlacakRow = {
 const MONEY = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 2 });
 const fmt = (n: number | string | null | undefined) => MONEY.format(Number(n) || 0);
 const fmtDate = (d: string) => { try { return new Date(d).toLocaleDateString("tr-TR"); } catch { return d; } };
-const todayIso = () => new Date().toISOString().split("T")[0];
+const todayIso = () => turkeyDateKey();
 const stripFinanceTags = (text?: string | null) => stripSystemTags(text).replace(/\s*\[GELIR_TURU:[^\]]+\]/g, "").trim();
 
 const METHOD_LABELS: Record<string, string> = {
@@ -239,6 +242,17 @@ function SearchSelect({
 export default function MuhasebePage() {
   const router       = useRouter();
   const searchParams = useSearchParams();
+  const { can, canAny } = usePermissions();
+  const canReadPayments = can("payments:read");
+  const canWritePayments = can("payments:write");
+  const canRefundPayments = can("payments:refund");
+  const canReadFinance = can("finance:read");
+  const canWriteFinance = can("finance:write");
+  const canReadInstallments = can("installments:read");
+  const canWriteInstallments = can("installments:write");
+  const canDeleteInstallments = can("installments:delete");
+  const canReadPatients = can("patients:read");
+  const canSeePatientPhone = can("patients:phone");
 
   // URL ?tab= parametresinden başlangıç tab'ı belirle
   // Not: "taksit" eski bağımsız sekmenin adıydı; artık "alacak" sekmesinin bir alt görünümü.
@@ -267,27 +281,37 @@ export default function MuhasebePage() {
   );
 
   const visibleTabs = useMemo(() => {
-    if (userRole === "BANKO") return TABS.filter(tab => tab.id !== "hakedis");
-    if (userRole === "DOKTOR" || userRole === "ASISTAN") return TABS.filter(() => false);
-    return TABS;
-  }, [userRole]);
+    return TABS.filter((tab) => {
+      if (tab.id === "defter") return canReadPayments || canReadFinance;
+      if (tab.id === "alacak") return canReadFinance;
+      return canReadFinance;
+    });
+  }, [canReadFinance, canReadPayments]);
   const [firmas,        setFirmas]        = useState<FirmaData[]>([]);
   const [taksitOverdue, setTaksitOverdue] = useState<{ count: number; amount: number }>({ count: 0, amount: 0 });
 
   const refreshSummary = useCallback(async (role?: string) => {
     // İşlem formu için firma seçenekleri ve sekme uyarısı için geciken taksitler.
     const effectiveRole = role || (typeof window !== "undefined" ? (sessionStorage.getItem("dev-preview-role") || "") : "");
-    const isBankoRole = effectiveRole === "BANKO";
-    const [fr, tr] = await Promise.all([
-      !isBankoRole ? fetch("/api/firma", { cache: "no-store" }).then(r => r.json()).catch(() => []) : Promise.resolve([]),
-      fetch("/api/taksit-plani?status=GECIKTI", { cache: "no-store" }).then(r => r.json()).catch(() => []),
+    void effectiveRole;
+    const fetchList = async (url: string) => {
+      const response = await fetch(url, { cache: "no-store" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(data)) throw new Error();
+      return data;
+    };
+    const [firmaResult, taksitResult] = await Promise.allSettled([
+      canReadFinance ? fetchList("/api/firma") : Promise.resolve([]),
+      canReadInstallments ? fetchList("/api/taksit-plani?status=GECIKTI") : Promise.resolve([]),
     ]);
-    setFirmas(Array.isArray(fr) ? fr : []);
-    if (Array.isArray(tr)) {
+    if (firmaResult.status === "fulfilled") setFirmas(firmaResult.value);
+    else showToastSafe({ title: "Özet yenilenemedi", message: "Firma seçenekleri korunarak yükleme durduruldu.", type: "error" });
+    if (taksitResult.status === "fulfilled") {
+      const tr = taksitResult.value;
       const items = (tr as TaksitPlan[]).flatMap(p => (p.taksitler || []).filter(t => t.status === "GECIKTI"));
       setTaksitOverdue({ count: items.length, amount: items.reduce((s, t) => s + Number(t.kalan || 0), 0) });
-    }
-  }, []);
+    } else showToastSafe({ title: "Özet yenilenemedi", message: "Geciken taksit özeti mevcut haliyle korundu.", type: "error" });
+  }, [canReadFinance, canReadInstallments]);
 
   useEffect(() => {
     const syncRole = () => {
@@ -300,18 +324,12 @@ export default function MuhasebePage() {
     };
 
     syncRole();
-    fetch("/api/taksit-plani/mark-gecikti", { method: "POST" }).catch(() => null);
+    if (canWriteInstallments) fetch("/api/taksit-plani/mark-gecikti", { method: "POST" }).catch(() => null);
 
     const onPreview = () => syncRole();
     window.addEventListener("preview-role-change", onPreview);
     return () => window.removeEventListener("preview-role-change", onPreview);
-  }, []);
-
-  useEffect(() => {
-    if (userRole === "DOKTOR" || userRole === "ASISTAN") {
-      router.replace("/yetkisiz");
-    }
-  }, [router, userRole]);
+  }, [canWriteInstallments]);
 
   useEffect(() => {
     if (visibleTabs.length === 0) return;
@@ -383,10 +401,12 @@ export default function MuhasebePage() {
 
   // Sayfa açılışını hafif tut: hasta listesi işlem formunda arandıkça yüklenir.
   useEffect(() => {
-    ensurePos();
-    cachedGet<unknown>("/api/staff", 60_000).then(d => setTaksitDoctors((Array.isArray(d) ? d : []).filter(isEffectiveDoctor))).catch(() => {});
+    if (canWritePayments) ensurePos();
+    if (canWritePayments || canWriteInstallments || canReadFinance) {
+      cachedGet<unknown>("/api/staff", 60_000).then(d => setTaksitDoctors((Array.isArray(d) ? d : []).filter(isEffectiveDoctor))).catch(() => {});
+    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canReadFinance, canWriteInstallments, canWritePayments]);
 
   // ── TAB: Gelir / Tahsilat ─────────────────────────────────────────────────
   const [allPayments,  setAllPayments]  = useState<Payment[]>([]);
@@ -467,19 +487,19 @@ export default function MuhasebePage() {
   const [newCatName,    setNewCatName]    = useState("");
   const [editingCatNames, setEditingCatNames] = useState<Record<string, string>>({});
   const [giderForm,     setGiderForm]     = useState({
-    tarih: new Date().toISOString().split("T")[0],
+    tarih: todayIso(),
     categoryId: "", category: "", description: "",
     tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0",
     // Seçilen kategori "Doktor Hakedişi" türündeyse (isDoctorPayout) doldurulur.
-    doctorId: "", donem: new Date().toISOString().slice(0, 7),
+    doctorId: "", donem: todayIso().slice(0, 7),
   });
   const [giderSaving, setGiderSaving] = useState(false);
   const [giderFormErrors, setGiderFormErrors] = useState<{ tarih?: string; tutar?: string; category?: string; doctorId?: string; donem?: string }>({});
 
   const loadExpenses = useCallback(async () => {
     const m3 = new Date(); m3.setMonth(m3.getMonth() - 3);
-    const from = m3.toISOString().split("T")[0];
-    const to   = new Date().toISOString().split("T")[0];
+    const from = turkeyDateKey(m3);
+    const to   = todayIso();
     try {
       const r = await fetch(`/api/gider?from=${from}&to=${to}&take=300`, { cache: "no-store" });
       const d = await r.json().catch(() => null);
@@ -589,7 +609,7 @@ export default function MuhasebePage() {
       showToast("success", isDoctorPayoutCategory ? "Hakediş ödemesi kaydedildi" : "Gider kaydedildi", isDoctorPayoutCategory ? "hakediş" : "finance");
       setTransactionOpen(false);
       const payoutDoctorId = giderForm.doctorId;
-      setGiderForm({ tarih: new Date().toISOString().split("T")[0], categoryId: "", category: "", description: "", tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0", doctorId: "", donem: new Date().toISOString().slice(0, 7) });
+      setGiderForm({ tarih: todayIso(), categoryId: "", category: "", description: "", tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0", doctorId: "", donem: todayIso().slice(0, 7) });
       setGiderTurSearch("");
       setGiderFormErrors({});
       loadExpenses(); refreshSummary();
@@ -681,22 +701,23 @@ export default function MuhasebePage() {
   // sinyaline dahil EDİLMEZ, aksi halde modal her açılışta "kirli" görünürdü.
   const transactionDirty = transactionOpen && (
     transactionKind === "gelir"
-      ? Boolean(tahForm.patientId || tahForm.doctorId || tahForm.amount || tahForm.description.trim() || tahForm.method !== "NAKIT" || tahForm.posId)
+      ? Boolean(tahForm.tarih !== todayIso() || tahForm.patientId || tahForm.doctorId || tahForm.amount || tahForm.description.trim() || tahForm.method !== "NAKIT" || tahForm.posId)
       : expenseEntryKind === "firma"
-        ? Boolean(firmaPayForm.firmaId || firmaPayForm.tutar || firmaPayForm.faturaNo.trim() || firmaPayForm.aciklama.trim() || firmaPayForm.yontem !== "HAVALE_EFT" || firmaPayForm.kdvOrani !== "0")
-        : Boolean(giderForm.categoryId || giderForm.description.trim() || giderForm.tutar || giderForm.faturaNo.trim() || giderForm.doctorId || giderForm.yontem !== "NAKIT")
+        ? Boolean(firmaPayForm.tarih !== todayIso() || firmaPayForm.firmaId || firmaPayForm.tutar || firmaPayForm.faturaNo.trim() || firmaPayForm.aciklama.trim() || firmaPayForm.yontem !== "HAVALE_EFT" || firmaPayForm.kdvOrani !== "0")
+        : Boolean(giderForm.tarih !== todayIso() || giderForm.categoryId || giderForm.description.trim() || giderForm.tutar || giderForm.faturaNo.trim() || giderForm.doctorId || giderForm.yontem !== "NAKIT")
   );
 
-  async function requestCloseTransaction() {
-    if (transactionDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE,
-      danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
-      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) {
-      return;
-    }
+  function requestCloseTransaction() {
     setTransactionOpen(false);
+    setTahForm({ tarih: todayIso(), patientId: "", doctorId: "", method: "NAKIT", amount: "", description: "", posId: "" });
+    setPatientSearch("");
+    setDoctorSearch("");
+    setTahFormErrors({});
+    setGiderForm({ tarih: todayIso(), categoryId: "", category: "", description: "", tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0", doctorId: "", donem: todayIso().slice(0, 7) });
+    setGiderTurSearch("");
+    setGiderFormErrors({});
+    setFirmaPayForm({ firmaId: "", tarih: todayIso(), tutar: "", yontem: "HAVALE_EFT", faturaNo: "", kdvOrani: "0", aciklama: "" });
+    setFirmaPayErrors({});
   }
 
   const openTransaction = useCallback((kind: TransactionKind | "firma" = "gelir") => {
@@ -784,15 +805,18 @@ export default function MuhasebePage() {
   const [selectedPlan,  setSelectedPlan]  = useState<TaksitPlan | null>(null);
   const [planDetail,    setPlanDetail]    = useState<TaksitPlan | null>(null);
   const [showOdeModal,  setShowOdeModal]  = useState<TaksitItem | null>(null);
-  const [odeForm,       setOdeForm]       = useState({ tutar: "", yontem: "NAKIT", note: "" });
+  const [odeForm,       setOdeForm]       = useState({ tutar: "", yontem: "NAKIT", posId: "", note: "" });
+  const [odeRequestKey, setOdeRequestKey] = useState("");
+  const [odeSaving,     setOdeSaving]     = useState(false);
+  const odeSubmittingRef = useRef(false);
   const [taksitDoctors, setTaksitDoctors] = useState<Doctor[]>([]);
   const [newPlanForm,   setNewPlanForm]   = useState({
     patientId: "", doctorId: "", baslik: "", toplamBorc: "", pesnat: "0",
-    taksitSayisi: "6", period: "AYLIK", startDate: new Date().toISOString().split("T")[0], notes: "",
+    taksitSayisi: "6", period: "AYLIK", startDate: todayIso(), notes: "",
   });
   const [reminders,    setReminders]    = useState<Reminder[]>([]);
   const [showRemModal, setShowRemModal] = useState(false);
-  const [remForm,      setRemForm]      = useState({ patientId: "", note: "", reminderDate: new Date().toISOString().split("T")[0] });
+  const [remForm,      setRemForm]      = useState({ patientId: "", note: "", reminderDate: todayIso() });
 
 
   const patientSearchOptions = useMemo(() => {
@@ -842,13 +866,26 @@ export default function MuhasebePage() {
   useEffect(() => { setTaksitPage(1); }, [taksitStatus]);
 
   const loadReminders = useCallback(async () => {
-    const r = await fetch("/api/reminder?status=HEPSI", { cache: "no-store" }); const d = await r.json();
-    setReminders(Array.isArray(d) ? d : []);
-  }, []);
+    try {
+      const r = await fetch("/api/reminder?status=HEPSI", { cache: "no-store" });
+      const d = await r.json().catch(() => null);
+      if (!r.ok) throw new Error(d?.error || "Hatırlatmalar yüklenemedi");
+      setReminders(Array.isArray(d) ? d : []);
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Hatırlatmalar yüklenemedi");
+    }
+  }, [showToast]);
 
   const loadPlanDetail = async (id: string) => {
-    const r = await fetch(`/api/taksit-plani/${id}`); const d = await r.json();
-    setPlanDetail(d); setSelectedPlan(d);
+    try {
+      const r = await fetch(`/api/taksit-plani/${id}`, { cache: "no-store" });
+      const d = await r.json().catch(() => null);
+      if (!r.ok || !d?.id) throw new Error(d?.error || "Taksit planı yüklenemedi");
+      setPlanDetail(d);
+      setSelectedPlan(d);
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Taksit planı yüklenemedi");
+    }
   };
 
   const handleCreatePlan = async () => {
@@ -879,56 +916,59 @@ export default function MuhasebePage() {
     });
     if (r.ok) {
       showToast("success", "Taksit planı oluşturuldu", "finance");
-      setNewPlanForm({ patientId: "", doctorId: "", baslik: "", toplamBorc: "", pesnat: "0", taksitSayisi: "6", period: "AYLIK", startDate: new Date().toISOString().split("T")[0], notes: "" });
+      setNewPlanForm({ patientId: "", doctorId: "", baslik: "", toplamBorc: "", pesnat: "0", taksitSayisi: "6", period: "AYLIK", startDate: todayIso(), notes: "" });
       setTaksitSubTab("liste"); loadTaksitPlans(); refreshSummary();
     } else {
       const e = await r.json(); showToast("error", e.error || "Hata");
     }
   };
 
-  async function requestCloseOdeModal() {
-    const dirty = Boolean(showOdeModal) && (odeForm.yontem !== "NAKIT" || odeForm.note.trim() !== "" || odeForm.tutar !== String(showOdeModal?.kalan ?? ""));
-    if (dirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE,
-      danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
-      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) {
-      return;
-    }
+  function requestCloseOdeModal() {
+    if (odeSubmittingRef.current) return;
     setShowOdeModal(null);
+    setOdeForm({ tutar: "", yontem: "NAKIT", posId: "", note: "" });
+    setOdeRequestKey("");
   }
 
-  async function requestCloseRemModal() {
-    if (Boolean(remForm.patientId || remForm.note.trim()) && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE,
-      danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
-      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) {
-      return;
-    }
+  function requestCloseRemModal() {
     setShowRemModal(false);
+    setRemForm({ patientId: "", note: "", reminderDate: todayIso() });
   }
 
   const handleOde = async () => {
-    if (!showOdeModal || !selectedPlan) return;
+    if (!showOdeModal || !selectedPlan || odeSubmittingRef.current) return;
     if (!odeForm.tutar || Number(odeForm.tutar) <= 0) { showToast("error", "Geçerli bir tahsilat tutarı giriniz"); return; }
     if (Number(odeForm.tutar) > Number(showOdeModal.kalan) + 0.01) { showToast("error", `Kalan tutardan fazla girilemez (Kalan: ${fmt(showOdeModal.kalan)})`); return; }
-    const r = await fetch(`/api/taksit-plani/${selectedPlan.id}/taksitler/${showOdeModal.id}`, {
-      method: "PATCH", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tutar: Number(odeForm.tutar), yontem: odeForm.yontem, note: odeForm.note || null }),
-    });
-    if (r.ok) {
-      setShowOdeModal(null); setOdeForm({ tutar: "", yontem: "NAKIT", note: "" });
-      loadPlanDetail(selectedPlan.id); loadTaksitPlans(); refreshSummary();
-      showToast("success", "Taksit tahsil edildi", "finance");
-    } else {
-      const e = await r.json(); showToast("error", e.error || "Hata");
+    if (requiresPos(odeForm.yontem) && !odeForm.posId) { showToast("error", "Kart / mail order tahsilatı için POS seçimi zorunlu"); return; }
+    const requestKey = odeRequestKey || crypto.randomUUID();
+    if (!odeRequestKey) setOdeRequestKey(requestKey);
+    odeSubmittingRef.current = true;
+    setOdeSaving(true);
+    try {
+      const r = await fetch(`/api/taksit-plani/${selectedPlan.id}/taksitler/${showOdeModal.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
+        body: JSON.stringify({ tutar: Number(odeForm.tutar), yontem: odeForm.yontem, posId: odeForm.posId || null, note: odeForm.note || null }),
+      });
+      if (r.ok) {
+        setShowOdeModal(null);
+        setOdeForm({ tutar: "", yontem: "NAKIT", posId: "", note: "" });
+        setOdeRequestKey("");
+        loadPlanDetail(selectedPlan.id); loadTaksitPlans(); refreshSummary();
+        showToast("success", "Taksit tahsil edildi", "finance");
+      } else {
+        const e = await r.json().catch(() => ({})); showToast("error", e.error || "Tahsilat yapılamadı");
+      }
+    } catch {
+      showToast("error", "Bağlantı kesildi. Aynı işlem güvenle yeniden denenebilir.");
+    } finally {
+      odeSubmittingRef.current = false;
+      setOdeSaving(false);
     }
   };
 
   const handleAddReminder = async () => {
+    if (!remForm.patientId) { showToast("error", "Hatırlatma için hasta seçimi zorunlu"); return; }
     if (!remForm.note.trim()) { showToast("error", "Not alanı zorunlu"); return; }
     if (!remForm.reminderDate) { showToast("error", "Tarih zorunlu"); return; }
     const r = await fetch("/api/reminder", {
@@ -938,7 +978,7 @@ export default function MuhasebePage() {
     if (r?.ok) {
       showToast("success", "Hatırlatma eklendi");
       setShowRemModal(false);
-      setRemForm({ patientId: "", note: "", reminderDate: new Date().toISOString().split("T")[0] });
+      setRemForm({ patientId: "", note: "", reminderDate: todayIso() });
       loadReminders();
     } else {
       showToast("error", "Hatırlatma eklenemedi");
@@ -1077,7 +1117,7 @@ export default function MuhasebePage() {
     setEditingKind("GIDER");
     setEditingId(expense.id);
     const next = {
-      tarih: expense.tarih?.substring(0, 10) || new Date().toISOString().split("T")[0],
+      tarih: expense.tarih ? turkeyDateKey(new Date(expense.tarih)) : todayIso(),
       categoryId: expense.categoryId || "",
       category: expense.category || "",
       description: stripSystemTags(expense.description) || "",
@@ -1098,16 +1138,13 @@ export default function MuhasebePage() {
       ? JSON.stringify(editExpenseForm) !== editExpenseSnapshotRef.current
       : false;
 
-  async function requestCloseEditModal() {
-    if (editRecordDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE,
-      danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT,
-      confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) {
-      return;
-    }
+  function requestCloseEditModal() {
     setEditingKind(null);
+    setEditingId("");
+    setEditPaymentForm({ tarih: "", amount: "", method: "NAKIT", description: "", posId: "", doctorId: "" });
+    setEditExpenseForm({ tarih: "", categoryId: "", category: "", description: "", tutar: "", yontem: "NAKIT", faturaNo: "", kdvOrani: "0", doctorId: null });
+    setEditPaymentDoctorSearch("");
+    setEditGiderTurSearch("");
   }
 
   const savePaymentEdit = async () => {
@@ -1248,8 +1285,8 @@ export default function MuhasebePage() {
   const [hakDoctors,     setHakDoctors]     = useState<Doctor[]>([]);
   const [selectedDoctor, setSelectedDoctor] = useState("");
   const [hakedisDoctorSearch, setHakedisDoctorSearch] = useState("");
-  const [hakFrom, setHakFrom] = useState(() => { const d = new Date(); d.setDate(1); return d.toISOString().split("T")[0]; });
-  const [hakTo, setHakTo] = useState(() => new Date().toISOString().split("T")[0]);
+  const [hakFrom, setHakFrom] = useState(() => `${todayIso().slice(0, 7)}-01`);
+  const [hakTo, setHakTo] = useState(() => todayIso());
   const [doctorFinance,  setDoctorFinance]  = useState<Record<string, unknown> | null>(null);
   const [hakLoading,     setHakLoading]     = useState(false);
   const [hakedisRefreshToken, setHakedisRefreshToken] = useState(0);
@@ -1396,14 +1433,14 @@ export default function MuhasebePage() {
   // ── Lazy tab data loading ─────────────────────────────────────────────────
   useEffect(() => {
     if (activeTab === "defter") {
-      if (allPayments.length === 0) loadPayments();
-      if (allExpenses.length === 0) loadExpenses();
-      if (giderKats.length === 0) loadGiderKats();
+      if (canReadPayments && allPayments.length === 0) loadPayments();
+      if (canReadFinance && allExpenses.length === 0) loadExpenses();
+      if (canReadFinance && giderKats.length === 0) loadGiderKats();
     }
     if (activeTab === "alacak") {
-      if (taksitPlans.length === 0) loadTaksitPlans();
-      if (alacaklar.length === 0) loadAlacaklar();
-      ensurePatients();
+      if (canReadInstallments && taksitPlans.length === 0) loadTaksitPlans();
+      if (canReadFinance && alacaklar.length === 0) loadAlacaklar();
+      if (canWritePayments || canWriteInstallments) ensurePatients();
     }
     if (activeTab === "hakedis" && hakDoctors.length === 0)
       cachedGet<unknown>("/api/staff", 60_000).then(d => setHakDoctors((Array.isArray(d) ? d : []).filter(isEffectiveDoctor))).catch(() => {});
@@ -1415,14 +1452,14 @@ export default function MuhasebePage() {
   // sessizce (sayfa yenilemeden) tazele.
   const refreshActiveTab = useCallback(() => {
     if (activeTab === "defter") {
-      loadPayments();
-      loadExpenses();
-      loadGiderKats();
+      if (canReadPayments) loadPayments();
+      if (canReadFinance) loadExpenses();
+      if (canReadFinance) loadGiderKats();
     }
     if (activeTab === "alacak") {
       refreshSummary();
-      loadTaksitPlans();
-      loadAlacaklar();
+      if (canReadInstallments) loadTaksitPlans();
+      if (canReadFinance) loadAlacaklar();
     }
     if (activeTab === "hakedis") {
       if (selectedDoctor) loadDoctorFinance(selectedDoctor);
@@ -1465,6 +1502,16 @@ export default function MuhasebePage() {
   return (
     <div className="space-y-2">
 
+      <PageHeader
+        icon="finance"
+        title="Muhasebe Merkezi"
+        description="Tahsilat, gider, alacak ve hekim hakedişlerini tek ekrandan yönetin."
+        stats={[
+          { label: "Sekme", value: visibleTabs.length },
+          { label: "Gecikmiş", value: taksitOverdue.count, color: taksitOverdue.count > 0 ? "text-rose-700" : "text-emerald-700" },
+        ]}
+      />
+
       {/* Toast */}
       {/* Tab Navigation */}
       <div className="sticky top-0 z-30 -mx-1 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-slate-200 bg-slate-100/95 px-1 py-2 backdrop-blur">
@@ -1484,19 +1531,19 @@ export default function MuhasebePage() {
             </button>
           ))}
         </div>
-        <Button onClick={() => openTransaction("gelir")} variant="primary" size="sm" icon={Plus}>
+        {canAny("payments:write", "finance:write") && <Button onClick={() => openTransaction(canWritePayments ? "gelir" : "gider")} variant="primary" size="sm" icon={Plus}>
           <span className="hidden sm:inline">İşlem Ekle</span>
           <span className="sm:hidden">İşlem</span>
-        </Button>
+        </Button>}
       </div>
 
       {/* Page Header */}
 
-      <Modal open={transactionOpen} onClose={() => setTransactionOpen(false)} isDirty={transactionDirty} title="İşlem Ekle" size="xl" module="finance">
+      <Modal open={transactionOpen} onClose={() => void requestCloseTransaction()} isDirty={transactionDirty} title="İşlem Ekle" size="xl" module="finance">
           <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 pb-4">
               {([
-                { id: "gelir", label: "Gelir", disabled: false },
-                { id: "gider", label: "Gider", disabled: userRole === "BANKO" },
+                { id: "gelir", label: "Gelir", disabled: !canWritePayments },
+                { id: "gider", label: "Gider", disabled: !canWriteFinance },
               ] as const).map((item) => (
                 <button
                   key={item.id}
@@ -1776,7 +1823,7 @@ export default function MuhasebePage() {
           )}
       </Modal>
 
-      <Modal open={Boolean(editingKind)} onClose={() => setEditingKind(null)} isDirty={editRecordDirty} title={editingKind === "TAHSILAT" ? "Tahsilatı Düzenle" : "Gideri Düzenle"} description="Kayıt değişiklikleri muhasebe geçmişine işlenir." size="lg" module="finance">
+      <Modal open={Boolean(editingKind)} onClose={() => void requestCloseEditModal()} isDirty={editRecordDirty} title={editingKind === "TAHSILAT" ? "Tahsilatı Düzenle" : "Gideri Düzenle"} description="Kayıt değişiklikleri muhasebe geçmişine işlenir." size="lg" module="finance">
             {editingKind === "TAHSILAT" && (
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <div>
@@ -2015,13 +2062,13 @@ export default function MuhasebePage() {
                     <td className={`px-4 py-3 text-right font-black ${row.tone}`}>{row.sign}{fmt(row.amount)}</td>
                     <td className="px-4 py-3 text-right">
                       <div className="flex justify-end gap-1" onClick={(event) => event.stopPropagation()}>
-                        <IconButton
+                        {(row.type === "TAHSILAT" ? canWritePayments : canWriteFinance) && <IconButton
                           icon={Pencil}
                           title="Düzenle"
                           tone="neutral"
                           onClick={() => row.type === "TAHSILAT" ? startEditPayment(row.source as Payment) : startEditExpense(row.source as Expense)}
-                        />
-                        {row.deletable && (
+                        />}
+                        {row.deletable && (row.type === "TAHSILAT" ? canRefundPayments : canWriteFinance) && (
                           <IconButton
                             icon={Trash2}
                             title="Sil"
@@ -2116,7 +2163,7 @@ export default function MuhasebePage() {
           <div className="flex flex-wrap gap-1 rounded-lg border border-slate-200 bg-white p-1.5 shadow-sm">
             {([
               { key: "liste",      label: "Plan Listesi" },
-              { key: "olustur",    label: "Yeni Plan" },
+              ...(canWriteInstallments ? [{ key: "olustur" as const, label: "Yeni Plan" }] : []),
               { key: "hatirlatma", label: `Hatırlatmalar (${reminders.filter(r => r.status === "AKTIF").length})` },
             ] as const).map(t => (
               <button key={t.key} onClick={() => setTaksitSubTab(t.key)}
@@ -2169,7 +2216,7 @@ export default function MuhasebePage() {
                                 <div className="flex shrink-0 flex-col items-end gap-1">
                                   {gec > 0 && <span className="ui-badge-pulse rounded-lg bg-red-100 px-2 py-1 text-xs font-bold text-red-700">{gec} gecikti</span>}
                                   {bek > 0 && <span className="rounded-lg bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">{bek} bekliyor</span>}
-                                  <button onClick={e => { e.stopPropagation(); cancelPlan(plan.id); }} className="mt-1 rounded-lg border border-red-100 px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 hover:text-red-700">Planı İptal Et</button>
+                                  {canDeleteInstallments && <button onClick={e => { e.stopPropagation(); cancelPlan(plan.id); }} className="mt-1 rounded-lg border border-red-100 px-2.5 py-1.5 text-xs font-bold text-red-500 hover:bg-red-50 hover:text-red-700">Planı İptal Et</button>}
                                 </div>
                               </div>
                             </div>
@@ -2217,8 +2264,8 @@ export default function MuhasebePage() {
                             <span>Tutar: {fmt(t.tutar)}</span>
                             <span>Kalan: <b className={Number(t.kalan) > 0 ? "text-amber-600" : "text-emerald-600"}>{fmt(t.kalan)}</b></span>
                           </div>
-                          {t.status !== "ODENDI" && t.status !== "IPTAL" && (
-                            <button onClick={() => { setShowOdeModal(t); setOdeForm({ tutar: String(t.kalan), yontem: "NAKIT", note: "" }); }}
+                          {canWriteInstallments && t.status !== "ODENDI" && t.status !== "IPTAL" && (
+                            <button onClick={() => { setShowOdeModal(t); setOdeForm({ tutar: String(t.kalan), yontem: "NAKIT", posId: "", note: "" }); setOdeRequestKey(crypto.randomUUID()); }}
                               className="mt-2 w-full rounded-lg bg-emerald-600 py-2 text-sm font-bold text-white hover:bg-emerald-700">
                               Tahsilat Yap
                             </button>
@@ -2333,8 +2380,8 @@ export default function MuhasebePage() {
           <Modal
             module="finance"
             open={Boolean(showOdeModal)}
-            onClose={() => setShowOdeModal(null)}
-            isDirty={Boolean(showOdeModal) && (odeForm.yontem !== "NAKIT" || odeForm.note.trim() !== "" || odeForm.tutar !== String(showOdeModal?.kalan ?? ""))}
+            onClose={() => void requestCloseOdeModal()}
+            isDirty={Boolean(showOdeModal) && (odeForm.yontem !== "NAKIT" || odeForm.posId !== "" || odeForm.note.trim() !== "" || odeForm.tutar !== String(showOdeModal?.kalan ?? ""))}
             title={showOdeModal ? `Taksit Tahsilatı — #${showOdeModal.siraNo}` : "Taksit Tahsilatı"}
             size="sm"
           >
@@ -2351,17 +2398,26 @@ export default function MuhasebePage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
-                  <select value={odeForm.yontem} onChange={e => setOdeForm(f => ({ ...f, yontem: e.target.value }))} className={INP}>
+                  <select value={odeForm.yontem} onChange={e => setOdeForm(f => ({ ...f, yontem: e.target.value, posId: requiresPos(e.target.value) ? f.posId : "" }))} className={INP}>
                     {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </div>
+                {requiresPos(odeForm.yontem) && (
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold text-slate-600">POS Cihazı *</label>
+                    <select value={odeForm.posId} onChange={e => setOdeForm(f => ({ ...f, posId: e.target.value }))} className={INP}>
+                      <option value="">POS seçin</option>
+                      {posDevices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                    </select>
+                  </div>
+                )}
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Not</label>
                   <input value={odeForm.note} onChange={e => setOdeForm(f => ({ ...f, note: e.target.value }))} placeholder="Opsiyonel…" className={INP} />
                 </div>
                 <div className="flex gap-2">
                   <Button variant="secondary" fullWidth onClick={() => void requestCloseOdeModal()}>Vazgeç</Button>
-                  <button onClick={handleOde} className="flex-1 rounded-xl bg-emerald-600 py-2.5 text-sm font-bold text-white hover:bg-emerald-700">Tahsil Et</button>
+                  <Button fullWidth onClick={handleOde} loading={odeSaving}>Tahsil Et</Button>
                 </div>
                 </div>
               )}
@@ -2371,14 +2427,14 @@ export default function MuhasebePage() {
           <Modal
             module="finance"
             open={showRemModal}
-            onClose={() => setShowRemModal(false)}
-            isDirty={Boolean(remForm.patientId || remForm.note.trim())}
+            onClose={() => void requestCloseRemModal()}
+            isDirty={Boolean(remForm.patientId || remForm.note.trim() || remForm.reminderDate !== todayIso())}
             title="Hatırlatma Ekle"
             size="sm"
           >
                 <div className="space-y-4">
                 <div>
-                  <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta (opsiyonel)</label>
+                  <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta *</label>
                   <select value={remForm.patientId} onChange={e => setRemForm(f => ({ ...f, patientId: e.target.value }))} className={INP}>
                     <option value="">— Hasta Seçin —</option>
                     {patients.map(p => <option key={p.id} value={p.id}>{p.fullName}</option>)}
@@ -2466,13 +2522,13 @@ export default function MuhasebePage() {
                         return (
                           <tr key={a.id} className="hover:bg-slate-50">
                             <td className="px-4 py-3">
-                              {userRole === "MUHASEBE"
+                              {!canReadPatients
                                 ? <span title="Muhasebe rolü hasta klinik kartına erişemez" className="font-semibold text-slate-800">{a.fullName}</span>
                                 : <Link href={`/hasta-detay?id=${a.id}`} className="font-semibold text-slate-800 hover:text-primary hover:underline">{a.fullName}</Link>}
                               {a.discountRate > 0 && <span className="ml-1.5 rounded-lg bg-green-100 px-2 py-1 text-xs text-green-700">%{a.discountRate} indirim</span>}
                               <div className="mt-1 text-[11px] text-slate-400">Net tedavi: {fmt(a.netTedavi)}</div>
                             </td>
-                            <td className="px-4 py-3 text-slate-500">{a.phone}</td>
+                            <td className="px-4 py-3 text-slate-500">{canSeePatientPhone ? (a.phone || "-") : "Gizli"}</td>
                             <td className="max-w-[260px] px-4 py-3 text-slate-600">
                               <span className="line-clamp-2">{doctorText}</span>
                             </td>
@@ -2501,7 +2557,7 @@ export default function MuhasebePage() {
                               <span className="text-[11px] text-slate-400">{a.lastPaymentAt ? "Son ödeme" : "Tedavi tarihi"}</span>
                             </td>
                             <td className="px-4 py-3">
-                              <button onClick={() => {
+                              {canWritePayments && <button onClick={() => {
                                 openTransaction("gelir");
                                 setPatientSearch(a.fullName);
                                 // Hastanın tek bir hekimi varsa doktor alanı da
@@ -2518,7 +2574,7 @@ export default function MuhasebePage() {
                               }}
                                 className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">
                                 Tahsilat
-                              </button>
+                              </button>}
                             </td>
                           </tr>
                         );

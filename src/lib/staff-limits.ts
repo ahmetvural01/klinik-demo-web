@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export type StaffLimitCheck = {
@@ -15,10 +16,13 @@ export type StaffLimitCheck = {
 // maxActiveDoctors alanları abonelik planından senkronlanır (bkz.
 // src/lib/subscription-plans.ts). Sadece "aktif" hale gelecek kayıtlar kontrol
 // edilir — pasif personel eklemek/bırakmak limitten etkilenmez.
-export async function checkStaffLimit({ institutionId, role, isActive, excludeUserId }: StaffLimitCheck): Promise<string | null> {
+export async function checkStaffLimit(
+  { institutionId, role, isActive, excludeUserId }: StaffLimitCheck,
+  db: Prisma.TransactionClient | typeof prisma = prisma,
+): Promise<string | null> {
   if (!isActive) return null;
 
-  const institution = await prisma.institution.findUnique({
+  const institution = await db.institution.findUnique({
     where: { id: institutionId },
     select: { maxActiveUsers: true, maxActiveDoctors: true },
   });
@@ -26,10 +30,10 @@ export async function checkStaffLimit({ institutionId, role, isActive, excludeUs
   if (!institution.maxActiveUsers && !institution.maxActiveDoctors) return null;
 
   const [activeUsers, activeDoctors] = await Promise.all([
-    prisma.user.count({
+    db.user.count({
       where: { institutionId, isActive: true, ...(excludeUserId ? { id: { not: excludeUserId } } : {}) },
     }),
-    prisma.user.count({
+    db.user.count({
       where: { institutionId, isActive: true, role: "DOKTOR", ...(excludeUserId ? { id: { not: excludeUserId } } : {}) },
     }),
   ]);

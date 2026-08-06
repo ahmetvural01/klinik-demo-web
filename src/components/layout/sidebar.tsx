@@ -13,6 +13,8 @@ import { usePanelAlerts } from "@/components/layout/use-panel-alerts";
 import { ModuleIcon, type ModuleKey } from "@/components/ui/ModuleIcon";
 import { useEscapeClose } from "@/lib/use-modal-dismiss";
 import { parseRolePreview, ROLE_PREVIEW_COOKIE, ROLE_PREVIEW_STORAGE } from "@/lib/role-preview";
+import { usePermissions } from "@/components/auth/PermissionProvider";
+import { hasAnyPanelPermission, hasPanelPermission } from "@/lib/panel-permissions";
 
 const NAV_LABEL_BASE =
   "min-w-0 overflow-hidden whitespace-nowrap text-left tracking-normal transition-all duration-150 ease-out";
@@ -37,105 +39,57 @@ const ROLE_LABELS: Record<string, string> = {
 type NavItem = { href: string; label: string; icon: string; badge?: string };
 type NavGroup = { label: string; items: NavItem[] };
 
-// ── Rol bazlı menü tanımları ──────────────────────────────────────────────
-function buildNavGroups(role: string): NavGroup[] {
-  const isYonetici  = role === "YONETICI" || role === "SUPERADMIN";
-  const isDoktor    = role === "DOKTOR";
-  const isAsistan   = role === "ASISTAN";
-  const isBanko     = role === "BANKO";
-  const isMuhasebe  = role === "MUHASEBE";
-
-  const groups: NavGroup[] = [];
-
-  // Tüm roller için anasayfa girişi
-  if (isYonetici || isDoktor || isAsistan || isBanko || isMuhasebe) {
-    groups.push({
-      label: "Bugün",
-      items: [{ href: "/anasayfa", label: "Anasayfa", icon: "home" }],
-    });
-  }
-
-  // ── KLİNİK ──
-  if (isYonetici || isDoktor || isAsistan || isBanko) {
-    groups.push({
+// Menü ile API aynı dinamik izin matrisinden beslenir. Bir rolün izni
+// süperadmin panelinden değiştirildiğinde burada ayrıca rol adı güncellenmez.
+function buildNavGroups(permissions: string[]): NavGroup[] {
+  const can = (permission: string) => hasPanelPermission(permissions, permission);
+  const canAny = (...required: string[]) => hasAnyPanelPermission(permissions, required);
+  const groups: NavGroup[] = [
+    { label: "Bugün", items: can("dashboard:read") ? [{ href: "/anasayfa", label: "Anasayfa", icon: "home" }] : [] },
+    {
       label: "Klinik",
       items: [
-        { href: "/randevu",     label: "Randevular",  icon: "calendar" },
-        { href: "/hasta",       label: "Hastalar",    icon: "users" },
-        ...(isYonetici || isDoktor || isAsistan || isBanko ? [{ href: "/gorevler", label: "Görev Merkezi", icon: "clipboard" }] : []),
-        ...(isYonetici || isDoktor || isAsistan || isBanko ? [{ href: "/hasta-takip", label: "Hasta Takip", icon: "follow" }] : []),
-        ...(isYonetici || isBanko ? [{ href: "/sms", label: "SMS Yönetimi", icon: "sms" }] : []),
+        ...(can("appointments:read") ? [{ href: "/randevu", label: "Randevular", icon: "calendar" }] : []),
+        ...(can("patients:read") ? [{ href: "/hasta", label: "Hastalar", icon: "users" }] : []),
+        ...(can("clinictasks:read") ? [{ href: "/gorevler", label: "Görev Merkezi", icon: "clipboard" }] : []),
+        ...(can("hastatracking:read") ? [{ href: "/hasta-takip", label: "Hasta Takip", icon: "follow" }] : []),
+        ...(can("sms:read") ? [{ href: "/sms", label: "SMS Yönetimi", icon: "sms" }] : []),
       ],
-    });
-  }
-
-  // ── TEDAVİ ──
-  if (isYonetici || isDoktor || isAsistan) {
-    groups.push({
-      label: "Tedavi",
-      items: [
-        { href: "/lab",          label: "Laboratuvar",  icon: "flask" },
-      ],
-    });
-  }
-
-  // ── FİNANS ──
-  if (isYonetici || isBanko || isMuhasebe) {
-    groups.push({
+    },
+    { label: "Tedavi", items: can("lab:read") ? [{ href: "/lab", label: "Laboratuvar", icon: "flask" }] : [] },
+    {
       label: "Finans & Rapor",
       items: [
-        { href: "/muhasebe", label: "Muhasebe Merkezi", icon: "finance" },
-        ...(isYonetici || isMuhasebe
-          ? [{ href: "/rapor", label: "Raporlar", icon: "rapor" }]
-          : []),
+        ...(can("finance:center") ? [{ href: "/muhasebe", label: "Muhasebe Merkezi", icon: "finance" }] : []),
+        ...(can("earnings:read") ? [{ href: "/finans", label: "Doktor Hakedişim", icon: "hakediş" }] : []),
+        ...(can("reports:read") ? [{ href: "/rapor", label: "Raporlar", icon: "rapor" }] : []),
       ],
-    });
-  }
-
-  // ── DOKTOR: kendi hakedişleri ──
-  if (isDoktor) {
-    groups.push({
-      label: "Finans",
-      items: [
-        { href: "/finans", label: "Doktor Hakedişim", icon: "hakediş" },
-      ],
-    });
-  }
-
-  // ── STOK & TEDARİK ──
-  if (isYonetici || isMuhasebe) {
-    groups.push({
+    },
+    {
       label: "Stok & Tedarik",
       items: [
-        { href: "/stok",  label: "Stok", icon: "box" },
-        { href: "/firma", label: "Satın Alma & Tedarikçiler", icon: "firma" },
+        ...(can("stock:read") ? [{ href: "/stok", label: "Stok", icon: "box" }] : []),
+        ...(can("finance:read") ? [{ href: "/firma", label: "Satın Alma & Tedarikçiler", icon: "firma" }] : []),
       ],
-    });
-  }
-
-  // ── YÖNETİM (sadece Yönetici) ──
-  if (isYonetici) {
-    groups.push({
+    },
+    {
       label: "Yönetim",
       items: [
-        { href: "/personel", label: "Personeller",   icon: "person" },
-        { href: "/sistem-izleme", label: "Sistem İzleme", icon: "chart" },
-        { href: "/ayar",     label: "Sistem Ayarları", icon: "settings" },
+        ...(can("staff:read") ? [{ href: "/personel", label: "Personeller", icon: "person" }] : []),
+        ...(can("audit:read") ? [{ href: "/sistem-izleme", label: "Sistem İzleme", icon: "chart" }] : []),
+        ...(can("settings:read") ? [{ href: "/ayar", label: "Sistem Ayarları", icon: "settings" }] : []),
       ],
-    });
-  }
-
-  // ── KİŞİSEL ──
-  groups.push({
-    label: "Kişisel",
-    items: [
-      { href: "/profil",  label: "Profilim", icon: "profile" },
-      ...(isYonetici ? [{ href: "/log", label: "İşlem Kayıtları", icon: "log" }] : []),
-      { href: "/destek",  label: "Destek",   icon: "support" },
-    ],
-  });
-
-  return groups;
+    },
+    {
+      label: "Kişisel",
+      items: [
+        ...(can("profile:read") ? [{ href: "/profil", label: "Profilim", icon: "profile" }] : []),
+        ...(can("audit:read") ? [{ href: "/log", label: "İşlem Kayıtları", icon: "log" }] : []),
+        ...(can("support:read") ? [{ href: "/destek", label: "Destek", icon: "support" }] : []),
+      ],
+    },
+  ];
+  return groups.filter((group) => group.items.length > 0);
 }
 
 const PREVIEW_ROLES = [
@@ -147,6 +101,7 @@ const PREVIEW_ROLES = [
 ];
 
 export function Sidebar({ user }: { user: { fullName: string; role: string; photoUrl?: string | null } }) {
+  const { permissions } = usePermissions();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -238,8 +193,8 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   const userName = user.fullName;
   // SuperAdmin ise seçili preview rolü, yoksa gerçek rol
   const effectiveRole = (isSuperAdmin && previewRole) ? previewRole : userRole;
-  const navGroups = buildNavGroups(effectiveRole);
-  const alerts = usePanelAlerts(effectiveRole);
+  const navGroups = buildNavGroups(permissions);
+  const alerts = usePanelAlerts(effectiveRole, permissions);
 
   const activePreview = PREVIEW_ROLES.find(r => r.key === previewRole);
 
@@ -275,6 +230,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
     if (href.startsWith("/muhasebe")) return alerts.taksit; // muhasebe merkezinde gecikmiş taksit uyarısı
     if (href === "/stok") return alerts.stok;
     if (href === "/lab") return alerts.lab;
+    if (href === "/gorevler") return alerts.tasks;
     return 0;
   };
 

@@ -144,7 +144,10 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   // istemcinin loading state'ine güvenilmez (bkz. denetim raporu). Aynı
   // Idempotency-Key ile gelen tekrar istek, stok miktarını İKİNCİ KEZ
   // değiştirmeden mevcut hareketi döndürür.
-  const requestKey = req.headers.get("Idempotency-Key")?.trim().slice(0, 180) || null;
+  const requestKey = req.headers.get("Idempotency-Key")?.trim() || null;
+  if (requestKey && (requestKey.length < 8 || requestKey.length > 180)) {
+    return NextResponse.json({ message: "İşlem anahtarı geçersiz" }, { status: 400 });
+  }
   const institutionId = auth.user.institutionId;
 
   if (requestKey) {

@@ -19,7 +19,7 @@ export const GET = withApiTiming("clinic-units", async () => {
   const auth = await requireAuth("appointments:read");
   if (auth.error) return auth.error;
   const institutionId = getInstitutionId(auth);
-  if (!institutionId) return NextResponse.json([]);
+  if (!institutionId) return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 403 });
 
   const items = await prisma.clinicUnit.findMany({
     where: { institutionId },

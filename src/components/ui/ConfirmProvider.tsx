@@ -82,7 +82,7 @@ export const ConfirmProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const dialog = pending && (
     <div
-      className="fixed inset-0 z-[350] flex items-center justify-center bg-slate-950/50 px-3 backdrop-blur-[1px]"
+      className="ui-confirm-backdrop fixed inset-0 z-[350] flex items-center justify-center bg-slate-950/50 px-3 backdrop-blur-[1px]"
       role="alertdialog"
       aria-modal="true"
       aria-labelledby="confirm-dialog-message"
@@ -90,7 +90,7 @@ export const ConfirmProvider: React.FC<{ children: React.ReactNode }> = ({ child
     >
       <div
         ref={dialogRef}
-        className="w-full max-w-sm animate-fade-in rounded-lg border border-slate-200 bg-white p-5 shadow-2xl"
+        className="ui-confirm-panel w-full max-w-sm animate-fade-in rounded-lg border border-slate-200 bg-white p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         {pending.title && (
@@ -99,19 +99,19 @@ export const ConfirmProvider: React.FC<{ children: React.ReactNode }> = ({ child
         <p id="confirm-dialog-message" className="whitespace-pre-line text-sm text-slate-600">
           {pending.message}
         </p>
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="ui-confirm-actions mt-5 flex justify-end gap-2">
           <button
             type="button"
             autoFocus
             onClick={() => respond(false)}
-            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
+            className="ui-confirm-cancel rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-slate-50"
           >
             {pending.cancelText || "Vazgeç"}
           </button>
           <button
             type="button"
             onClick={() => respond(true)}
-            className={`rounded-lg px-4 py-2 text-sm font-bold text-white ${
+            className={`ui-confirm-submit rounded-lg px-4 py-2 text-sm font-bold text-white ${
               pending.danger ? "bg-red-600 hover:bg-red-700" : "bg-primary hover:bg-primary/90"
             }`}
           >

@@ -58,7 +58,7 @@ export function ListTable<T>({
   const tableMinWidth = columns.length >= 6 ? "min-w-[820px]" : columns.length >= 4 ? "min-w-[680px]" : "";
 
   return (
-    <div className="ui-surface overflow-hidden">
+    <div className="ui-list-table ui-surface overflow-hidden">
       <div className="overflow-x-auto">
         <table className={`${tableMinWidth} w-full`}>
           <thead>
@@ -96,8 +96,14 @@ export function ListTable<T>({
                   tabIndex={onRowClick ? 0 : undefined}
                   role={onRowClick ? "button" : undefined}
                   aria-label={onRowClick ? getRowAriaLabel?.(row) : undefined}
-                  onClick={onRowClick ? () => onRowClick(row) : undefined}
+                  onClick={onRowClick ? (event) => {
+                    const target = event.target as HTMLElement;
+                    if (target.closest("button, a, input, select, textarea, [role='button']")) return;
+                    onRowClick(row);
+                  } : undefined}
                   onKeyDown={onRowClick ? (event) => {
+                    const target = event.target as HTMLElement;
+                    if (target.closest("button, a, input, select, textarea, [role='button']")) return;
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
                       onRowClick(row);

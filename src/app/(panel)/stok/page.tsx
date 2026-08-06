@@ -10,14 +10,16 @@ import { downloadCsv } from "@/lib/csv-export";
 import JsBarcode from "jsbarcode";
 import { ProfessionalDataTable } from "@/components/ui/ProfessionalDataTable";
 import { Button } from "@/components/ui/Button";
-import { Modal, DIRTY_CONFIRM_MESSAGE, DIRTY_CONFIRM_CANCEL_TEXT, DIRTY_CONFIRM_CONFIRM_TEXT } from "@/components/ui/Modal";
+import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
 import { Download, Plus, Printer, TriangleAlert, CalendarClock, PackageX, Wallet } from "lucide-react";
-import { ModuleIcon } from "@/components/ui/ModuleIcon";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { StatsCard } from "@/components/ui/Premium";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { CountUp } from "@/components/ui/CountUp";
 import { Spinner } from "@/components/ui/Spinner";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 
 const StockEmptyIcon = createSceneIllustration("stok");
 
@@ -51,6 +53,9 @@ const UNITS = ["adet", "kutu", "şişe", "ampul", "set", "ml", "gr"];
 const CURRENCY = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 0 });
 
 export default function StokPage() {
+  const { can } = usePermissions();
+  const canWriteStock = can("stock:write");
+  const canDeleteStock = can("stock:delete");
   const [items,      setItems]      = useState<StockItem[]>([]);
   const [loading,    setLoading]    = useState(false);
   const [category,   setCategory]   = useState("Tümü");
@@ -152,27 +157,17 @@ export default function StokPage() {
   const editItemDirty = Boolean(editItem) && JSON.stringify(editForm) !== editSnapshotRef.current;
   const moveDirty = Boolean(move.quantity || move.note.trim());
 
-  async function requestCloseNewItem() {
-    if (newItemDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE, danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) return;
+  function requestCloseNewItem() {
     setShowNew(false);
+    setNewItem(NEW_ITEM_DEFAULT);
   }
 
-  async function requestCloseEditItem() {
-    if (editItemDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE, danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) return;
+  function requestCloseEditItem() {
     setEditItem(null);
+    setEditForm({ name: "", category: "Sarf", unit: "adet", minQuantity: "5", barcode: "", expiresAt: "", storageLocation: "" });
   }
 
-  async function requestCloseMove() {
-    if (moveDirty && !(await confirmDialog({
-      message: DIRTY_CONFIRM_MESSAGE, danger: true,
-      cancelText: DIRTY_CONFIRM_CANCEL_TEXT, confirmText: DIRTY_CONFIRM_CONFIRM_TEXT,
-    }))) return;
+  function requestCloseMove() {
     setMoveItem(null);
     setMove({ type: "CIKIS", quantity: "", note: "" });
   }
@@ -458,7 +453,7 @@ export default function StokPage() {
         );
       },
     },
-    {
+    ...(canWriteStock ? [{
       id: "quickAction",
       header: "",
       cell: ({ row }) => (
@@ -473,33 +468,28 @@ export default function StokPage() {
           </button>
         </div>
       ),
-    },
+    } as ColumnDef<StockItem, unknown>] : []),
   ];
 
   const inp = "rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none";
 
   return (
     <div className="space-y-3">
-      <div className="ui-surface p-4 sm:p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-3">
-            <ModuleIcon module="box" size="lg" />
-            <div>
-              <h1 className="font-display text-xl font-black tracking-tight text-slate-900">Stok Yönetimi</h1>
-              <p className="text-xs font-medium text-slate-500">Malzeme envanterini, kritik stok ve SKT uyarılarını takip edin.</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2.5">
+      <PageHeader
+        icon="box"
+        title="Stok Yönetimi"
+        description="Malzeme envanterini, kritik stok ve SKT uyarılarını takip edin."
+        actions={(
+          <>
             <Button size="sm" variant="secondary" icon={Download} onClick={exportStockCsv} disabled={filtered.length === 0}>
               CSV
             </Button>
-            <button type="button" onClick={() => setShowNew(true)}
-              className="ui-interactive inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-gradient-to-b from-primary to-primary-strong px-4 py-2 text-sm font-bold text-white shadow-[0_2px_8px_rgb(var(--app-primary)/0.3)]">
-              <Plus className="h-4 w-4" /> Yeni Stok Kartı
-            </button>
-          </div>
-        </div>
-      </div>
+            {canWriteStock && <Button size="sm" icon={Plus} onClick={() => setShowNew(true)}>
+              Yeni Stok Kartı
+            </Button>}
+          </>
+        )}
+      />
 
       <div className="ui-surface p-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -520,34 +510,10 @@ export default function StokPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <div className="ui-surface ui-kpi-in flex items-center gap-2.5 p-3" style={{ ["--row-delay" as string]: "0ms" }}>
-          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500"><Wallet className="h-4 w-4" /></span>
-          <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{filtered.length}/{items.length} kalem</p>
-            <p className="truncate text-sm font-black text-slate-800"><CountUp value={totalValue} formatter={(n) => CURRENCY.format(n)} /></p>
-          </div>
-        </div>
-        <div className={`ui-kpi-in flex items-center gap-2.5 rounded-[var(--radius-surface)] border p-3 shadow-[var(--shadow-rest)] ${lowStock > 0 ? "border-red-200 bg-red-50/50" : "border-[rgb(var(--app-border))] bg-[rgb(var(--app-surface))]"}`} style={{ ["--row-delay" as string]: "40ms" }}>
-          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${lowStock > 0 ? "bg-red-100 text-red-600 ui-badge-pulse" : "bg-slate-100 text-slate-400"}`}><TriangleAlert className="h-4 w-4" /></span>
-          <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">Kritik Stok</p>
-            <p className={`text-sm font-black ${lowStock > 0 ? "text-red-700" : "text-slate-800"}`}><CountUp value={lowStock} /> kalem</p>
-          </div>
-        </div>
-        <div className={`ui-kpi-in flex items-center gap-2.5 rounded-[var(--radius-surface)] border p-3 shadow-[var(--shadow-rest)] ${expiringSoon > 0 ? "border-amber-200 bg-amber-50/50" : "border-[rgb(var(--app-border))] bg-[rgb(var(--app-surface))]"}`} style={{ ["--row-delay" as string]: "80ms" }}>
-          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${expiringSoon > 0 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-400"}`}><CalendarClock className="h-4 w-4" /></span>
-          <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">SKT Yakın</p>
-            <p className={`text-sm font-black ${expiringSoon > 0 ? "text-amber-700" : "text-slate-800"}`}><CountUp value={expiringSoon} /> kalem</p>
-          </div>
-        </div>
-        <div className={`ui-kpi-in flex items-center gap-2.5 rounded-[var(--radius-surface)] border p-3 shadow-[var(--shadow-rest)] ${expiredCount > 0 ? "border-red-200 bg-red-50/50" : "border-[rgb(var(--app-border))] bg-[rgb(var(--app-surface))]"}`} style={{ ["--row-delay" as string]: "120ms" }}>
-          <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${expiredCount > 0 ? "bg-red-100 text-red-600 ui-badge-pulse" : "bg-slate-100 text-slate-400"}`}><PackageX className="h-4 w-4" /></span>
-          <div className="min-w-0">
-            <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">SKT Geçmiş</p>
-            <p className={`text-sm font-black ${expiredCount > 0 ? "text-red-700" : "text-slate-800"}`}><CountUp value={expiredCount} /> kalem</p>
-          </div>
-        </div>
+        <StatsCard icon={Wallet} label={`${filtered.length}/${items.length} kalem`} value={<CountUp value={totalValue} formatter={(n) => CURRENCY.format(n)} />} tone="neutral" />
+        <StatsCard icon={TriangleAlert} label="Kritik Stok" value={<><CountUp value={lowStock} /> kalem</>} tone={lowStock > 0 ? "critical" : "neutral"} badge={lowStock > 0 ? "Aksiyon" : undefined} />
+        <StatsCard icon={CalendarClock} label="SKT Yakın" value={<><CountUp value={expiringSoon} /> kalem</>} tone={expiringSoon > 0 ? "warning" : "neutral"} />
+        <StatsCard icon={PackageX} label="SKT Geçmiş" value={<><CountUp value={expiredCount} /> kalem</>} tone={expiredCount > 0 ? "critical" : "neutral"} badge={expiredCount > 0 ? "Kritik" : undefined} />
       </div>
 
       {loading && filtered.length === 0 ? (
@@ -572,7 +538,7 @@ export default function StokPage() {
       <Modal
         module="box"
         open={showNew}
-        onClose={() => setShowNew(false)}
+        onClose={() => void requestCloseNewItem()}
         isDirty={newItemDirty}
         title="Yeni Stok Kalemi"
         footer={(
@@ -651,7 +617,7 @@ export default function StokPage() {
               </div>
             </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <Button
+              {canWriteStock && <Button
                 variant="primary"
                 onClick={() => {
                   const item = detailItem;
@@ -661,16 +627,16 @@ export default function StokPage() {
                 }}
               >
                 Stok Çıkışı
-              </Button>
+              </Button>}
               <Button variant="secondary" onClick={() => { const item = detailItem; setDetailItem(null); if (item) void openHistory(item); }}>
                 Hareketler
               </Button>
-              <Button variant="secondary" onClick={() => { const item = detailItem; setDetailItem(null); if (item) openEdit(item); }}>
+              {canWriteStock && <Button variant="secondary" onClick={() => { const item = detailItem; setDetailItem(null); if (item) openEdit(item); }}>
                 Düzenle
-              </Button>
-              <Button variant="ghost" onClick={() => { const item = detailItem; setDetailItem(null); if (item) void deleteItem(item); }}>
+              </Button>}
+              {canDeleteStock && <Button variant="ghost" onClick={() => { const item = detailItem; setDetailItem(null); if (item) void deleteItem(item); }}>
                 Arşivle
-              </Button>
+              </Button>}
             </div>
           </div>
         )}
@@ -680,7 +646,7 @@ export default function StokPage() {
       <Modal
         module="box"
         open={Boolean(editItem)}
-        onClose={() => setEditItem(null)}
+        onClose={() => void requestCloseEditItem()}
         isDirty={editItemDirty}
         title="Stok Kartını Düzenle"
         description="Bu form ürün kimliğini düzenler. Alış fiyatı ve tedarikçi satın alma satırlarında tutulur."
@@ -730,7 +696,7 @@ export default function StokPage() {
       <Modal
         module="box"
         open={Boolean(moveItem)}
-        onClose={() => { setMoveItem(null); setMove({ type: "CIKIS", quantity: "", note: "" }); }}
+        onClose={() => void requestCloseMove()}
         isDirty={moveDirty}
         title="Stok Çıkışı"
         footer={(

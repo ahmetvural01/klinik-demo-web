@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
@@ -55,6 +55,10 @@ export function PatientPackagesSection({ patientId, doctorOptions }: { patientId
   const [loading, setLoading] = useState(true);
   const [showSell, setShowSell] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [usingPackageId, setUsingPackageId] = useState<string | null>(null);
+  const [cancellingPackageId, setCancellingPackageId] = useState<string | null>(null);
+  const sellRequestKeyRef = useRef("");
+  const usageRequestKeysRef = useRef<Record<string, string>>({});
 
   const [definitionId, setDefinitionId] = useState("");
   const [customName, setCustomName] = useState("");
@@ -66,15 +70,27 @@ export function PatientPackagesSection({ patientId, doctorOptions }: { patientId
 
   const load = async () => {
     setLoading(true);
-    const [pkgRes, defRes] = await Promise.all([
-      fetch(`/api/patient-packages?patientId=${patientId}`).catch(() => null),
-      fetch("/api/package-definitions").catch(() => null),
-    ]);
-    const pkgData = await pkgRes?.json().catch(() => []);
-    const defData = await defRes?.json().catch(() => []);
-    setPackages(Array.isArray(pkgData) ? pkgData : []);
-    setDefinitions(Array.isArray(defData) ? defData.filter((d: PackageDefinition) => d.isActive) : []);
-    setLoading(false);
+    try {
+      const [pkgRes, defRes] = await Promise.all([
+        fetch(`/api/patient-packages?patientId=${encodeURIComponent(patientId)}`),
+        fetch("/api/package-definitions"),
+      ]);
+      const [pkgData, defData] = await Promise.all([
+        pkgRes.json().catch(() => null),
+        defRes.json().catch(() => null),
+      ]);
+      if (!pkgRes.ok || !Array.isArray(pkgData)) throw new Error("Hasta paketleri yüklenemedi.");
+      setPackages(pkgData);
+      if (!defRes.ok || !Array.isArray(defData)) {
+        showToastSafe({ title: "Şablonlar yüklenemedi", message: "Mevcut paketler korundu; paket şablonlarını yenilemek için tekrar deneyin.", type: "error" });
+      } else {
+        setDefinitions(defData.filter((d: PackageDefinition) => d.isActive));
+      }
+    } catch (error) {
+      showToastSafe({ title: "Paketler yüklenemedi", message: error instanceof Error ? error.message : "Bağlantıyı kontrol edip tekrar deneyin.", type: "error" });
+    } finally {
+      setLoading(false);
+    }
   };
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -84,7 +100,18 @@ export function PatientPackagesSection({ patientId, doctorOptions }: { patientId
   const price = selectedDefinition ? Number(selectedDefinition.price) : Number(customPrice) || 0;
   const remaining = Math.max(0, price - (Number(pesnat) || 0));
 
+  const sellDirty = Boolean(
+    definitionId
+    || customName.trim()
+    || customSessions !== "6"
+    || customPrice
+    || (doctorId && doctorId !== (doctorOptions[0]?.id || ""))
+    || pesnat
+    || taksitSayisi !== "2",
+  );
+
   const openSell = () => {
+    sellRequestKeyRef.current = crypto.randomUUID();
     setDefinitionId("");
     setCustomName(""); setCustomSessions("6"); setCustomPrice("");
     setDoctorId(doctorOptions[0]?.id || "");
@@ -93,14 +120,43 @@ export function PatientPackagesSection({ patientId, doctorOptions }: { patientId
     setShowSell(true);
   };
 
+  const closeSell = () => {
+    sellRequestKeyRef.current = "";
+    setShowSell(false);
+    setDefinitionId("");
+    setCustomName("");
+    setCustomSessions("6");
+    setCustomPrice("");
+    setDoctorId("");
+    setPesnat("");
+    setTaksitSayisi("2");
+  };
+
   const sell = async () => {
     if (!doctorId) { showToastSafe({ title: "Eksik bilgi", message: "Doktor seçin", type: "error" }); return; }
     if (!definitionId && !customName.trim()) { showToastSafe({ title: "Eksik bilgi", message: "Paket şablonu seçin veya özel paket adı girin", type: "error" }); return; }
+    if (!definitionId && (!Number.isInteger(Number(customSessions)) || Number(customSessions) <= 0 || Number(customSessions) > 10_000)) {
+      showToastSafe({ title: "Geçersiz bilgi", message: "Özel paket için geçerli bir seans sayısı girin", type: "error" });
+      return;
+    }
+    if (!definitionId && (customPrice === "" || !Number.isFinite(Number(customPrice)) || Number(customPrice) <= 0 || Number(customPrice) > 99_999_999.99)) {
+      showToastSafe({ title: "Geçersiz bilgi", message: "Özel paket için geçerli bir fiyat girin", type: "error" });
+      return;
+    }
+    const deposit = pesnat === "" ? 0 : Number(pesnat);
+    if (!Number.isFinite(deposit) || deposit < 0 || deposit > price) {
+      showToastSafe({ title: "Geçersiz bilgi", message: "Peşinat toplam fiyatı aşamaz", type: "error" });
+      return;
+    }
+    if (remaining > 0 && (!Number.isInteger(Number(taksitSayisi)) || Number(taksitSayisi) <= 0 || Number(taksitSayisi) > 100)) {
+      showToastSafe({ title: "Geçersiz bilgi", message: "Kalan tutar için geçerli bir taksit sayısı girin", type: "error" });
+      return;
+    }
     setSaving(true);
     try {
       const res = await fetch("/api/patient-packages", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", "Idempotency-Key": sellRequestKeyRef.current || (sellRequestKeyRef.current = crypto.randomUUID()) },
         body: JSON.stringify({
           patientId, doctorId,
           definitionId: definitionId || undefined,
@@ -114,7 +170,7 @@ export function PatientPackagesSection({ patientId, doctorOptions }: { patientId
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.message || "Paket satılamadı.");
       showToastSafe({ title: "Satıldı", message: "Paket hasta kartına eklendi.", type: "success" });
-      setShowSell(false);
+      closeSell();
       await load();
     } catch (error) {
       showToastSafe({ title: "Hata", message: error instanceof Error ? error.message : "Paket satılamadı.", type: "error" });
@@ -124,20 +180,43 @@ export function PatientPackagesSection({ patientId, doctorOptions }: { patientId
   };
 
   const consumeSession = async (pkg: PatientPackage) => {
+    if (usingPackageId) return;
     if (!(await confirmDialog({ message: `${pkg.name} paketinden 1 seans kullanılsın mı? (${pkg.sessionsUsed}/${pkg.sessionsTotal})`, confirmText: "Seans Kullan" }))) return;
-    const res = await fetch(`/api/patient-packages/${pkg.id}/use`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({}) });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) { showToastSafe({ title: "Hata", message: data?.message || "İşlem yapılamadı.", type: "error" }); return; }
-    showToastSafe({ title: "Seans kullanıldı", message: `${pkg.name}: ${data.sessionsUsed}/${data.sessionsTotal}`, type: "success" });
-    await load();
+    setUsingPackageId(pkg.id);
+    const requestKey = usageRequestKeysRef.current[pkg.id] || (usageRequestKeysRef.current[pkg.id] = crypto.randomUUID());
+    try {
+      const res = await fetch(`/api/patient-packages/${pkg.id}/use`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || "İşlem yapılamadı.");
+      delete usageRequestKeysRef.current[pkg.id];
+      showToastSafe({ title: "Seans kullanıldı", message: `${pkg.name}: ${data.sessionsUsed}/${data.sessionsTotal}`, type: "success" });
+      await load();
+    } catch (error) {
+      showToastSafe({ title: "Hata", message: error instanceof Error ? error.message : "İşlem yapılamadı. Aynı işlem güvenle tekrar denenebilir.", type: "error" });
+    } finally {
+      setUsingPackageId(null);
+    }
   };
 
   const cancelPackage = async (pkg: PatientPackage) => {
+    if (cancellingPackageId) return;
     if (!(await confirmDialog({ message: `${pkg.name} paketi iptal edilsin mi? Bağlı ödeme/taksit kaydı ayrıca muhasebeden düzenlenmeli.`, danger: true, confirmText: "İptal Et" }))) return;
-    const res = await fetch(`/api/patient-packages/${pkg.id}`, { method: "DELETE" });
-    if (!res.ok) { showToastSafe({ title: "Hata", message: "İptal edilemedi.", type: "error" }); return; }
-    showToastSafe({ title: "İptal edildi", message: `${pkg.name} iptal edildi.`, type: "success" });
-    await load();
+    setCancellingPackageId(pkg.id);
+    try {
+      const res = await fetch(`/api/patient-packages/${pkg.id}`, { method: "DELETE" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.message || "İptal edilemedi.");
+      showToastSafe({ title: "İptal edildi", message: `${pkg.name} iptal edildi.`, type: "success" });
+      await load();
+    } catch (error) {
+      showToastSafe({ title: "Hata", message: error instanceof Error ? error.message : "İptal edilemedi.", type: "error" });
+    } finally {
+      setCancellingPackageId(null);
+    }
   };
 
   return (
@@ -174,13 +253,20 @@ export function PatientPackagesSection({ patientId, doctorOptions }: { patientId
                     <Button
                       size="sm"
                       variant="secondary"
-                      disabled={pkg.effectiveStatus !== "AKTIF"}
+                      loading={usingPackageId === pkg.id}
+                      disabled={pkg.effectiveStatus !== "AKTIF" || Boolean(usingPackageId) || Boolean(cancellingPackageId)}
                       onClick={() => void consumeSession(pkg)}
                     >
                       Seans Kullan
                     </Button>
                     {pkg.effectiveStatus !== "IPTAL" && (
-                      <Button size="sm" variant="ghost" onClick={() => void cancelPackage(pkg)}>İptal</Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        loading={cancellingPackageId === pkg.id}
+                        disabled={Boolean(usingPackageId) || Boolean(cancellingPackageId)}
+                        onClick={() => void cancelPackage(pkg)}
+                      >İptal</Button>
                     )}
                   </div>
                 </div>
@@ -201,11 +287,12 @@ export function PatientPackagesSection({ patientId, doctorOptions }: { patientId
 
       <Modal
         open={showSell}
-        onClose={() => setShowSell(false)}
+        onClose={closeSell}
+        isDirty={sellDirty}
         title="Yeni Paket Sat"
         footer={(
           <>
-            <Button variant="secondary" onClick={() => setShowSell(false)}>Vazgeç</Button>
+            <Button variant="secondary" onClick={closeSell}>Vazgeç</Button>
             <Button loading={saving} onClick={sell}>Paketi Sat</Button>
           </>
         )}
@@ -226,10 +313,10 @@ export function PatientPackagesSection({ patientId, doctorOptions }: { patientId
                 <input value={customName} onChange={(e) => setCustomName(e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
               </FormField>
               <FormField label="Seans Sayısı" required>
-                <input type="number" min={1} value={customSessions} onChange={(e) => setCustomSessions(e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
+                <input type="number" min={1} max={10000} value={customSessions} onChange={(e) => setCustomSessions(e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
               </FormField>
               <FormField label="Fiyat (₺)" required>
-                <input type="number" min={0} value={customPrice} onChange={(e) => setCustomPrice(e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
+                <input type="number" min={0.01} max={99999999.99} step="0.01" value={customPrice} onChange={(e) => setCustomPrice(e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
               </FormField>
             </div>
           )}
@@ -247,7 +334,7 @@ export function PatientPackagesSection({ patientId, doctorOptions }: { patientId
             </FormField>
             {remaining > 0 && (
               <FormField label="Kalan Tutar Taksit Sayısı">
-                <input type="number" min={1} value={taksitSayisi} onChange={(e) => setTaksitSayisi(e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
+                <input type="number" min={1} max={100} value={taksitSayisi} onChange={(e) => setTaksitSayisi(e.target.value)} className="w-full rounded-lg border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
               </FormField>
             )}
           </div>

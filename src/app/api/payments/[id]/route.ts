@@ -5,6 +5,7 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { can } from "@/lib/rbac";
 import { deleteIntegratedPayment, toPublicPayment, updateIntegratedPayment } from "@/lib/payment-ledger";
 import { effectiveDoctorWhere, isDoctorPeriodSettled } from "@/lib/hakedis";
+import { turkeyYearMonth } from "@/lib/tz";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -26,19 +27,14 @@ async function findAccessiblePayment(id: string, auth: { user: { role: string; i
     patient: { select: { id: true, fullName: true } },
     doctor: { select: { id: true, fullName: true } },
   } as const;
-  if (auth.user.role === "SUPERADMIN") {
-    return prisma.payment.findFirst({ where: { id, status: "ACTIVE" }, include });
+  if (auth.user.institutionId) {
+    return prisma.payment.findFirst({
+      where: { id, institutionId: auth.user.institutionId, status: "ACTIVE" },
+      include,
+    });
   }
-  if (!auth.user.institutionId) return null;
-
-  return prisma.payment.findFirst({
-    where: {
-      id,
-      institutionId: auth.user.institutionId,
-      status: "ACTIVE",
-    },
-    include,
-  });
+  if (auth.user.role !== "SUPERADMIN") return null;
+  return prisma.payment.findFirst({ where: { id, status: "ACTIVE" }, include });
 }
 
 export async function DELETE(_: NextRequest, props: Params) {
@@ -60,7 +56,8 @@ export async function DELETE(_: NextRequest, props: Params) {
   let periodLockOverridden = false;
   if (existing.doctorId) {
     const d = new Date(existing.createdAt);
-    const settled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId, d.getUTCFullYear(), d.getUTCMonth() + 1);
+    const { year, month } = turkeyYearMonth(d);
+    const settled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId, year, month);
     if (settled) {
       if (auth.user.role !== "SUPERADMIN") {
         return NextResponse.json(
@@ -114,15 +111,28 @@ export async function PATCH(request: NextRequest, props: Params) {
   const auth = await requireAuth("payments:write");
   if (auth.error) return auth.error;
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek gövdesi" }, { status: 400 });
+  }
   const existing = await findAccessiblePayment(params.id, auth);
   if (!existing) {
     return NextResponse.json({ message: "Ödeme bulunamadı" }, { status: 404 });
   }
 
   const nextAmount = body.amount !== undefined ? Number(body.amount) : undefined;
-  if (nextAmount !== undefined && (!Number.isFinite(nextAmount) || nextAmount <= 0)) {
+  if (nextAmount !== undefined && (!Number.isFinite(nextAmount) || nextAmount <= 0 || nextAmount > 99_999_999.99)) {
     return NextResponse.json({ message: "Geçerli ödeme tutarı girin" }, { status: 400 });
+  }
+  if (body.description !== undefined && body.description !== null && (typeof body.description !== "string" || body.description.trim().length > 500)) {
+    return NextResponse.json({ message: "Açıklama en fazla 500 karakter olabilir" }, { status: 400 });
+  }
+  if (body.reason !== undefined && body.reason !== null && (typeof body.reason !== "string" || body.reason.trim().length > 500)) {
+    return NextResponse.json({ message: "Değişiklik nedeni en fazla 500 karakter olabilir" }, { status: 400 });
+  }
+  const editableFields = ["amount", "method", "description", "posId", "createdAt", "doctorId"];
+  if (!editableFields.some((field) => body[field] !== undefined)) {
+    return NextResponse.json({ message: "Güncellenecek alan bulunamadı" }, { status: 400 });
   }
 
   // Bu ödeme bir doktorun cirosuna/ödemesine sayılıyorsa ve o dönem için
@@ -133,7 +143,8 @@ export async function PATCH(request: NextRequest, props: Params) {
     const touchesSettledFields = body.amount !== undefined || body.createdAt !== undefined || body.doctorId !== undefined;
     if (touchesSettledFields) {
       const d = new Date(existing.createdAt);
-      const settled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId, d.getUTCFullYear(), d.getUTCMonth() + 1);
+      const { year, month } = turkeyYearMonth(d);
+      const settled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId, year, month);
       if (settled) {
         if (auth.user.role !== "SUPERADMIN") {
           return NextResponse.json(
@@ -156,6 +167,9 @@ export async function PATCH(request: NextRequest, props: Params) {
   const nextCreatedAt = body.createdAt !== undefined ? String(body.createdAt) : undefined;
   if (nextCreatedAt !== undefined && Number.isNaN(new Date(nextCreatedAt).getTime())) {
     return NextResponse.json({ message: "Geçerli ödeme tarihi girin" }, { status: 400 });
+  }
+  if (nextCreatedAt !== undefined && new Date(nextCreatedAt).getTime() > Date.now() + 5 * 60_000) {
+    return NextResponse.json({ message: "Ödeme tarihi gelecekte olamaz" }, { status: 400 });
   }
 
   const nextDoctorId = body.doctorId !== undefined ? (body.doctorId || null) : undefined;
@@ -181,14 +195,24 @@ export async function PATCH(request: NextRequest, props: Params) {
   // kilidi hiç kontrol edilmiyordu. Böylece kapanmış bir dönem, doktor
   // değişikliğiyle fark edilmeden yeniden açılıp bozulabiliyordu (bkz.
   // denetim raporu).
-  if (finalDoctorId && finalDoctorId !== existing.doctorId && !body.force) {
+  if (finalDoctorId) {
     const effectiveDate = nextCreatedAt ? new Date(nextCreatedAt) : new Date(existing.createdAt);
-    const newDoctorSettled = await isDoctorPeriodSettled(finalDoctorId, auth.user.institutionId, effectiveDate.getUTCFullYear(), effectiveDate.getUTCMonth() + 1);
+    const targetPeriod = turkeyYearMonth(effectiveDate);
+    const sourcePeriod = turkeyYearMonth(new Date(existing.createdAt));
+    const targetChanged = finalDoctorId !== existing.doctorId
+      || targetPeriod.year !== sourcePeriod.year
+      || targetPeriod.month !== sourcePeriod.month;
+    const newDoctorSettled = targetChanged
+      ? await isDoctorPeriodSettled(finalDoctorId, auth.user.institutionId, targetPeriod.year, targetPeriod.month)
+      : false;
     if (newDoctorSettled) {
-      return NextResponse.json(
-        { message: "Bu ödeme aktarılmak istenen doktorun ilgili dönemi için zaten hakediş ödemesi yapılmış — ödeme bu doktora taşınamaz." },
-        { status: 400 },
-      );
+      if (auth.user.role !== "SUPERADMIN") {
+        return NextResponse.json(
+          { message: "Ödemenin taşınmak istendiği doktor/dönem için hakediş ödemesi yapılmış; kayıt bu döneme taşınamaz." },
+          { status: 400 },
+        );
+      }
+      periodLockOverridden = true;
     }
   }
   if (posRequiredMethods.has(finalMethod) && !finalPosId) {

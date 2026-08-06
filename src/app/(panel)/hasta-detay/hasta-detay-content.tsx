@@ -7,6 +7,7 @@ import { Download, List as ListIcon, Pencil, Plus, ShieldAlert } from "lucide-re
 import { OdontogramSelector, ToothStatus as TSType, TOOTH_STATUS_LABELS } from "@/components/ToothChart";
 import { PatientConsentPanel } from "@/components/PatientConsentPanel";
 import { SearchSelect } from "@/components/ui/SearchSelect";
+import { SearchableListbox, type SearchableListboxOption } from "@/components/ui/SearchableListbox";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { FormField } from "@/components/ui/FormField";
@@ -20,7 +21,7 @@ import {
 import { MEDICATION_TEMPLATES } from "@/lib/medications";
 import { ACTIVE_PRICE_LIST_STORAGE_KEY, TDB_2026_CORE_PRICE_CATALOG } from "@/lib/dental-treatment-catalog";
 import { confirmDialog } from "@/lib/confirm-client";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 import { addPdfSection, createPdfDoc, pdfSafeText } from "@/lib/pdf-export";
 import { cachedGet } from "@/lib/client-cache";
 import { PatientFormModal } from "@/components/patient/PatientFormModal";
@@ -30,6 +31,9 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { createModuleEmptyIcon, type ModuleKey } from "@/components/ui/ModuleIcon";
 import { showToastSafe } from "@/lib/toast-client";
 import { getDisplayAppointmentStatus } from "@/lib/appointment-status";
+import { parseAppointmentNote } from "@/lib/appointment-follow-up";
+import { turkeyDateKey, turkeyDateTimeLocalValue, turkeyLocalDateTimeToUtc } from "@/lib/tz";
+import { addInstallmentPeriod } from "@/lib/installment-schedule";
 
 const TaskEmptyIcon = createModuleEmptyIcon("clipboard");
 const RxEmptyIcon = createModuleEmptyIcon("finance");
@@ -140,7 +144,16 @@ type SmsConsentTokenLite = {
   usedAt?: string | null;
   resultStatus?: "PENDING" | "ENABLED" | "DISABLED" | "EXPIRED" | null;
 };
-type Appt = { id: string; startAt: string; endAt: string; type: string; status: string; doctor?: { fullName: string } };
+type Appt = {
+  id: string;
+  startAt: string;
+  endAt: string;
+  type: string;
+  status: string;
+  note?: string | null;
+  doctor?: { fullName: string };
+  clinicUnit?: { name: string; code?: string | null } | null;
+};
 type Exam = { id: string; treatmentName: string; toothNo?: string | null; amount: string | number; status: string; diagnosedAt: string; doctorId: string; doctor?: { id: string; fullName: string } };
 type Pay = { id: string; amount: string | number; method: string; description?: string | null; createdAt: string; doctorId?: string | null; doctor?: { id: string; fullName: string } | null; posId?: string | null };
 type Rx = { id: string; drugs: string; note?: string | null; createdAt: string };
@@ -157,6 +170,7 @@ type ClinicTask = {
   remindAt?: string | null;
   assignedToId?: string | null;
   assignedTo?: { id: string; fullName: string } | null;
+  assignees?: Array<{ userId: string; user: { id: string; fullName: string; role: string; isActive?: boolean } }>;
   createdBy?: { id: string; fullName: string } | null;
   createdAt: string;
 };
@@ -185,6 +199,18 @@ const TAB_ITEMS: { key: Tab; label: string }[] = [
   { key: "lab", label: "Laboratuvar" },
   { key: "belgeler", label: "Belgeler & Onam" },
 ];
+
+const TAB_PERMISSIONS: Record<Tab, string[]> = {
+  bilgi: ["patients:read"],
+  randevular: ["appointments:read"],
+  gorevler: ["clinictasks:read"],
+  tedavi: ["examinations:read", "treatment:read"],
+  odeme: ["payments:read", "installments:read", "finance:read"],
+  recete: ["prescriptions:read"],
+  notlar: ["patients:read"],
+  lab: ["lab:read"],
+  belgeler: ["documents:read"],
+};
 
 const PRIMARY_TAB_ORDER: Tab[] = ["bilgi", "tedavi", "lab", "odeme", "randevular"];
 const MORE_TAB_ORDER: Tab[] = ["recete", "notlar", "gorevler", "belgeler"];
@@ -247,6 +273,14 @@ const TASK_TYPE_LABELS: Record<ClinicTask["type"], string> = {
   ARAMA: "Arama",
   EVRAK: "Evrak",
   DIGER: "Diğer",
+};
+const TASK_TYPE_OPTIONS: SearchableListboxOption[] = Object.entries(TASK_TYPE_LABELS).map(([id, label]) => ({ id, label }));
+const TASK_STAFF_ROLE_LABELS: Record<string, string> = {
+  YONETICI: "Yönetici",
+  DOKTOR: "Doktor",
+  ASISTAN: "Asistan",
+  BANKO: "Banko",
+  MUHASEBE: "Muhasebe",
 };
 
 const TASK_STATUS_LABELS: Record<ClinicTask["status"], string> = {
@@ -533,6 +567,8 @@ function LabDentalChart({ selected, onChange }: { selected: number[]; onChange: 
 }
 
 export default function HastaDetayContent() {
+  const { can, canAny, permissions } = usePermissions();
+  const hidePatientPhone = !can("patients:phone");
   const router = useRouter();
   const search = useSearchParams();
   const id = search.get("id") || "";
@@ -541,25 +577,29 @@ export default function HastaDetayContent() {
   const [loadError, setLoadError] = useState("");
   const [tab, setTab] = useState<Tab>("bilgi");
   const [payMethod, setPayMethod] = useState("NAKIT");
-  const [payDate, setPayDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [payDate, setPayDate] = useState(() => turkeyDateKey());
   const [payAmount, setPayAmount] = useState("");
   const [payDesc, setPayDesc] = useState("");
   const [payPosId, setPayPosId] = useState("");
   const [payDoctorId, setPayDoctorId] = useState("");
   const [editingPaymentId, setEditingPaymentId] = useState("");
   const [payLoading, setPayLoading] = useState(false);
+  const [selectedAppointment, setSelectedAppointment] = useState<Appt | null>(null);
+  const [appointmentStatusSaving, setAppointmentStatusSaving] = useState(false);
   const paymentRequestKeyRef = useRef("");
+  const paymentSnapshotRef = useRef("");
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const closePaymentModal = () => {
     setPaymentModalOpen(false);
     setEditingPaymentId("");
-    setPayDate(new Date().toISOString().slice(0, 10));
+    setPayDate(turkeyDateKey());
     setPayAmount("");
     setPayDesc("");
     setPayPosId("");
     setPayDoctorId("");
     setPayMethod("NAKIT");
     paymentRequestKeyRef.current = "";
+    paymentSnapshotRef.current = "";
   };
   const [exportModalOpen, setExportModalOpen] = useState(false);
   const [exportFormat, setExportFormat] = useState<ExportFormat>("pdf");
@@ -578,18 +618,11 @@ export default function HastaDetayContent() {
   // ilerlemeyi raporlamazsa (bkz. XHR upload.onprogress lengthComputable)
   // sahte bir yüzde üretmek yerine belirsiz (indeterminate) çubuk gösterilir.
   const [currentUserId, setCurrentUserId] = useState("");
-  // Başlangıçta sessionStorage'dan oku — flash'siz render
-  const [currentUserRole, setCurrentUserRole] = useState(() =>
-    typeof window !== "undefined" ? (sessionStorage.getItem("dev-preview-role") || "") : ""
-  );
 
-  // Rol bazlı sekme filtreleme — BANKO: tedavi, recete, lab sekmeleri API tarafından engellendi
-  const visibleTabItems = TAB_ITEMS.filter(t => {
-    if (currentUserRole === "BANKO") return !["tedavi", "recete", "lab", "belgeler"].includes(t.key);
-    return true;
-  });
-  // DOKTOR: patients:write yetkisi yok — "Düzenle" butonu gösterilmemeli.
-  const canEditPatient = currentUserRole !== "DOKTOR";
+  const visibleTabItems = TAB_ITEMS.filter((item) => canAny(...TAB_PERMISSIONS[item.key]));
+  const canEditPatient = can("patients:write");
+  const canWriteClinicTasks = can("clinictasks:write");
+  const canCancelClinicTasks = can("clinictasks:delete");
   const [posDevices, setPosDevices] = useState<{ id: string; name: string; isActive: boolean }[]>([]);
   const [showEditModal, setShowEditModal] = useState(false);
   const [noteText, setNoteText] = useState("");
@@ -601,12 +634,35 @@ export default function HastaDetayContent() {
   const [taskTitle, setTaskTitle] = useState("");
   const [taskType, setTaskType] = useState<ClinicTask["type"]>("PARCA_SIPARIS");
   const [taskPriority, setTaskPriority] = useState(2);
-  const [taskAssignedToId, setTaskAssignedToId] = useState("");
+  const [taskAssignedToIds, setTaskAssignedToIds] = useState<string[]>([]);
+  const [taskStaff, setTaskStaff] = useState<Array<{ id: string; fullName: string; role: string; isActive: boolean }>>([]);
+  const [taskStaffLoading, setTaskStaffLoading] = useState(false);
+  const [taskStaffLoaded, setTaskStaffLoaded] = useState(false);
   const [taskVendor, setTaskVendor] = useState("");
   const [taskDueAt, setTaskDueAt] = useState("");
   const [taskDetails, setTaskDetails] = useState("");
   const [taskSaving, setTaskSaving] = useState(false);
   const [taskBusyId, setTaskBusyId] = useState("");
+  const taskBusyRef = useRef("");
+  const taskCreateRequestKeyRef = useRef("");
+  const taskStaffOptions = useMemo<SearchableListboxOption[]>(() => taskStaff.map((member) => ({
+    id: member.id,
+    label: member.fullName,
+    meta: TASK_STAFF_ROLE_LABELS[member.role] || member.role,
+    keywords: member.role,
+  })), [taskStaff]);
+
+  useEffect(() => {
+    if (tab !== "gorevler" || !canWriteClinicTasks || taskStaffLoaded || taskStaffLoading) return;
+    setTaskStaffLoading(true);
+    cachedGet<unknown>("/api/staff", 60_000)
+      .then((result) => {
+        if (!Array.isArray(result)) throw new Error("Personel listesi beklenmeyen biçimde döndü");
+        setTaskStaff((result as Array<{ id: string; fullName: string; role: string; isActive: boolean }>).filter((member) => member.isActive));
+      })
+      .catch((error) => showToast("error", error instanceof Error ? error.message : "Personel listesi yüklenemedi"))
+      .finally(() => { setTaskStaffLoaded(true); setTaskStaffLoading(false); });
+  }, [tab, canWriteClinicTasks, taskStaffLoaded, taskStaffLoading]);
   // Tek, paylaşılan bildirim sistemi — bu sayfa önceden kendi renkli kutu
   // toast'ını çiziyordu (motion'suz, StatusFeedback'siz), artık uygulama
   // genelindeki tek toast sistemine (showToastSafe → ToastProvider) yönlendirir.
@@ -688,10 +744,19 @@ export default function HastaDetayContent() {
     pesnat: "0",
     taksitSayisi: "3",
     period: "AYLIK" as const,
-    startDate: new Date().toISOString().slice(0, 10),
+    startDate: turkeyDateKey(),
     notes: ""
   });
   const [installmentPreview, setInstallmentPreview] = useState<{date: string; amount: number}[]>([]);
+  const installmentSnapshotRef = useRef("");
+
+  const resetInstallmentModal = () => {
+    setInstallmentModalOpen(false);
+    setInstallmentStep("borç");
+    setInstallmentForm({ toplamBorc: "", pesnat: "0", taksitSayisi: "3", period: "AYLIK", startDate: turkeyDateKey(), notes: "" });
+    setInstallmentPreview([]);
+    installmentSnapshotRef.current = "";
+  };
 
   // Laboratuvar süreç yönetimi (hasta-detay içi)
   const [labDetailModalOpen, setLabDetailModalOpen] = useState(false);
@@ -703,6 +768,7 @@ export default function HastaDetayContent() {
   const [labCreateModalOpen, setLabCreateModalOpen] = useState(false);
   const [labCreateSaving, setLabCreateSaving] = useState(false);
   const [labCreateError, setLabCreateError] = useState("");
+  const labCreateSnapshotRef = useRef("");
   const [labNewForm, setLabNewForm] = useState({
     doctorId: "",
     labName: "",
@@ -721,7 +787,7 @@ export default function HastaDetayContent() {
     sentItem: "",
     requestedItem: "",
     impressionMethod: "" as ImpressionMethod,
-    sentAt: new Date().toISOString().slice(0, 10),
+    sentAt: turkeyDateKey(),
     sentNote: "",
   });
   const [labTripSuggested, setLabTripSuggested] = useState(false);
@@ -729,14 +795,15 @@ export default function HastaDetayContent() {
   const [labTripEditForm, setLabTripEditForm] = useState({
     sentItem: "",
     requestedItem: "",
-    sentAt: new Date().toISOString().slice(0, 10),
+    sentAt: turkeyDateKey(),
     sentNote: "",
   });
   const [labDetailAction, setLabDetailAction] = useState<"trip" | "receive" | "invoice" | "editInvoice" | "rpt" | "editTrip" | null>(null);
   const [labActiveTrip, setLabActiveTrip] = useState<LabTrip | null>(null);
   const [editingLabInvoiceId, setEditingLabInvoiceId] = useState<string | null>(null);
+  const labDetailActionSnapshotRef = useRef("");
   const [labReceiveForm, setLabReceiveForm] = useState({
-    receivedAt: new Date().toISOString().slice(0, 10),
+    receivedAt: turkeyDateKey(),
     receivedItem: "",
     receivedNote: "",
     needsAppointment: true,
@@ -745,7 +812,7 @@ export default function HastaDetayContent() {
     item: "",
     amount: "",
     invoiceNo: "",
-    issuedAt: new Date().toISOString().slice(0, 10),
+    issuedAt: turkeyDateKey(),
     note: "",
   });
   const labInvoiceRequestKeyRef = useRef("");
@@ -819,9 +886,31 @@ export default function HastaDetayContent() {
   };
 
   const selectTab = (nextTab: Tab) => {
-    setTab(nextTab);
-    syncTabInUrl(nextTab);
+    const safeTab = visibleTabItems.some((item) => item.key === nextTab) ? nextTab : "bilgi";
+    setTab(safeTab);
+    syncTabInUrl(safeTab);
   };
+
+  useEffect(() => {
+    const syncFromLocation = () => {
+      const requested = new URLSearchParams(window.location.search).get("tab") as Tab | null;
+      const nextTab = requested && visibleTabItems.some((item) => item.key === requested) ? requested : "bilgi";
+      setTab(nextTab);
+    };
+
+    window.addEventListener("popstate", syncFromLocation);
+    return () => window.removeEventListener("popstate", syncFromLocation);
+    // İzin matrisi değiştiğinde açık hasta kartı aynı görünür sekme kümesini kullanmalı.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permissions]);
+
+  useEffect(() => {
+    if (!visibleTabItems.some((item) => item.key === tab)) {
+      setTab("bilgi");
+      syncTabInUrl("bilgi");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [permissions, tab]);
   const closeActionMenu = () => {
     if (actionMenuRef.current) actionMenuRef.current.open = false;
   };
@@ -873,6 +962,32 @@ export default function HastaDetayContent() {
     });
   };
 
+  const updateAppointmentStatusFromDetail = async (status: string) => {
+    if (!selectedAppointment || appointmentStatusSaving) return;
+    if (status === "IPTAL" && !(await confirmDialog({ message: "Randevu iptal edilsin mi? Kayıt geçmişte görünmeye devam eder.", danger: true, confirmText: "İptal Et" }))) return;
+
+    setAppointmentStatusSaving(true);
+    try {
+      const response = await fetch(`/api/appointments/${selectedAppointment.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        showToast("error", body?.message || "Randevu durumu güncellenemedi");
+        return;
+      }
+      setSelectedAppointment((previous) => previous ? { ...previous, status } : previous);
+      showToast("success", "Randevu durumu güncellendi");
+      void load(true);
+    } catch {
+      showToast("error", "Bağlantı hatası — randevu durumu güncellenemedi");
+    } finally {
+      setAppointmentStatusSaving(false);
+    }
+  };
+
   const load = async (silent = false) => {
     if (!id) return;
     if (!silent) setLoading(true);
@@ -883,22 +998,22 @@ export default function HastaDetayContent() {
           cache: "no-store",
           headers: patientAccessRecordedRef.current ? { "x-silent-refresh": "1" } : undefined,
         }),
-        fetch(`/api/clinic-tasks?patientId=${id}&take=200`, { cache: "no-store" }),
+        can("clinictasks:read") ? fetch(`/api/clinic-tasks?patientId=${id}&take=200`, { cache: "no-store" }).catch(() => null) : Promise.resolve(null),
         // Hasta detayında tedavi planları hiç görünmüyordu — hasta-detay ile
         // tedavi-plani arasındaki zincir kopuktu (bkz. denetim raporu Tema 6/7).
-        fetch(`/api/treatment-plans?patientId=${id}&take=50`, { cache: "no-store" }),
+        can("treatment:read") ? fetch(`/api/treatment-plans?patientId=${id}&take=50`, { cache: "no-store" }).catch(() => null) : Promise.resolve(null),
       ]);
       if (!res.ok) {
-        setData(null);
-        setLoadError(res.status === 404 ? "Hasta bulunamadı" : "Hasta kartı yüklenemedi");
+        if (res.status === 404) setData(null);
+        setLoadError(res.status === 404 ? "Hasta bulunamadı" : "Hasta kartı yenilenemedi; mevcut bilgiler korundu");
         return;
       }
       patientAccessRecordedRef.current = true;
       lastSilentRefreshAtRef.current = Date.now();
 
       const d = await res.json();
-      const taskJson = await taskRes.json().catch(() => []);
-      const planJson = await planRes.json().catch(() => ({ items: [] }));
+      const taskJson = taskRes?.ok ? await taskRes.json().catch(() => null) : null;
+      const planJson = planRes?.ok ? await planRes.json().catch(() => null) : null;
       const normalizedData: PatientDetailData = {
         ...d,
         appointments: Array.isArray(d?.appointments) ? d.appointments : [],
@@ -909,17 +1024,18 @@ export default function HastaDetayContent() {
         taksitPlanlari: Array.isArray(d?.taksitPlanlari) ? d.taksitPlanlari : [],
       };
       setData(normalizedData);
-      setClinicTasks(Array.isArray(taskJson) ? taskJson : []);
-      setTreatmentPlans(Array.isArray(planJson?.items) ? planJson.items : []);
+      if (Array.isArray(taskJson)) setClinicTasks(taskJson);
+      else if (can("clinictasks:read") && !silent) showToast("error", "Görevler yenilenemedi; mevcut görev listesi korundu");
+      if (Array.isArray(planJson?.items)) setTreatmentPlans(planJson.items);
+      else if (can("treatment:read") && !silent) showToast("error", "Tedavi planları yenilenemedi; mevcut liste korundu");
       if (normalizedData.toothChart) {
         try { setToothMap(JSON.parse(normalizedData.toothChart)); } catch { setToothMap({}); }
       } else {
         setToothMap({});
       }
     } catch {
-      setData(null);
-      setLoadError("Hasta karti yuklenemedi");
-      showToast("error", "Hasta karti yuklenemedi");
+      setLoadError("Hasta kartı yenilenemedi; mevcut bilgiler korundu");
+      showToast("error", "Hasta kartı yenilenemedi; bağlantıyı kontrol edip tekrar deneyin");
     } finally {
       setLoading(false);
     }
@@ -929,13 +1045,17 @@ export default function HastaDetayContent() {
   useEffect(() => {
     patientAccessRecordedRef.current = false;
     lastSilentRefreshAtRef.current = 0;
-    setTab("bilgi");
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
-      if (params.get("tab") !== "bilgi") {
-        params.set("tab", "bilgi");
+      const requestedTab = params.get("tab") as Tab | null;
+      const validTab = requestedTab && TAB_ITEMS.some((item) => item.key === requestedTab) ? requestedTab : "bilgi";
+      setTab(validTab);
+      if (params.get("tab") !== validTab) {
+        params.set("tab", validTab);
         window.history.replaceState(null, "", `${window.location.pathname}?${params.toString()}`);
       }
+    } else {
+      setTab("bilgi");
     }
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1036,7 +1156,7 @@ export default function HastaDetayContent() {
     labOrderRequestKeyRef.current = "";
     const defaultDoctorId = doctorOptions[0]?.id || "";
     const defaultLabName = knownLabs[0] || "";
-    setLabNewForm({
+    const initial = {
       doctorId: defaultDoctorId,
       labName: defaultLabName,
       customLabName: "",
@@ -1045,8 +1165,10 @@ export default function HastaDetayContent() {
       notes: "",
       sentItem: "",
       requestedItem: "",
-      impressionMethod: "",
-    });
+      impressionMethod: "" as ImpressionMethod,
+    };
+    setLabNewForm(initial);
+    labCreateSnapshotRef.current = JSON.stringify(initial);
     setLabNewDoctorSearch(doctorOptions.find((d) => d.id === defaultDoctorId)?.fullName || "");
     setLabNewLabSearch(defaultLabName);
     setLabNewTypeSearch("");
@@ -1057,6 +1179,7 @@ export default function HastaDetayContent() {
     setLabCreateModalOpen(false);
     setLabCreateSaving(false);
     setLabCreateError("");
+    labCreateSnapshotRef.current = "";
   };
 
   const createOrderFromPatientDetail = async () => {
@@ -1139,15 +1262,15 @@ export default function HastaDetayContent() {
     setLabActionError("");
     setLabSelectedOrderId("");
     setLabOrderDetail(null);
-    setLabTripForm({ sentItem: "", requestedItem: "", impressionMethod: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
+    setLabTripForm({ sentItem: "", requestedItem: "", impressionMethod: "", sentAt: turkeyDateKey(), sentNote: "" });
     setLabTripSuggested(false);
-    setLabTripEditForm({ sentItem: "", requestedItem: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
+    setLabTripEditForm({ sentItem: "", requestedItem: "", sentAt: turkeyDateKey(), sentNote: "" });
     setEditingTripId(null);
     setLabDetailAction(null);
     setLabActiveTrip(null);
     setLabActionError("");
-    setLabReceiveForm({ receivedAt: new Date().toISOString().slice(0, 10), receivedItem: "", receivedNote: "", needsAppointment: true });
-    setLabInvoiceForm({ item: "", amount: "", invoiceNo: "", issuedAt: new Date().toISOString().slice(0, 10), note: "" });
+    setLabReceiveForm({ receivedAt: turkeyDateKey(), receivedItem: "", receivedNote: "", needsAppointment: true });
+    setLabInvoiceForm({ item: "", amount: "", invoiceNo: "", issuedAt: turkeyDateKey(), note: "" });
     setLabRptReason("");
   };
 
@@ -1173,7 +1296,7 @@ export default function HastaDetayContent() {
       if (!response.ok) throw new Error(payload?.error || "Laboratuvar gönderimi eklenemedi");
 
       await Promise.all([refreshLabOrderDetail(labOrderDetail.id), load()]);
-      setLabTripForm({ sentItem: "", requestedItem: "", impressionMethod: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
+      setLabTripForm({ sentItem: "", requestedItem: "", impressionMethod: "", sentAt: turkeyDateKey(), sentNote: "" });
       setLabTripSuggested(false);
       showToast("success", "Laboratuvar gönderimi eklendi");
     } catch (error) {
@@ -1187,18 +1310,20 @@ export default function HastaDetayContent() {
 
   const startEditTripFromPatientDetail = (trip: LabTrip) => {
     const parsed = splitTripDescription(trip.description);
-    setEditingTripId(trip.id);
-    setLabTripEditForm({
+    const initial = {
       sentItem: parsed.sentItem,
       requestedItem: parsed.requestedItem,
-      sentAt: trip.sentAt ? new Date(trip.sentAt).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+      sentAt: trip.sentAt ? turkeyDateKey(new Date(trip.sentAt)) : turkeyDateKey(),
       sentNote: trip.sentNote || "",
-    });
+    };
+    setEditingTripId(trip.id);
+    setLabTripEditForm(initial);
+    labDetailActionSnapshotRef.current = JSON.stringify(initial);
   };
 
   const cancelEditTripFromPatientDetail = () => {
     setEditingTripId(null);
-    setLabTripEditForm({ sentItem: "", requestedItem: "", sentAt: new Date().toISOString().slice(0, 10), sentNote: "" });
+    setLabTripEditForm({ sentItem: "", requestedItem: "", sentAt: turkeyDateKey(), sentNote: "" });
   };
 
   const saveTripEditFromPatientDetail = async () => {
@@ -1240,6 +1365,7 @@ export default function HastaDetayContent() {
     setEditingLabInvoiceId(null);
     setLabActionError("");
     setLabRptReason("");
+    labDetailActionSnapshotRef.current = "";
     cancelEditTripFromPatientDetail();
   };
 
@@ -1258,50 +1384,58 @@ export default function HastaDetayContent() {
     const template = WORKFLOW_TEMPLATES[labOrderDetail.labType] ?? [];
     const stepIndex = getNextTemplateStepIndex(labOrderDetail.labType, labOrderDetail.trips);
     const suggestion = template[stepIndex] ?? null;
-    setLabTripForm((prev) => ({
-      ...prev,
-      sentItem: prev.sentItem || suggestion?.send || "",
-      requestedItem: prev.requestedItem || suggestion?.request || "",
-      sentAt: new Date().toISOString().slice(0, 10),
-    }));
+    const initial = {
+      ...labTripForm,
+      sentItem: labTripForm.sentItem || suggestion?.send || "",
+      requestedItem: labTripForm.requestedItem || suggestion?.request || "",
+      sentAt: turkeyDateKey(),
+    };
+    setLabTripForm(initial);
+    labDetailActionSnapshotRef.current = JSON.stringify(initial);
     setLabDetailAction("trip");
   };
 
   const openPatientLabReceiveAction = (_order: SharedLabOrder, trip: SharedLabTrip) => {
     setLabActiveTrip(toLocalLabTrip(trip));
     const parts = splitTripDescription(trip.description);
-    setLabReceiveForm({
-      receivedAt: new Date().toISOString().slice(0, 10),
+    const initial = {
+      receivedAt: turkeyDateKey(),
       receivedItem: getReceivedItemFromNote(trip.receivedNote, parts.requestedItem || parts.sentItem),
       receivedNote: cleanLabReceivedNote(trip.receivedNote),
       needsAppointment: true,
-    });
+    };
+    setLabReceiveForm(initial);
+    labDetailActionSnapshotRef.current = JSON.stringify(initial);
     setLabDetailAction("receive");
   };
 
   const openPatientLabInvoiceAction = (order: SharedLabOrder) => {
     labInvoiceRequestKeyRef.current = "";
     setEditingLabInvoiceId(null);
-    setLabInvoiceForm({
+    const initial = {
       item: order.labType || "Laboratuvar ücreti",
       amount: "",
       invoiceNo: "",
-      issuedAt: new Date().toISOString().slice(0, 10),
+      issuedAt: turkeyDateKey(),
       note: "",
-    });
+    };
+    setLabInvoiceForm(initial);
+    labDetailActionSnapshotRef.current = JSON.stringify(initial);
     setLabDetailAction("invoice");
   };
 
   const openPatientLabInvoiceEditAction = (_order: SharedLabOrder, invoice: SharedLabInvoice) => {
     labInvoiceRequestKeyRef.current = "";
     setEditingLabInvoiceId(invoice.id);
-    setLabInvoiceForm({
+    const initial = {
       item: invoice.item,
       amount: String(invoice.amount),
       invoiceNo: invoice.invoiceNo || "",
       issuedAt: invoice.issuedAt.slice(0, 10),
       note: invoice.note || "",
-    });
+    };
+    setLabInvoiceForm(initial);
+    labDetailActionSnapshotRef.current = JSON.stringify(initial);
     setLabDetailAction("editInvoice");
   };
 
@@ -1447,6 +1581,7 @@ export default function HastaDetayContent() {
 
   const openPatientLabRptAction = () => {
     setLabRptReason("");
+    labDetailActionSnapshotRef.current = JSON.stringify({ reason: "" });
     setLabDetailAction("rpt");
   };
 
@@ -1487,10 +1622,7 @@ export default function HastaDetayContent() {
 
     const handleEscapeKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        setInstallmentModalOpen(false);
-        setInstallmentStep("borç");
-        setInstallmentForm({toplamBorc: "", pesnat: "0", taksitSayisi: "3", period: "AYLIK", startDate: new Date().toISOString().slice(0, 10), notes: ""});
-        setInstallmentPreview([]);
+        resetInstallmentModal();
       }
     };
 
@@ -1507,12 +1639,9 @@ export default function HastaDetayContent() {
       .then((devs: { id: string; name: string; isActive: boolean }[]) => setPosDevices(devs.filter(d => d.isActive)))
       .catch(() => {});
 
-    cachedGet<{ id?: string; role?: string } | null>("/api/auth/me", 60_000)
+    cachedGet<{ id?: string } | null>("/api/auth/me", 60_000)
       .then(d => {
         setCurrentUserId(d?.id || "");
-        const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
-        const effectiveRole = preview || d?.role || "";
-        if (effectiveRole) setCurrentUserRole(effectiveRole);
         if (d?.id) setTreatDoctorId(d.id);
       })
       .catch(() => {});
@@ -1698,18 +1827,15 @@ export default function HastaDetayContent() {
     // ve hasta hesabında asla kapanmayan bir kuruş bakiyesi kalır.
     const perInstallment = Math.round((remaining / installmentCount) * 100) / 100;
 
-    const daysMap: Record<string, number> = {HAFTALIK: 7, IKIHALFTALIK: 14, AYLIK: 30, IKIAYLIK: 60, UCAYLIK: 90, ALTIAYLIK: 180, YILLIK: 365};
-    const daysDiff = daysMap[installmentForm.period] || 30;
-    const startDate = new Date(installmentForm.startDate);
+    const startDate = new Date(`${installmentForm.startDate}T00:00:00.000Z`);
 
     const preview = Array.from({length: installmentCount}, (_, i) => {
-      const dueDate = new Date(startDate);
-      dueDate.setDate(dueDate.getDate() + (i * daysDiff));
+      const dueDate = addInstallmentPeriod(startDate, installmentForm.period, i);
       const isLast = i === installmentCount - 1;
       const amount = isLast
         ? Math.round((remaining - perInstallment * (installmentCount - 1)) * 100) / 100
         : perInstallment;
-      return {date: dueDate.toISOString().slice(0, 10), amount};
+      return {date: turkeyDateKey(dueDate), amount};
     });
     setInstallmentPreview(preview);
   };
@@ -1718,6 +1844,8 @@ export default function HastaDetayContent() {
     if (!currentUserId) return showToast("error", "Kullanıcı doğrulanamadı");
     const totalDebt = Number(installmentForm.toplamBorc) || 0;
     const downPayment = Number(installmentForm.pesnat) || 0;
+    if (!Number.isFinite(totalDebt) || totalDebt <= 0 || totalDebt > (discountedTotal - totalPaid) + 0.005) return showToast("error", "Taksitlendirilecek tutar mevcut borcu aşamaz");
+    if (!Number.isInteger(Number(installmentForm.taksitSayisi)) || Number(installmentForm.taksitSayisi) <= 0 || Number(installmentForm.taksitSayisi) > 60) return showToast("error", "1-60 arasında geçerli bir taksit sayısı girin");
     if (downPayment > totalDebt) return showToast("error", "Peşinat tutarı toplam borçtan büyük olamaz");
     if (totalDebt - downPayment <= 0) return showToast("error", "Taksitlendirilecek miktar 0'dan büyük olmalıdır");
 
@@ -1742,7 +1870,7 @@ export default function HastaDetayContent() {
 
       if (res.ok) {
         showToast("success", "Taksit planı oluşturuldu", "finance");
-        setInstallmentForm({toplamBorc: "", pesnat: "0", taksitSayisi: "3", period: "AYLIK", startDate: new Date().toISOString().slice(0, 10), notes: ""});
+        setInstallmentForm({toplamBorc: "", pesnat: "0", taksitSayisi: "3", period: "AYLIK", startDate: turkeyDateKey(), notes: ""});
         setInstallmentModalOpen(false);
         setInstallmentStep("borç");
         setInstallmentPreview([]);
@@ -1760,13 +1888,16 @@ export default function HastaDetayContent() {
 
   const handleInstallmentNextStep = () => {
     if (installmentStep === "borç") {
-      if (!installmentForm.toplamBorc || Number(installmentForm.toplamBorc) <= 0) return showToast("error", "Toplam borç girin");
+      const total = Number(installmentForm.toplamBorc);
+      if (!Number.isFinite(total) || total <= 0) return showToast("error", "Toplam borç girin");
+      if (total > totalDebt + 0.005) return showToast("error", "Taksitlendirilecek tutar mevcut borcu aşamaz");
       const pesnat = Number(installmentForm.pesnat) || 0;
+      if (pesnat < 0 || !Number.isFinite(pesnat)) return showToast("error", "Geçerli bir peşinat girin");
       if (pesnat >= Number(installmentForm.toplamBorc)) return showToast("error", "Peşinat toplam borçtan küçük olmalı");
       generateInstallmentPreview();
       setInstallmentStep("plan");
     } else if (installmentStep === "plan") {
-      if (!installmentForm.taksitSayisi || Number(installmentForm.taksitSayisi) <= 0) return showToast("error", "Taksit sayısı girin");
+      if (!Number.isInteger(Number(installmentForm.taksitSayisi)) || Number(installmentForm.taksitSayisi) <= 0 || Number(installmentForm.taksitSayisi) > 60) return showToast("error", "1-60 arasında geçerli bir taksit sayısı girin");
       setInstallmentStep("onay");
     }
   };
@@ -1799,7 +1930,7 @@ export default function HastaDetayContent() {
   const buildPatientBar = () => {
     if (!data) return "";
     const age = data.birthDate ? Math.floor((Date.now() - new Date(data.birthDate).getTime()) / 31536000000) : null;
-    const phoneText = shouldHidePatientPhone(currentUserRole) ? "***" : (data.phone || "—");
+    const phoneText = hidePatientPhone ? "***" : (data.phone || "—");
     return `<div class="patient-bar">
       <span><strong>${data.fullName}</strong></span>
       <span>T.C.: <strong>${data.tcNo}</strong></span>
@@ -2071,21 +2202,32 @@ export default function HastaDetayContent() {
   }, [recentTreatingDoctorId]);
 
   const openNewPaymentModal = () => {
+    const today = turkeyDateKey();
     setEditingPaymentId("");
+    setPayDate(today);
+    setPayAmount("");
+    setPayDesc("");
+    setPayPosId("");
+    setPayMethod("NAKIT");
     setPayDoctorId(recentTreatingDoctorId);
+    paymentSnapshotRef.current = JSON.stringify({ editingPaymentId: "", payDate: today, payAmount: "", payDesc: "", payPosId: "", payMethod: "NAKIT", payDoctorId: recentTreatingDoctorId });
     setPaymentModalOpen(true);
   };
 
   const startEditPayment = (p: { id: string; createdAt: string; method: string; description?: string | null; amount: string | number; doctorId?: string | null; posId?: string | null }) => {
-    setEditingPaymentId(p.id);
-    setPayAmount(String(Number(p.amount)));
-    setPayMethod(p.method);
-    setPayDesc(p.description || "");
-    setPayPosId(p.posId || "");
-    setPayDoctorId(p.doctorId || "");
-    setPayDate(new Date(p.createdAt).toISOString().slice(0, 10));
+    const nextForm = { editingPaymentId: p.id, payDate: turkeyDateKey(new Date(p.createdAt)), payAmount: String(Number(p.amount)), payDesc: p.description || "", payPosId: p.posId || "", payMethod: p.method, payDoctorId: p.doctorId || "" };
+    setEditingPaymentId(nextForm.editingPaymentId);
+    setPayAmount(nextForm.payAmount);
+    setPayMethod(nextForm.payMethod);
+    setPayDesc(nextForm.payDesc);
+    setPayPosId(nextForm.payPosId);
+    setPayDoctorId(nextForm.payDoctorId);
+    setPayDate(nextForm.payDate);
+    paymentSnapshotRef.current = JSON.stringify(nextForm);
     setPaymentModalOpen(true);
   };
+
+  const paymentDirty = paymentModalOpen && JSON.stringify({ editingPaymentId: editingPaymentId, payDate, payAmount, payDesc, payPosId, payMethod, payDoctorId }) !== paymentSnapshotRef.current;
 
   const addPayment = async () => {
     if (payLoading) return;
@@ -2107,7 +2249,7 @@ export default function HastaDetayContent() {
         ? await fetch("/api/payments/" + editingPaymentId, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ method: payMethod, amount, description: payDesc, doctorId: payDoctorId, posId: payPosId || null, createdAt: new Date(payDate + "T00:00:00").toISOString() })
+            body: JSON.stringify({ method: payMethod, amount, description: payDesc, doctorId: payDoctorId, posId: payPosId || null, createdAt: turkeyLocalDateTimeToUtc(payDate, "12:00").toISOString() })
           })
         : await fetch("/api/payments", {
             method: "POST",
@@ -2141,20 +2283,27 @@ export default function HastaDetayContent() {
   };
 
   const createClinicTask = async () => {
-    if (!taskTitle.trim()) return showToast("error", "Görev başlığı girin");
+    if (taskTitle.trim().length < 2) return showToast("error", "Görev başlığı en az 2 karakter olmalıdır");
+    if (taskDueAt) {
+      const dueAt = turkeyLocalDateTimeToUtc(taskDueAt.slice(0, 10), taskDueAt.slice(11, 16));
+      if (dueAt.getTime() < Date.now() - 5 * 60 * 1000) return showToast("error", "Yeni görevin son tarihi geçmişte olamaz");
+    }
     setTaskSaving(true);
     try {
       const res = await fetch("/api/clinic-tasks", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": taskCreateRequestKeyRef.current || (taskCreateRequestKeyRef.current = crypto.randomUUID()),
+        },
         body: JSON.stringify({
           patientId: id,
           title: taskTitle.trim(),
           type: taskType,
           priority: taskPriority,
-          assignedToId: taskAssignedToId || undefined,
+          assignedToIds: taskAssignedToIds,
           vendorName: taskVendor.trim() || undefined,
-          dueAt: taskDueAt ? new Date(taskDueAt).toISOString() : undefined,
+          dueAt: taskDueAt ? turkeyLocalDateTimeToUtc(taskDueAt.slice(0, 10), taskDueAt.slice(11, 16)).toISOString() : undefined,
           details: taskDetails.trim() || undefined,
         }),
       });
@@ -2167,10 +2316,11 @@ export default function HastaDetayContent() {
       setTaskTitle("");
       setTaskType("PARCA_SIPARIS");
       setTaskPriority(2);
-      setTaskAssignedToId("");
+      setTaskAssignedToIds([]);
       setTaskVendor("");
       setTaskDueAt("");
       setTaskDetails("");
+      taskCreateRequestKeyRef.current = "";
       showToast("success", "Görev eklendi");
       void load();
     } catch {
@@ -2181,6 +2331,8 @@ export default function HastaDetayContent() {
   };
 
   const updateClinicTaskStatus = async (taskId: string, status: ClinicTask["status"]) => {
+    if (taskBusyRef.current) return;
+    taskBusyRef.current = taskId;
     setTaskBusyId(taskId);
     try {
       const res = await fetch("/api/clinic-tasks/" + taskId, {
@@ -2198,21 +2350,35 @@ export default function HastaDetayContent() {
     } catch {
       showToast("error", "Bağlantı hatası — görev güncellenemedi. Lütfen tekrar deneyin.");
     } finally {
+      taskBusyRef.current = "";
       setTaskBusyId("");
     }
   };
 
   const deleteClinicTask = async (taskId: string) => {
-    if (!(await confirmDialog({ message: "Görev silinsin mi?", danger: true, confirmText: "Sil" }))) return;
-    setTaskBusyId(taskId);
-    const res = await fetch("/api/clinic-tasks/" + taskId, { method: "DELETE" });
-    setTaskBusyId("");
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      return showToast("error", err.message || "Görev silinemedi");
+    if (taskBusyRef.current) return;
+    taskBusyRef.current = taskId;
+    if (!(await confirmDialog({ message: "Görev iptal edilsin mi? Görev geçmişi korunacaktır.", danger: true, confirmText: "İptal Et" }))) {
+      taskBusyRef.current = "";
+      return;
     }
-    showToast("success", "Görev silindi");
-    void load();
+    setTaskBusyId(taskId);
+    try {
+      const res = await fetch("/api/clinic-tasks/" + taskId, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "IPTAL" }),
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) return showToast("error", result.message || "Görev iptal edilemedi");
+      showToast("success", "Görev iptal edildi");
+      void load();
+    } catch {
+      showToast("error", "Bağlantı hatası nedeniyle görev iptal edilemedi");
+    } finally {
+      taskBusyRef.current = "";
+      setTaskBusyId("");
+    }
   };
 
   const addDrugToList = () => {
@@ -2280,13 +2446,16 @@ export default function HastaDetayContent() {
       const res = await fetch(`/api/documents?patientId=${id}`, { cache: "no-store" });
       if (!res.ok) {
         showToast("error", "Belgeler/röntgenler yüklenemedi. Lütfen tekrar deneyin.");
-        setDocuments([]);
         return;
       }
-      const json = await res.json().catch(() => []);
-      setDocuments(Array.isArray(json) ? json : []);
+      const json = await res.json().catch(() => null);
+      if (!Array.isArray(json)) {
+        showToast("error", "Belgeler/röntgenler geçerli biçimde alınamadı; mevcut liste korundu.");
+        return;
+      }
+      setDocuments(json);
     } catch {
-      setDocuments([]);
+      showToast("error", "Bağlantı hatası nedeniyle belgeler/röntgenler yenilenemedi; mevcut liste korundu.");
     } finally {
       setDocumentsLoading(false);
       setDocumentsLoaded(true);
@@ -2470,6 +2639,19 @@ export default function HastaDetayContent() {
   const totalCharged = tedaviler.reduce((s, e) => s + Number(e.amount), 0);
   const discountedTotal = totalCharged * (1 - (Number(data.discountRate || 0) / 100));
   const totalDebt = discountedTotal - totalPaid;
+  const openInstallmentModal = () => {
+    if (totalDebt <= 0) {
+      showToast("error", "Taksit planı için açık bir borç bulunmuyor");
+      return;
+    }
+    const nextForm = { toplamBorc: String(discountedTotal), pesnat: "0", taksitSayisi: "3", period: "AYLIK" as const, startDate: turkeyDateKey(), notes: "" };
+    setInstallmentModalOpen(true);
+    setInstallmentStep("borç");
+    setInstallmentForm(nextForm);
+    setInstallmentPreview([]);
+    installmentSnapshotRef.current = JSON.stringify(nextForm);
+  };
+  const installmentDirty = installmentModalOpen && JSON.stringify(installmentForm) !== installmentSnapshotRef.current;
 
   const healthFlags = ([
     ["Alerji", data.hasAllergy], ["Hepatit", data.hasHepatitis], ["Böbrek", data.hasKidney],
@@ -2477,6 +2659,14 @@ export default function HastaDetayContent() {
     ["Bulaşıcı Hastalık", data.hasContagiousDisease],
   ] as [string, boolean][]).filter(([, v]) => v);
   const canOpenTab = (key: Tab) => visibleTabItems.some((item) => item.key === key);
+  const labCreateDirty = labCreateModalOpen && JSON.stringify(labNewForm) !== labCreateSnapshotRef.current;
+  const labDetailActionForm = labDetailAction === "trip" ? labTripForm
+    : labDetailAction === "receive" ? labReceiveForm
+    : labDetailAction === "invoice" || labDetailAction === "editInvoice" ? labInvoiceForm
+    : labDetailAction === "editTrip" ? labTripEditForm
+    : { reason: labRptReason };
+  const labDetailActionDirty = Boolean(labDetailAction && labOrderDetail)
+    && JSON.stringify(labDetailActionForm) !== labDetailActionSnapshotRef.current;
   const now = Date.now();
   const upcomingAppointments = data.appointments
     .filter((a) => new Date(a.startAt).getTime() >= now && !["IPTAL", "TAMAMLANDI"].includes(a.status))
@@ -2603,7 +2793,7 @@ export default function HastaDetayContent() {
           // DOKTOR/ASISTAN rolünden gizlenirken, bu dışa aktarma özelliği
           // hiç kontrol etmiyordu — aynı roller "Dışa Aktar" ile tam
           // numarayı elde edebiliyordu (bkz. denetim raporu).
-          ["Telefon", shouldHidePatientPhone(currentUserRole) ? "***" : patient.phone],
+          ["Telefon", hidePatientPhone ? "***" : patient.phone],
           ["Meslek", patient.profession || "-"],
           ["Cinsiyet", patient.gender || "-"],
           ["Doğum Tarihi", patient.birthDate ? dateText(patient.birthDate) : "-"],
@@ -2936,7 +3126,7 @@ export default function HastaDetayContent() {
               {healthFlags.length > 0 && <Badge tone="critical" icon={ShieldAlert}>Sağlık uyarısı</Badge>}
               {totalDebt > 0 && <Badge tone="warning">Kalan {totalDebt.toLocaleString("tr-TR", { maximumFractionDigits: 0 })} TL</Badge>}
             </div>
-            <p className="mt-0.5 text-xs text-slate-500">TC: {data.tcNo}{(currentUserRole !== "DOKTOR" && currentUserRole !== "ASISTAN") ? ` · ${data.phone}` : ""}</p>
+            <p className="mt-0.5 text-xs text-slate-500">TC: {data.tcNo}{!hidePatientPhone ? ` · ${data.phone}` : ""}</p>
           </div>
         </div>
 
@@ -3183,7 +3373,7 @@ export default function HastaDetayContent() {
               </div>
               <dl className="space-y-2 text-sm">
                 {[
-                  ...(currentUserRole !== "DOKTOR" && currentUserRole !== "ASISTAN" ? [["Telefon", data.phone]] : []),
+                  ...(!hidePatientPhone ? [["Telefon", data.phone]] : []),
                   ["Cinsiyet", data.gender === "ERKEK" || data.gender === "Erkek" ? "Erkek" : "Kadın"],
                   ["Kurum", data.insurance || "-"],
                   ["Meslek", data.profession || "-"],
@@ -3327,20 +3517,18 @@ export default function HastaDetayContent() {
               {data.appointments.map(a => (
                 <tr
                   key={a.id}
-                  className="cursor-pointer border-b hover:bg-primary/10"
-                  onClick={() => {
-                    const d = new Date(a.startAt);
-                    const yyyy = d.getFullYear();
-                    const mm = String(d.getMonth() + 1).padStart(2, "0");
-                    const dd = String(d.getDate()).padStart(2, "0");
-                    const params = new URLSearchParams({
-                      view: "GUN",
-                      date: `${yyyy}-${mm}-${dd}`,
-                      focusAppointmentId: a.id,
-                    });
-                    router.push(`/randevu?${params.toString()}`);
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`${new Date(a.startAt).toLocaleString("tr-TR")} randevu detayını aç`}
+                  className="ui-appointment-history-row cursor-pointer border-b hover:bg-primary/10"
+                  onClick={() => setSelectedAppointment(a)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelectedAppointment(a);
+                    }
                   }}
-                  title="Randevular ekranında ilgili güne git"
+                  title="Randevu detayını aç"
                 >
                   <td className="px-3 py-2">{new Date(a.startAt).toLocaleString("tr-TR")}</td>
                   <td className="px-3 py-2">{a.doctor?.fullName || "-"}</td>
@@ -3363,41 +3551,46 @@ export default function HastaDetayContent() {
 
       {tab === "gorevler" && (
         <div className="ui-tab-panel-in space-y-4">
-          <div className="ui-surface p-4">
+          {canWriteClinicTasks && <div className="ui-surface p-4">
             <h3 className="mb-3 text-sm font-bold text-slate-800">Yeni Görev Ekle</h3>
-            <div className="grid gap-2 md:grid-cols-3">
-              <input
-                value={taskTitle}
-                onChange={e => setTaskTitle(e.target.value)}
-                placeholder="Görev başlığı (örn: X firmasından implant parçası sipariş)"
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              />
-              <select value={taskType} onChange={e => setTaskType(e.target.value as ClinicTask["type"])} className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
-                {Object.entries(TASK_TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-              </select>
-              <select value={taskPriority} onChange={e => setTaskPriority(Number(e.target.value))} className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
-                <option value={1}>Öncelik: Düşük</option>
-                <option value={2}>Öncelik: Orta</option>
-                <option value={3}>Öncelik: Yüksek</option>
-              </select>
-              <input
-                value={taskVendor}
-                onChange={e => setTaskVendor(e.target.value)}
-                placeholder="Firma/Tedarikçi (opsiyonel)"
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              />
-              <select value={taskAssignedToId} onChange={e => setTaskAssignedToId(e.target.value)} className="rounded-lg border border-slate-200 px-3 py-2 text-sm">
-                <option value="">Sorumlu: Seçilmedi</option>
-                {doctorOptions.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
-              </select>
-              <input
-                type="datetime-local"
-                value={taskDueAt}
-                onChange={e => setTaskDueAt(e.target.value)}
-                className="rounded-lg border border-slate-200 px-3 py-2 text-sm"
-              />
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              <FormField label="Görev Başlığı" required>
+                <input maxLength={180} value={taskTitle} onChange={e => setTaskTitle(e.target.value)} placeholder="örn. İmplant parçası sipariş et" className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
+              </FormField>
+              <FormField label="Görev Türü" required>
+                <SearchableListbox options={TASK_TYPE_OPTIONS} value={[taskType]} onChange={(ids) => setTaskType((ids[0] || "DIGER") as ClinicTask["type"])} searchPlaceholder="Görev türünde ara" />
+              </FormField>
+              <FormField label="Öncelik" required>
+                <select value={taskPriority} onChange={e => setTaskPriority(Number(e.target.value))} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+                  <option value={1}>Düşük</option><option value={2}>Orta</option><option value={3}>Yüksek</option>
+                </select>
+              </FormField>
+              <FormField label="Firma / Tedarikçi">
+                <input maxLength={180} value={taskVendor} onChange={e => setTaskVendor(e.target.value)} placeholder="İsteğe bağlı" className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
+              </FormField>
+              <FormField label="Atanacak Personel">
+                <SearchableListbox
+                  multiple
+                  options={taskStaffOptions}
+                  value={taskAssignedToIds}
+                  onChange={setTaskAssignedToIds}
+                  onOpen={() => {
+                    if (!taskStaffLoading && taskStaff.length === 0) setTaskStaffLoaded(false);
+                  }}
+                  placeholder="Personel seçin"
+                  searchPlaceholder="İsim veya rolle ara"
+                  selectedLabel="personel seçildi"
+                  allSelectedLabel="Tüm personel"
+                  emptyText="Aktif personel bulunamadı"
+                  loading={taskStaffLoading}
+                />
+              </FormField>
+              <FormField label="Son Tarih">
+                <input type="datetime-local" min={turkeyDateTimeLocalValue()} value={taskDueAt} onChange={e => setTaskDueAt(e.target.value)} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
+              </FormField>
             </div>
             <textarea
+              maxLength={3000}
               value={taskDetails}
               onChange={e => setTaskDetails(e.target.value)}
               rows={2}
@@ -3405,11 +3598,9 @@ export default function HastaDetayContent() {
               className="mt-2 w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
             />
             <div className="mt-2 flex justify-end">
-              <button onClick={() => void createClinicTask()} disabled={taskSaving} className="rounded-lg bg-primary px-3 py-2 text-xs font-semibold text-white hover:bg-primary/90 disabled:opacity-50">
-                {taskSaving ? "Ekleniyor..." : "Görev Ekle"}
-              </button>
+              <Button size="sm" onClick={() => void createClinicTask()} loading={taskSaving} disabled={taskTitle.trim().length < 2}>Görev Ekle</Button>
             </div>
-          </div>
+          </div>}
 
           <div className="ui-surface overflow-hidden">
             <table className="w-full text-sm">
@@ -3437,13 +3628,17 @@ export default function HastaDetayContent() {
                       {t.details && <p className="text-xs text-slate-500">{t.details}</p>}
                     </td>
                     <td className="px-3 py-2 text-xs">{TASK_TYPE_LABELS[t.type]}</td>
-                    <td className="px-3 py-2 text-xs">{t.assignedTo?.fullName || "-"}</td>
+                    <td className="px-3 py-2 text-xs">
+                      {t.assignees && t.assignees.length > 0
+                        ? t.assignees.map((assignee) => assignee.user.isActive === false ? `${assignee.user.fullName} (pasif)` : assignee.user.fullName).join(", ")
+                        : t.assignedTo?.fullName || "-"}
+                    </td>
                     <td className="px-3 py-2 text-xs">{t.dueAt ? new Date(t.dueAt).toLocaleString("tr-TR") : "-"}</td>
                     <td className="px-3 py-2">
                       <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + (t.status === "TAMAMLANDI" ? "bg-emerald-100 text-emerald-700" : t.status === "IPTAL" ? "bg-slate-200 text-slate-700" : t.status === "BEKLEMEDE" ? "bg-amber-100 text-amber-700" : "bg-primary/10 text-primary")}>{TASK_STATUS_LABELS[t.status]}</span>
                     </td>
                     <td className="px-3 py-2">
-                      <div className="flex flex-wrap gap-1">
+                      {canWriteClinicTasks ? <div className="flex flex-wrap gap-1">
                         {t.status !== "TAMAMLANDI" && (
                           <button onClick={() => void updateClinicTaskStatus(t.id, "TAMAMLANDI")} disabled={taskBusyId === t.id} className="rounded-lg border border-emerald-300 px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">Tamamla</button>
                         )}
@@ -3453,8 +3648,8 @@ export default function HastaDetayContent() {
                         {t.status !== "ACIK" && (
                           <button onClick={() => void updateClinicTaskStatus(t.id, "ACIK")} disabled={taskBusyId === t.id} className="rounded-lg border border-primary/30 px-2.5 py-1.5 text-xs font-semibold text-primary hover:bg-primary/10">Açık Yap</button>
                         )}
-                        <button onClick={() => void deleteClinicTask(t.id)} disabled={taskBusyId === t.id} className="rounded-lg border border-rose-300 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50">Sil</button>
-                      </div>
+                        {canCancelClinicTasks && t.status !== "IPTAL" && t.status !== "TAMAMLANDI" && <button onClick={() => void deleteClinicTask(t.id)} disabled={taskBusyId === t.id} className="rounded-lg border border-rose-300 px-2.5 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50">İptal</button>}
+                      </div> : <span className="text-xs text-slate-400">Salt okunur</span>}
                     </td>
                   </tr>
                 ))}
@@ -3486,7 +3681,7 @@ export default function HastaDetayContent() {
         };
         const selectedPriceItem = treatmentPool.find(p => p.id === treatDropdownId);
         // ASISTAN'ın examinations:write yetkisi yok — liste görüntülenir ama yazma eylemleri gizlenir.
-        const canWriteExam = currentUserRole !== "ASISTAN";
+        const canWriteExam = can("examinations:write");
         const planStatusLabel: Record<string, string> = { PLANLANDI: "Planlandı", DEVAM_EDIYOR: "Devam Ediyor", TAMAMLANDI: "Tamamlandı", IPTAL: "İptal" };
         const planStatusCls: Record<string, string> = {
           PLANLANDI: "bg-slate-100 text-slate-700", DEVAM_EDIYOR: "bg-primary/10 text-primary",
@@ -3495,7 +3690,7 @@ export default function HastaDetayContent() {
         const treatmentPlanHref = `/tedavi-plani?patientId=${id}&patientName=${encodeURIComponent(data?.fullName || "")}`;
         return (
         <div className="ui-tab-panel-in space-y-4">
-          {treatmentPlans.length === 0 && currentUserRole !== "ASISTAN" && (
+          {treatmentPlans.length === 0 && can("treatment:write") && (
             <div className="rounded-xl border border-primary/20 bg-primary/10 p-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-bold text-primary">Tedavi Planları</h3>
@@ -3507,7 +3702,7 @@ export default function HastaDetayContent() {
             <div className="rounded-xl border border-primary/20 bg-primary/10 p-4">
               <div className="mb-2 flex items-center justify-between">
                 <h3 className="text-sm font-bold text-primary">Tedavi Planları</h3>
-                <Link href={treatmentPlanHref} className="text-xs font-semibold text-primary underline">Tümünü Yönet</Link>
+                <Link href={treatmentPlanHref} className="text-xs font-semibold text-primary underline">{can("treatment:write") ? "Tümünü Yönet" : "Tümünü Gör"}</Link>
               </div>
               <p className="mb-3 text-xs text-primary">
                 Bu tutarlar aşağıdaki &quot;Kalan&quot; bakiyeye otomatik yansımaz — plan, hasta muayeneye/tedaviye geldikçe
@@ -3529,7 +3724,7 @@ export default function HastaDetayContent() {
               </div>
             </div>
           )}
-          {currentUserRole === "ASISTAN" ? (
+          {!canWriteExam ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-700">
             Yeni muayene/tedavi eklemek için doktor yetkisi gereklidir. Mevcut kayıtları aşağıdaki listede görüntüleyebilirsiniz.
           </div>
@@ -4058,18 +4253,19 @@ export default function HastaDetayContent() {
           </div>
 
           <div className="ui-surface p-4">
-            <button onClick={() => {setInstallmentModalOpen(true); setInstallmentStep("borç"); setInstallmentForm({toplamBorc: String(discountedTotal), pesnat: "0", taksitSayisi: "3", period: "AYLIK", startDate: new Date().toISOString().slice(0, 10), notes: ""});}} className="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-primary/90 transition">+ Taksit Planı Oluştur</button>
+            <button onClick={openInstallmentModal} className="w-full rounded-lg bg-primary px-4 py-3 text-sm font-semibold text-white hover:bg-primary/90 transition">+ Taksit Planı Oluştur</button>
           </div>
 
           <Modal
             open={installmentModalOpen}
-            onClose={() => setInstallmentModalOpen(false)}
+            onClose={resetInstallmentModal}
+            isDirty={installmentDirty}
             title="Taksit Planı Oluştur"
             description={`Adım ${installmentStep === "borç" ? 1 : installmentStep === "plan" ? 2 : 3} / 3`}
             size="lg"
             footer={
               <>
-                <Button variant="secondary" onClick={() => {setInstallmentModalOpen(false); setInstallmentStep("borç"); setInstallmentPreview([]);}}>İptal</Button>
+                <Button variant="secondary" onClick={resetInstallmentModal}>İptal</Button>
                 {(installmentStep === "plan" || installmentStep === "onay") && <Button variant="secondary" onClick={handleInstallmentPrevStep}>← Geri</Button>}
                 {installmentStep !== "onay" && <Button onClick={handleInstallmentNextStep}>Devam Et</Button>}
                 {installmentStep === "onay" && <Button onClick={createInstallmentPlan} loading={installmentLoading}>Planı Oluştur</Button>}
@@ -4720,13 +4916,14 @@ export default function HastaDetayContent() {
         open={showEditModal}
         onClose={() => setShowEditModal(false)}
         patientId={data.id}
-        hidePhoneField={currentUserRole === "DOKTOR" || currentUserRole === "ASISTAN"}
+        hidePhoneField={hidePatientPhone}
         onSaved={() => { showToast("success", "Hasta bilgileri güncellendi"); void load(); }}
       />
 
       <Modal
         open={labCreateModalOpen}
         onClose={closeLabCreateModal}
+        isDirty={labCreateDirty}
         title="Hasta İçin Yeni Laboratuvar İşi"
         size="lg"
         footer={
@@ -4883,6 +5080,7 @@ export default function HastaDetayContent() {
       <Modal
         open={Boolean(labDetailAction && labOrderDetail)}
         onClose={closeLabDetailAction}
+        isDirty={labDetailActionDirty}
         module="flask"
         title={
           labDetailAction === "trip" ? "Laboratuvara Gönderim Ekle"
@@ -5137,6 +5335,103 @@ export default function HastaDetayContent() {
         )}
       </Modal>
 
+      {selectedAppointment && (() => {
+        const parsedAppointmentNote = parseAppointmentNote(selectedAppointment.note);
+        const displayStatus = getDisplayAppointmentStatus(selectedAppointment.status, selectedAppointment.startAt);
+        const startDate = new Date(selectedAppointment.startAt);
+        const endDate = new Date(selectedAppointment.endAt);
+        const canMarkNoShow = startDate.getTime() <= Date.now();
+        const statusOptions = [
+          { value: "BEKLIYOR", label: "Planlandı", className: "border-sky-200 bg-sky-50 text-sky-700" },
+          { value: "GELDI", label: "Bekliyor", className: "border-amber-200 bg-amber-50 text-amber-700" },
+          { value: "TAMAMLANDI", label: "Tamamlandı", className: "border-emerald-200 bg-emerald-50 text-emerald-700" },
+          { value: "GELMEDI", label: "Gelmedi", className: "border-red-200 bg-red-50 text-red-700" },
+          { value: "IPTAL", label: "İptal", className: "border-slate-200 bg-slate-100 text-slate-700" },
+        ];
+        const statusTone = displayStatus === "TAMAMLANDI" ? "success" : displayStatus === "GELMEDI" || displayStatus === "IPTAL" ? "critical" : displayStatus === "PLANLANDI" ? "info" : "warning";
+        return (
+          <Modal
+            open
+            onClose={() => setSelectedAppointment(null)}
+            module="calendar"
+            title="Randevu Detayı"
+            description={`${data.fullName} · ${startDate.toLocaleDateString("tr-TR")}`}
+            size="lg"
+            footer={<Button variant="secondary" onClick={() => setSelectedAppointment(null)}>Kapat</Button>}
+          >
+            <div className="space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/15 bg-primary/[0.045] px-3 py-2.5">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Randevu bilgileri</p>
+                  <p className="mt-0.5 text-sm font-extrabold text-slate-900">{selectedAppointment.type || "Muayene"}</p>
+                </div>
+                <Badge tone={statusTone} solid>
+                  {APPOINTMENT_STATUS_LABELS[displayStatus] || selectedAppointment.status || "Bekliyor"}
+                </Badge>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div className="ui-surface-soft px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Hasta</p>
+                  <p className="mt-1 text-sm font-bold text-slate-800">{data.fullName}</p>
+                </div>
+                <div className="ui-surface-soft px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Doktor</p>
+                  <p className="mt-1 text-sm font-bold text-slate-800">{selectedAppointment.doctor?.fullName || "Doktor belirtilmedi"}</p>
+                </div>
+                <div className="ui-surface-soft px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Başlangıç</p>
+                  <p className="mt-1 text-sm font-bold text-slate-800">{startDate.toLocaleString("tr-TR")}</p>
+                </div>
+                <div className="ui-surface-soft px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Bitiş</p>
+                  <p className="mt-1 text-sm font-bold text-slate-800">{endDate.toLocaleString("tr-TR")}</p>
+                </div>
+              </div>
+
+              {selectedAppointment.clinicUnit && (
+                <div className="rounded-xl border border-violet-100 bg-violet-50/70 px-3 py-2.5 text-sm text-violet-900">
+                  <span className="font-bold">Tedavi alanı:</span> {selectedAppointment.clinicUnit.name}{selectedAppointment.clinicUnit.code ? ` · ${selectedAppointment.clinicUnit.code}` : ""}
+                </div>
+              )}
+              {(parsedAppointmentNote.detail || selectedAppointment.note) && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                  <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Randevu notu</p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-slate-700">{parsedAppointmentNote.detail || selectedAppointment.note}</p>
+                </div>
+              )}
+
+              <div className="border-t border-slate-100 pt-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Durumu güncelle</p>
+                  {selectedAppointment.status === "IPTAL" && <span className="text-[11px] font-semibold text-slate-400">Önce Planlandı seçilerek yeniden açılabilir.</span>}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {statusOptions.map((option) => {
+                    const futureNoShow = option.value === "GELMEDI" && !canMarkNoShow;
+                    const canceledTransition = selectedAppointment.status === "IPTAL" && !["IPTAL", "BEKLIYOR"].includes(option.value);
+                    const disabled = appointmentStatusSaving || futureNoShow || canceledTransition;
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => void updateAppointmentStatusFromDetail(option.value)}
+                        title={futureNoShow ? "Randevu saati henüz gelmedi" : canceledTransition ? "İptal edilmiş randevu önce Planlandı durumuna alınmalı" : undefined}
+                        className={`rounded-full border px-3 py-1.5 text-xs font-bold transition hover:-translate-y-px disabled:cursor-not-allowed disabled:opacity-40 ${option.className} ${selectedAppointment.status === option.value ? "ring-2 ring-slate-400 ring-offset-1" : ""}`}
+                      >
+                        {option.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                {!canMarkNoShow && <p className="mt-2 text-[11px] font-medium text-slate-400">Gelmedi durumu randevu saati geçtikten sonra kullanılabilir.</p>}
+              </div>
+            </div>
+          </Modal>
+        );
+      })()}
+
       <Modal
         open={exportModalOpen}
         onClose={() => setExportModalOpen(false)}
@@ -5258,6 +5553,7 @@ export default function HastaDetayContent() {
       <Modal
         open={paymentModalOpen}
         onClose={closePaymentModal}
+        isDirty={paymentDirty}
         title={editingPaymentId ? "Ödemeyi Düzenle" : "Ödeme Al"}
         description={`${data.fullName} adına tahsilat ${editingPaymentId ? "güncellenir" : "kaydedilir"}.`}
         size="lg"

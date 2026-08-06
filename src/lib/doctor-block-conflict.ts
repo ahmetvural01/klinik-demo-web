@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { turkeyDateKey, turkeyTimeKey } from "@/lib/tz";
+import type { Prisma } from "@prisma/client";
 
 /**
  * Verilen doktor + zaman aralığı bir DoctorBlock (bloke edilmiş saat) ile
@@ -7,13 +8,18 @@ import { turkeyDateKey, turkeyTimeKey } from "@/lib/tz";
  * önceden yalnızca randevu-randevu çakışmasına bakıyordu, DoctorBlock hiç
  * dahil edilmiyordu (bkz. denetim raporu Tema 5).
  */
-export async function findDoctorBlockConflict(doctorId: string, startAt: Date, endAt: Date) {
+export async function findDoctorBlockConflict(
+  doctorId: string,
+  startAt: Date,
+  endAt: Date,
+  client: Prisma.TransactionClient | typeof prisma = prisma,
+) {
   const startDate = turkeyDateKey(startAt);
   const endDate = turkeyDateKey(endAt);
   const startTime = turkeyTimeKey(startAt);
   const endTime = turkeyTimeKey(endAt);
 
-  const blocks = await prisma.doctorBlock.findMany({
+  const blocks = await client.doctorBlock.findMany({
     where: {
       doctorId,
       date: startDate === endDate ? startDate : { in: [startDate, endDate] },

@@ -3,11 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { patientFollowUpCreateSchema } from "@/lib/validators";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await requireAuth("appointments:read");
+  const auth = await requireAuth("hastatracking:read");
     if (auth.error) return auth.error;
 
     const institutionDoctors = auth.user.institutionId
@@ -25,12 +25,24 @@ export async function GET(request: NextRequest) {
     const status = request.nextUrl.searchParams.get("status");
     const q = (request.nextUrl.searchParams.get("q") || "").trim();
 
+    const fromDate = from ? new Date(from) : null;
+    const toDate = to ? new Date(to) : null;
+    if ((fromDate && Number.isNaN(fromDate.getTime())) || (toDate && Number.isNaN(toDate.getTime()))) {
+      return NextResponse.json({ message: "Geçersiz tarih aralığı" }, { status: 400 });
+    }
+    if (fromDate && toDate && fromDate > toDate) {
+      return NextResponse.json({ message: "Başlangıç tarihi bitiş tarihinden sonra olamaz" }, { status: 400 });
+    }
+    if (status && !new Set(["ACIK", "KAPALI"]).has(status)) {
+      return NextResponse.json({ message: "Geçersiz takip durumu" }, { status: 400 });
+    }
+
     const whereClauses: any[] = [];
     if (from || to) {
       whereClauses.push({
         createdAt: {
-          gte: from ? new Date(from) : undefined,
-          lte: to ? new Date(to) : undefined,
+          gte: fromDate || undefined,
+          lte: toDate || undefined,
         },
       });
     }
@@ -38,14 +50,10 @@ export async function GET(request: NextRequest) {
     if (patientId) whereClauses.push({ patientId });
     if (status) whereClauses.push({ status });
     if (auth.user.institutionId) {
-      whereClauses.push({
-        OR: [
-          { patient: { institutionId: auth.user.institutionId } },
-          { doctorId: { in: doctorIds } },
-          { appointment: { doctorId: { in: doctorIds } } },
-          { createdBy: { institutionId: auth.user.institutionId } },
-        ],
-      });
+      // Hasta takibinin sahibi hastadır. Oluşturan personel veya doktorun
+      // kurumu üzerinden OR kapsamı kurmak, hatalı eski bir bağlantıda başka
+      // kliniğin hasta iletişim bilgisini görünür hale getirebilirdi.
+      whereClauses.push({ patient: { institutionId: auth.user.institutionId } });
     }
     if (q) {
       whereClauses.push({
@@ -79,7 +87,7 @@ export async function GET(request: NextRequest) {
       take: 500,
     });
 
-    const hidePhone = shouldHidePatientPhone(auth.user.role);
+    const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
     const result = hidePhone
       ? items.map((item) => ({
           ...item,
@@ -95,7 +103,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAuth("appointments:write");
+  const auth = await requireAuth("hastatracking:write");
   if (auth.error) return auth.error;
 
   const institutionDoctors = auth.user.institutionId
@@ -145,13 +153,16 @@ export async function POST(request: NextRequest) {
     try {
       const appointment = await prisma.appointment.findUnique({
         where: { id: parsed.data.appointmentId },
-        select: { id: true, doctorId: true, patient: { select: { institutionId: true } } },
+        select: { id: true, doctorId: true, patientId: true, patient: { select: { institutionId: true } } },
       });
       if (!appointment) {
         return NextResponse.json({ message: "Bağlı randevu bulunamadı." }, { status: 404 });
       }
       if (auth.user.institutionId && appointment.patient.institutionId !== auth.user.institutionId) {
         return NextResponse.json({ message: "Randevu bu kuruma bağlı değil." }, { status: 403 });
+      }
+      if (appointment.patientId !== parsed.data.patientId) {
+        return NextResponse.json({ message: "Seçilen randevu bu hastaya ait değil." }, { status: 400 });
       }
       resolvedFollowUpDoctorId = appointment.doctorId;
     } catch (error) {

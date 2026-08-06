@@ -34,7 +34,11 @@ export async function POST(req: Request) {
   const auth = await requireAuth("messages:write");
   if (auth.error) return auth.error;
 
-  const { text } = await req.json();
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Geçersiz istek gövdesi" }, { status: 400 });
+  }
+  const { text } = body as { text?: unknown };
   const normalizedText = String(text || "").trim();
   if (!normalizedText) return NextResponse.json({ error: "Mesaj boş olamaz" }, { status: 400 });
   if (normalizedText.length > 1000) {

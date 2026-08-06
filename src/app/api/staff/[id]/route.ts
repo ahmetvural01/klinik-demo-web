@@ -16,6 +16,7 @@ const ROLE_LABELS: Record<string, string> = {
   BANKO: "Banko",
   MUHASEBE: "Muhasebe",
 };
+const STAFF_ROLES = new Set<Role>(["YONETICI", "DOKTOR", "ASISTAN", "BANKO", "MUHASEBE"]);
 
 function fmt(v: unknown): string {
   if (v === null || v === undefined || v === "") return "-";
@@ -75,7 +76,10 @@ export async function PUT(request: NextRequest, props: Params) {
   const auth = await requireAuth("staff:write");
   if (auth.error) return auth.error;
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek gövdesi." }, { status: 400 });
+  }
   const existing = await prisma.user.findUnique({ where: { id: params.id }, include: { profile: true } });
   if (!existing || existing.role === "SUPERADMIN") {
     return NextResponse.json({ message: "Personel bulunamadı" }, { status: 404 });
@@ -85,8 +89,25 @@ export async function PUT(request: NextRequest, props: Params) {
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
   }
 
-  if (body.role === "SUPERADMIN") {
-    return NextResponse.json({ message: "Bu rol atanamaz" }, { status: 403 });
+  if (body.role !== undefined && !STAFF_ROLES.has(body.role as Role)) {
+    return NextResponse.json({ message: "Geçersiz personel rolü." }, { status: 400 });
+  }
+  if (body.fullName !== undefined && (typeof body.fullName !== "string" || body.fullName.trim().length < 2 || body.fullName.trim().length > 120)) {
+    return NextResponse.json({ message: "Ad soyad 2-120 karakter olmalıdır." }, { status: 400 });
+  }
+  for (const field of ["isActive", "force", "hideAsDoctor"] as const) {
+    if (body[field] !== undefined && typeof body[field] !== "boolean") {
+      return NextResponse.json({ message: `${field} alanı geçersiz.` }, { status: 400 });
+    }
+  }
+  for (const field of ["kkYuzde", "genelYuzde", "maasYuzde"] as const) {
+    if (body[field] !== undefined) {
+      const value = Number(body[field]);
+      if (!Number.isFinite(value) || value < 0 || value > 100) {
+        return NextResponse.json({ message: "Komisyon oranları 0-100 arasında olmalıdır." }, { status: 400 });
+      }
+      body[field] = value;
+    }
   }
 
   // İzin haritası kurum yöneticisi tarafından sonradan değiştirilebildiği için
@@ -98,8 +119,11 @@ export async function PUT(request: NextRequest, props: Params) {
     return NextResponse.json({ message: "Bu rol için yetkiniz yok" }, { status: 403 });
   }
 
-  if (body.identityNo !== undefined && !TC_NO_REGEX.test(String(body.identityNo))) {
-    return NextResponse.json({ message: TC_NO_MESSAGE }, { status: 400 });
+  if (body.identityNo !== undefined) {
+    body.identityNo = String(body.identityNo).trim();
+    if (!TC_NO_REGEX.test(body.identityNo)) {
+      return NextResponse.json({ message: TC_NO_MESSAGE }, { status: 400 });
+    }
   }
 
   const workStart = body.workStart !== undefined ? body.workStart : (existing.profile?.workStart || "08:30");
@@ -111,13 +135,21 @@ export async function PUT(request: NextRequest, props: Params) {
 
   const newRole = (body.role || existing.role) as string;
   const newIsActive = typeof body.isActive === "boolean" ? body.isActive : existing.isActive;
+  if (existing.id === auth.user.id && existing.isActive && !newIsActive) {
+    return NextResponse.json({ message: "Kendi kullanıcı hesabınızı pasife alamazsınız." }, { status: 409 });
+  }
 
   // Bir doktor/personel pasife alınırken, ona bağlı gelecek randevular/açık
   // planlar/açık takipler kimse fark etmeden "hayalet" bir kullanıcıya bağlı
   // kalmasın diye önce uyarıyoruz — kullanıcı `force:true` ile onaylarsa
   // pasifleştirme yine de gerçekleşir (kayıtlar silinmez/devredilmez, sadece
   // bilinçli bir kararla ilerlenmiş olur).
-  if (existing.isActive && !newIsActive && !body.force) {
+  const removesClinicalAccess = existing.isActive && (
+    !newIsActive
+    || (existing.role === "DOKTOR" && newRole !== "DOKTOR")
+    || (!existing.profile?.hideAsDoctor && body.hideAsDoctor === true)
+  );
+  if (removesClinicalAccess && !body.force) {
     const [futureAppointments, openTreatmentPlans, openFollowUps] = await Promise.all([
       prisma.appointment.count({
         where: { doctorId: existing.id, startAt: { gte: new Date() }, status: { notIn: ["IPTAL", "GELMEDI"] } },
@@ -135,7 +167,7 @@ export async function PUT(request: NextRequest, props: Params) {
       if (openTreatmentPlans > 0) parts.push(`${openTreatmentPlans} açık tedavi planı`);
       if (openFollowUps > 0) parts.push(`${openFollowUps} açık hasta takibi`);
       return NextResponse.json({
-        message: `Bu personelin ${parts.join(", ")} var. Pasife almadan önce bunları başka bir doktora devredin ya da kapatın.`,
+        message: `Bu personelin ${parts.join(", ")} var. Klinik görünürlüğünü kaldırmadan önce bunları başka bir doktora devredin ya da kapatın.`,
         requiresForce: true,
         counts: { futureAppointments, openTreatmentPlans, openFollowUps },
       }, { status: 409 });
@@ -170,26 +202,26 @@ export async function PUT(request: NextRequest, props: Params) {
     }
   }
 
-  if (existing.institutionId) {
-    const limitError = await checkStaffLimit({
-      institutionId: existing.institutionId,
-      role: newRole,
-      isActive: newIsActive,
-      excludeUserId: existing.id,
-    });
-    if (limitError) {
-      return NextResponse.json({ message: limitError }, { status: 409 });
-    }
-  }
-
   let updated;
   try {
-    updated = await prisma.user.update({
+    updated = await prisma.$transaction(async (tx) => {
+      if (existing.institutionId) {
+        await tx.$queryRaw`SELECT id FROM "Institution" WHERE id = ${existing.institutionId} FOR UPDATE`;
+        const limitError = await checkStaffLimit({
+          institutionId: existing.institutionId,
+          role: newRole,
+          isActive: newIsActive,
+          excludeUserId: existing.id,
+        }, tx);
+        if (limitError) throw new Error(`STAFF_LIMIT:${limitError}`);
+      }
+
+      const result = await tx.user.update({
     where: { id: params.id },
     data: {
       identityNo: body.identityNo,
-      fullName: body.fullName,
-      role: (body.role || "ASISTAN") as Role,
+      ...(body.fullName !== undefined && { fullName: body.fullName.trim() }),
+      role: newRole as Role,
       // Form bu alanı göndermiyorsa mevcut değeri korur — önceden eksik
       // gönderilen istek durumu sessizce "aktif"e, mesaiyi 08:30–18:00'e
       // sıfırlıyordu (bkz. Personel ekranı sadeleştirmesi).
@@ -228,7 +260,39 @@ export async function PUT(request: NextRequest, props: Params) {
       profile: { select: { workStart: true, workEnd: true, photoUrl: true, hideAsDoctor: true } },
     },
     });
+
+      const ratesChanged = String(existing.kkYuzde ?? "") !== String(result.kkYuzde ?? "")
+        || String(existing.genelYuzde ?? "") !== String(result.genelYuzde ?? "")
+        || String(existing.maasYuzde ?? "") !== String(result.maasYuzde ?? "");
+      if (ratesChanged) {
+        const hasHistory = await tx.doctorRateHistory.findFirst({ where: { doctorId: result.id }, select: { id: true } });
+        if (!hasHistory) {
+          await tx.doctorRateHistory.create({
+            data: {
+              doctorId: result.id,
+              kkYuzde: existing.kkYuzde ?? 3,
+              genelYuzde: existing.genelYuzde ?? 15,
+              maasYuzde: existing.maasYuzde ?? 40,
+              effectiveFrom: new Date(0),
+            },
+          });
+        }
+        await tx.doctorRateHistory.create({
+          data: {
+            doctorId: result.id,
+            kkYuzde: result.kkYuzde ?? 3,
+            genelYuzde: result.genelYuzde ?? 15,
+            maasYuzde: result.maasYuzde ?? 40,
+            effectiveFrom: new Date(),
+          },
+        });
+      }
+      return result;
+    });
   } catch (error) {
+    if (error instanceof Error && error.message.startsWith("STAFF_LIMIT:")) {
+      return NextResponse.json({ message: error.message.slice("STAFF_LIMIT:".length) }, { status: 409 });
+    }
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
       return NextResponse.json({ message: "Bu TC kimlik no bu kurumda zaten kayıtlı" }, { status: 409 });
     }
@@ -256,38 +320,6 @@ export async function PUT(request: NextRequest, props: Params) {
   pushDiff("Genel Yüzde", existing.genelYuzde, updated.genelYuzde);
   pushDiff("Maaş Yüzde", existing.maasYuzde, updated.maasYuzde);
 
-  // Oranlardan biri değiştiyse dönem-damgalı bir geçmiş satırı ekle — geçmiş
-  // ayların hakediş hesabı bu yeni orandan etkilenmesin, sadece bu andan
-  // itibaren geçerli olsun (bkz. DoctorRateHistory tanımı).
-  const ratesChanged = String(existing.kkYuzde ?? "") !== String(updated.kkYuzde ?? "")
-    || String(existing.genelYuzde ?? "") !== String(updated.genelYuzde ?? "")
-    || String(existing.maasYuzde ?? "") !== String(updated.maasYuzde ?? "");
-  if (ratesChanged) {
-    const hasHistory = await prisma.doctorRateHistory.findFirst({ where: { doctorId: updated.id }, select: { id: true } });
-    if (!hasHistory) {
-      // İlk değişiklik: geçmiş ayların ESKİ orana göre hesaplanmaya devam
-      // etmesi için, değişiklik anına kadar geçerli olan eski oranı da
-      // (çok eski bir tarihten itibaren geçerliymiş gibi) kaydediyoruz.
-      await prisma.doctorRateHistory.create({
-        data: {
-          doctorId: updated.id,
-          kkYuzde: existing.kkYuzde ?? 3,
-          genelYuzde: existing.genelYuzde ?? 15,
-          maasYuzde: existing.maasYuzde ?? 40,
-          effectiveFrom: new Date(0),
-        },
-      });
-    }
-    await prisma.doctorRateHistory.create({
-      data: {
-        doctorId: updated.id,
-        kkYuzde: updated.kkYuzde ?? 3,
-        genelYuzde: updated.genelYuzde ?? 15,
-        maasYuzde: updated.maasYuzde ?? 40,
-        effectiveFrom: new Date(),
-      },
-    });
-  }
   pushDiff("Mesai Başlangıç", existing.profile?.workStart, updated.profile?.workStart);
   pushDiff("Mesai Bitiş", existing.profile?.workEnd, updated.profile?.workEnd);
   pushDiff("Profil Fotoğrafı", existing.profile?.photoUrl, updated.profile?.photoUrl);
@@ -315,6 +347,30 @@ export async function DELETE(_: NextRequest, props: Params) {
 
   if (auth.user.role !== "SUPERADMIN" && existing.institutionId !== auth.user.institutionId) {
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
+  }
+
+  if (existing.id === auth.user.id) {
+    return NextResponse.json({ message: "Kendi kullanıcı hesabınızı pasife alamazsınız." }, { status: 409 });
+  }
+  if (!existing.isActive) {
+    return NextResponse.json({ ok: true, alreadyInactive: true });
+  }
+
+  const [futureAppointments, openTreatmentPlans, openFollowUps] = await Promise.all([
+    prisma.appointment.count({
+      where: { doctorId: existing.id, startAt: { gte: new Date() }, status: { notIn: ["IPTAL", "GELMEDI"] } },
+    }),
+    (prisma as any).treatmentPlan.count({
+      where: { doctorId: existing.id, status: { notIn: ["TAMAMLANDI", "IPTAL"] } },
+    }),
+    prisma.patientFollowUp.count({ where: { doctorId: existing.id, status: "ACIK" } }),
+  ]);
+  if (futureAppointments > 0 || openTreatmentPlans > 0 || openFollowUps > 0) {
+    return NextResponse.json({
+      message: "Bu personele bağlı aktif klinik kayıtları var. Önce kayıtları devredin veya kapatın.",
+      requiresReassignment: true,
+      counts: { futureAppointments, openTreatmentPlans, openFollowUps },
+    }, { status: 409 });
   }
 
   const deleted = await prisma.user.update({

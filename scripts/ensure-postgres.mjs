@@ -1,6 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import net from "node:net";
 import { PrismaClient } from "@prisma/client";
 
@@ -220,8 +221,16 @@ try {
   console.error(`[ensure-postgres] ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;
 }
-// Prisma/network handle'ları process'i canlı tutabilir — script bittiğinde
-// (basarili ya da hatali) sürecin gerçekten kapanmasını garanti et, yoksa
-// npm run build zinciri (ensure-postgres && clean-next && next build)
-// burada asılı kalmaya devam eder.
-process.exit(process.exitCode ?? 0);
+
+// `node scripts/ensure-postgres.mjs` doğrudan çalıştırıldığında (örn. `npm
+// run build` zinciri) Prisma/network handle'ları process'i canlı tutabilir —
+// script bittiğinde sürecin gerçekten kapanmasını garanti etmek gerekir.
+// Ancak `scripts/dev-stable.mjs` bu dosyayı bir MODÜL olarak import eder
+// (yan etki için) — o durumda process.exit() burada tetiklenirse dev-stable
+// supervisor'ının kendisini de öldürür ve `next dev` hiç başlamadan `npm run
+// dev` sessizce çıkar. Bu yüzden yalnızca bu dosya doğrudan girdi betiği
+// olarak çalıştırıldığında çıkılır, import edildiğinde değil.
+const isDirectRun = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isDirectRun) {
+  process.exit(process.exitCode ?? 0);
+}

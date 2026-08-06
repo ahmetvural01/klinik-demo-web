@@ -41,12 +41,13 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   { key: "lab",            icon: "🧪", category: "klinik",   label: "Laboratuvar",             permissions: ["lab:read", "lab:write", "lab:delete", "lab:complete"] },
   { key: "xray",           icon: "🩻", category: "klinik",   label: "Görüntüleme / Röntgen",   permissions: ["xray:read", "xray:write", "xray:delete"] },
   { key: "hastatracking",  icon: "📍", category: "klinik",   label: "Hasta Takip Paneli",      permissions: ["hastatracking:read", "hastatracking:write"] },
-  { key: "clinictasks",    icon: "✅", category: "klinik",   label: "Görev Merkezi",           permissions: ["clinictasks:read", "clinictasks:write", "clinictasks:delete"] },
+  { key: "clinictasks",    icon: "✅", category: "klinik",   label: "Görev Merkezi",           permissions: ["clinictasks:read", "clinictasks:read-all", "clinictasks:write", "clinictasks:delete"] },
   { key: "documents",      icon: "📎", category: "klinik",   label: "Hasta Belgeleri",         permissions: ["documents:read", "documents:write", "documents:delete"] },
   // ── FİNANS ──────────────────────────────────────────────────────────────
   { key: "payments",       icon: "💳", category: "finans",   label: "Ödeme ve Tahsilat",       permissions: ["payments:read", "payments:write", "payments:refund"] },
   { key: "installments",   icon: "🗓️", category: "finans",  label: "Taksit Planı",            permissions: ["installments:read", "installments:write", "installments:delete"] },
-  { key: "finance",        icon: "📊", category: "finans",   label: "Finans / Muhasebe",       permissions: ["finance:read", "finance:write", "finance:export"] },
+  { key: "finance",        icon: "📊", category: "finans",   label: "Finans / Muhasebe",       permissions: ["finance:center", "finance:read", "finance:write", "finance:export"] },
+  { key: "earnings",       icon: "🩺", category: "finans",   label: "Doktor Hakedişi",         permissions: ["earnings:read"] },
   { key: "stock",          icon: "📦", category: "finans",   label: "Stok ve Malzeme",         permissions: ["stock:read", "stock:write", "stock:delete"] },
   { key: "prices",         icon: "💰", category: "finans",   label: "Fiyat Listesi",           permissions: ["prices:read", "prices:write"] },
   { key: "reports",        icon: "📈", category: "finans",   label: "Raporlar ve İstatistik",  permissions: ["reports:read", "reports:write", "reports:export"] },
@@ -82,11 +83,7 @@ export const PERMISSION_DETAILS: Record<string, PermissionDetail> = {
   "patients:read":          { code: "patients:read",          risk: "dusuk",   title: "Hasta — Kart Görüntüleme",                   description: "Hasta listesini açabilir, hasta kartını görebilir. Telefon numarası bu yetkiyle gizlidir." },
   "patients:write":         { code: "patients:write",         risk: "orta",    title: "Hasta — Kayıt Oluşturma ve Düzenleme",       description: "Yeni hasta ekleyebilir, ad/soyad/doğum tarihi/adres gibi bilgileri güncelleyebilir." },
   "patients:delete":        { code: "patients:delete",        risk: "yuksek",  title: "Hasta — Silme",                              description: "Hasta kaydını sistemden kalıcı olarak silebilir. Bu işlem KVKK kapsamında loglanır." },
-  // NOT: Telefon maskeleme şu anda bu yetkiden BAĞIMSIZ, sabit bir rol
-  // kuralıyla uygulanıyor (bkz. src/lib/patient-visibility.ts — DOKTOR ve
-  // ASISTAN rolünden gizlenir). Bu satırı buradan kaldırmak yerine, admin'i
-  // yanıltmamak için açıklamada bunu net belirtiyoruz.
-  "patients:phone":         { code: "patients:phone",         risk: "yuksek",  title: "Hasta — Telefon Numarası Görüntüleme (bilgi amaçlı)", description: "Bu yetki şu an panelden değiştirilemez bir bilgi kaydıdır: telefon numarası maskeleme kuralı sistemde sabittir (Doktor ve Asistan rolünden her zaman gizlenir, diğer rollerde her zaman açıktır). Bu kutuyu açıp kapatmak gerçek görünürlüğü etkilemez." },
+  "patients:phone":         { code: "patients:phone",         risk: "yuksek",  title: "Hasta — Telefon Numarası Görüntüleme",       description: "Hasta telefon numarasının maskesiz görünmesini sağlar. Yetki yoksa API ve arayüz numarayı gizler." },
   "patients:merge":         { code: "patients:merge",         risk: "yuksek",  title: "Hasta — Kayıt Birleştirme",                  description: "Mükerrer hasta kayıtlarını tek kayıtta birleştirebilir. Geri alınamaz bir işlemdir." },
   // ── MUAYENE ──────────────────────────────────────────────────────────────
   "examinations:read":      { code: "examinations:read",      risk: "dusuk",   title: "Muayene — Kayıt Görüntüleme",                description: "Hastanın muayene geçmişini, klinik notları ve bulguları görebilir." },
@@ -114,8 +111,9 @@ export const PERMISSION_DETAILS: Record<string, PermissionDetail> = {
   "hastatracking:read":     { code: "hastatracking:read",     risk: "dusuk",   title: "Hasta Takip — Görüntüleme",                  description: "Gelmeyen, ulaşılamayan ve geri arama listesindeki hastaları takip edebilir." },
   "hastatracking:write":    { code: "hastatracking:write",    risk: "orta",    title: "Hasta Takip — Güncelleme",                   description: "Hasta takip durumunu değiştirebilir, arama notu ekleyebilir, takip kaydını tamamlayabilir." },
   "clinictasks:read":       { code: "clinictasks:read",       risk: "dusuk",   title: "Görev Merkezi — Görüntüleme",                description: "Klinik görev listesini (parça siparişi, lab, arama, evrak vb.) görebilir." },
+  "clinictasks:read-all":   { code: "clinictasks:read-all",   risk: "orta",    title: "Görev Merkezi — Tüm Görevleri Görüntüleme",   description: "Yalnızca kendisine atananlar yerine kurumdaki tüm görevleri görüntüleyebilir." },
   "clinictasks:write":      { code: "clinictasks:write",      risk: "orta",    title: "Görev Merkezi — Oluşturma ve Düzenleme",     description: "Yeni görev ekleyebilir, mevcut görevin durumunu/detayını değiştirebilir." },
-  "clinictasks:delete":     { code: "clinictasks:delete",     risk: "orta",    title: "Görev Merkezi — Silme",                      description: "Klinik görevlerini kalıcı olarak silebilir." },
+  "clinictasks:delete":     { code: "clinictasks:delete",     risk: "orta",    title: "Görev Merkezi — İptal Etme",                 description: "Klinik görevlerini geçmiş kaydını koruyarak iptal edebilir." },
   // ── BELGELER ─────────────────────────────────────────────────────────────
   "documents:read":         { code: "documents:read",         risk: "dusuk",   title: "Hasta Belgeleri — Görüntüleme",              description: "Hasta dosyalarını, yüklü belgeleri ve görüntüleri indirebilir veya görebilir." },
   "documents:write":        { code: "documents:write",        risk: "orta",    title: "Hasta Belgeleri — Yükleme ve Düzenleme",     description: "Hasta için belge, dosya veya görüntü yükleyebilir; mevcut belgeler üzerinde düzenleme yapabilir." },
@@ -130,6 +128,8 @@ export const PERMISSION_DETAILS: Record<string, PermissionDetail> = {
   "installments:delete":    { code: "installments:delete",    risk: "yuksek",  title: "Taksit Planı — Silme",                       description: "Taksit planını sistemden tamamen kaldırabilir." },
   // ── FİNANS ───────────────────────────────────────────────────────────────
   "finance:read":           { code: "finance:read",           risk: "orta",    title: "Finans — Gelir/Gider Görüntüleme",           description: "Muhasebe özetini, gelir-gider cetvelini, cari hesapları ve finansal raporları görebilir." },
+  "finance:center":         { code: "finance:center",         risk: "orta",    title: "Muhasebe Merkezi — Ekran Erişimi",            description: "Muhasebe Merkezi sayfasını ve menüsünü açar. Hasta kartındaki ödeme geçmişi izninden bağımsızdır." },
+  "earnings:read":          { code: "earnings:read",          risk: "orta",    title: "Hakediş — Kendi Dökümünü Görüntüleme",       description: "Doktorun kendi aylık hakediş ve ödeme dökümünü, kurumun genel cirosuna erişmeden görebilmesini sağlar." },
   "finance:write":          { code: "finance:write",          risk: "yuksek",  title: "Finans — Muhasebe Kaydı Düzenleme",          description: "Gider kaydı ekleyebilir, cari hesap hareketi girebilir ve muhasebe düzenlemesi yapabilir." },
   "finance:export":         { code: "finance:export",         risk: "yuksek",  title: "Finans — Dışa Aktarma",                      description: "Finansal verileri Excel/PDF olarak dışa aktarabilir. Hassas veri içerir." },
   // ── STOK ─────────────────────────────────────────────────────────────────
@@ -182,13 +182,14 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
   DOKTOR: [
     "dashboard:read", "dashboard:stats",
     "appointments:read", "appointments:write", "appointments:delete", "appointments:approve",
-    "patients:read", "patients:phone",
+    "patients:read",
     "examinations:read", "examinations:write", "examinations:delete",
     "treatment:read", "treatment:write", "treatment:approve",
     "prescriptions:read", "prescriptions:write", "prescriptions:print",
     "lab:read", "lab:write", "lab:complete",
     "xray:read", "xray:write",
     "payments:read", "payments:write", "payments:refund",
+    "earnings:read",
     "installments:read", "installments:write", "installments:delete",
     "hastatracking:read", "hastatracking:write",
     "clinictasks:read", "clinictasks:write", "clinictasks:delete",
@@ -226,9 +227,10 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
   BANKO: [
     "dashboard:read", "dashboard:stats",
     "appointments:read", "appointments:write", "appointments:delete",
-    "patients:read", "patients:write",
+    "patients:read", "patients:write", "patients:phone",
     "prescriptions:read", "prescriptions:write",
     "lab:read", "lab:write",
+    "finance:center",
     "payments:read", "payments:write", "payments:refund",
     "installments:read", "installments:write", "installments:delete",
     "hastatracking:read", "hastatracking:write",
@@ -244,7 +246,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, string[]> = {
   ],
   MUHASEBE: [
     "dashboard:read", "dashboard:stats",
-    "finance:read", "finance:write", "finance:export",
+    "finance:center", "finance:read", "finance:write", "finance:export",
     "reports:read", "reports:write", "reports:export",
     "prices:read", "prices:write",
     "payments:read", "payments:write", "payments:refund",

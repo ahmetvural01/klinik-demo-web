@@ -5,7 +5,9 @@ import { showToastSafe } from "@/lib/toast-client";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
 import { confirmDialog } from "@/lib/confirm-client";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 
 type Price = { id: string; code: string; treatment: string; amount: number; isCustom: boolean; isTemplate?: boolean; catalogYear?: number };
 type PriceMeta = { activeCatalogYear: number; latestPublishedYear: number; updateAvailable: boolean; officialPdfUrl: string };
@@ -50,7 +52,7 @@ function PriceTable({ title, prices, isCustom, favorites, toggleFav, onEdit, onD
 		{ key: "code", header: "Kod", render: (p) => <span className="font-mono text-xs text-slate-500">{p.code}</span> },
 		{ key: "treatment", header: "Tedavi Adı", render: (p) => <span className="font-medium text-slate-800">{p.treatment}</span> },
 		{ key: "amount", header: "Ücret", align: "right", render: (p) => <span className="font-bold text-slate-800">{Number(p.amount).toLocaleString("tr-TR", { minimumFractionDigits: 2 })} ₺</span> },
-		...(isCustom ? [{
+		...(isCustom && (onEdit || onDelete) ? [{
 			key: "islem",
 			header: "İşlem",
 			align: "center" as const,
@@ -126,6 +128,8 @@ async function readJsonArray(response: Response) {
 }
 
 function FiyatManagement() {
+	const { can } = usePermissions();
+	const canWritePrices = can("prices:write");
 	const [standardPrices, setStandardPrices] = useState<Price[]>([]);
 	const [customPrices, setCustomPrices] = useState<Price[]>([]);
 	const [loading, setLoading] = useState(false);
@@ -153,7 +157,7 @@ function FiyatManagement() {
 
 	const loadSettings = async () => {
 		try {
-			const res = await fetch("/api/settings", { cache: "no-store" });
+			const res = await fetch("/api/prices/active-list", { cache: "no-store" });
 			const settings = await res.json().catch(() => null);
 			if (!res.ok) throw new Error(settings?.message || "Fiyat listesi ayarı yüklenemedi.");
 			if (settings?.activePriceList === "standard" || settings?.activePriceList === "custom") {
@@ -168,8 +172,9 @@ function FiyatManagement() {
 	const changeActiveList = async (next: "standard" | "custom") => {
 		setActiveList(next);
 		window.localStorage.setItem(ACTIVE_PRICE_LIST_STORAGE_KEY, next);
+		if (!canWritePrices) return;
 		try {
-			const res = await fetch("/api/settings", {
+			const res = await fetch("/api/prices/active-list", {
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ activePriceList: next }),
@@ -265,10 +270,11 @@ function FiyatManagement() {
 	return (
 		<section className="space-y-5">
 			<div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-				<div className="flex flex-wrap items-center gap-2">
-					<h1 className="text-lg font-black text-slate-900">Fiyat Listesi</h1>
+				<div className="flex flex-wrap items-center gap-3">
+					<ModuleIcon module="finance" size="lg" />
+					<h1 className="font-display text-xl font-black tracking-tight text-slate-900">Fiyat Listesi</h1>
 					<Badge tone={activeList === "custom" ? "warning" : "info"} size="md">
-						{activeList === "custom" ? "Özel liste" : "TDB tarife"}
+						{canWritePrices ? (activeList === "custom" ? "Aktif: Özel liste" : "Aktif: TDB tarife") : (activeList === "custom" ? "Görüntülenen: Özel" : "Görüntülenen: TDB")}
 					</Badge>
 				</div>
 				<div className="flex rounded-xl border border-slate-200 bg-slate-50 p-1">
@@ -288,7 +294,7 @@ function FiyatManagement() {
 					</Button>
 				</div>
 			)}
-			{editItem && (
+			{canWritePrices && editItem && (
 				<div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
 					<div className="flex flex-wrap items-center gap-3">
 						<div className="text-sm font-semibold text-primary-strong">Fiyat güncelle</div>
@@ -302,7 +308,7 @@ function FiyatManagement() {
 			{activeList === "standard" ? (
 				<PriceTable key="standard" title="TDB Tarife Fiyatları" prices={standardPrices} isCustom={false} loading={loading} />
 			) : (
-				<PriceTable key="custom" title="Özel Fiyatlar" prices={customPrices} isCustom={true} favorites={favorites} toggleFav={toggleFav} onEdit={(p) => { setEditItem(p); setEditAmount(String(p.amount)); }} onDelete={deletePrice} onAdd={addCustom} loading={loading} />
+				<PriceTable key="custom" title="Özel Fiyatlar" prices={customPrices} isCustom={true} favorites={favorites} toggleFav={toggleFav} onEdit={canWritePrices ? (p) => { setEditItem(p); setEditAmount(String(p.amount)); } : undefined} onDelete={canWritePrices ? deletePrice : undefined} onAdd={canWritePrices ? addCustom : undefined} loading={loading} />
 			)}
 		</section>
 	);

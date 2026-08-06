@@ -9,7 +9,9 @@ export async function GET() {
   if (auth.error) return auth.error;
 
   const isSuperAdmin = auth.user.role === "SUPERADMIN";
-  const institutionId = auth.user.institutionId;
+  // requireAuth, SUPERADMIN olmayan oturumlarda institutionId'yi zorunlu kılar
+  // (bkz. src/lib/api.ts) — bu dalda değer her zaman gerçek bir string'tir.
+  const institutionId = auth.user.institutionId as string;
 
   const [totalAppointments, totalExaminations, totalPatients, totalStaff, latestLogs] = await Promise.all([
     prisma.appointment.count({

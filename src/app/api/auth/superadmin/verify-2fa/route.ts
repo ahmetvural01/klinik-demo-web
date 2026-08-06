@@ -19,10 +19,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Kod zorunlu" }, { status: 400 });
   }
 
-  const userId = verifyPendingTwoFactorToken(pendingToken);
-  if (!userId) {
+  const pending = verifyPendingTwoFactorToken(pendingToken);
+  if (!pending) {
     return NextResponse.json({ message: "Oturum süresi doldu, tekrar giriş yapın" }, { status: 401 });
   }
+  const { userId } = pending;
 
   const rate = checkRateLimit(`sa-2fa:${getClientIpFromHeaders(req.headers)}:${userId}`, 8, 60_000);
   if (!rate.ok) {

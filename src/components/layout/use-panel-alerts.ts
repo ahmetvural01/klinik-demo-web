@@ -1,17 +1,27 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { hasPanelPermission } from "@/lib/panel-permissions";
 
 export type WaitingPatient = { id: string; patientName: string; doctorName: string; startAt: string };
-export type PanelAlertCounts = { taksit: number; stok: number; lab: number; waiting: number; waitingList: WaitingPatient[] };
+export type PanelAlertCounts = { taksit: number; stok: number; lab: number; tasks: number; waiting: number; waitingList: WaitingPatient[] };
 
-const EMPTY_ALERTS: PanelAlertCounts = { taksit: 0, stok: 0, lab: 0, waiting: 0, waitingList: [] };
+const EMPTY_ALERTS: PanelAlertCounts = { taksit: 0, stok: 0, lab: 0, tasks: 0, waiting: 0, waitingList: [] };
 const CACHE_TTL_MS = 15_000;
 
 let memoryCache: Record<string, { at: number; data: PanelAlertCounts }> = {};
 let inFlight: Record<string, Promise<PanelAlertCounts> | undefined> = {};
 
-export function getAlertPermissions(role: string) {
+export function getAlertPermissions(role: string, permissions?: readonly string[]) {
+  if (permissions) {
+    return {
+      canSeeTaksit: hasPanelPermission(permissions, "installments:read"),
+      canSeeStok: hasPanelPermission(permissions, "stock:read"),
+      canSeeLab: hasPanelPermission(permissions, "lab:read"),
+      canSeeWaiting: hasPanelPermission(permissions, "appointments:read"),
+      canSeeTasks: hasPanelPermission(permissions, "clinictasks:read"),
+    };
+  }
   return {
     canSeeTaksit: ["YONETICI", "SUPERADMIN", "MUHASEBE", "BANKO"].includes(role),
     canSeeStok: ["YONETICI", "SUPERADMIN", "MUHASEBE"].includes(role),
@@ -20,11 +30,12 @@ export function getAlertPermissions(role: string) {
     // katlarda/odalarda çalışan doktor ve asistanların da bunu fark etmesi
     // gerekir — bu yüzden klinik içi tüm operasyonel roller görebilir.
     canSeeWaiting: ["YONETICI", "SUPERADMIN", "DOKTOR", "ASISTAN", "BANKO"].includes(role),
+    canSeeTasks: ["YONETICI", "SUPERADMIN", "DOKTOR", "ASISTAN", "BANKO", "MUHASEBE"].includes(role),
   };
 }
 
-function cacheKey(role: string) {
-  return `panel-alerts:${role || "UNKNOWN"}`;
+function cacheKey(accessKey: string) {
+  return `panel-alerts:${accessKey || "UNKNOWN"}`;
 }
 
 function readCached(role: string): PanelAlertCounts | null {
@@ -41,6 +52,7 @@ function readCached(role: string): PanelAlertCounts | null {
       taksit: Number(parsed.data?.taksit || 0),
       stok: Number(parsed.data?.stok || 0),
       lab: Number(parsed.data?.lab || 0),
+      tasks: Number(parsed.data?.tasks || 0),
       waiting: Number(parsed.data?.waiting || 0),
       waitingList: Array.isArray(parsed.data?.waitingList) ? parsed.data!.waitingList! : [],
     };
@@ -57,22 +69,23 @@ function writeCached(role: string, data: PanelAlertCounts) {
   } catch {}
 }
 
-async function loadAlerts(role: string): Promise<PanelAlertCounts> {
-  const cached = readCached(role);
+async function loadAlerts(role: string, permissions: readonly string[] | undefined, accessKey: string): Promise<PanelAlertCounts> {
+  const cached = readCached(accessKey);
   if (cached) return cached;
 
-  if (inFlight[role]) return inFlight[role]!;
+  if (inFlight[accessKey]) return inFlight[accessKey]!;
 
-  const { canSeeTaksit, canSeeStok, canSeeLab, canSeeWaiting } = getAlertPermissions(role);
+  const { canSeeTaksit, canSeeStok, canSeeLab, canSeeWaiting, canSeeTasks } = getAlertPermissions(role, permissions);
   const todayKey = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Istanbul" });
 
-  inFlight[role] = Promise.allSettled([
+  inFlight[accessKey] = Promise.allSettled([
     canSeeTaksit ? fetch("/api/taksit-plani?status=GECIKTI", { cache: "no-store" }) : Promise.resolve(null),
     canSeeStok ? fetch("/api/stock", { cache: "no-store" }) : Promise.resolve(null),
     canSeeLab ? fetch("/api/lab-orders?status=BEKLIYOR", { cache: "no-store" }) : Promise.resolve(null),
     canSeeWaiting ? fetch(`/api/appointments?date=${todayKey}`, { cache: "no-store" }) : Promise.resolve(null),
+    canSeeTasks ? fetch("/api/clinic-tasks?scope=mine&take=500", { cache: "no-store" }) : Promise.resolve(null),
   ])
-    .then(async ([tRes, sRes, lRes, aRes]) => {
+    .then(async ([tRes, sRes, lRes, aRes, taskRes]) => {
       const tData =
         tRes.status === "fulfilled" && tRes.value?.ok ? await tRes.value.json() : null;
       const sData =
@@ -81,6 +94,8 @@ async function loadAlerts(role: string): Promise<PanelAlertCounts> {
         lRes.status === "fulfilled" && lRes.value?.ok ? await lRes.value.json() : null;
       const aData =
         aRes.status === "fulfilled" && aRes.value?.ok ? await aRes.value.json() : null;
+      const taskData =
+        taskRes.status === "fulfilled" && taskRes.value?.ok ? await taskRes.value.json() : null;
 
       const taksit = Array.isArray(tData)
         ? tData.reduce(
@@ -97,6 +112,14 @@ async function loadAlerts(role: string): Promise<PanelAlertCounts> {
         ? sData.filter((item: any) => Number(item.quantity || 0) <= Number(item.minQuantity || 0)).length
         : 0;
       const lab = Array.isArray(lData) ? lData.length : Number(lData?.total || 0);
+      const now = Date.now();
+      const tasks = Array.isArray(taskData)
+        ? taskData.filter((task: any) => {
+            if (!["ACIK", "BEKLEMEDE"].includes(task.status)) return false;
+            const alertAt = task.remindAt || task.dueAt;
+            return alertAt && new Date(alertAt).getTime() <= now;
+          }).length
+        : 0;
       const waitingList: WaitingPatient[] = Array.isArray(aData)
         ? aData
             .filter((a: any) => a.status === "GELDI")
@@ -108,19 +131,19 @@ async function loadAlerts(role: string): Promise<PanelAlertCounts> {
               startAt: a.startAt,
             }))
         : [];
-      const data = { taksit, stok, lab, waiting: waitingList.length, waitingList };
-      writeCached(role, data);
+      const data = { taksit, stok, lab, tasks, waiting: waitingList.length, waitingList };
+      writeCached(accessKey, data);
       return data;
     })
     .catch(() => EMPTY_ALERTS)
     .finally(() => {
-      inFlight[role] = undefined;
+      inFlight[accessKey] = undefined;
     });
 
-  return inFlight[role]!;
+  return inFlight[accessKey]!;
 }
 
-export function usePanelAlerts(role: string) {
+export function usePanelAlerts(role: string, permissions?: readonly string[]) {
   // Başlangıç değeri her zaman sabit (EMPTY_ALERTS) olmalı: sunucu tarafında
   // localStorage yok, istemci tarafında ise varsa önbellek farklı bir değer
   // dönebilir. Bu, ilk render'da sunucu/istemci HTML'inin uyuşmamasına
@@ -128,23 +151,26 @@ export function usePanelAlerts(role: string) {
   // render edilmesine yol açıyordu. Önbellek artık yalnızca useEffect
   // içinde (hydration tamamlandıktan sonra) uygulanıyor.
   const [alerts, setAlerts] = useState<PanelAlertCounts>(EMPTY_ALERTS);
+  const permissionKey = permissions ? [...permissions].sort().join(",") : "";
+  const accessKey = `${role}:${permissionKey}`;
 
   useEffect(() => {
     if (!role) return;
     let cancelled = false;
 
-    const cached = readCached(role);
+    const cached = readCached(accessKey);
     if (cached) setAlerts(cached);
 
     const refresh = async (force = false) => {
       if (typeof document !== "undefined" && document.hidden) return;
       if (force) {
-        delete memoryCache[role];
+        delete memoryCache[accessKey];
         try {
-          localStorage.removeItem(cacheKey(role));
+          localStorage.removeItem(cacheKey(accessKey));
         } catch {}
       }
-      const data = await loadAlerts(role);
+      const resolvedPermissions = permissionKey ? permissionKey.split(",") : undefined;
+      const data = await loadAlerts(role, resolvedPermissions, accessKey);
       if (!cancelled) setAlerts(data);
     };
 
@@ -171,7 +197,7 @@ export function usePanelAlerts(role: string) {
       window.clearInterval(timer);
       if (initialTimer) clearTimeout(initialTimer);
     };
-  }, [role]);
+  }, [accessKey, permissionKey, role]);
 
   return alerts;
 }

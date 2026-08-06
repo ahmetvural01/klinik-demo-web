@@ -6,7 +6,7 @@ import { turkeyDateKey } from "@/lib/tz";
 // GET /api/hakedis?doctorId=X&months=12
 // Seçili doktor için son N ayın hakediş/ödenen/kalan dökümünü döner.
 export const GET = withApiTiming("hakedis", async function GET(req: NextRequest) {
-  const auth = await requireAuth("finance:read");
+  const auth = await requireAuth("earnings:read");
   if (auth.error) return auth.error;
 
   const { searchParams } = new URL(req.url);

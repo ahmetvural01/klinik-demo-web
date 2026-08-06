@@ -13,6 +13,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
   const amount = Number(body.amount);
   if (!amount || isNaN(amount)) return NextResponse.json({ message: "Geçersiz miktar" }, { status: 400 });
   if (!Number.isInteger(amount)) return NextResponse.json({ message: "Miktar tam sayi olmali" }, { status: 400 });
+  if (Math.abs(amount) > 5_000_000) return NextResponse.json({ message: "Tek işlemde en fazla 5.000.000 SMS düzenlenebilir" }, { status: 400 });
 
   const institution = await prisma.institution.findUnique({ where: { id: params.id } });
   if (!institution) return NextResponse.json({ message: "Klinik bulunamadı" }, { status: 404 });
@@ -23,10 +24,18 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
       update: {},
       create: { id: 1, availableBalance: 0 },
     });
+    // Cüzdan ve klinik satırlarını aynı sırada kilitle. Eşzamanlı iki kredi
+    // düzenlemesi artık eski bakiyeyi okuyup negatif/lost-update üretemez.
+    await tx.$queryRaw`SELECT "id" FROM "PlatformSmsWallet" WHERE "id" = ${wallet.id} FOR UPDATE`;
+    await tx.$queryRaw`SELECT "id" FROM "Institution" WHERE "id" = ${params.id} FOR UPDATE`;
+    const [currentWallet, currentInstitution] = await Promise.all([
+      tx.platformSmsWallet.findUniqueOrThrow({ where: { id: wallet.id } }),
+      tx.institution.findUniqueOrThrow({ where: { id: params.id } }),
+    ]);
 
     if (amount > 0) {
-      if (wallet.availableBalance < amount) {
-        return { error: `Platform stok yetersiz. Mevcut: ${wallet.availableBalance}, Istek: ${amount}` };
+      if (currentWallet.availableBalance < amount) {
+        return { error: `Platform stok yetersiz. Mevcut: ${currentWallet.availableBalance}, Istek: ${amount}` };
       }
 
       const [updatedInstitution, updatedWallet] = await Promise.all([
@@ -47,7 +56,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
       };
     }
 
-    const removable = Math.min(institution.smsBalance, Math.abs(amount));
+    const removable = Math.min(currentInstitution.smsBalance, Math.abs(amount));
     const [updatedInstitution, updatedWallet] = await Promise.all([
       tx.institution.update({
         where: { id: params.id },

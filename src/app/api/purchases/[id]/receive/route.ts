@@ -41,7 +41,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   const auth = await requireAuth("finance:write");
   if (auth.error) return auth.error;
 
-  const requestKey = req.headers.get("Idempotency-Key")?.trim().slice(0, 180) || null;
+  const requestKey = req.headers.get("Idempotency-Key")?.trim() || null;
+  if (requestKey && (requestKey.length < 8 || requestKey.length > 180)) {
+    return NextResponse.json({ error: "İşlem anahtarı geçersiz" }, { status: 400 });
+  }
   const purchase = await loadPurchase(params.id, auth.user.institutionId);
   if (!purchase) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
   if (purchase.status !== "AKTIF") {
@@ -70,6 +73,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     : 0;
   if (paymentAmount > total) {
     return NextResponse.json({ error: "Ödeme tutarı sipariş toplamını aşamaz" }, { status: 400 });
+  }
+  const purchaseItemIds = new Set(purchase.items.map((item: any) => item.id));
+  const requestedLotIds = parsed.data.itemLots.map((item) => item.purchaseItemId);
+  if (new Set(requestedLotIds).size !== requestedLotIds.length || requestedLotIds.some((id) => !purchaseItemIds.has(id))) {
+    return NextResponse.json({ error: "Teslim alma lotlarından biri bu siparişe ait değil veya tekrar edilmiş" }, { status: 400 });
   }
 
   try {

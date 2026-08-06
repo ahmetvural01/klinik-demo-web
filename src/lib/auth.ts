@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
 import { cookies, headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
+import { parseRolePreview } from "@/lib/role-preview";
 
 const TOKEN_NAME = "klinik_token";
 const ROLE_PREVIEW_COOKIE = "klinik_preview_role";
@@ -66,32 +67,42 @@ export async function verifyPassword(password: string, hash: string) {
   return bcrypt.compare(password, hash);
 }
 
-export function signToken(payload: AuthPayload) {
+// "Oturumu açık tut" işaretliyse oturum 24 saat, işaretli değilse 3 saat
+// sonra sona erer (bkz. kullanıcı geri bildirimi). Diğer (giriş formu dışı)
+// çağıranlar için varsayılan true — mevcut oturumu aynı sürede yeniler.
+function sessionExpiresIn(rememberMe: boolean) {
+  return rememberMe ? "24h" : "3h";
+}
+function sessionMaxAgeSeconds(rememberMe: boolean) {
+  return rememberMe ? 60 * 60 * 24 : 60 * 60 * 3;
+}
+
+export function signToken(payload: AuthPayload, rememberMe: boolean = true) {
   const secret = process.env.JWT_SECRET;
 
   if (!secret) {
     throw new Error("JWT_SECRET tanımlı değil");
   }
 
-  return jwt.sign(payload, secret, { expiresIn: "7d" });
+  return jwt.sign(payload, secret, { expiresIn: sessionExpiresIn(rememberMe) });
 }
 
-type PendingTwoFactorPayload = { userId: string; purpose: "2fa-pending" };
+type PendingTwoFactorPayload = { userId: string; rememberMe: boolean; purpose: "2fa-pending" };
 
 /** Şifre doğrulandı ama 2FA kodu henüz girilmedi — kısa ömürlü, oturum açmaya yetmez. */
-export function signPendingTwoFactorToken(userId: string) {
+export function signPendingTwoFactorToken(userId: string, rememberMe: boolean = true) {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error("JWT_SECRET tanımlı değil");
-  return jwt.sign({ userId, purpose: "2fa-pending" } satisfies PendingTwoFactorPayload, secret, { expiresIn: "5m" });
+  return jwt.sign({ userId, rememberMe, purpose: "2fa-pending" } satisfies PendingTwoFactorPayload, secret, { expiresIn: "5m" });
 }
 
-export function verifyPendingTwoFactorToken(token: string): string | null {
+export function verifyPendingTwoFactorToken(token: string): { userId: string; rememberMe: boolean } | null {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error("JWT_SECRET tanımlı değil");
   try {
     const payload = jwt.verify(token, secret) as PendingTwoFactorPayload;
     if (payload.purpose !== "2fa-pending") return null;
-    return payload.userId;
+    return { userId: payload.userId, rememberMe: payload.rememberMe ?? true };
   } catch {
     return null;
   }
@@ -171,9 +182,12 @@ export async function getCurrentUserFast(): Promise<{ id: string; role: string; 
   if (!token) return null;
   try {
     const payload = verifyToken(token);
+    const previewRole = payload.role === "SUPERADMIN"
+      ? parseRolePreview((await cookies()).get(ROLE_PREVIEW_COOKIE)?.value)
+      : null;
     return {
       id: payload.userId,
-      role: getVisibleRole(payload.role),
+      role: previewRole || getVisibleRole(payload.role),
       rawRole: payload.role,
       institution: payload.institutionId ?? "",
       fullName: payload.fullName || "",
@@ -184,13 +198,13 @@ export async function getCurrentUserFast(): Promise<{ id: string; role: string; 
   }
 }
 
-export async function setAuthCookie(token: string) {
+export async function setAuthCookie(token: string, rememberMe: boolean = true) {
   (await cookies()).set(TOKEN_NAME, token, {
     httpOnly: true,
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: 60 * 60 * 24 * 7
+    maxAge: sessionMaxAgeSeconds(rememberMe)
   });
 }
 

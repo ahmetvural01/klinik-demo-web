@@ -1,4 +1,4 @@
-import { Prisma, PrismaClient, Role } from "@prisma/client";
+import { AppointmentStatus, Prisma, PrismaClient, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
@@ -11,6 +11,7 @@ const DEMO_INSTITUTION_ADDRESS = process.env.DEMO_INSTITUTION_ADDRESS || "Demo A
 const DEMO_INSTITUTION_PHONE = process.env.DEMO_INSTITUTION_PHONE || "0000 000 0000";
 const DEMO_INSTITUTION_WEBSITE = process.env.DEMO_INSTITUTION_WEBSITE || "www.demo.local";
 const DEMO_ADMIN_IDENTITY = process.env.DEMO_ADMIN_IDENTITY || "00000000000";
+const staffIdentityNo = (index: number) => `0000000001${index}`;
 
 function dec(value: number | string) {
   return new Prisma.Decimal(value);
@@ -106,11 +107,11 @@ async function cleanupOldVisibleDemoPrefixes(institutionId: string) {
 async function upsertStaff(institutionId: string) {
   const passwordHash = await bcrypt.hash(PASSWORD, 10);
   const rows = [
-    { identityNo: "00000000011", fullName: "Demo Doktor 1", role: Role.DOKTOR, email: "doctor1@demo.local", genelYuzde: 40, kkYuzde: 35, maasYuzde: 30 },
-    { identityNo: "00000000012", fullName: "Demo Doktor 2", role: Role.DOKTOR, email: "doctor2@demo.local", genelYuzde: 42, kkYuzde: 36, maasYuzde: 30 },
-    { identityNo: "00000000013", fullName: "Demo Asistan", role: Role.ASISTAN, email: "assistant@demo.local" },
-    { identityNo: "00000000014", fullName: "Demo Banko", role: Role.BANKO, email: "frontdesk@demo.local" },
-    { identityNo: "00000000015", fullName: "Demo Muhasebe", role: Role.MUHASEBE, email: "finance@demo.local" },
+    { identityNo: staffIdentityNo(1), fullName: "Demo Doktor 1", role: Role.DOKTOR, email: "doctor1@demo.local", genelYuzde: 40, kkYuzde: 35, maasYuzde: 30 },
+    { identityNo: staffIdentityNo(2), fullName: "Demo Doktor 2", role: Role.DOKTOR, email: "doctor2@demo.local", genelYuzde: 42, kkYuzde: 36, maasYuzde: 30 },
+    { identityNo: staffIdentityNo(3), fullName: "Demo Asistan", role: Role.ASISTAN, email: "assistant@demo.local" },
+    { identityNo: staffIdentityNo(4), fullName: "Demo Banko", role: Role.BANKO, email: "frontdesk@demo.local" },
+    { identityNo: staffIdentityNo(5), fullName: "Demo Muhasebe", role: Role.MUHASEBE, email: "finance@demo.local" },
   ];
 
   const users: Record<string, Awaited<ReturnType<typeof prisma.user.upsert>>> = {};
@@ -343,7 +344,7 @@ async function upsertFirms(institutionId: string) {
   return firms;
 }
 
-async function createAppointment(patientId: string, doctorId: string, startAt: Date, status: string, type = "STANDART", note?: string) {
+async function createAppointment(patientId: string, doctorId: string, startAt: Date, status: AppointmentStatus, type = "STANDART", note?: string) {
   const existing = await prisma.appointment.findFirst({ where: { patientId, doctorId, startAt } });
   if (existing) {
     return prisma.appointment.update({
@@ -625,7 +626,7 @@ async function upsertStockAndPurchases(
     { stock: stocks["Ölçü Silikonu Putty"], productName: "Ölçü Silikonu Putty", quantity: 6, unit: "takım", unitPrice: 650 },
   ]) {
     const movement = await prisma.stockMovement.create({
-      data: { stockItemId: row.stock.id, type: "GIRIS", quantity: row.quantity, unitPrice: dec(row.unitPrice), supplier: "Medikal Sarf Deposu", note: `Satın alma faturası ${purchase1.faturaNo}`, userId: managerId },
+      data: { stockItemId: row.stock.id, institutionId, type: "GIRIS", quantity: row.quantity, unitPrice: dec(row.unitPrice), supplier: "Medikal Sarf Deposu", note: `Satın alma faturası ${purchase1.faturaNo}`, userId: managerId },
     });
     await prisma.purchaseItem.create({
       data: { purchaseId: p1.id, stockItemId: row.stock.id, productName: row.productName, quantity: row.quantity, unit: row.unit, unitPrice: dec(row.unitPrice), lineTotal: dec(row.quantity * row.unitPrice), stockMovementId: movement.id },
@@ -684,7 +685,7 @@ async function upsertStockAndPurchases(
     { stock: stocks["İmplant Cerrahi Set"], productName: "İmplant Cerrahi Set", quantity: 4, unit: "set", unitPrice: 1440 },
   ]) {
     const movement = await prisma.stockMovement.create({
-      data: { stockItemId: row.stock.id, type: "GIRIS", quantity: row.quantity, unitPrice: dec(row.unitPrice), supplier: "Aydın Dental Tedarik", note: `Satın alma faturası ${purchase2.faturaNo}`, userId: managerId },
+      data: { stockItemId: row.stock.id, institutionId, type: "GIRIS", quantity: row.quantity, unitPrice: dec(row.unitPrice), supplier: "Aydın Dental Tedarik", note: `Satın alma faturası ${purchase2.faturaNo}`, userId: managerId },
     });
     await prisma.purchaseItem.create({
       data: { purchaseId: p2.id, stockItemId: row.stock.id, productName: row.productName, quantity: row.quantity, unit: row.unit, unitPrice: dec(row.unitPrice), lineTotal: dec(row.quantity * row.unitPrice), stockMovementId: movement.id },
@@ -692,10 +693,10 @@ async function upsertStockAndPurchases(
   }
 
   await prisma.stockMovement.create({
-    data: { stockItemId: stocks["Nitril Eldiven Mavi M"].id, type: "CIKIS", quantity: 3, note: "Cerrahi işlem tüketimi", userId: managerId },
+    data: { stockItemId: stocks["Nitril Eldiven Mavi M"].id, institutionId, type: "CIKIS", quantity: 3, note: "Cerrahi işlem tüketimi", userId: managerId },
   });
   await prisma.stockMovement.create({
-    data: { stockItemId: stocks["Artikain Anestezi Ampul"].id, type: "CIKIS", quantity: 5, note: "Kanal ve implant randevuları", userId: managerId },
+    data: { stockItemId: stocks["Artikain Anestezi Ampul"].id, institutionId, type: "CIKIS", quantity: 5, note: "Kanal ve implant randevuları", userId: managerId },
   });
 }
 

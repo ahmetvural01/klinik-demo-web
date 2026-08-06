@@ -16,6 +16,9 @@ export async function PUT(request: NextRequest, props: Params) {
   if (auth.error) return auth.error;
 
   const body = await request.json();
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
+  }
   const existing = await (prisma as any).posDevice.findFirst({
     where: {
       id: params.id,
@@ -23,8 +26,11 @@ export async function PUT(request: NextRequest, props: Params) {
     },
   });
   if (!existing) return NextResponse.json({ message: "POS cihazı bulunamadı" }, { status: 404 });
-  if (body.name !== undefined && !String(body.name).trim()) {
-    return NextResponse.json({ message: "POS cihaz adı boş olamaz" }, { status: 400 });
+  if (body.name !== undefined && (!String(body.name).trim() || String(body.name).trim().length > 120)) {
+    return NextResponse.json({ message: "POS cihaz adı 1-120 karakter olmalı" }, { status: 400 });
+  }
+  if (body.isActive !== undefined && typeof body.isActive !== "boolean") {
+    return NextResponse.json({ message: "Aktiflik bilgisi geçersiz" }, { status: 400 });
   }
 
   const updated = await (prisma as any).posDevice.update({
@@ -72,7 +78,14 @@ export async function DELETE(_: NextRequest, props: Params) {
   });
   if (!existing) return NextResponse.json({ message: "POS cihazı bulunamadı" }, { status: 404 });
 
+  const paymentCount = await prisma.payment.count({ where: { posId: existing.id } });
+  if (paymentCount > 0) {
+    const deactivated = await (prisma as any).posDevice.update({ where: { id: existing.id }, data: { isActive: false } });
+    await writeAudit(auth.user.id, "POS_DEACTIVATE", `Geçmiş tahsilatı bulunan POS pasife alındı: ${deactivated.name}`);
+    return NextResponse.json({ ok: true, deactivated: true, message: "Geçmiş tahsilatlar korundu; POS cihazı pasife alındı." });
+  }
+
   const deleted = await (prisma as any).posDevice.delete({ where: { id: existing.id } });
   await writeAudit(auth.user.id, "POS_DELETE", `POS cihazı silindi: ${deleted.name}`);
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, deactivated: false });
 }

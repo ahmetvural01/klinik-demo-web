@@ -4,9 +4,8 @@
  * gerçek tarayıcıda, Hasta ekleme modalı (PatientFormModal) üzerinden uçtan
  * uca doğrular:
  *  - Temiz formda backdrop tıklaması kapatır.
- *  - Dirty formda backdrop tıklaması KAPATMAZ, veriyi korur, dikkat vurgusu gösterir.
- *  - ESC dirty formda onay ister; "Düzenlemeye Devam Et" veriyi korur.
- *  - "Değişiklikleri Sil ve Çık" gerçekten kapatır.
+ *  - Dirty formda backdrop tıklaması KAPATMAZ, veriyi korur, kalıcı uyarı gösterir.
+ *  - ESC dirty formu onay istemeden kapatır.
  *  - Yeni açılışta önceki dirty state sızmaz (regresyon yok).
  *
  * Gerçek tarayıcı (playwright-core + yerel Chrome) ve çalışan bir dev sunucu
@@ -21,7 +20,7 @@ import { chromium } from "playwright-core";
 const prisma = new PrismaClient();
 const BASE = process.env.LAYOUT_TEST_BASE_URL || "http://127.0.0.1:3001";
 const CHROME_PATH = process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const PASSWORD = "ModalTest!2026";
+const PASSWORD = process.env.MODAL_TEST_PASSWORD || "changeme";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -72,33 +71,24 @@ async function main() {
     await nameInput.fill(testValue);
     await page.mouse.click(20, 20);
     await page.waitForTimeout(60);
-    const hintVisible = (await page.locator("text=Kaydedilmemiş değişiklikleriniz var.").count()) > 0;
+    const hintVisible = (await page.locator("text=Kaydedilmemiş değişiklik var. Form açık tutuldu.").count()) > 0;
     await page.waitForTimeout(400);
     assert((await dialogCount()) === 1, "Dirty formda backdrop tıklaması modalı kapattı (veri kaybı riski)");
     assert((await nameInput.inputValue()) === testValue, "Backdrop tıklaması sonrası form verisi korunmadı");
     assert((await page.locator('[role="alertdialog"]').count()) === 0, "Backdrop tıklamasında istenmeyen onay diyaloğu açıldı");
     assert(hintVisible, "Dirty backdrop tıklamasında dikkat ipucu gösterilmedi");
-    console.log("✓ Dirty formda backdrop tıklaması modalı kapatmıyor, veri korunuyor, onay diyaloğu açılmıyor.");
+    await page.waitForTimeout(900);
+    assert((await page.locator("text=Kaydedilmemiş değişiklik var. Form açık tutuldu.").count()) > 0, "Dirty uyarısı kalıcı görünmedi");
+    console.log("✓ Dirty formda backdrop tıklaması modalı kapatmıyor, veri korunuyor, kalıcı uyarı görünüyor.");
 
-    // 3) ESC -> onay iste; "Düzenlemeye Devam Et" -> modal açık kalır, veri korunur
+    // 3) ESC -> onay istemeden kapanır
     await page.keyboard.press("Escape");
     await page.waitForTimeout(400);
-    assert((await page.locator('[role="alertdialog"]').count()) === 1, "ESC dirty formda onay diyaloğu açmadı");
-    await page.locator('[role="alertdialog"] button', { hasText: "Düzenlemeye Devam Et" }).click();
-    await page.waitForTimeout(400);
-    assert((await dialogCount()) === 1, "'Düzenlemeye Devam Et' sonrası modal kapandı");
-    assert((await nameInput.inputValue()) === testValue, "'Düzenlemeye Devam Et' sonrası form verisi korunmadı");
-    console.log("✓ ESC onay ister, 'Düzenlemeye Devam Et' formu ve odağı korur.");
+    assert((await page.locator('[role="alertdialog"]').count()) === 0, "ESC dirty formda onay diyaloğu açtı");
+    assert((await dialogCount()) === 0, "ESC dirty formu kapatmadı");
+    console.log("✓ ESC dirty formu onay istemeden kapatıyor.");
 
-    // 4) ESC tekrar -> "Değişiklikleri Sil ve Çık" -> gerçekten kapanır
-    await page.keyboard.press("Escape");
-    await page.waitForTimeout(400);
-    await page.locator('[role="alertdialog"] button', { hasText: "Değişiklikleri Sil ve Çık" }).click();
-    await page.waitForTimeout(400);
-    assert((await dialogCount()) === 0, "'Değişiklikleri Sil ve Çık' sonrası modal kapanmadı");
-    console.log("✓ 'Değişiklikleri Sil ve Çık' modalı gerçekten kapatıyor.");
-
-    // 5) Yeni açılış: önceki dirty veri sızmamalı, backdrop yine kapatabilmeli
+    // 4) Yeni açılış: önceki dirty veri sızmamalı, backdrop yine kapatabilmeli
     await openModal();
     assert((await nameInput.inputValue()) === "", "Yeni modal açılışında önceki dirty veri sızdı");
     await page.mouse.click(20, 20);

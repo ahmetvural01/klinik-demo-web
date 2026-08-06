@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -84,7 +84,7 @@ export async function GET(request: NextRequest, props: Params) {
   // adına bir dışa aktarma yapması için kullanılıyor — panelde telefonu
   // görmesine izin verilmeyen bir rol (DOKTOR/ASISTAN), bu endpoint'i
   // kullanarak maskelemeyi bypass edemesin.
-  const hidePhone = shouldHidePatientPhone(auth.user.role);
+  const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
   const patientForExport = hidePhone ? { ...patient, phone: "***" } : patient;
 
   const exportPayload = {

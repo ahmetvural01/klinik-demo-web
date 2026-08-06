@@ -185,6 +185,7 @@ export async function POST(request: NextRequest) {
         tx.stockMovement.create({
           data: {
             stockItemId: item.id,
+            institutionId: institution.id,
             type: "GIRIS",
             quantity: item.quantity,
             note: "Açılış stok girişi",

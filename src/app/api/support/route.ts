@@ -29,10 +29,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Çok fazla destek talebi oluşturdunuz. Lütfen biraz sonra tekrar deneyin." }, { status: 429 });
   }
 
-  const body = await request.json();
-  const subject = String(body.subject || "Genel").trim().slice(0, 120);
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek gövdesi" }, { status: 400 });
+  }
+  const subject = String(body.subject || "Genel").trim();
   const message = String(body.message || "").trim();
   if (!message) return NextResponse.json({ message: "Mesaj zorunlu" }, { status: 400 });
+  if (subject.length > 120 || message.length > 5_000) {
+    return NextResponse.json({ message: "Konu en fazla 120, mesaj en fazla 5000 karakter olabilir" }, { status: 400 });
+  }
 
   const ticket = await prisma.supportTicket.create({
     data: {

@@ -2,6 +2,7 @@
 import { prisma } from "@/lib/prisma";
 import { examinationSchema } from "@/lib/validators";
 import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 export const GET = withApiTiming("examinations", async function GET(request: NextRequest) {
   const auth = await requireAuth("examinations:read");
@@ -12,7 +13,7 @@ export const GET = withApiTiming("examinations", async function GET(request: Nex
   const examinations = await prisma.examination.findMany({
     where: {
       ...(patientId ? { patientId } : {}),
-      ...(auth.user.role !== "SUPERADMIN" ? { patient: { institutionId: auth.user.institutionId } } : {}),
+      ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
     },
     include: { patient: true, doctor: { select: { id: true, fullName: true } } },
     orderBy: { diagnosedAt: "desc" },
@@ -38,11 +39,11 @@ export async function POST(request: NextRequest) {
   if (auth.user.role !== "SUPERADMIN") {
     const [patient, doctor] = await Promise.all([
       prisma.patient.findFirst({
-        where: { id: parsed.data.patientId, institutionId: auth.user.institutionId, archivedAt: null },
+        where: { id: parsed.data.patientId, institutionId: auth.user.institutionId as string, archivedAt: null },
         select: { id: true, fullName: true },
       }),
       prisma.user.findFirst({
-        where: { id: parsed.data.doctorId, institutionId: auth.user.institutionId, isActive: true },
+        where: { id: parsed.data.doctorId, ...effectiveDoctorWhere(auth.user.institutionId) },
         select: { id: true, fullName: true },
       }),
     ]);
@@ -57,6 +58,9 @@ export async function POST(request: NextRequest) {
     ]);
     patientInfo = patient;
     doctorInfo = doctor;
+  }
+  if (!patientInfo || !doctorInfo) {
+    return NextResponse.json({ message: "Hasta veya doktor bulunamadı" }, { status: 404 });
   }
 
   const examination = await prisma.examination.create({

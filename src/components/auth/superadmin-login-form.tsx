@@ -1,7 +1,10 @@
 "use client";
 
 import { FormEvent, useState } from "react";
+import { ArrowRight, ShieldCheck } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
+import { Button } from "@/components/ui/Button";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
 
 export function SuperadminLoginForm() {
   const [identityNo, setIdentityNo] = useState("");
@@ -66,19 +69,22 @@ export function SuperadminLoginForm() {
   };
 
   return (
-    <main className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-emerald-950 flex items-center justify-center p-4">
+    <main className="auth-shell auth-shell-dark flex min-h-screen items-center justify-center p-4">
       {pendingToken ? (
-        <form onSubmit={onSubmitCode} className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-7 text-white shadow-2xl">
-          <div className="mb-6">
-            <p className="text-xs tracking-widest text-emerald-300">İKİ FAKTÖRLÜ DOĞRULAMA</p>
+        <form onSubmit={onSubmitCode} className="auth-panel auth-panel-dark w-full max-w-md p-7 text-white">
+          <div className="auth-brand-row mb-6">
+            <span className="auth-panel-icon auth-panel-icon-dark"><ShieldCheck className="h-5 w-5" /></span>
+            <div>
+            <p className="auth-eyebrow auth-eyebrow-dark">İki faktörlü doğrulama</p>
             <h1 className="mt-2 text-3xl font-black">Doğrulama Kodu</h1>
             <p className="mt-1 text-sm text-slate-300">Kimlik doğrulayıcı uygulamanızdaki 6 haneli kodu veya bir yedek kodu girin.</p>
+            </div>
           </div>
 
-          <label className="mb-4 block text-sm font-semibold text-slate-200">
+          <label className="auth-label auth-label-dark mb-4 block text-sm font-semibold">
             Kod
             <input
-              className="mt-1 w-full rounded-xl border border-white/20 bg-white/5 px-3 py-2.5 text-center text-lg tracking-widest focus:outline-none focus:ring-2 focus:ring-emerald-300"
+              className="auth-input auth-input-dark mt-1 w-full px-3 py-2.5 text-center text-lg tracking-widest"
               value={code}
               onChange={(e) => setCode(e.target.value)}
               autoFocus
@@ -86,31 +92,34 @@ export function SuperadminLoginForm() {
             />
           </label>
 
-          {error && <p className="mb-3 text-sm text-rose-300">{error}</p>}
+          {error && <p className="auth-status auth-status-error-dark mb-3 text-sm">{error}</p>}
 
-          <button disabled={loading} className="w-full rounded-xl bg-emerald-500 p-3 text-sm font-bold text-slate-900 hover:bg-emerald-400 transition disabled:opacity-50">
+          <Button type="submit" loading={loading} fullWidth icon={ArrowRight} className="auth-submit-dark">
             {loading ? "Doğrulanıyor..." : "Doğrula ve Giriş Yap"}
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            type="button" variant="ghost"
             onClick={() => { setPendingToken(null); setCode(""); setError(null); }}
-            className="mt-3 w-full text-center text-xs text-slate-400 hover:text-slate-200"
+            fullWidth className="auth-back-dark mt-3"
           >
-            ← Geri dön
-          </button>
+            Geri dön
+          </Button>
         </form>
       ) : (
-        <form onSubmit={onSubmit} className="w-full max-w-md rounded-2xl border border-white/10 bg-white/5 backdrop-blur p-7 text-white shadow-2xl">
-          <div className="mb-6">
-            <p className="text-xs tracking-widest text-emerald-300">YÖNETİM PANELİ</p>
+        <form onSubmit={onSubmit} className="auth-panel auth-panel-dark w-full max-w-md p-7 text-white">
+          <div className="auth-brand-row mb-6">
+            <span className="auth-panel-icon auth-panel-icon-dark"><ModuleIcon module="settings" size="md" /></span>
+            <div>
+            <p className="auth-eyebrow auth-eyebrow-dark">Yönetim paneli</p>
             <h1 className="mt-2 text-3xl font-black">Yönetici Girişi</h1>
             <p className="mt-1 text-sm text-slate-300">Sistem yönetimi için kimlik bilgilerinizi girin.</p>
+            </div>
           </div>
 
-          <label className="mb-4 block text-sm font-semibold text-slate-200">
+          <label className="auth-label auth-label-dark mb-4 block text-sm font-semibold">
             TC Kimlik No
             <input
-              className="mt-1 w-full rounded-xl border border-white/20 bg-white/5 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300"
+              className="auth-input auth-input-dark mt-1 w-full px-3 py-2.5 text-sm"
               value={identityNo}
               onChange={(e) => setIdentityNo(e.target.value)}
               placeholder="11 haneli"
@@ -118,10 +127,10 @@ export function SuperadminLoginForm() {
             />
           </label>
 
-          <label className="mb-4 block text-sm font-semibold text-slate-200">
+          <label className="auth-label auth-label-dark mb-4 block text-sm font-semibold">
             Şifre
             <input
-              className="mt-1 w-full rounded-xl border border-white/20 bg-white/5 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-300"
+              className="auth-input auth-input-dark mt-1 w-full px-3 py-2.5 text-sm"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -129,11 +138,11 @@ export function SuperadminLoginForm() {
             />
           </label>
 
-          {error && <p className="mb-3 text-sm text-rose-300">{error}</p>}
+          {error && <p className="auth-status auth-status-error-dark mb-3 text-sm">{error}</p>}
 
-          <button disabled={loading} className="w-full rounded-xl bg-emerald-500 p-3 text-sm font-bold text-slate-900 hover:bg-emerald-400 transition disabled:opacity-50">
+          <Button type="submit" loading={loading} fullWidth icon={ArrowRight} className="auth-submit-dark">
             {loading ? "Doğrulanıyor..." : "Sisteme Giriş"}
-          </button>
+          </Button>
         </form>
       )}
     </main>

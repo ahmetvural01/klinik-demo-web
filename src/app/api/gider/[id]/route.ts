@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { computeDoctorMonthlyHakedis, computeDoctorMonthlyOdenen, monthRangeUtc } from "@/lib/hakedis";
+import { turkeyYearMonth } from "@/lib/tz";
 
 export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -29,21 +30,41 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
 
-    const body = await req.json();
+    const body = await req.json().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Geçersiz istek gövdesi" }, { status: 400 });
+    }
     const existing = await (prisma as any).expense.findFirst({
       where: {
         id: params.id,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
       },
-      select: { id: true, doctorId: true, tarih: true, tutar: true, periodYear: true, periodMonth: true },
+      select: { id: true, doctorId: true, tarih: true, tutar: true, categoryId: true, category: true, periodYear: true, periodMonth: true },
     });
     if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
-    if (body.tutar !== undefined && (!Number.isFinite(Number(body.tutar)) || Number(body.tutar) <= 0)) {
+    const validMethods = new Set(["NAKIT", "KREDI_KARTI", "HAVALE_EFT", "MAIL_ORDER", "DIGER"]);
+    if (body.yontem !== undefined && (typeof body.yontem !== "string" || !validMethods.has(body.yontem))) {
+      return NextResponse.json({ error: "Geçersiz ödeme yöntemi" }, { status: 400 });
+    }
+    if (body.tarih !== undefined && (typeof body.tarih !== "string" || Number.isNaN(new Date(body.tarih).getTime()))) {
+      return NextResponse.json({ error: "Geçerli bir tarih girilmelidir" }, { status: 400 });
+    }
+
+    if (body.tutar !== undefined && (!Number.isFinite(Number(body.tutar)) || Number(body.tutar) <= 0 || Number(body.tutar) > 99_999_999.99)) {
       return NextResponse.json({ error: "Tutar pozitif bir sayı olmalıdır" }, { status: 400 });
     }
     if (body.kdvOrani !== undefined && (!Number.isFinite(Number(body.kdvOrani)) || Number(body.kdvOrani) < 0 || Number(body.kdvOrani) > 100)) {
       return NextResponse.json({ error: "KDV oranı 0-100 arasında olmalıdır" }, { status: 400 });
+    }
+    if (body.description !== undefined && body.description !== null && (typeof body.description !== "string" || body.description.trim().length > 1_000)) {
+      return NextResponse.json({ error: "Açıklama en fazla 1000 karakter olabilir" }, { status: 400 });
+    }
+    if (body.category !== undefined && (typeof body.category !== "string" || body.category.trim().length < 1 || body.category.trim().length > 120)) {
+      return NextResponse.json({ error: "Kategori 1-120 karakter olmalıdır" }, { status: 400 });
+    }
+    if (body.faturaNo !== undefined && body.faturaNo !== null && (typeof body.faturaNo !== "string" || body.faturaNo.trim().length > 100)) {
+      return NextResponse.json({ error: "Fatura numarası en fazla 100 karakter olabilir" }, { status: 400 });
     }
 
     if (existing.doctorId && body.yontem !== undefined && body.yontem !== "NAKIT" && body.yontem !== "HAVALE_EFT") {
@@ -60,18 +81,30 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         return NextResponse.json({ error: "Hakediş ödemesinin dönemi (ay/yıl) sonradan değiştirilemez — gerekiyorsa kaydı iptal edip yeniden oluşturun." }, { status: 400 });
       }
     }
-
-    // Doktora bağlı olmayan bir gider, kategorisi "Doktor Hakedişi"ye
-    // değiştirilerek doktor alanı boş kalamaz — aksi halde tutar hiçbir
-    // doktorun hakediş hesabına yansımadan kaydedilir (bkz. POST'taki aynı kontrol).
-    if (!existing.doctorId && body.categoryId) {
-      const targetCategory = await (prisma as any).expenseCategory.findUnique({
-        where: { id: body.categoryId },
-        select: { isDoctorPayout: true },
+    // Kategori başka bir kurumdan taşınamaz; ayrıca doktora bağlı olmayan bir
+    // gider "Doktor Hakedişi" kategorisine geçirilerek hakediş hesabından
+    // koparılamaz.
+    let resolvedCategoryName: string | undefined;
+    if (body.categoryId !== undefined && body.categoryId !== null && typeof body.categoryId !== "string") {
+      return NextResponse.json({ error: "Kategori seçimi geçersiz" }, { status: 400 });
+    }
+    if (body.categoryId) {
+      const targetCategory = await (prisma as any).expenseCategory.findFirst({
+        where: { id: body.categoryId, ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}) },
+        select: { name: true, isDoctorPayout: true },
       });
-      if (targetCategory?.isDoctorPayout) {
+      if (!targetCategory) {
+        return NextResponse.json({ error: "Kategori bulunamadı veya bu kuruma ait değil" }, { status: 404 });
+      }
+      if (!existing.doctorId && targetCategory.isDoctorPayout) {
         return NextResponse.json({ error: "\"Doktor Hakedişi\" kategorisine sadece doktor seçilerek (yeni kayıt olarak) geçilebilir." }, { status: 400 });
       }
+      if (existing.doctorId && !targetCategory.isDoctorPayout) {
+        return NextResponse.json({ error: "Doktor hakedişi ödemesi normal gider kategorisine taşınamaz." }, { status: 400 });
+      }
+      resolvedCategoryName = targetCategory.name;
+    } else if (existing.doctorId && body.categoryId !== undefined) {
+      return NextResponse.json({ error: "Doktor hakedişi ödemesinin kategorisi kaldırılamaz." }, { status: 400 });
     }
 
     // Tutar artırılıyorsa, doktorun o dönem hakedişini aşmadığından emin ol —
@@ -79,8 +112,9 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     // API çağrısıyla trivially bypass edilebiliyordu (bkz. denetim raporu Tema 5).
     if (existing.doctorId && body.tutar !== undefined) {
       const newTutar = Number(body.tutar);
-      const year = body.periodYear ?? existing.periodYear ?? new Date(existing.tarih).getUTCFullYear();
-      const month = body.periodMonth ?? existing.periodMonth ?? new Date(existing.tarih).getUTCMonth() + 1;
+      const existingDatePeriod = turkeyYearMonth(new Date(existing.tarih));
+      const year = body.periodYear ?? existing.periodYear ?? existingDatePeriod.year;
+      const month = body.periodMonth ?? existing.periodMonth ?? existingDatePeriod.month;
       const doctor = await prisma.user.findUnique({
         where: { id: existing.doctorId },
         select: { kkYuzde: true, genelYuzde: true, maasYuzde: true },
@@ -114,17 +148,21 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     const data: Record<string, unknown> = {};
     if (body.tarih !== undefined) data.tarih = new Date(body.tarih);
     if (body.categoryId !== undefined) data.categoryId = body.categoryId || null;
-    if (body.category !== undefined) data.category = body.category;
-    if (body.description !== undefined) data.description = body.description || null;
+    if (resolvedCategoryName !== undefined) data.category = resolvedCategoryName;
+    else if (body.category !== undefined) data.category = body.category.trim();
+    if (body.description !== undefined) data.description = body.description?.trim() || null;
     if (body.tutar !== undefined) data.tutar = Number(body.tutar);
     if (body.yontem !== undefined) data.yontem = body.yontem;
-    if (body.faturaNo !== undefined) data.faturaNo = existing.doctorId ? null : (body.faturaNo || null);
+    if (body.faturaNo !== undefined) data.faturaNo = existing.doctorId ? null : (body.faturaNo?.trim() || null);
     if (body.kdvOrani !== undefined) data.kdvOrani = existing.doctorId ? 0 : Number(body.kdvOrani);
     // doctorId burada kasıtlı olarak whitelist'e alınmadı (hangi doktora ait olduğunu
     // değiştirmek hassas bir işlem, şu an arayüzde de sunulmuyor) — sadece hangi
     // hakediş dönemine (ay/yıl) sayıldığı düzeltilebilir.
     if (body.periodYear !== undefined) data.periodYear = body.periodYear === null ? null : Number(body.periodYear);
     if (body.periodMonth !== undefined) data.periodMonth = body.periodMonth === null ? null : Number(body.periodMonth);
+    if (Object.keys(data).length === 0) {
+      return NextResponse.json({ error: "Güncellenecek alan bulunamadı" }, { status: 400 });
+    }
 
     const expense = await (prisma as any).expense.update({
       where: { id: existing.id },

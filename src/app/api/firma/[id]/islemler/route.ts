@@ -76,7 +76,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
     institutionId = auth.user.institutionId;
-    requestKey = req.headers.get("Idempotency-Key")?.trim().slice(0, 180) || null;
+    requestKey = req.headers.get("Idempotency-Key")?.trim() || null;
+    if (requestKey && (requestKey.length < 8 || requestKey.length > 180)) {
+      return NextResponse.json({ error: "İşlem anahtarı geçersiz" }, { status: 400 });
+    }
 
     const parsed = firmaIslemCreateSchema.safeParse(await req.json());
     if (!parsed.success) {

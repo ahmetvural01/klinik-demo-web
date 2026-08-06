@@ -21,7 +21,10 @@ export async function PUT(request: NextRequest, props: Params) {
     return NextResponse.json({ message: "Görev bulunamadı" }, { status: 404 });
   }
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek gövdesi" }, { status: 400 });
+  }
   const parsed = clinicTaskUpdateSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ message: "Geçersiz güncelleme verisi" }, { status: 400 });
@@ -29,7 +32,8 @@ export async function PUT(request: NextRequest, props: Params) {
 
   const p = parsed.data;
 
-  const requestedAssignees = p.assignedToIds
+  const hasAssigneeUpdate = p.assignedToIds !== undefined || p.assignedToId !== undefined;
+  const requestedAssignees = hasAssigneeUpdate
     ? Array.from(new Set([...(p.assignedToIds || []), ...(typeof p.assignedToId === "string" && p.assignedToId ? [p.assignedToId] : [])].filter(Boolean)))
     : undefined;
 
@@ -44,6 +48,11 @@ export async function PUT(request: NextRequest, props: Params) {
   }
 
   const nextStatus = p.status || existing.status;
+  const nextDueAt = p.dueAt === undefined ? existing.dueAt : p.dueAt ? new Date(p.dueAt) : null;
+  const nextRemindAt = p.remindAt === undefined ? existing.remindAt : p.remindAt ? new Date(p.remindAt) : null;
+  if (nextDueAt && nextRemindAt && nextRemindAt > nextDueAt) {
+    return NextResponse.json({ message: "Hatırlatma zamanı son tarihten sonra olamaz" }, { status: 400 });
+  }
 
   const task = await prisma.$transaction(async (tx) => {
     const updated = await tx.clinicTask.update({
@@ -64,7 +73,9 @@ export async function PUT(request: NextRequest, props: Params) {
         completedAt:
           p.completedAt !== undefined
             ? (p.completedAt ? new Date(p.completedAt) : null)
-            : (nextStatus === "TAMAMLANDI" ? new Date() : nextStatus === "ACIK" ? null : undefined),
+            : p.status !== undefined
+              ? (nextStatus === "TAMAMLANDI" ? (existing.completedAt || new Date()) : null)
+              : undefined,
       },
     });
 
@@ -105,13 +116,18 @@ export async function DELETE(_: NextRequest, props: Params) {
 
   const existing = await prisma.clinicTask.findFirst({
     where: { id: params.id, institutionId: auth.user.institutionId },
-    select: { id: true, title: true },
+    select: { id: true, title: true, status: true },
   });
   if (!existing) {
     return NextResponse.json({ message: "Görev bulunamadı" }, { status: 404 });
   }
 
-  await prisma.clinicTask.delete({ where: { id: existing.id } });
-  await writeAudit(auth.user.id, "CLINIC_TASK_DELETE", existing.title);
-  return NextResponse.json({ ok: true });
+  if (existing.status === "IPTAL") return NextResponse.json({ ok: true, status: "IPTAL" });
+  if (existing.status === "TAMAMLANDI") {
+    return NextResponse.json({ message: "Tamamlanmış görev silinemez; işlem geçmişi korunmalıdır" }, { status: 409 });
+  }
+
+  await prisma.clinicTask.update({ where: { id: existing.id }, data: { status: "IPTAL", completedAt: null } });
+  await writeAudit(auth.user.id, "CLINIC_TASK_CANCEL", existing.title);
+  return NextResponse.json({ ok: true, status: "IPTAL" });
 }

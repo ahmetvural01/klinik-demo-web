@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { HakedisMonthlyPanel } from "@/components/hakedis/HakedisMonthlyPanel";
 import { cachedGet } from "@/lib/client-cache";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
 
 type CurrentUser = { id?: string; role?: string; fullName?: string };
 type Doctor = { id: string; fullName: string; role: string; profile?: { hideAsDoctor?: boolean | null } | null };
@@ -54,9 +55,12 @@ export default function FinansPage() {
   return (
     <section className="space-y-4" aria-busy={loading}>
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
-        <div>
-          <h1 className="text-lg font-black text-slate-900">{isDoctorView ? "Hakedişim" : "Doktor Hakedişi"}</h1>
-          <p className="mt-0.5 text-sm text-slate-500">Aylık üretim, tahsilat, laboratuvar gideri ve kurum ödemeleri aynı hesapta izlenir.</p>
+        <div className="flex items-center gap-3">
+          <ModuleIcon module="hakediş" size="lg" />
+          <div>
+            <h1 className="font-display text-xl font-black tracking-tight text-slate-900">{isDoctorView ? "Hakedişim" : "Doktor Hakedişi"}</h1>
+            <p className="text-xs font-medium text-slate-500">Aylık üretim, tahsilat, laboratuvar gideri ve kurum ödemeleri aynı hesapta izlenir.</p>
+          </div>
         </div>
         {!isDoctorView && (
           <Link href="/muhasebe?tab=hakedis" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50">

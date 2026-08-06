@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
+import { isValidDateKey, turkeyDayRangeUtc } from "@/lib/tz";
 
 export async function GET(request: NextRequest) {
   try {
@@ -10,11 +11,22 @@ export async function GET(request: NextRequest) {
     const sp = request.nextUrl.searchParams;
     const from = sp.get("from") || sp.get("start");
     const to = sp.get("to") || sp.get("end");
-    const page = Math.max(1, parseInt(sp.get("page") || "1"));
-    const limit = Math.min(200, Math.max(1, parseInt(sp.get("limit") || "15")));
+    const rawPage = Number(sp.get("page") || 1);
+    const rawLimit = Number(sp.get("limit") || 15);
+    const page = Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1;
+    const limit = Number.isInteger(rawLimit) ? Math.min(200, Math.max(1, rawLimit)) : 15;
     const q = sp.get("q") || "";
     const action = sp.get("action") || "";
     const category = sp.get("category") || "";
+
+    if ((from && !isValidDateKey(from)) || (to && !isValidDateKey(to))) {
+      return NextResponse.json({ message: "Geçersiz tarih aralığı" }, { status: 400 });
+    }
+    const fromDate = from ? turkeyDayRangeUtc(from).start : null;
+    const toDate = to ? turkeyDayRangeUtc(to).end : null;
+    if (fromDate && toDate && fromDate > toDate) {
+      return NextResponse.json({ message: "Başlangıç tarihi bitiş tarihinden sonra olamaz" }, { status: 400 });
+    }
 
     const where: Record<string, unknown> = {};
     where.user = {
@@ -24,8 +36,8 @@ export async function GET(request: NextRequest) {
     where.NOT = [{ actorRole: "SUPERADMIN" }, { isGhost: true }];
     if (from || to) {
       where.createdAt = {
-        ...(from ? { gte: new Date(from) } : {}),
-        ...(to ? { lte: new Date(to + "T23:59:59.999Z") } : {})
+        ...(fromDate ? { gte: fromDate } : {}),
+        ...(toDate ? { lte: toDate } : {})
       };
     }
     if (q) {

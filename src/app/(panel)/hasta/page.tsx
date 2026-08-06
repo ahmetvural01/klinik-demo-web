@@ -21,10 +21,12 @@ import {
 } from "lucide-react";
 import { confirmDialog } from "@/lib/confirm-client";
 import { useSlashFocus } from "@/lib/use-slash-focus";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 import { ListRowSkeleton, TableRowsSkeleton } from "@/components/ui/ListSkeleton";
 import { cachedGet } from "@/lib/client-cache";
 import { PatientFormModal } from "@/components/patient/PatientFormModal";
-import { ModuleIcon } from "@/components/ui/ModuleIcon";
+import { Button } from "@/components/ui/Button";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { Badge } from "@/components/ui/Badge";
 import { ShieldAlert, Percent } from "lucide-react";
@@ -68,24 +70,9 @@ type PatientResponse = {
   message?: string;
 };
 
-type AuthCache = { id?: string; fullName?: string; role?: string };
 type SortKey = "fullName" | "tcNo" | "phone" | "gender" | "birthDate" | "insurance" | "profession" | "createdAt" | "updatedAt";
 
 const PAGE_SIZES = [15, 25, 50, 100];
-
-function readCachedAuthRole() {
-  if (typeof window === "undefined") return "";
-  const preview = sessionStorage.getItem("dev-preview-role");
-  if (preview) return preview;
-  const raw = sessionStorage.getItem("auth:me:v1");
-  if (!raw) return "";
-  try {
-    const cached = JSON.parse(raw) as AuthCache;
-    return cached.role || "";
-  } catch {
-    return "";
-  }
-}
 
 function formatDate(value?: string | null) {
   if (!value) return "-";
@@ -120,6 +107,7 @@ function patientInitials(name: string) {
 }
 
 function HastaContent() {
+  const { can } = usePermissions();
   const router = useRouter();
   const searchParams = useSearchParams();
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -141,17 +129,17 @@ function HastaContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
-  const [userRole, setUserRole] = useState(() => readCachedAuthRole());
   const [showQuickCreate, setShowQuickCreate] = useState(false);
   const [editPatientId, setEditPatientId] = useState<string | null>(null);
   const [smsConsentFilter, setSmsConsentFilter] = useState(searchParams.get("smsConsent") || "");
 
-  const hidePhone = userRole === "DOKTOR" || userRole === "ASISTAN";
-  const canDeletePatients = userRole === "SUPERADMIN" || userRole === "YONETICI";
+  const hidePhone = !can("patients:phone");
+  const canWritePatients = can("patients:write");
+  const canDeletePatients = can("patients:delete");
   const activeFilterCount = [doctorId, smsConsentFilter].filter(Boolean).length;
 
   useEffect(() => {
-    if (searchParams.get("yeni") === "1") setShowQuickCreate(true);
+    if (searchParams.get("yeni") === "1" && canWritePatients) setShowQuickCreate(true);
   }, [searchParams]);
 
   const closeQuickCreate = () => {
@@ -176,33 +164,6 @@ function HastaContent() {
     }, 300);
     return () => clearTimeout(timer);
   }, [query]);
-
-  useEffect(() => {
-    const applyRole = async () => {
-      const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
-      if (preview) {
-        setUserRole(preview);
-        return;
-      }
-      const cachedRole = readCachedAuthRole();
-      if (cachedRole) {
-        setUserRole(cachedRole);
-        return;
-      }
-      try {
-        const me = await cachedGet<AuthCache | null>("/api/auth/me", 60_000);
-        if (me?.role) setUserRole(me.role);
-      } catch {}
-    };
-
-    void applyRole();
-    const onPreview = () => {
-      const preview = sessionStorage.getItem("dev-preview-role") || "";
-      if (preview) setUserRole(preview);
-    };
-    window.addEventListener("preview-role-change", onPreview);
-    return () => window.removeEventListener("preview-role-change", onPreview);
-  }, []);
 
   const load = useCallback(async (force = false) => {
     setLoading(true);
@@ -340,33 +301,17 @@ function HastaContent() {
 
   return (
     <section className="space-y-4">
-      <div className="ui-surface p-4 sm:p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-3">
-            <ModuleIcon module="users" size="lg" />
-            <div>
-              <h1 className="font-display text-xl font-black tracking-tight text-slate-900">Hastalar</h1>
-              <p className="text-xs font-medium text-slate-500">Kayıtlı hasta dosyalarını görüntüleyin ve yönetin.</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2.5">
-            {visibleSummary.map((item) => (
-              <div key={item.label} className="ui-surface-soft min-w-[104px] px-3.5 py-2">
-                <span className="block text-[10px] font-bold uppercase tracking-wide text-slate-500">{item.label}</span>
-                <span className={`text-xl font-black tabular-nums ${item.color}`}>{Number(item.value || 0).toLocaleString("tr-TR")}</span>
-              </div>
-            ))}
-            <button
-              type="button"
-              onClick={() => setShowQuickCreate(true)}
-              className="ui-interactive inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-gradient-to-b from-primary to-primary-strong px-4 py-2 text-sm font-bold text-white shadow-[0_2px_8px_rgb(var(--app-primary)/0.3)]"
-            >
-              <UserPlus className="h-4 w-4" />
-              Yeni Hasta
-            </button>
-          </div>
-        </div>
-      </div>
+      <PageHeader
+        icon="users"
+        title="Hastalar"
+        description="Kayıtlı hasta dosyalarını, iletişim bilgilerini ve klinik uyarıları yönetin."
+        stats={visibleSummary.map((item) => ({
+          label: item.label,
+          value: Number(item.value || 0).toLocaleString("tr-TR"),
+          color: item.color,
+        }))}
+        actions={canWritePatients ? <Button icon={UserPlus} onClick={() => setShowQuickCreate(true)}>Yeni Hasta</Button> : undefined}
+      />
 
       <div className="ui-surface p-3">
         <div className="grid gap-2 xl:grid-cols-[1fr_auto] xl:items-center">
@@ -460,7 +405,11 @@ function HastaContent() {
                     router.push(`/hasta-detay?id=${patient.id}`);
                   }}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter") router.push(`/hasta-detay?id=${patient.id}`);
+                    if ((event.target as HTMLElement).closest("button, a, input, select, textarea, [role='button']")) return;
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      router.push(`/hasta-detay?id=${patient.id}`);
+                    }
                   }}
                   style={{ ["--row-delay" as string]: `${Math.min(patientIdx, 12) * 20}ms` }}
                   className="ui-tone-card-interactive ui-row-in ui-pressable p-4 transition-colors hover:bg-primary/[0.035] focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25"
@@ -498,10 +447,10 @@ function HastaContent() {
                     >
                       Randevu Oluştur
                     </button>
-                    <div className={`grid gap-2 ${canDeletePatients ? "grid-cols-2" : "grid-cols-1"}`}>
-                      <button type="button" onClick={() => setEditPatientId(patient.id)} className="ui-interactive rounded-lg border border-slate-200 px-3 py-2.5 text-center text-sm font-semibold text-slate-700">Düzenle</button>
+                    {(canWritePatients || canDeletePatients) && <div className={`grid gap-2 ${canWritePatients && canDeletePatients ? "grid-cols-2" : "grid-cols-1"}`}>
+                      {canWritePatients && <button type="button" onClick={() => setEditPatientId(patient.id)} className="ui-interactive rounded-lg border border-slate-200 px-3 py-2.5 text-center text-sm font-semibold text-slate-700">Düzenle</button>}
                       {canDeletePatients && <button type="button" onClick={() => remove(patient.id)} className="ui-interactive rounded-lg border border-red-200 px-3 py-2.5 text-sm font-semibold text-red-600">Sil</button>}
-                    </div>
+                    </div>}
                   </div>
                 </div>
               );
@@ -568,7 +517,11 @@ function HastaContent() {
                       router.push(`/hasta-detay?id=${patient.id}`);
                     }}
                     onKeyDown={(event) => {
-                      if (event.key === "Enter") router.push(`/hasta-detay?id=${patient.id}`);
+                      if ((event.target as HTMLElement).closest("button, a, input, select, textarea, [role='button']")) return;
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        router.push(`/hasta-detay?id=${patient.id}`);
+                      }
                     }}
                     style={{ ["--row-delay" as string]: `${Math.min(patientIdx, 12) * 20}ms` }}
                     className="ui-row-in cursor-pointer transition-colors hover:bg-primary/[0.035] focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25"
@@ -621,11 +574,11 @@ function HastaContent() {
                             <CalendarPlus className="h-4 w-4" />
                           </button>
                         </Tooltip>
-                        <Tooltip label="Düzenle">
+                        {canWritePatients && <Tooltip label="Düzenle">
                           <button type="button" onClick={() => setEditPatientId(patient.id)} aria-label="Düzenle" className="ui-interactive rounded-lg bg-slate-100 p-2 text-slate-600 hover:bg-slate-200">
                             <Pencil className="h-4 w-4" />
                           </button>
-                        </Tooltip>
+                        </Tooltip>}
                         {canDeletePatients && (
                           <Tooltip label="Sil">
                             <button type="button" onClick={() => remove(patient.id)} aria-label="Sil" className="ui-interactive rounded-lg bg-red-50 p-2 text-red-600 hover:bg-red-100">
@@ -688,14 +641,14 @@ function HastaContent() {
           </div>
         </div>
       </div>
-      <PatientFormModal open={showQuickCreate} onClose={closeQuickCreate} onSaved={(patient) => router.push(`/hasta-detay?id=${patient.id}`)} />
-      <PatientFormModal
+      {canWritePatients && <PatientFormModal open={showQuickCreate} onClose={closeQuickCreate} onSaved={(patient) => router.push(`/hasta-detay?id=${patient.id}`)} />}
+      {canWritePatients && <PatientFormModal
         open={Boolean(editPatientId)}
         onClose={() => setEditPatientId(null)}
         patientId={editPatientId || undefined}
         hidePhoneField={hidePhone}
         onSaved={() => void load(true)}
-      />
+      />}
     </section>
   );
 }

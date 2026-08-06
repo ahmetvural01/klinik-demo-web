@@ -12,7 +12,7 @@ export async function GET(_: NextRequest, props: Params) {
   const prescription = await prisma.prescription.findFirst({
     where: {
       id: params.id,
-      ...(auth.user.role !== "SUPERADMIN" ? { patient: { institutionId: auth.user.institutionId } } : {}),
+      ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
     },
   });
 
@@ -31,7 +31,7 @@ export async function DELETE(_: NextRequest, props: Params) {
   const existing = await prisma.prescription.findFirst({
     where: {
       id: params.id,
-      ...(auth.user.role !== "SUPERADMIN" ? { patient: { institutionId: auth.user.institutionId } } : {}),
+      ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
     },
     select: { id: true },
   });

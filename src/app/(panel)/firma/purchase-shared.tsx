@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { confirmDialog } from "@/lib/confirm-client";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
+import { turkeyDateKey } from "@/lib/tz";
 
 export type StockItem = { id: string; name: string; quantity: number; unit: string };
 
@@ -223,13 +224,14 @@ export function usePurchaseModals({
   const [purchaseFirmaId, setPurchaseFirmaId] = useState("");
   const [purchaseFirmaQuery, setPurchaseFirmaQuery] = useState("");
   const [purchaseForm, setPurchaseForm] = useState({
-    tarih: new Date().toISOString().split("T")[0], faturaNo: "", aciklama: "", kdvOrani: "0",
+    tarih: turkeyDateKey(), faturaNo: "", aciklama: "", kdvOrani: "0",
     receiptStatus: "TESLIM_ALINDI" as "SIPARIS_VERILDI" | "TESLIM_ALINDI",
-    paidNow: false, paymentDate: new Date().toISOString().split("T")[0], paymentMethod: "NAKIT", paymentAmount: "",
+    paidNow: false, paymentDate: turkeyDateKey(), paymentMethod: "NAKIT", paymentAmount: "",
     items: [emptyLine()] as PurchaseLineForm[],
   });
   const [isSubmittingPurchase, setIsSubmittingPurchase] = useState(false);
   const purchaseRequestKeyRef = useRef("");
+  const purchaseSnapshotRef = useRef("");
 
   const [showPurchaseDetail, setShowPurchaseDetail] = useState(false);
   const [viewingPurchase, setViewingPurchase] = useState<Purchase | null>(null);
@@ -238,11 +240,12 @@ export function usePurchaseModals({
   const [receivingPurchase, setReceivingPurchase] = useState<Purchase | null>(null);
   const [isReceivingPurchase, setIsReceivingPurchase] = useState(false);
   const receiveRequestKeyRef = useRef("");
+  const receiveSnapshotRef = useRef("");
   const [receiveForm, setReceiveForm] = useState({
-    receivedAt: new Date().toISOString().split("T")[0],
+    receivedAt: turkeyDateKey(),
     itemLots: [] as { purchaseItemId: string; productName: string; lotNo: string; expiresAt: string }[],
     paidNow: false,
-    paymentDate: new Date().toISOString().split("T")[0],
+    paymentDate: turkeyDateKey(),
     paymentMethod: "NAKIT",
     paymentAmount: "",
   });
@@ -254,24 +257,68 @@ export function usePurchaseModals({
     items: [] as PurchaseLineForm[],
   });
   const [isSubmittingPurchaseEdit, setIsSubmittingPurchaseEdit] = useState(false);
+  const editPurchaseSnapshotRef = useRef("");
 
-  const openAddPurchase = (firmaId?: string) => {
-    const targetFirma = firmaId ? firmas.find(f => f.id === firmaId) : null;
-    setPurchaseFirmaId(firmaId || "");
-    setPurchaseFirmaQuery(targetFirma?.name || "");
-    const today = new Date().toISOString().split("T")[0];
+  const resetPurchaseForm = () => {
+    const today = turkeyDateKey();
+    setPurchaseFirmaId("");
+    setPurchaseFirmaQuery("");
     setPurchaseForm({
       tarih: today,
       faturaNo: "",
       aciklama: "",
       kdvOrani: "0",
-      receiptStatus: "TESLIM_ALINDI",
+      receiptStatus: "TESLIM_ALINDI" as const,
       paidNow: false,
       paymentDate: today,
       paymentMethod: "NAKIT",
       paymentAmount: "",
       items: [emptyLine()],
     });
+  };
+
+  const closeAddPurchase = () => {
+    setShowAddPurchase(false);
+    purchaseRequestKeyRef.current = "";
+    purchaseSnapshotRef.current = "";
+    resetPurchaseForm();
+  };
+
+  const closeReceivePurchase = () => {
+    const today = turkeyDateKey();
+    setShowReceivePurchase(false);
+    setReceivingPurchase(null);
+    receiveRequestKeyRef.current = "";
+    receiveSnapshotRef.current = "";
+    setReceiveForm({ receivedAt: today, itemLots: [], paidNow: false, paymentDate: today, paymentMethod: "NAKIT", paymentAmount: "" });
+  };
+
+  const closeEditPurchase = () => {
+    setShowEditPurchase(false);
+    setEditingPurchaseId(null);
+    editPurchaseSnapshotRef.current = "";
+    setEditPurchaseForm({ tarih: "", faturaNo: "", aciklama: "", kdvOrani: "0", items: [] });
+  };
+
+  const openAddPurchase = (firmaId?: string) => {
+    const targetFirma = firmaId ? firmas.find(f => f.id === firmaId) : null;
+    setPurchaseFirmaId(firmaId || "");
+    setPurchaseFirmaQuery(targetFirma?.name || "");
+    const today = turkeyDateKey();
+    const nextForm = {
+      tarih: today,
+      faturaNo: "",
+      aciklama: "",
+      kdvOrani: "0",
+      receiptStatus: "TESLIM_ALINDI" as const,
+      paidNow: false,
+      paymentDate: today,
+      paymentMethod: "NAKIT",
+      paymentAmount: "",
+      items: [emptyLine()],
+    };
+    setPurchaseForm(nextForm);
+    purchaseSnapshotRef.current = JSON.stringify({ firmaId: firmaId || "", query: targetFirma?.name || "", form: nextForm });
     purchaseRequestKeyRef.current = newLineKey();
     setShowAddPurchase(true);
   };
@@ -296,7 +343,8 @@ export function usePurchaseModals({
     setIsSubmittingPurchase(true);
     const requestKey = purchaseRequestKeyRef.current || newLineKey();
     purchaseRequestKeyRef.current = requestKey;
-    const r = await fetch("/api/purchases", {
+    try {
+      const r = await fetch("/api/purchases", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
       body: JSON.stringify({
@@ -317,41 +365,53 @@ export function usePurchaseModals({
           expiresAt: line.expiresAt || null,
         })),
       }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (r.ok) {
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok) {
       purchaseRequestKeyRef.current = "";
-      setShowAddPurchase(false);
+      const savedFirmaId = purchaseFirmaId;
+      const savedReceiptStatus = purchaseForm.receiptStatus;
+      const savedPaidNow = purchaseForm.paidNow;
+      closeAddPurchase();
       showToast(
         "success",
-        purchaseForm.receiptStatus === "SIPARIS_VERILDI"
+        savedReceiptStatus === "SIPARIS_VERILDI"
           ? "Sipariş kaydedildi; teslim alınana kadar stok ve firma bakiyesi değişmedi"
-          : purchaseForm.paidNow
+          : savedPaidNow
             ? "Teslim alınan ürünler stoğa, borç ve ödeme muhasebeye işlendi"
             : "Teslim alınan ürünler stoğa ve firma borcuna işlendi",
       );
-      await onChanged(purchaseFirmaId);
-    } else {
-      showToast("error", data.error || "Satın alma kaydedilemedi");
+      await onChanged(savedFirmaId);
+      } else {
+        showToast("error", data.error || "Satın alma kaydedilemedi");
+      }
+    } catch {
+      showToast("error", "Bağlantı hatası — satın alma kaydedilemedi.");
+    } finally {
+      setIsSubmittingPurchase(false);
     }
-    setIsSubmittingPurchase(false);
   };
 
   const openPurchaseDetail = async (purchaseId: string) => {
     setShowPurchaseDetail(true);
     setPurchaseDetailLoading(true);
     setViewingPurchase(null);
-    const r = await fetch(`/api/purchases/${purchaseId}`, { cache: "no-store" });
-    if (r.ok) setViewingPurchase(await r.json());
-    else showToast("error", "Satın alma detayı yüklenemedi");
-    setPurchaseDetailLoading(false);
+    try {
+      const r = await fetch(`/api/purchases/${purchaseId}`, { cache: "no-store" });
+      if (r.ok) setViewingPurchase(await r.json());
+      else showToast("error", "Satın alma detayı yüklenemedi");
+    } catch {
+      showToast("error", "Bağlantı hatası — satın alma detayı yüklenemedi.");
+    } finally {
+      setPurchaseDetailLoading(false);
+    }
   };
 
   const openReceivePurchase = (purchase: Purchase) => {
-    const today = new Date().toISOString().split("T")[0];
+    const today = turkeyDateKey();
     const total = (purchase.items || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
     setReceivingPurchase(purchase);
-    setReceiveForm({
+    const nextForm = {
       receivedAt: today,
       itemLots: (purchase.items || []).map(item => ({
         purchaseItemId: item.id,
@@ -363,7 +423,9 @@ export function usePurchaseModals({
       paymentDate: today,
       paymentMethod: "NAKIT",
       paymentAmount: String(total),
-    });
+    };
+    setReceiveForm(nextForm);
+    receiveSnapshotRef.current = JSON.stringify(nextForm);
     receiveRequestKeyRef.current = newLineKey();
     setShowReceivePurchase(true);
   };
@@ -403,8 +465,7 @@ export function usePurchaseModals({
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(payload.error || "Sipariş teslim alınamadı");
-      setShowReceivePurchase(false);
-      setReceivingPurchase(null);
+      closeReceivePurchase();
       receiveRequestKeyRef.current = "";
       setViewingPurchase(payload as Purchase);
       showToast(
@@ -423,18 +484,26 @@ export function usePurchaseModals({
   };
 
   const openPurchaseEdit = async (purchaseId: string) => {
-    const r = await fetch(`/api/purchases/${purchaseId}`, { cache: "no-store" });
-    if (!r.ok) { showToast("error", "Satın alma yüklenemedi"); return; }
-    const p: Purchase = await r.json();
+    let p: Purchase;
+    try {
+      const r = await fetch(`/api/purchases/${purchaseId}`, { cache: "no-store" });
+      if (!r.ok) { showToast("error", "Satın alma yüklenemedi"); return; }
+      p = await r.json();
+    } catch {
+      showToast("error", "Bağlantı hatası — satın alma yüklenemedi.");
+      return;
+    }
     setEditingPurchaseId(purchaseId);
-    setEditPurchaseForm({
+    const nextForm = {
       tarih: p.tarih.substring(0, 10), faturaNo: p.faturaNo || "", aciklama: p.aciklama || "", kdvOrani: String(p.kdvOrani),
       items: (p.items || []).map(it => ({
         key: newLineKey(), id: it.id, stockItemId: it.stockItemId, productQuery: it.productName,
         category: "Sarf", unit: it.unit, quantity: String(it.quantity), unitPrice: String(it.unitPrice),
         lotNo: it.lotNo || "", expiresAt: it.expiresAt?.substring(0, 10) || "",
       })),
-    });
+    };
+    setEditPurchaseForm(nextForm);
+    editPurchaseSnapshotRef.current = JSON.stringify(nextForm);
     setShowEditPurchase(true);
   };
 
@@ -449,7 +518,8 @@ export function usePurchaseModals({
     }
     if (isSubmittingPurchaseEdit) return;
     setIsSubmittingPurchaseEdit(true);
-    const r = await fetch(`/api/purchases/${editingPurchaseId}`, {
+    try {
+      const r = await fetch(`/api/purchases/${editingPurchaseId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -465,39 +535,52 @@ export function usePurchaseModals({
           expiresAt: line.expiresAt || null,
         })),
       }),
-    });
-    const data = await r.json().catch(() => ({}));
-    if (r.ok) {
-      setShowEditPurchase(false);
-      showToast("success", "Satın alma düzeltildi, stok ve firma bakiyesi güncellendi");
-      await onChanged(currentFirmaId || data.firmaId || "");
-    } else {
-      showToast("error", data.error || "Satın alma düzeltilemedi");
+      });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok) {
+        closeEditPurchase();
+        showToast("success", "Satın alma düzeltildi, stok ve firma bakiyesi güncellendi");
+        await onChanged(currentFirmaId || data.firmaId || "");
+      } else {
+        showToast("error", data.error || "Satın alma düzeltilemedi");
+      }
+    } catch {
+      showToast("error", "Bağlantı hatası — satın alma düzeltilemedi.");
+    } finally {
+      setIsSubmittingPurchaseEdit(false);
     }
-    setIsSubmittingPurchaseEdit(false);
   };
 
   const cancelPurchase = async (purchaseId: string, firmaId: string) => {
     if (!(await confirmDialog({ message: "Bu satın almayı iptal etmek istediğinizden emin misiniz? Stok ve firma bakiyesi geri alınacak.", danger: true, confirmText: "İptal Et" }))) return;
-    const r = await fetch(`/api/purchases/${purchaseId}/cancel`, { method: "POST" });
-    const data = await r.json().catch(() => ({}));
-    showToast(r.ok ? "success" : "error", data.message || data.error || (r.ok ? "Satın alma iptal edildi" : "Satın alma iptal edilemedi"));
-    await onChanged(firmaId);
+    try {
+      const r = await fetch(`/api/purchases/${purchaseId}/cancel`, { method: "POST" });
+      const data = await r.json().catch(() => ({}));
+      showToast(r.ok ? "success" : "error", data.message || data.error || (r.ok ? "Satın alma iptal edildi" : "Satın alma iptal edilemedi"));
+      if (r.ok) await onChanged(firmaId);
+    } catch {
+      showToast("error", "Bağlantı hatası — satın alma iptal edilemedi.");
+    }
   };
+
+  const purchaseDirty = JSON.stringify({ firmaId: purchaseFirmaId, query: purchaseFirmaQuery, form: purchaseForm }) !== purchaseSnapshotRef.current;
+  const receiveDirty = JSON.stringify(receiveForm) !== receiveSnapshotRef.current;
+  const editPurchaseDirty = JSON.stringify(editPurchaseForm) !== editPurchaseSnapshotRef.current;
 
   const modals = (
     <>
       {/* Modal: Satın Alma Ekle (çok kalemli) */}
       <Modal
         open={showAddPurchase}
-        onClose={() => setShowAddPurchase(false)}
+        onClose={closeAddPurchase}
+        isDirty={purchaseDirty}
         module="firma"
         title="Satın Alma Kaydı"
         description="Sipariş ile teslimatı ayırın; stok ve firma borcu yalnızca ürünler kliniğe ulaştığında oluşur."
         size="xl"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowAddPurchase(false)}>Vazgeç</Button>
+            <Button variant="secondary" onClick={closeAddPurchase}>Vazgeç</Button>
             <Button variant="primary" onClick={submitPurchase} loading={isSubmittingPurchase}>
               {purchaseForm.receiptStatus === "SIPARIS_VERILDI" ? "Siparişi Kaydet" : "Satın Almayı Kaydet"}
             </Button>
@@ -767,14 +850,15 @@ export function usePurchaseModals({
       {/* Modal: Siparişi Teslim Al */}
       <Modal
         open={showReceivePurchase && Boolean(receivingPurchase)}
-        onClose={() => setShowReceivePurchase(false)}
+        onClose={closeReceivePurchase}
+        isDirty={receiveDirty}
         module="firma"
         title="Siparişi Teslim Al"
         description={receivingPurchase ? `${receivingPurchase.firma?.name} · ${(receivingPurchase.items || []).length} kalem · ${fmt((receivingPurchase.items || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0))}` : undefined}
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowReceivePurchase(false)}>Vazgeç</Button>
+            <Button variant="secondary" onClick={closeReceivePurchase}>Vazgeç</Button>
             <Button variant="primary" onClick={submitReceivePurchase} loading={isReceivingPurchase}>Teslimatı Onayla</Button>
           </>
         }
@@ -884,14 +968,15 @@ export function usePurchaseModals({
       {/* Modal: Satın Almayı Düzelt */}
       <Modal
         open={showEditPurchase}
-        onClose={() => setShowEditPurchase(false)}
+        onClose={closeEditPurchase}
+        isDirty={editPurchaseDirty}
         module="firma"
         title="Satın Almayı Düzelt"
         description="Miktar/fiyat/ürün değişiklikleri stok ve firma bakiyesine otomatik yansır."
         size="xl"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowEditPurchase(false)}>Vazgeç</Button>
+            <Button variant="secondary" onClick={closeEditPurchase}>Vazgeç</Button>
             <Button variant="primary" onClick={submitPurchaseEdit} loading={isSubmittingPurchaseEdit}>Düzeltmeyi Kaydet</Button>
           </>
         }

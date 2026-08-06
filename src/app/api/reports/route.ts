@@ -71,7 +71,7 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
   const institutionPatientScope = doctorIds.length > 0
     ? {
         OR: [
-          { institutionId },
+          { institutionId: institutionId as string },
           { examinations: { some: { doctorId: { in: doctorIds } } } },
           { appointments: { some: { doctorId: { in: doctorIds } } } },
         ],

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { randomUUID } from "crypto";
 import { invalidateInstitutionCache, requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { syncInstitutionPaymentGate } from "@/lib/billing";
@@ -13,6 +14,10 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const status = searchParams.get("status") || "";
+  const validStatuses = new Set(["PENDING", "PAID", "OVERDUE", "CANCELLED"]);
+  if (status && !validStatuses.has(status)) {
+    return NextResponse.json({ message: "Geçersiz fatura durumu" }, { status: 400 });
+  }
   const institutionId = searchParams.get("institutionId") || "";
   const q = (searchParams.get("q") || "").trim();
   // "status" filtresi burada UYGULANMAZ — ham DB durumuna göre filtrelemek,
@@ -73,9 +78,42 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json();
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
+  }
+
+  const institutionId = typeof body.institutionId === "string" ? body.institutionId.trim() : "";
+  const amount = Number(body.amount);
+  const status = body.status ?? "PENDING";
+  const validStatuses = new Set(["PENDING", "PAID", "OVERDUE", "CANCELLED"]);
+  const dueDate = body.dueDate ? new Date(body.dueDate) : null;
+
+  if (!institutionId) {
+    return NextResponse.json({ message: "Klinik seçimi zorunlu" }, { status: 400 });
+  }
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 99_999_999.99) {
+    return NextResponse.json({ message: "Geçerli bir fatura tutarı girin" }, { status: 400 });
+  }
+  if (!validStatuses.has(status)) {
+    return NextResponse.json({ message: "Geçersiz fatura durumu" }, { status: 400 });
+  }
+  if (body.dueDate && Number.isNaN(dueDate?.getTime())) {
+    return NextResponse.json({ message: "Geçerli bir son ödeme tarihi girin" }, { status: 400 });
+  }
+  if (body.description !== undefined && body.description !== null && typeof body.description !== "string") {
+    return NextResponse.json({ message: "Fatura açıklaması geçersiz" }, { status: 400 });
+  }
+  const description = typeof body.description === "string" ? body.description.trim().slice(0, 1000) : null;
+  const institution = await prisma.institution.findUnique({
+    where: { id: institutionId },
+    select: { id: true, name: true },
+  });
+  if (!institution) {
+    return NextResponse.json({ message: "Klinik bulunamadı" }, { status: 404 });
+  }
 
   // Fatura numarası oluştur
-  const invoiceNo = `INV-${Date.now()}`;
+  const invoiceNo = `INV-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`;
 
   // Fatura oluşturma ile kurumun paymentGraceUntil senkronu TEK transaction
   // içinde yapılır — sync adımı başarısız olursa fatura da hiç oluşturulmamış
@@ -85,16 +123,17 @@ export async function POST(request: NextRequest) {
     const created = await tx.invoice.create({
       data: {
         invoiceNo,
-        institutionId: body.institutionId,
-        amount: body.amount,
-        description: body.description,
-        dueDate: body.dueDate ? new Date(body.dueDate) : undefined,
-        status: body.status || "PENDING",
+        institutionId,
+        amount,
+        description,
+        dueDate,
+        status,
+        paidAt: status === "PAID" ? new Date() : null,
       },
     });
 
     if (created.status !== "PAID") {
-      await syncInstitutionPaymentGate(body.institutionId, tx);
+      await syncInstitutionPaymentGate(institutionId, tx);
     }
 
     return created;
@@ -104,7 +143,6 @@ export async function POST(request: NextRequest) {
     invalidateInstitutionCache(invoice.institutionId);
   }
 
-  const institution = await prisma.institution.findUnique({ where: { id: body.institutionId }, select: { name: true } });
-  await writeAudit(auth.user.id, "SUPERADMIN_INVOICE_CREATE", `${institution?.name || body.institutionId} için ${invoice.invoiceNo} oluşturuldu: ₺${Number(invoice.amount).toLocaleString("tr-TR")}`);
+  await writeAudit(auth.user.id, "SUPERADMIN_INVOICE_CREATE", `${institution.name} için ${invoice.invoiceNo} oluşturuldu: ₺${Number(invoice.amount).toLocaleString("tr-TR")}`);
   return NextResponse.json(invoice);
 }

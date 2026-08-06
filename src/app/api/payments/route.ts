@@ -129,27 +129,41 @@ export async function POST(request: NextRequest) {
       { isolationLevel: "Serializable" }
     );
 
-    // Aynı gün bu hasta+doktor için "Planlandı" veya "Bekliyor" (geldi, bekleme
-    // salonunda) durumundaki randevu(lar), tahsilat alınınca otomatik
-    // "Tamamlandı" olur — tedavi yapılıp ödeme alındıktan sonra randevunun
-    // ekranda hâlâ bekleniyor görünmesi kafa karıştırıcıdır (bkz. kullanıcı
-    // geri bildirimi). İptal/gelmedi/zaten tamamlanmış randevulara dokunulmaz;
-    // bu adım best-effort'tur, başarısız olsa da ödeme akışını kırmaz.
+    // Aynı hastanın aynı doktorda aynı gün birden fazla randevusu olabilir.
+    // Tahsilat alınca günün bütün randevularını tamamlamak gelecekteki seansı
+    // da kapatıyordu. Yalnızca tek ve açıkça eşleşen kayıt tamamlanır: önce tek
+    // GELDI kaydı, yoksa ödeme anı geçmiş tek BEKLIYOR kaydı.
     let autoCompletedAppointments = 0;
     if (patientId && doctorId) {
       try {
         const dayKey = turkeyDateKey(payment.createdAt);
         const { start, end } = turkeyDayRangeUtc(dayKey);
-        const result = await prisma.appointment.updateMany({
+        const candidates = await prisma.appointment.findMany({
           where: {
             patientId,
             doctorId,
             startAt: { gte: start, lte: end },
             status: { in: ["BEKLIYOR", "GELDI"] },
           },
-          data: { status: "TAMAMLANDI" },
+          select: { id: true, status: true, startAt: true },
+          orderBy: { startAt: "asc" },
         });
-        autoCompletedAppointments = result.count;
+        const arrived = candidates.filter((item) => item.status === "GELDI");
+        const alreadyStarted = candidates.filter(
+          (item) => item.status === "BEKLIYOR" && item.startAt <= payment.createdAt,
+        );
+        const target = arrived.length === 1
+          ? arrived[0]
+          : arrived.length === 0 && alreadyStarted.length === 1
+            ? alreadyStarted[0]
+            : null;
+        if (target) {
+          const result = await prisma.appointment.updateMany({
+            where: { id: target.id, status: target.status },
+            data: { status: "TAMAMLANDI" },
+          });
+          autoCompletedAppointments = result.count;
+        }
       } catch {
         // otomatik tamamlama başarısız olsa da ödeme akışını kırmamalı.
       }

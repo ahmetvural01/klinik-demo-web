@@ -1,8 +1,55 @@
 "use client";
 
-import { FormEvent, useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { FormEvent, useEffect, useState } from "react";
+import Image from "next/image";
+import Link from "next/link";
+import { ArrowRight, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
+import { Button } from "@/components/ui/Button";
+import { ModuleIcon } from "@/components/ui/ModuleIcon";
+
+const HERO_IMAGE = "/clinic-workspace-hero.jpg";
+
+// Şifre HİÇBİR ZAMAN burada saklanmaz — tarayıcının kendi şifre yöneticisi
+// autoComplete="current-password" ile bunu güvenli şekilde yönetir. Burada
+// yalnızca gizli olmayan kimlik alanları ("Oturumu açık tut" işaretliyken)
+// hatırlanır ki kullanıcı her seferinde kurum kodunu yeniden yazmasın.
+const REMEMBER_KEY = "km_remember_login";
+
+function loadRememberedLogin(): { institution: string; identityNo: string } | null {
+  try {
+    const raw = window.localStorage.getItem(REMEMBER_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function AuthBackground() {
+  return (
+    <div className="fixed inset-0 -z-10 bg-slate-950">
+      <Image
+        src={HERO_IMAGE}
+        alt="Diş hekimliği muayenesi"
+        fill
+        priority
+        unoptimized
+        className="object-cover opacity-45"
+      />
+    </div>
+  );
+}
+
+function BrandMark() {
+  return (
+    <Link href="/" className="fixed left-6 top-6 z-10 flex items-center gap-2.5" aria-label="Ana sayfa">
+      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-[#0d7d6f] to-[#0a5b57] text-sm font-black text-white shadow-sm">
+        KM
+      </span>
+      <span className="text-sm font-black tracking-tight text-white drop-shadow">KlinikModern</span>
+    </Link>
+  );
+}
 
 export function ClinicLoginForm() {
   const [institution, setInstitution] = useState("");
@@ -14,6 +61,15 @@ export function ClinicLoginForm() {
   const [pendingToken, setPendingToken] = useState<string | null>(null);
   const [twoFactorCode, setTwoFactorCode] = useState("");
   const [showPassword, setShowPassword] = useState(false);
+
+  useEffect(() => {
+    const remembered = loadRememberedLogin();
+    if (remembered) {
+      setInstitution(remembered.institution);
+      setIdentityNo(remembered.identityNo);
+      setRemember(true);
+    }
+  }, []);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -40,6 +96,14 @@ export function ClinicLoginForm() {
       setPendingToken(payload.pendingToken);
       return;
     }
+
+    try {
+      if (remember) {
+        window.localStorage.setItem(REMEMBER_KEY, JSON.stringify({ institution: institution.trim(), identityNo: identityNo.trim() }));
+      } else {
+        window.localStorage.removeItem(REMEMBER_KEY);
+      }
+    } catch {}
 
     // Yeni personel hesapları şifre sorulmadan TC kimlik no ile oluşturulur —
     // ilk girişte doğrudan şifre değiştirme adımına yönlendirilir (bkz.
@@ -69,17 +133,33 @@ export function ClinicLoginForm() {
       return;
     }
 
+    try {
+      if (remember) {
+        window.localStorage.setItem(REMEMBER_KEY, JSON.stringify({ institution: institution.trim(), identityNo: identityNo.trim() }));
+      } else {
+        window.localStorage.removeItem(REMEMBER_KEY);
+      }
+    } catch {}
+
     window.location.href = "/anasayfa";
   };
 
   if (pendingToken) {
     return (
-      <main className="flex min-h-dvh items-center justify-center bg-slate-100 p-4">
-        <form onSubmit={onSubmit2FA} className="w-full max-w-sm rounded-lg border border-slate-200 bg-white p-6 shadow-xl">
-          <h2 className="text-xl font-black text-slate-900">İki Faktörlü Doğrulama</h2>
+      <main className="flex min-h-dvh items-center justify-center p-4">
+        <AuthBackground />
+        <BrandMark />
+        <form onSubmit={onSubmit2FA} className="auth-panel mt-14 w-full max-w-sm p-6 sm:mt-0 sm:p-7">
+          <div className="auth-panel-heading">
+            <span className="auth-panel-icon"><ShieldCheck className="h-5 w-5" /></span>
+            <div>
+              <p className="auth-eyebrow">Güvenli erişim</p>
+              <h2 className="text-xl font-black text-slate-900">İki Faktörlü Doğrulama</h2>
+            </div>
+          </div>
           <p className="mt-1 text-sm text-slate-500">Kimlik doğrulama uygulamanızdaki 6 haneli kodu girin.</p>
           <input
-            className="mt-5 w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-center text-lg outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+            className="auth-input mt-5 w-full px-3 py-3 text-center text-lg"
             value={twoFactorCode}
             onChange={(e) => setTwoFactorCode(e.target.value.replace(/\s/g, "").slice(0, 12))}
             placeholder="000000"
@@ -87,32 +167,39 @@ export function ClinicLoginForm() {
             autoFocus
             required
           />
-          {error && <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{error}</p>}
-          <button disabled={loading} className="mt-4 w-full rounded-lg bg-primary p-3 text-sm font-bold text-white transition hover:bg-primary/90 disabled:opacity-50">
+          {error && <p className="auth-status auth-status-error mt-3 px-3 py-2 text-sm font-semibold">{error}</p>}
+          <Button type="submit" loading={loading} fullWidth icon={ArrowRight} className="mt-4">
             {loading ? "Doğrulanıyor..." : "Doğrula ve Giriş Yap"}
-          </button>
-          <button type="button" onClick={() => { setPendingToken(null); setTwoFactorCode(""); setError(null); }} className="mt-2 w-full rounded-lg border border-slate-200 p-2.5 text-xs font-semibold text-slate-500 hover:bg-slate-50">
+          </Button>
+          <Button type="button" variant="secondary" onClick={() => { setPendingToken(null); setTwoFactorCode(""); setError(null); }} fullWidth className="mt-2">
             Geri dön
-          </button>
+          </Button>
         </form>
       </main>
     );
   }
 
   return (
-    <main className="flex min-h-dvh items-start justify-center bg-slate-100 px-4 py-8 sm:items-center sm:py-12">
-      <form onSubmit={onSubmit} className="w-full max-w-md rounded-lg border border-slate-200 bg-white p-6 shadow-xl md:p-8">
-        <div className="border-b border-slate-200 pb-5">
-          <p className="text-xs font-bold uppercase text-slate-500">Yetkili personel girişi</p>
-          <h1 className="mt-2 text-xl font-black text-slate-950">Panele giriş</h1>
+    <main className="flex min-h-dvh items-start justify-center px-4 py-8 sm:items-center sm:py-12">
+      <AuthBackground />
+      <BrandMark />
+      <form onSubmit={onSubmit} className="auth-panel mt-14 w-full max-w-md p-6 sm:mt-0 sm:p-8">
+        <div className="auth-brand-row">
+          <span className="auth-panel-icon"><ModuleIcon module="calendar" size="md" /></span>
+          <div>
+            <p className="auth-eyebrow">Yetkili personel girişi</p>
+            <h1 className="text-xl font-black text-slate-950">Panele giriş</h1>
+          </div>
+        </div>
+        <div className="mt-3 border-b border-slate-100 pb-5">
           <p className="mt-1 text-sm text-slate-500">Kurum ve personel bilgilerinizle devam edin.</p>
         </div>
 
           <div className="mt-6 space-y-4">
-            <label className="block text-xs font-bold text-slate-600">
+            <label className="auth-label block text-xs font-bold">
               Kurum Kodu veya Kısa Adı
               <input
-                className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-800 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                className="auth-input mt-1.5 w-full px-3 py-3 text-sm"
                 value={institution}
                 onChange={(e) => setInstitution(e.target.value)}
                 placeholder="ornekklinik"
@@ -121,10 +208,10 @@ export function ClinicLoginForm() {
               />
             </label>
 
-            <label className="block text-xs font-bold text-slate-600">
+            <label className="auth-label block text-xs font-bold">
               TC Kimlik No
               <input
-                className="mt-1.5 w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-800 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                className="auth-input mt-1.5 w-full px-3 py-3 text-sm"
                 value={identityNo}
                 onChange={(e) => setIdentityNo(e.target.value.replace(/\D/g, "").slice(0, 11))}
                 placeholder="11 haneli"
@@ -134,11 +221,11 @@ export function ClinicLoginForm() {
               />
             </label>
 
-            <label className="block text-xs font-bold text-slate-600">
+            <label className="auth-label block text-xs font-bold">
               Şifre
               <span className="relative mt-1.5 block">
                 <input
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-3 pr-11 text-sm text-slate-800 outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
+                  className="auth-input w-full px-3 py-3 pr-11 text-sm"
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -148,7 +235,7 @@ export function ClinicLoginForm() {
                 <button
                   type="button"
                   onClick={() => setShowPassword((value) => !value)}
-                  className="absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+                  className="auth-icon-button absolute right-2 top-1/2 inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg"
                   aria-label={showPassword ? "Şifreyi gizle" : "Şifreyi göster"}
                   title={showPassword ? "Şifreyi gizle" : "Şifreyi göster"}
                 >
@@ -158,17 +245,17 @@ export function ClinicLoginForm() {
             </label>
 
             <div className="flex items-center justify-between gap-3">
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600" title="İşaretliyse oturum 24 saat, işaretli değilse 3 saat sonra kendiliğinden sona erer.">
                 <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="h-4 w-4 accent-primary" />
-                Oturumu açık tut
+                Oturumu açık tut (24 saat)
               </label>
             </div>
 
-            {error && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{error}</p>}
+            {error && <p className="auth-status auth-status-error px-3 py-2 text-sm font-semibold">{error}</p>}
 
-            <button disabled={loading} className="w-full rounded-lg bg-primary p-3 text-sm font-bold text-white transition hover:bg-primary/90 disabled:opacity-50">
+            <Button type="submit" loading={loading} fullWidth icon={ArrowRight}>
               {loading ? "Giriş yapılıyor..." : "Panele Giriş Yap"}
-            </button>
+            </Button>
           </div>
         </form>
     </main>

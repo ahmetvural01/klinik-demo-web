@@ -19,7 +19,7 @@ import { chromium } from "playwright-core";
 const prisma = new PrismaClient();
 const BASE = process.env.LAYOUT_TEST_BASE_URL || "http://127.0.0.1:3001";
 const CHROME_PATH = process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-const PASSWORD = "LayoutTest!2026";
+const PASSWORD = process.env.LAYOUT_TEST_PASSWORD || "changeme";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);

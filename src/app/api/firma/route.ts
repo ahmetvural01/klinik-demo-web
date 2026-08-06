@@ -77,6 +77,9 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
+    if (!auth.user.institutionId) {
+      return NextResponse.json({ message: "Firma kaydı için kurum bağlamı zorunlu" }, { status: 403 });
+    }
     const parsed = firmaCreateSchema.safeParse(await req.json());
     if (!parsed.success) {
       return NextResponse.json({ error: "Firma bilgileri geçersiz", errors: formatZodError(parsed.error) }, { status: 400 });

@@ -3,7 +3,7 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { RefreshCw, Plus, User, XCircle } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
 import { cachedGet } from "@/lib/client-cache";
@@ -13,10 +13,14 @@ import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { SearchableListbox, type SearchableListboxOption } from "@/components/ui/SearchableListbox";
+import { turkeyDateTimeLocalValue, turkeyLocalDateTimeToUtc } from "@/lib/tz";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 
 const TaskEmptyIcon = createSceneIllustration("gorevler");
 
-type Staff = { id: string; fullName: string; role: string };
+type Staff = { id: string; fullName: string; role: string; isActive: boolean };
 type PatientOption = { id: string; fullName: string; phone?: string | null };
 
 type StaffTask = {
@@ -48,6 +52,15 @@ const TASK_TYPE_LABELS: Record<StaffTask["type"], string> = {
   DIGER: "Diğer",
 };
 
+const TASK_TYPE_OPTIONS: SearchableListboxOption[] = Object.entries(TASK_TYPE_LABELS).map(([id, label]) => ({ id, label }));
+const STAFF_ROLE_LABELS: Record<string, string> = {
+  YONETICI: "Yönetici",
+  DOKTOR: "Doktor",
+  ASISTAN: "Asistan",
+  BANKO: "Banko",
+  MUHASEBE: "Muhasebe",
+};
+
 function getStatusTone(status: StaffTask["status"]): BadgeTone {
   if (status === "BEKLEMEDE") return "warning";
   if (status === "TAMAMLANDI") return "success";
@@ -74,13 +87,14 @@ function readCachedTasks(scope: string, status: string) {
 }
 
 export default function GorevlerPage() {
+  const { can } = usePermissions();
   const [scope, setScope] = useState<"mine" | "all">("mine");
   const [status, setStatus] = useState<"ACIK" | "BEKLEMEDE" | "TAMAMLANDI" | "IPTAL" | "TUMU">("TUMU");
   const [tasks, setTasks] = useState<StaffTask[]>(() => readCachedTasks("mine", "TUMU"));
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState("");
-  const [role, setRole] = useState("");
+  const busyTaskRef = useRef("");
 
   // Yeni görev oluşturma
   const [showCreate, setShowCreate] = useState(false);
@@ -96,31 +110,43 @@ export default function GorevlerPage() {
   const [taskDetails, setTaskDetails] = useState("");
   const [taskAssigneeIds, setTaskAssigneeIds] = useState<string[]>([]);
   const [taskSaving, setTaskSaving] = useState(false);
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [staffLoaded, setStaffLoaded] = useState(false);
+  const taskRequestKeyRef = useRef("");
 
   useEffect(() => {
-    if (!showCreate || staff.length > 0) return;
+    if (!showCreate || staffLoaded || staffLoading) return;
+    setStaffLoading(true);
     cachedGet<unknown>("/api/staff", 60_000)
-      .then((d) => setStaff(Array.isArray(d) ? d : []))
-      .catch(() => {});
-  }, [showCreate]);
+      .then((d) => setStaff(Array.isArray(d) ? (d as Staff[]).filter((member) => member.isActive) : []))
+      .catch(() => showToastSafe({ title: "Personel yüklenemedi", message: "Atanacak personel listesi alınamadı. Mevcut seçimler korundu.", type: "error" }))
+      .finally(() => { setStaffLoaded(true); setStaffLoading(false); });
+  }, [showCreate, staffLoaded, staffLoading]);
 
   useEffect(() => {
     if (patientSearch.trim().length < 2) { setPatientResults([]); setPatientSearchLoading(false); return; }
-    const timer = setTimeout(() => {
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
       setPatientSearchLoading(true);
-      fetch(`/api/patients?q=${encodeURIComponent(patientSearch.trim())}&take=8&summary=false`, { cache: "no-store" })
-        .then((r) => r.json())
-        .then((d) => {
-          const rows = Array.isArray(d?.patients) ? d.patients : Array.isArray(d) ? d : [];
-          setPatientResults(rows.map((p: PatientOption) => ({ id: p.id, fullName: p.fullName, phone: p.phone })));
-        })
-        .catch(() => setPatientResults([]))
-        .finally(() => setPatientSearchLoading(false));
+      try {
+        const response = await fetch(`/api/patients?q=${encodeURIComponent(patientSearch.trim())}&take=8&summary=false`, { cache: "no-store", signal: controller.signal });
+        const data = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(data?.message || "Hasta araması yapılamadı");
+        const rows = Array.isArray(data?.patients) ? data.patients : Array.isArray(data) ? data : [];
+        setPatientResults(rows.map((patient: PatientOption) => ({ id: patient.id, fullName: patient.fullName, phone: patient.phone })));
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setPatientResults([]);
+        showToastSafe({ title: "Hasta araması yapılamadı", message: error instanceof Error ? error.message : "Bağlantıyı kontrol edip tekrar deneyin.", type: "error" });
+      } finally {
+        if (!controller.signal.aborted) setPatientSearchLoading(false);
+      }
     }, 250);
-    return () => clearTimeout(timer);
+    return () => { clearTimeout(timer); controller.abort(); };
   }, [patientSearch]);
 
   const resetCreateForm = () => {
+    taskRequestKeyRef.current = "";
     setSelectedPatient(null);
     setPatientSearch("");
     setPatientResults([]);
@@ -132,23 +158,56 @@ export default function GorevlerPage() {
     setTaskAssigneeIds([]);
   };
 
+  const createTaskDirty = Boolean(
+    selectedPatient
+    || patientSearch.trim()
+    || taskTitle.trim()
+    || taskType !== "DIGER"
+    || taskPriority !== 2
+    || taskDueAt
+    || taskDetails.trim()
+    || taskAssigneeIds.length > 0,
+  );
+
+  const closeCreateModal = () => {
+    setShowCreate(false);
+    resetCreateForm();
+  };
+
+  const openCreateModal = () => {
+    resetCreateForm();
+    if (staff.length === 0) setStaffLoaded(false);
+    taskRequestKeyRef.current = crypto.randomUUID();
+    setShowCreate(true);
+  };
+
   const createTask = async () => {
-    if (!taskTitle.trim()) {
-      showToastSafe({ title: "Eksik bilgi", message: "Görev başlığı zorunlu.", type: "error" });
+    if (taskTitle.trim().length < 2) {
+      showToastSafe({ title: "Eksik bilgi", message: "Görev başlığı en az 2 karakter olmalıdır.", type: "error" });
       return;
+    }
+    if (taskDueAt) {
+      const dueAt = turkeyLocalDateTimeToUtc(taskDueAt.slice(0, 10), taskDueAt.slice(11, 16));
+      if (dueAt.getTime() < Date.now() - 5 * 60 * 1000) {
+        showToastSafe({ title: "Geçersiz tarih", message: "Yeni görevin son tarihi geçmişte olamaz.", type: "error" });
+        return;
+      }
     }
     setTaskSaving(true);
     try {
       const res = await fetch("/api/clinic-tasks", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Idempotency-Key": taskRequestKeyRef.current || (taskRequestKeyRef.current = crypto.randomUUID()),
+        },
         body: JSON.stringify({
           patientId: selectedPatient?.id || undefined,
           title: taskTitle.trim(),
           details: taskDetails.trim() || undefined,
           type: taskType,
           priority: taskPriority,
-          dueAt: taskDueAt ? new Date(taskDueAt).toISOString() : undefined,
+          dueAt: taskDueAt ? turkeyLocalDateTimeToUtc(taskDueAt.slice(0, 10), taskDueAt.slice(11, 16)).toISOString() : undefined,
           assignedToIds: taskAssigneeIds,
           status: "ACIK",
         }),
@@ -158,9 +217,8 @@ export default function GorevlerPage() {
         showToastSafe({ title: "Görev oluşturulamadı", message: data?.message || "Lütfen bilgileri kontrol edin.", type: "error" });
         return;
       }
-      setTasks((prev) => [data as StaffTask, ...prev]);
-      resetCreateForm();
-      setShowCreate(false);
+      closeCreateModal();
+      await load();
       showToastSafe({ title: "Görev oluşturuldu", message: "Görev listeye eklendi.", type: "success", icon: "clipboard" });
     } catch {
       showToastSafe({ title: "Görev oluşturulamadı", message: "Bağlantı hatası oluştu.", type: "error" });
@@ -169,7 +227,14 @@ export default function GorevlerPage() {
     }
   };
 
-  const canSeeAll = role === "YONETICI" || role === "SUPERADMIN";
+  const canSeeAll = can("clinictasks:read-all");
+  const canWriteTasks = can("clinictasks:write");
+  const staffOptions = useMemo<SearchableListboxOption[]>(() => staff.map((member) => ({
+    id: member.id,
+    label: member.fullName,
+    meta: STAFF_ROLE_LABELS[member.role] || member.role,
+    keywords: member.role,
+  })), [staff]);
 
   const load = async () => {
     const cacheKey = `clinic-tasks:list:${scope}:${status}`;
@@ -178,10 +243,9 @@ export default function GorevlerPage() {
       const raw = sessionStorage.getItem(cacheKey);
       if (raw) {
         try {
-          const cached = JSON.parse(raw) as { role?: string; tasks?: StaffTask[] };
+          const cached = JSON.parse(raw) as { tasks?: StaffTask[] };
           if (Array.isArray(cached?.tasks)) {
             setTasks(cached.tasks);
-            if (cached.role) setRole(cached.role);
             hadCached = true;
           }
         } catch {}
@@ -191,23 +255,25 @@ export default function GorevlerPage() {
     setLoading(!hadCached);
     setError("");
     try {
-      const [me, taskRes] = await Promise.all([
-        cachedGet<{ role?: string } | null>("/api/auth/me", 60_000),
-        fetch(`/api/clinic-tasks?take=300&scope=${scope}${status !== "TUMU" ? `&status=${status}` : ""}`, { cache: "no-store" }),
-      ]);
+      const taskRes = await fetch(`/api/clinic-tasks?take=500&scope=${scope}${status !== "TUMU" ? `&status=${status}` : ""}`, { cache: "no-store" });
 
-      const rows = await taskRes.json().catch(() => []);
-      setRole(String(me?.role || ""));
-      const nextTasks = Array.isArray(rows) ? rows : [];
+      const rows = await taskRes.json().catch(() => null);
+      if (!taskRes.ok) {
+        throw new Error(rows?.message || "Görevler yüklenemedi.");
+      }
+      if (!Array.isArray(rows)) {
+        throw new Error("Görev listesi beklenmeyen biçimde döndü.");
+      }
+      const nextTasks = rows as StaffTask[];
       setTasks(nextTasks);
       if (typeof window !== "undefined") {
-        sessionStorage.setItem(cacheKey, JSON.stringify({ role: String(me?.role || ""), tasks: nextTasks }));
+        sessionStorage.setItem(cacheKey, JSON.stringify({ tasks: nextTasks }));
       }
-    } catch {
-      const msg = "Görevler yüklenemedi.";
+    } catch (loadError) {
+      const msg = loadError instanceof Error ? loadError.message : "Görevler yüklenemedi.";
       setError(msg);
       try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {}
-      setTasks([]);
+      if (!hadCached) setTasks([]);
     } finally {
       setLoading(false);
     }
@@ -250,11 +316,13 @@ export default function GorevlerPage() {
   }, [scope, status]);
 
   const updateStatus = async (taskId: string, next: StaffTask["status"]) => {
+    if (busyTaskRef.current) return;
     const previous = tasks.find((t) => t.id === taskId);
     if (!previous) return;
 
     // Optimistic: sunucu yanıtını beklemeden anında güncelle, hata olursa geri al.
     setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: next } : t)));
+    busyTaskRef.current = taskId;
     setBusyId(taskId);
     setError("");
     try {
@@ -278,6 +346,7 @@ export default function GorevlerPage() {
       setError(msg);
       try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {}
     } finally {
+      busyTaskRef.current = "";
       setBusyId("");
     }
   };
@@ -354,10 +423,10 @@ export default function GorevlerPage() {
           {task.patient?.id ? (
             <IconButton icon={User} title="Hasta kartını aç" tone="neutral" href={`/hasta-detay?id=${task.patient.id}`} />
           ) : null}
-          {task.status !== "TAMAMLANDI" && task.status !== "IPTAL" && (
+          {canWriteTasks && task.status !== "TAMAMLANDI" && task.status !== "IPTAL" && (
             <Button size="sm" variant="primary" disabled={busyId === task.id} onClick={() => void updateStatus(task.id, "TAMAMLANDI")}>Tamamla</Button>
           )}
-          {task.status !== "TAMAMLANDI" && task.status !== "IPTAL" && (
+          {canWriteTasks && task.status !== "TAMAMLANDI" && task.status !== "IPTAL" && (
             <IconButton icon={XCircle} title="Görevi iptal et" tone="danger" disabled={busyId === task.id} onClick={() => void updateStatus(task.id, "IPTAL")} />
           )}
         </div>
@@ -367,7 +436,17 @@ export default function GorevlerPage() {
 
   return (
     <section className="space-y-2">
-      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-100 bg-white px-2 py-2 shadow-sm">
+      <PageHeader
+        icon="clipboard"
+        title="Görev Merkezi"
+        description="Ekibe atanan işleri, öncelikleri ve tamamlanma durumunu takip edin."
+        stats={[
+          { label: "Kayıt", value: sorted.length },
+          { label: "Yüksek", value: sorted.filter((task) => task.priority >= 3 && task.status === "ACIK").length, color: "text-rose-700" },
+        ]}
+        actions={canWriteTasks ? <Button size="sm" icon={Plus} onClick={openCreateModal}>Görev Oluştur</Button> : undefined}
+      />
+      <div className="ui-toolbar flex flex-wrap items-center gap-2 p-2.5">
           {canSeeAll && (
             <select value={scope} onChange={(e) => setScope(e.target.value as "mine" | "all")} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm">
               <option value="mine">Bana Atananlar</option>
@@ -385,7 +464,6 @@ export default function GorevlerPage() {
             <Badge tone="critical">Yüksek öncelik</Badge>
           )}
           <Button variant="secondary" size="sm" icon={RefreshCw} onClick={() => void load()} className="ml-auto">Yenile</Button>
-          <Button size="sm" icon={Plus} onClick={() => setShowCreate(true)}>Görev Oluştur</Button>
       </div>
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</div>}
@@ -402,12 +480,13 @@ export default function GorevlerPage() {
 
       <Modal
         open={showCreate}
-        onClose={() => setShowCreate(false)}
+        onClose={closeCreateModal}
+        isDirty={createTaskDirty}
         title="Yeni Görev"
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowCreate(false)}>İptal</Button>
+            <Button variant="secondary" onClick={closeCreateModal}>İptal</Button>
             <Button onClick={() => void createTask()} disabled={!taskTitle.trim()} loading={taskSaving}>Görevi Kaydet</Button>
           </>
         }
@@ -442,34 +521,43 @@ export default function GorevlerPage() {
           </FormField>
         </div>
 
-        <div className="mt-3 grid gap-3 sm:grid-cols-[0.9fr_0.6fr_1fr_1fr]">
-          <select value={taskType} onChange={(e) => setTaskType(e.target.value as StaffTask["type"])} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-            <option value="PARCA_SIPARIS">Parça Sipariş</option>
-            <option value="LAB">Laboratuvar</option>
-            <option value="ARAMA">Arama</option>
-            <option value="EVRAK">Evrak</option>
-            <option value="DIGER">Diğer</option>
-          </select>
-          <select value={taskPriority} onChange={(e) => setTaskPriority(Number(e.target.value) as 1 | 2 | 3)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-            <option value={1}>Düşük</option>
-            <option value={2}>Orta</option>
-            <option value={3}>Yüksek</option>
-          </select>
-          <div className="max-h-[84px] overflow-y-auto rounded-lg border border-slate-200 bg-slate-50 px-2 py-2 text-sm">
-            {staff.length === 0 ? <p className="text-xs text-slate-400">Personel yükleniyor…</p> : staff.map((s) => {
-              const checked = taskAssigneeIds.includes(s.id);
-              return (
-                <label key={s.id} className="flex items-center gap-2 py-1 text-xs text-slate-700">
-                  <input type="checkbox" checked={checked} onChange={(e) => setTaskAssigneeIds((prev) => e.target.checked ? Array.from(new Set([...prev, s.id])) : prev.filter((id) => id !== s.id))} />
-                  <span>{s.fullName}</span>
-                </label>
-              );
-            })}
-          </div>
-          <input type="datetime-local" value={taskDueAt} onChange={(e) => setTaskDueAt(e.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-[0.9fr_0.65fr_1.25fr_1fr]">
+          <FormField label="Görev Türü" required>
+            <SearchableListbox
+              options={TASK_TYPE_OPTIONS}
+              value={[taskType]}
+              onChange={(ids) => setTaskType((ids[0] || "DIGER") as StaffTask["type"])}
+              placeholder="Görev türü seçin"
+              searchPlaceholder="Görev türünde ara"
+            />
+          </FormField>
+          <FormField label="Öncelik" required>
+            <select value={taskPriority} onChange={(e) => setTaskPriority(Number(e.target.value) as 1 | 2 | 3)} className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+              <option value={1}>Düşük</option>
+              <option value={2}>Orta</option>
+              <option value={3}>Yüksek</option>
+            </select>
+          </FormField>
+          <FormField label="Atanacak Personel">
+            <SearchableListbox
+              multiple
+              options={staffOptions}
+              value={taskAssigneeIds}
+              onChange={setTaskAssigneeIds}
+              placeholder="Personel seçin"
+              searchPlaceholder="İsim veya rolle ara"
+              selectedLabel="personel seçildi"
+              allSelectedLabel="Tüm personel"
+              emptyText="Aktif personel bulunamadı"
+              loading={staffLoading}
+            />
+          </FormField>
+          <FormField label="Son Tarih">
+            <input type="datetime-local" min={turkeyDateTimeLocalValue()} value={taskDueAt} onChange={(e) => setTaskDueAt(e.target.value)} className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
+          </FormField>
         </div>
 
-        <textarea value={taskDetails} onChange={(e) => setTaskDetails(e.target.value)} rows={2} placeholder="Görev detayı (opsiyonel)" className="mt-3 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
+        <textarea maxLength={3000} value={taskDetails} onChange={(e) => setTaskDetails(e.target.value)} rows={2} placeholder="Görev detayı (opsiyonel)" className="mt-3 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
       </Modal>
     </section>
   );

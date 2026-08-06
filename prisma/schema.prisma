@@ -8,69 +8,70 @@ datasource db {
 }
 
 model Institution {
-  id                  String                    @id @default(cuid())
-  name                String                    @unique
-  email               String                    @unique
-  phone               String?
-  address             String?
-  taxNo               String?                   @unique
-  registryNo          String?
-  website             String?
-  logo                String?
-  subscriptionPlan    SubscriptionPlan          @default(TEMEL)
-  billingCycle        BillingCycle              @default(AYLIK)
-  smsBalance          Int                       @default(0)
+  id                     String                    @id @default(cuid())
+  name                   String                    @unique
+  email                  String                    @unique
+  phone                  String?
+  address                String?
+  taxNo                  String?                   @unique
+  registryNo             String?
+  website                String?
+  logo                   String?
+  subscriptionPlan       SubscriptionPlan          @default(TEMEL)
+  billingCycle           BillingCycle              @default(AYLIK)
+  smsBalance             Int                       @default(0)
   // Yalnızca süperadmin tarafından açılabilir (klinik kendi başına
   // etkinleştiremez) — bkz. WhatsappProviderConfig yorumu.
-  whatsappEnabled     Boolean                   @default(false)
-  isActive            Boolean                   @default(true)
-  ownerId             String?                   @unique
-  createdAt           DateTime                  @default(now())
-  updatedAt           DateTime                  @updatedAt
-  adIntensity         AdIntensity               @default(MEDIUM)
-  adsEnabled          Boolean                   @default(false)
-  maxActiveDoctors    Int?
-  maxActiveUsers      Int?
-  paymentGraceUntil   DateTime?
-  serviceMode         ServiceMode               @default(NORMAL)
-  serviceNote         String?
-  suspendedUntil      DateTime?
-  throttleMs          Int                       @default(0)
-  isDemo              Boolean                   @default(false)
-  demoExpiresAt       DateTime?
-  demoSourceRequestId String?
-  owner               User?                     @relation("InstitutionOwner", fields: [ownerId], references: [id])
-  adAssignments       InstitutionAdAssignment[]
-  announcements       Announcement[]
-  clinicTasks         ClinicTask[]
-  demoRequests        DemoRequest[]             @relation("DemoRequestInstitution")
-  invoices            Invoice[]
-  patients            Patient[]
-  priceItems          PriceItem[]
-  settings            Setting?
-  smsTransactions     SmsTransaction[]
-  stockItems          StockItem[]
-  stockLots           StockLot[]
-  expenseCategories   ExpenseCategory[]
-  expenses            Expense[]
-  firmas              Firma[]
-  purchases           Purchase[]
-  posDevices          PosDevice[]
-  payments            Payment[]
-  users               User[]
-  supportTickets      SupportTicket[]
-  whatsappProviders   WhatsappProviderConfig[]
-  whatsappMessages    WhatsappMessage[]
-  documents           Document[]
-  waitlistEntries     Waitlist[]
-  bookingRequests     BookingRequest[]
-  treatmentTypes      TreatmentType[]
-  consentTemplates    ConsentTemplate[]
-  patientConsents     PatientConsent[]
-  smsTemplates        SmsTemplate[]
-  packageDefinitions  PackageDefinition[]
-  patientPackages     PatientPackage[]
-  clinicUnits         ClinicUnit[]
+  whatsappEnabled        Boolean                   @default(false)
+  isActive               Boolean                   @default(true)
+  ownerId                String?                   @unique
+  createdAt              DateTime                  @default(now())
+  updatedAt              DateTime                  @updatedAt
+  adIntensity            AdIntensity               @default(MEDIUM)
+  adsEnabled             Boolean                   @default(false)
+  maxActiveDoctors       Int?
+  maxActiveUsers         Int?
+  paymentGraceUntil      DateTime?
+  serviceMode            ServiceMode               @default(NORMAL)
+  serviceNote            String?
+  suspendedUntil         DateTime?
+  throttleMs             Int                       @default(0)
+  isDemo                 Boolean                   @default(false)
+  demoExpiresAt          DateTime?
+  demoSourceRequestId    String?
+  owner                  User?                     @relation("InstitutionOwner", fields: [ownerId], references: [id])
+  adAssignments          InstitutionAdAssignment[]
+  announcements          Announcement[]
+  clinicTasks            ClinicTask[]
+  demoRequests           DemoRequest[]             @relation("DemoRequestInstitution")
+  invoices               Invoice[]
+  patients               Patient[]
+  priceItems             PriceItem[]
+  settings               Setting?
+  smsTransactions        SmsTransaction[]
+  stockItems             StockItem[]
+  stockMovements         StockMovement[]
+  stockLots              StockLot[]
+  expenseCategories      ExpenseCategory[]
+  expenses               Expense[]
+  firmas                 Firma[]
+  purchases              Purchase[]
+  posDevices             PosDevice[]
+  payments               Payment[]
+  users                  User[]
+  supportTickets         SupportTicket[]
+  whatsappProviders      WhatsappProviderConfig[]
+  whatsappMessages       WhatsappMessage[]
+  documents              Document[]
+  waitlistEntries        Waitlist[]
+  bookingRequests        BookingRequest[]
+  treatmentTypes         TreatmentType[]
+  consentTemplates       ConsentTemplate[]
+  patientConsents        PatientConsent[]
+  smsTemplates           SmsTemplate[]
+  packageDefinitions     PackageDefinition[]
+  patientPackages        PatientPackage[]
+  clinicUnits            ClinicUnit[]
   celebrationDaySettings CelebrationDaySetting[]
 }
 
@@ -560,19 +561,19 @@ model Profile {
 }
 
 model Patient {
-  id                         String                 @id @default(cuid())
-  institutionId              String?
+  id                         String                      @id @default(cuid())
+  institutionId              String
   // Yabancı uyruklu hastalarda TC kimlik no zorunlu değildir (bkz. isForeigner)
   // — Postgres benzersiz indekste NULL değerler birbirinden farklı sayılır,
   // yani birden fazla TC'siz yabancı hasta kaydı çakışma yaratmaz.
   tcNo                       String?
-  isForeigner                Boolean                @default(false)
+  isForeigner                Boolean                     @default(false)
   // Telefonun ülke kodu (ör. "+90", "+49") — numara her zaman ülke kodu
   // olmadan, o ülkenin yerel formatında saklanır.
-  phoneCountryCode           String                 @default("+90")
+  phoneCountryCode           String                      @default("+90")
   fullName                   String
   phone                      String
-  preferredContactChannel    String                 @default("SMS")
+  preferredContactChannel    String                      @default("SMS")
   whatsappOptInAt            DateTime?
   whatsappOptOutAt           DateTime?
   communicationConsentSource String?
@@ -581,15 +582,15 @@ model Patient {
   gender                     String
   birthDate                  DateTime?
   insurance                  String?
-  discountRate               Int                    @default(0)
+  discountRate               Int                         @default(0)
   notes                      String?
-  hasAllergy                 Boolean                @default(false)
-  hasHepatitis               Boolean                @default(false)
-  hasKidney                  Boolean                @default(false)
-  hasDiabetes                Boolean                @default(false)
-  hasHeart                   Boolean                @default(false)
-  hasBloodIssue              Boolean                @default(false)
-  hasContagiousDisease       Boolean                @default(false)
+  hasAllergy                 Boolean                     @default(false)
+  hasHepatitis               Boolean                     @default(false)
+  hasKidney                  Boolean                     @default(false)
+  hasDiabetes                Boolean                     @default(false)
+  hasHeart                   Boolean                     @default(false)
+  hasBloodIssue              Boolean                     @default(false)
+  hasContagiousDisease       Boolean                     @default(false)
   contagiousDiseaseNote      String?
   surgeries                  String?
   medications                String?
@@ -597,12 +598,12 @@ model Patient {
   archivedAt                 DateTime?
   archivedById               String?
   archiveReason              String?
-  createdAt                  DateTime               @default(now())
-  updatedAt                  DateTime               @updatedAt
+  createdAt                  DateTime                    @default(now())
+  updatedAt                  DateTime                    @updatedAt
   bloodType                  String?
   toothChart                 String?
   referrer                   String?
-  institution                Institution?           @relation(fields: [institutionId], references: [id])
+  institution                Institution                 @relation(fields: [institutionId], references: [id])
   appointments               Appointment[]
   examinations               Examination[]
   labOrders                  LabOrder[]
@@ -667,7 +668,7 @@ model Appointment {
   smsSurvey        Boolean               @default(false)
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
-  status           String                @default("BEKLIYOR")
+  status           AppointmentStatus     @default(BEKLIYOR)
   doctor           User                  @relation(fields: [doctorId], references: [id])
   clinicUnit       ClinicUnit?           @relation(fields: [clinicUnitId], references: [id], onDelete: SetNull)
   followUps        PatientFollowUp[]
@@ -686,6 +687,7 @@ model Appointment {
 
 model ClinicTask {
   id            String               @id @default(cuid())
+  requestKey    String?              @unique
   institutionId String
   patientId     String?
   title         String
@@ -806,7 +808,7 @@ model ConsentTemplate {
 
 model PatientConsent {
   id               String           @id @default(cuid())
-  institutionId    String?
+  institutionId    String
   patientId        String
   templateId       String?
   title            String
@@ -825,7 +827,7 @@ model PatientConsent {
   patient          Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
   template         ConsentTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   createdBy        User             @relation("ConsentCreatedBy", fields: [createdById], references: [id])
-  institution      Institution?     @relation(fields: [institutionId], references: [id])
+  institution      Institution      @relation(fields: [institutionId], references: [id])
 
   @@index([institutionId])
   @@index([status])
@@ -903,16 +905,16 @@ model PaymentRevision {
 }
 
 model PriceItem {
-  id            String       @id @default(cuid())
-  institutionId String?
+  id            String      @id @default(cuid())
+  institutionId String
   code          String
   treatment     String
-  amount        Decimal      @db.Decimal(10, 2)
-  isFavorite    Boolean      @default(false)
-  isCustom      Boolean      @default(true)
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  institution   Institution? @relation(fields: [institutionId], references: [id])
+  amount        Decimal     @db.Decimal(10, 2)
+  isFavorite    Boolean     @default(false)
+  isCustom      Boolean     @default(true)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  institution   Institution @relation(fields: [institutionId], references: [id])
 
   @@unique([institutionId, code, treatment])
   @@index([institutionId])
@@ -938,45 +940,45 @@ model AuditLog {
 }
 
 model Setting {
-  id                        String      @id @default(cuid())
-  institutionName           String
-  institutionAddress        String?
-  institutionPhone          String?
-  institutionWebsite        String?
-  openingTime               String      @default("08:30")
-  closingTime               String      @default("23:00")
-  appointmentDuration       Int         @default(15)
-  holidayDays               String      @default("[]")
+  id                         String              @id @default(cuid())
+  institutionName            String
+  institutionAddress         String?
+  institutionPhone           String?
+  institutionWebsite         String?
+  openingTime                String              @default("08:30")
+  closingTime                String              @default("23:00")
+  appointmentDuration        Int                 @default(15)
+  holidayDays                String              @default("[]")
   // Günlük özel çalışma saatleri: JSON array of {day:"pazartesi",open:"08:30",close:"17:00",lunchStart:"12:00",lunchEnd:"13:00",isHoliday:false}
-  dailySchedules            String      @default("[]")
+  dailySchedules             String              @default("[]")
   // Genel öğle arası (günlük override yoksa kullanılır)
-  lunchStart                String      @default("")
-  lunchEnd                  String      @default("")
-  smsEnabled                Boolean     @default(true)
-  smsDefaultInfo            Boolean     @default(true)
-  smsDefaultReminder        Boolean     @default(false)
-  smsDefaultSurvey          Boolean     @default(false)
+  lunchStart                 String              @default("")
+  lunchEnd                   String              @default("")
+  smsEnabled                 Boolean             @default(true)
+  smsDefaultInfo             Boolean             @default(true)
+  smsDefaultReminder         Boolean             @default(false)
+  smsDefaultSurvey           Boolean             @default(false)
   // Hastanın taksit/ödeme vadesi yaklaştığında veya geciktiğinde otomatik SMS
   // gönderilsin mi (bkz. src/lib/patient-payment-reminders.ts). Varsayılan
   // kapalı: SMS kurumun kendi bakiyesinden düşer, bu yüzden bilinçli açılmalı.
-  paymentReminderSmsEnabled Boolean     @default(false)
+  paymentReminderSmsEnabled  Boolean             @default(false)
   // Ödeme hatırlatması vadeden kaç gün önce gönderilsin (klinik ayarlanabilir).
-  paymentReminderWindowDays Int         @default(3)
+  paymentReminderWindowDays  Int                 @default(3)
   // Değerlendirme (ANKET) SMS şablonunda {{surveyLink}} yer tutucusu için
   // kliniğin kendi belirlediği bağlantı (ör. Google yorum linki). Opsiyonel.
-  reviewLink                String?
+  reviewLink                 String?
   // Doğum günü olan hastalara otomatik kutlama SMS'i (bkz. src/lib/birthday-reminders.ts).
-  birthdaySmsEnabled        Boolean     @default(false)
+  birthdaySmsEnabled         Boolean             @default(false)
   // Otomatik bildirimlerin (randevu, hatırlatma, ödeme vb.) varsayılan olarak
   // hangi kanaldan gideceği. Yalnızca Institution.whatsappEnabled açık kliniklerde
   // WHATSAPP seçilebilir; kapalıysa merkezi servis her zaman SMS'e düşer
   // (bkz. src/lib/notification-dispatch.ts).
   defaultNotificationChannel NotificationChannel @default(SMS)
-  updatedAt                 DateTime    @updatedAt
-  institutionId             String      @unique
-  activePriceList           String      @default("standard")
-  followUpCustomTypes       String      @default("[]")
-  institution               Institution @relation(fields: [institutionId], references: [id])
+  updatedAt                  DateTime            @updatedAt
+  institutionId              String              @unique
+  activePriceList            String              @default("standard")
+  followUpCustomTypes        String              @default("[]")
+  institution                Institution         @relation(fields: [institutionId], references: [id])
 }
 
 // Kuruma özel randevu tedavi türleri ve renkleri (Ayarlar > Tedavi Türleri)
@@ -1011,15 +1013,15 @@ model DoctorBlock {
 }
 
 model SupportTicket {
-  id        String   @id @default(cuid())
-  userId    String?
+  id            String       @id @default(cuid())
+  userId        String?
   institutionId String?
-  subject   String
-  message   String
-  answer    String?
-  createdAt DateTime @default(now())
-  user      User?    @relation(fields: [userId], references: [id])
-  institution Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  subject       String
+  message       String
+  answer        String?
+  createdAt     DateTime     @default(now())
+  user          User?        @relation(fields: [userId], references: [id])
+  institution   Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([institutionId])
@@ -1125,6 +1127,7 @@ model PackageDefinition {
 // tahsilat/taksit gibi görünür, ayrı bir "paket geliri" silosu yoktur.
 model PatientPackage {
   id            String                @id @default(cuid())
+  requestKey    String?               @unique
   institutionId String
   patientId     String
   definitionId  String?
@@ -1158,6 +1161,7 @@ model PatientPackage {
 // böylece paket kullanımı ile randevu geçmişi arasında iz kaybolmaz.
 model PatientPackageUsage {
   id               String         @id @default(cuid())
+  requestKey       String?        @unique
   patientPackageId String
   appointmentId    String?
   usedAt           DateTime       @default(now())
@@ -1233,6 +1237,12 @@ model LabOrderInvoice {
   createdAt  DateTime @default(now())
   labOrder   LabOrder @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
 
+  // Postgres'te unique indekste NULL değerler birbirinden farklı sayılır —
+  // yani bu kısıt yalnızca gerçek bir invoiceNo GİRİLDİĞİNDE aynı siparişte
+  // tekrarını engeller. invoiceNo boş bırakılan (henüz numara atanmamış /
+  // fatura dışı maliyet kalemi) satırlar sayıca sınırsızdır — bu bilinçli bir
+  // tasarımdır (bkz. denetim raporu), çünkü bir laboratuvar siparişine birden
+  // fazla numarasız maliyet kalemi eklenebilmesi gerekir.
   @@unique([labOrderId, invoiceNo])
   @@index([labOrderId])
   @@index([issuedAt])
@@ -1240,7 +1250,7 @@ model LabOrderInvoice {
 
 model StockItem {
   id              String          @id @default(cuid())
-  institutionId   String?
+  institutionId   String
   name            String
   category        String          @default("SARF")
   unit            String          @default("adet")
@@ -1254,7 +1264,7 @@ model StockItem {
   isActive        Boolean         @default(true)
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
-  institution     Institution?    @relation(fields: [institutionId], references: [id])
+  institution     Institution     @relation(fields: [institutionId], references: [id])
   movements       StockMovement[]
   purchaseItems   PurchaseItem[]
   lots            StockLot[]
@@ -1273,9 +1283,9 @@ model StockItem {
 model StockMovement {
   id             String                       @id @default(cuid())
   stockItemId    String
-  institutionId  String?
+  institutionId  String
   requestKey     String?
-  type           String
+  type           StockMovementType
   quantity       Int
   unitPrice      Decimal?                     @db.Decimal(10, 2)
   supplier       String?
@@ -1283,6 +1293,7 @@ model StockMovement {
   userId         String
   createdAt      DateTime                     @default(now())
   stockItem      StockItem                    @relation(fields: [stockItemId], references: [id])
+  institution    Institution                  @relation(fields: [institutionId], references: [id])
   user           User                         @relation("StockMovementUser", fields: [userId], references: [id])
   purchaseItem   PurchaseItem?
   lotAllocations StockMovementLotAllocation[]
@@ -1293,7 +1304,7 @@ model StockMovement {
 
 model StockLot {
   id                String                       @id @default(cuid())
-  institutionId     String?
+  institutionId     String
   stockItemId       String
   purchaseItemId    String?
   lotNo             String?
@@ -1306,7 +1317,7 @@ model StockLot {
   status            StockLotStatus               @default(AKTIF)
   createdAt         DateTime                     @default(now())
   updatedAt         DateTime                     @updatedAt
-  institution       Institution?                 @relation(fields: [institutionId], references: [id])
+  institution       Institution                  @relation(fields: [institutionId], references: [id])
   stockItem         StockItem                    @relation(fields: [stockItemId], references: [id])
   purchaseItem      PurchaseItem?                @relation(fields: [purchaseItemId], references: [id])
   allocations       StockMovementLotAllocation[]
@@ -1483,24 +1494,24 @@ model CelebrationSmsLog {
 // akışı günceller; personel manuel olarak ONAYLANDI/REDDEDILDI yazamaz,
 // yalnızca yeni bir token üretip tekrar gönderim tetikleyebilir.
 model PatientSmsPreference {
-  id                String            @id @default(cuid())
-  institutionId     String
-  patientId         String            @unique
-  status            SmsConsentStatus  @default(PENDING)
-  firstConsentAt    DateTime?
-  lastRejectionAt   DateTime?
-  lastRequestSentAt DateTime?
+  id                   String                  @id @default(cuid())
+  institutionId        String
+  patientId            String                  @unique
+  status               SmsConsentStatus        @default(PENDING)
+  firstConsentAt       DateTime?
+  lastRejectionAt      DateTime?
+  lastRequestSentAt    DateTime?
   // Son gönderim DENEMESİ (başarılı ya da başarısız) — hasta kartında "Onay
   // Bekliyor" durumunun aslında hiç gönderilememiş bir SMS'i başarılıymış gibi
   // göstermesini önlemek için lastRequestSentAt'tan (yalnızca başarı) ayrı tutulur.
   lastRequestAttemptAt DateTime?
   lastRequestError     String?
-  consentTokenId    String?
-  lastChangeSource  SmsConsentSource  @default(SYSTEM_MIGRATION)
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  patient           Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  consentToken      PatientSmsConsentToken? @relation(fields: [consentTokenId], references: [id], onDelete: SetNull)
+  consentTokenId       String?
+  lastChangeSource     SmsConsentSource        @default(SYSTEM_MIGRATION)
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  patient              Patient                 @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  consentToken         PatientSmsConsentToken? @relation(fields: [consentTokenId], references: [id], onDelete: SetNull)
 
   @@index([institutionId])
   @@index([institutionId, status])
@@ -1588,11 +1599,11 @@ model SmsDispatch {
 
 model PosDevice {
   id             String        @id @default(cuid())
-  institutionId  String?
+  institutionId  String
   name           String
   isActive       Boolean       @default(true)
   createdAt      DateTime      @default(now())
-  institution    Institution?  @relation(fields: [institutionId], references: [id])
+  institution    Institution   @relation(fields: [institutionId], references: [id])
   payments       Payment[]
   taksitOdemeler TaksitOdeme[]
 
@@ -1601,15 +1612,15 @@ model PosDevice {
 }
 
 model ExpenseCategory {
-  id             String       @id @default(cuid())
-  institutionId  String?
+  id             String      @id @default(cuid())
+  institutionId  String
   name           String
-  isActive       Boolean      @default(true)
+  isActive       Boolean     @default(true)
   // Bu tür seçildiğinde gider formu doktor + hakediş dönemi (yıl/ay) alanlarını
   // gösterir ve kayıt o doktorun aylık hakediş bakiyesinden düşülür.
-  isDoctorPayout Boolean      @default(false)
-  createdAt      DateTime     @default(now())
-  institution    Institution? @relation(fields: [institutionId], references: [id])
+  isDoctorPayout Boolean     @default(false)
+  createdAt      DateTime    @default(now())
+  institution    Institution @relation(fields: [institutionId], references: [id])
   expenses       Expense[]
 
   @@unique([institutionId, name])
@@ -1618,7 +1629,7 @@ model ExpenseCategory {
 
 model Expense {
   id              String           @id @default(cuid())
-  institutionId   String?
+  institutionId   String
   requestKey      String?          @unique
   tarih           DateTime
   categoryId      String?
@@ -1628,7 +1639,7 @@ model Expense {
   yontem          PaymentMethod    @default(NAKIT)
   faturaNo        String?
   kdvOrani        Int              @default(0)
-  status          String           @default("AKTIF")
+  status          AktifIptalStatus @default(AKTIF)
   sourceType      String?
   sourceId        String?
   // Doktor hakediş ödemesi kayıtları için: hangi doktora, hangi hakediş dönemine
@@ -1638,7 +1649,7 @@ model Expense {
   periodMonth     Int?
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
-  institution     Institution?     @relation(fields: [institutionId], references: [id])
+  institution     Institution      @relation(fields: [institutionId], references: [id])
   expenseCategory ExpenseCategory? @relation(fields: [categoryId], references: [id])
   doctor          User?            @relation("ExpenseDoctor", fields: [doctorId], references: [id])
 
@@ -1651,7 +1662,7 @@ model Expense {
 
 model Firma {
   id                 String                   @id @default(cuid())
-  institutionId      String?
+  institutionId      String
   name               String
   phone              String?
   iban               String?
@@ -1665,7 +1676,7 @@ model Firma {
   isActive           Boolean                  @default(true)
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
-  institution        Institution?             @relation(fields: [institutionId], references: [id])
+  institution        Institution              @relation(fields: [institutionId], references: [id])
   islemler           FirmaIslem[]
   kontaktler         FirmaKontakt[]
   purchases          Purchase[]
@@ -1691,7 +1702,7 @@ model FirmaIslem {
   yontem             PaymentMethod?
   dueDate            DateTime?
   kdvOrani           Int                      @default(0)
-  status             String                   @default("AKTIF")
+  status             AktifIptalStatus         @default(AKTIF)
   sourceType         String?
   sourceId           String?
   createdAt          DateTime                 @default(now())
@@ -1746,7 +1757,7 @@ model FirmaKontakt {
 // satır detayları (hangi üründen kaç adet, hangi fiyattan) burada tutulur.
 model Purchase {
   id                String                @id @default(cuid())
-  institutionId     String?
+  institutionId     String
   firmaId           String
   firmaIslemId      String?               @unique
   requestKey        String?               @unique
@@ -1757,11 +1768,11 @@ model Purchase {
   faturaNo          String?
   aciklama          String?
   kdvOrani          Int                   @default(0)
-  status            String                @default("AKTIF")
+  status            AktifIptalStatus      @default(AKTIF)
   createdById       String?
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
-  institution       Institution?          @relation(fields: [institutionId], references: [id])
+  institution       Institution           @relation(fields: [institutionId], references: [id])
   firma             Firma                 @relation(fields: [firmaId], references: [id])
   firmaIslem        FirmaIslem?           @relation(fields: [firmaIslemId], references: [id])
   createdBy         User?                 @relation("PurchaseCreatedBy", fields: [createdById], references: [id])
@@ -1862,6 +1873,29 @@ enum AppointmentType {
   STANDART
   KONTROL
   ACIL
+}
+
+enum AppointmentStatus {
+  BEKLIYOR
+  GELDI
+  TAMAMLANDI
+  GELMEDI
+  IPTAL
+  // Eski istemcilerde/verilerde kullanılan değer — yeni ekranlar ham durum
+  // olarak BEKLIYOR/GELDI değerlerini gönderir (bkz. src/lib/appointment-status.ts).
+  ONAYLANDI
+}
+
+// AKTIF/IPTAL yaşam döngüsüne sahip finans kayıtları (Purchase, FirmaIslem,
+// Expense) arasında paylaşılır — üçü de aynı iki durumu kullanır.
+enum AktifIptalStatus {
+  AKTIF
+  IPTAL
+}
+
+enum StockMovementType {
+  GIRIS
+  CIKIS
 }
 
 enum FollowUpType {
@@ -1985,7 +2019,7 @@ enum PaymentTermType {
 
 model Document {
   id              String           @id @default(cuid())
-  institutionId   String?
+  institutionId   String
   patientId       String
   uploadedById    String
   category        DocumentCategory @default(BELGE)
@@ -2000,7 +2034,7 @@ model Document {
   createdAt       DateTime         @default(now())
   patient         Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
   uploadedBy      User             @relation(fields: [uploadedById], references: [id])
-  institution     Institution?     @relation(fields: [institutionId], references: [id])
+  institution     Institution      @relation(fields: [institutionId], references: [id])
 
   @@index([patientId])
   @@index([institutionId])
@@ -2022,7 +2056,7 @@ enum DocumentCategory {
 
 model Waitlist {
   id            String         @id @default(cuid())
-  institutionId String?
+  institutionId String
   patientId     String
   doctorId      String?
   createdById   String
@@ -2040,7 +2074,7 @@ model Waitlist {
   doctor        User?          @relation("WaitlistDoctor", fields: [doctorId], references: [id])
   appointment   Appointment?   @relation(fields: [appointmentId], references: [id])
   createdBy     User           @relation("WaitlistCreatedBy", fields: [createdById], references: [id])
-  institution   Institution?   @relation(fields: [institutionId], references: [id])
+  institution   Institution    @relation(fields: [institutionId], references: [id])
 
   @@index([institutionId])
   @@index([status])

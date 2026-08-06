@@ -7,6 +7,7 @@ import { resolveOrCreateStockItem } from "@/lib/purchase-helpers";
 import { applyFirmaIslemIntegration } from "@/lib/firma-integration";
 import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
 import { purchasePaymentToken } from "@/lib/purchase-payment-links";
+import { isValidDateKey, turkeyDayRangeUtc } from "@/lib/tz";
 
 function toPublicPurchase(purchase: any) {
   if (!purchase) return purchase;
@@ -29,6 +30,12 @@ export const GET = withApiTiming("purchases", async function GET(req: NextReques
     const from = searchParams.get("from");
     const to = searchParams.get("to");
     const q = searchParams.get("q");
+    if ((from && !isValidDateKey(from)) || (to && !isValidDateKey(to))) {
+      return NextResponse.json({ message: "Geçersiz tarih aralığı" }, { status: 400 });
+    }
+    if (from && to && from > to) {
+      return NextResponse.json({ message: "Başlangıç tarihi bitiş tarihinden sonra olamaz" }, { status: 400 });
+    }
 
     const where: Record<string, unknown> = {
       status: "AKTIF",
@@ -37,8 +44,8 @@ export const GET = withApiTiming("purchases", async function GET(req: NextReques
     if (firmaId) where.firmaId = firmaId;
     if (from || to) {
       where.tarih = {
-        ...(from ? { gte: new Date(from) } : {}),
-        ...(to ? { lte: new Date(to + "T23:59:59") } : {}),
+        ...(from ? { gte: turkeyDayRangeUtc(from).start } : {}),
+        ...(to ? { lte: turkeyDayRangeUtc(to).end } : {}),
       };
     }
     if (q) {
@@ -87,8 +94,14 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
+    if (!auth.user.institutionId) {
+      return NextResponse.json({ error: "Satın alma kaydı için kurum bağlamı zorunlu" }, { status: 403 });
+    }
     institutionId = auth.user.institutionId;
-    requestKey = req.headers.get("Idempotency-Key")?.trim().slice(0, 180) || null;
+    requestKey = req.headers.get("Idempotency-Key")?.trim() || null;
+    if (requestKey && (requestKey.length < 8 || requestKey.length > 180)) {
+      return NextResponse.json({ error: "İşlem anahtarı geçersiz" }, { status: 400 });
+    }
 
     if (requestKey) {
       const existing = await (prisma as any).purchase.findFirst({

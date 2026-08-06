@@ -8,6 +8,9 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
     const body = await req.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ error: "Geçersiz istek" }, { status: 400 });
+    }
     const existing = await (prisma as any).expenseCategory.findFirst({
       where: {
         id: params.id,
@@ -21,9 +24,28 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     // ham `body`yi olduğu gibi vermek institutionId gibi alanların dışarıdan
     // değiştirilebilmesine yol açardı.
     const data: Record<string, unknown> = {};
-    if (body.name !== undefined) data.name = body.name;
-    if (body.isActive !== undefined) data.isActive = Boolean(body.isActive);
-    if (body.isDoctorPayout !== undefined) data.isDoctorPayout = Boolean(body.isDoctorPayout);
+    if (body.name !== undefined) {
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      if (!name || name.length > 120) {
+        return NextResponse.json({ error: "Kategori adı 1-120 karakter olmalı" }, { status: 400 });
+      }
+      data.name = name;
+    }
+    if (body.isActive !== undefined) {
+      if (typeof body.isActive !== "boolean") {
+        return NextResponse.json({ error: "Aktiflik bilgisi geçersiz" }, { status: 400 });
+      }
+      data.isActive = body.isActive;
+    }
+    if (body.isDoctorPayout !== undefined) {
+      if (typeof body.isDoctorPayout !== "boolean") {
+        return NextResponse.json({ error: "Hakediş kategorisi bilgisi geçersiz" }, { status: 400 });
+      }
+      data.isDoctorPayout = body.isDoctorPayout;
+    }
+    if (Object.keys(data).length === 0) {
+      return NextResponse.json({ error: "Güncellenecek alan bulunamadı" }, { status: 400 });
+    }
 
     const cat = await (prisma as any).expenseCategory.update({
       where: { id: existing.id },

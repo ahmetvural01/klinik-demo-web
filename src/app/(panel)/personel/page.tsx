@@ -8,6 +8,7 @@ import { ChevronRight, Search, UserPlus } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 
@@ -139,16 +140,16 @@ export default function PersonelPage() {
 
   return (
     <section className="space-y-3">
-      <div className="ui-surface flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-bold text-slate-900">Personel</h1>
-          <Badge>{staff.length} kişi</Badge>
-          <Badge tone="success">{staff.filter((person) => person.isActive).length} aktif</Badge>
-        </div>
-        <Button icon={UserPlus} href="/personel-ekle">
-          Yeni Personel Ekle
-        </Button>
-      </div>
+      <PageHeader
+        icon="person"
+        title="Personel"
+        description="Ekip yetkilerini, çalışma saatlerini ve aktif personel durumunu yönetin."
+        stats={[
+          { label: "Kişi", value: staff.length },
+          { label: "Aktif", value: staff.filter((person) => person.isActive).length, color: "text-emerald-700" },
+        ]}
+        actions={<Button icon={UserPlus} href="/personel-ekle">Yeni Personel Ekle</Button>}
+      />
 
       <div className="ui-toolbar flex flex-wrap items-center gap-2 p-2.5">
         <div className="relative flex-1 min-w-48">

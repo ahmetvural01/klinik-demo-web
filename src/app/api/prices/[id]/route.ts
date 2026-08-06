@@ -40,6 +40,9 @@ export async function PUT(request: NextRequest, props: Params) {
     if (auth.error) return auth.error;
 
     const body = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
+    }
     const existing = await prisma.priceItem.findFirst({
       where: {
         id: params.id,
@@ -56,8 +59,14 @@ export async function PUT(request: NextRequest, props: Params) {
     const code = String(body.code ?? existing.code).trim();
     const treatment = String(body.treatment ?? existing.treatment).trim();
     const amount = body.amount !== undefined ? Number(body.amount) : Number(existing.amount);
-    if (!code || !treatment || !Number.isFinite(amount) || amount < 0) {
+    if (!code || code.length > 50 || !treatment || treatment.length > 200 || !Number.isFinite(amount) || amount < 0 || amount > 99_999_999.99) {
       return NextResponse.json({ message: "Geçerli kod, tedavi ve tutar zorunlu" }, { status: 400 });
+    }
+    if (body.isFavorite !== undefined && typeof body.isFavorite !== "boolean") {
+      return NextResponse.json({ message: "Favori bilgisi geçersiz" }, { status: 400 });
+    }
+    if (body.isCustom !== undefined && typeof body.isCustom !== "boolean") {
+      return NextResponse.json({ message: "Fiyat türü bilgisi geçersiz" }, { status: 400 });
     }
 
     const item = await prisma.priceItem.update({
@@ -66,7 +75,8 @@ export async function PUT(request: NextRequest, props: Params) {
         code,
         treatment,
         amount,
-        isFavorite: Boolean(body.isFavorite)
+        isFavorite: body.isFavorite ?? existing.isFavorite,
+        isCustom: body.isCustom ?? existing.isCustom,
       }
     });
 
@@ -106,6 +116,9 @@ export async function PATCH(request: NextRequest, props: Params) {
     if (auth.error) return auth.error;
 
     const body = await request.json();
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
+    }
     const existing = await prisma.priceItem.findFirst({
       where: {
         id: params.id,
@@ -118,7 +131,7 @@ export async function PATCH(request: NextRequest, props: Params) {
 
     if (body.amount !== undefined) {
       const nextAmount = Number(body.amount);
-      if (!Number.isFinite(nextAmount) || nextAmount < 0) {
+      if (!Number.isFinite(nextAmount) || nextAmount < 0 || nextAmount > 99_999_999.99) {
         return NextResponse.json({ message: "Geçerli bir tutar girin" }, { status: 400 });
       }
     }

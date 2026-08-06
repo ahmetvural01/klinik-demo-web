@@ -38,7 +38,10 @@ export async function PUT(request: NextRequest, props: Params) {
   const auth = await requireAuth("support:write");
   if (auth.error) return auth.error;
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek gövdesi" }, { status: 400 });
+  }
   const existing = await prisma.supportTicket.findFirst({
     where: supportTenantWhere(params.id, auth.user.role, auth.user.institutionId),
   });
@@ -53,13 +56,28 @@ export async function PUT(request: NextRequest, props: Params) {
   if (body.answer !== undefined && auth.user.role !== "SUPERADMIN") {
     return NextResponse.json({ message: "Yanıt alanını yalnızca destek ekibi düzenleyebilir." }, { status: 403 });
   }
+  const subject = body.subject !== undefined ? String(body.subject).trim() : undefined;
+  const message = body.message !== undefined ? String(body.message).trim() : undefined;
+  const answer = body.answer !== undefined ? String(body.answer).trim() : undefined;
+  if (subject !== undefined && (!subject || subject.length > 120)) {
+    return NextResponse.json({ message: "Konu 1-120 karakter olmalıdır." }, { status: 400 });
+  }
+  if (message !== undefined && (!message || message.length > 5_000)) {
+    return NextResponse.json({ message: "Mesaj 1-5000 karakter olmalıdır." }, { status: 400 });
+  }
+  if (answer !== undefined && (!answer || answer.length > 10_000)) {
+    return NextResponse.json({ message: "Yanıt 1-10000 karakter olmalıdır." }, { status: 400 });
+  }
+  if (subject === undefined && message === undefined && answer === undefined) {
+    return NextResponse.json({ message: "Güncellenecek alan bulunamadı." }, { status: 400 });
+  }
 
   const ticket = await prisma.supportTicket.update({
     where: { id: params.id },
     data: {
-      ...(body.subject !== undefined && { subject: body.subject }),
-      ...(body.message !== undefined && { message: body.message }),
-      ...(body.answer !== undefined && { answer: body.answer }),
+      ...(subject !== undefined && { subject }),
+      ...(message !== undefined && { message }),
+      ...(answer !== undefined && { answer }),
     }
   });
 

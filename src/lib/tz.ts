@@ -21,6 +21,23 @@ export function turkeyDateKey(date: Date = new Date()): string {
   return `${y}-${m}-${d}`;
 }
 
+/** Verilen anın Türkiye takvimindeki yıl ve ayını döner. */
+export function turkeyYearMonth(date: Date = new Date()): { year: number; month: number } {
+  const [year, month] = turkeyDateKey(date).split("-").map(Number);
+  return { year, month };
+}
+
+/** YYYY-MM-DD biçiminin gerçek bir takvim gününü temsil edip etmediğini denetler. */
+export function isValidDateKey(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
+}
+
 /**
  * "YYYY-MM-DD" bir Türkiye takvim gününün [00:00, 23:59:59.999] Türkiye yerel saat
  * aralığını UTC Date olarak döner. `new Date(dateStr + "T00:00:00.000Z")` kullanmak
@@ -38,6 +55,11 @@ export function turkeyTimeKey(date: Date): string {
   const h = String(t.getUTCHours()).padStart(2, "0");
   const m = String(t.getUTCMinutes()).padStart(2, "0");
   return `${h}:${m}`;
+}
+
+/** Verilen anı datetime-local alanlarının beklediği Türkiye yerel biçimine dönüştürür. */
+export function turkeyDateTimeLocalValue(date: Date = new Date()): string {
+  return `${turkeyDateKey(date)}T${turkeyTimeKey(date)}`;
 }
 
 /** Türkiye yerel tarih/saat alanlarını UTC Date nesnesine dönüştürür. */

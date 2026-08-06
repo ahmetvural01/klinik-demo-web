@@ -4,10 +4,11 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ArrowUpRight, CalendarClock, Check, ChevronLeft, ChevronRight, Megaphone, Pencil, Send, Trash2, WalletCards, X } from "lucide-react";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 
 const CalendarEmptyIcon = createSceneIllustration("randevu", 160);
+import { Button } from "@/components/ui/Button";
 import { ModuleIcon, type ModuleKey } from "@/components/ui/ModuleIcon";
 import { CountUp } from "@/components/ui/CountUp";
 import { StatusFeedback } from "@/components/ui/StatusFeedback";
@@ -15,6 +16,8 @@ import { confirmDialog } from "@/lib/confirm-client";
 import { cachedGet } from "@/lib/client-cache";
 import { showToastSafe } from "@/lib/toast-client";
 import { getDisplayAppointmentStatus } from "@/lib/appointment-status";
+import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 
 type ApptStatus = "BEKLIYOR" | "GELDI" | "IPTAL" | "TAMAMLANDI" | string;
 type Appt = { id: string; startAt: string; endAt: string; status: ApptStatus; patient: { fullName: string }; doctor: { fullName: string }; type: string };
@@ -22,8 +25,17 @@ type Msg = { id: string; userId: string; text: string; createdAt: string; user: 
 type Ann = { id: string; text: string; createdAt: string };
 type CrossStats = { pendingLabOrders: number; overdueInstallments: number; todayInstallments: number };
 type InstallmentAgendaItem = { id: string; patientName: string; amount: number; dueDate: string; days: number };
-type HomeTask = { id: string; title: string; meta?: string; href: string; tone: "red" | "amber" | "blue" | "slate" };
-type SummaryItem = { id: string; label: string; value: string; tone: "blue" | "emerald" | "amber" | "red" | "slate"; href: string };
+type HomeTask = {
+  id: string;
+  title: string;
+  meta?: string;
+  href: string;
+  tone: "red" | "amber" | "blue" | "purple" | "slate";
+  module: ModuleKey;
+  count: number;
+  severity: "Kritik" | "Yüksek" | "Normal";
+};
+type SummaryItem = { id: string; label: string; value: string; tone: "blue" | "emerald" | "amber" | "red" | "slate"; href: string; module: ModuleKey; countValue?: number; accentOverride?: "amber" };
 type StockLite = { id: string; name: string; quantity: number; minQuantity: number };
 type SmsLogLite = { id: string; action: string; createdAt: string };
 
@@ -119,13 +131,15 @@ function readHomeCache() {
 }
 
 export default function AnasayfaPage() {
+  const { can } = usePermissions();
   const [crossStats, setCrossStats] = useState<CrossStats>({ pendingLabOrders: 0, overdueInstallments: 0, todayInstallments: 0 });
   const [installmentAgenda, setInstallmentAgenda] = useState<{ overdue: InstallmentAgendaItem[]; upcoming: InstallmentAgendaItem[] }>({ overdue: [], upcoming: [] });
   const [todayCiro, setTodayCiro] = useState(0);
   const [appts, setAppts] = useState<Appt[]>([]);
   const [dateOffset, setDateOffset] = useState(0);
-  const [apptLoading, setApptLoading] = useState(false);
+  const [apptLoading, setApptLoading] = useState(true);
   const [messages, setMessages] = useState<Msg[]>([]);
+  const [messagesLoaded, setMessagesLoaded] = useState(false);
   const [msgText, setMsgText] = useState("");
   const [msgLoading, setMsgLoading] = useState(false);
   const [annSaving, setAnnSaving] = useState(false);
@@ -133,9 +147,11 @@ export default function AnasayfaPage() {
   const [editingMsgText, setEditingMsgText] = useState("");
   const [currentUserId, setCurrentUserId] = useState("");
   const [announcements, setAnnouncements] = useState<Ann[]>([]);
+  const [announcementsLoaded, setAnnouncementsLoaded] = useState(false);
   const [annText, setAnnText] = useState("");
   const [annRole, setAnnRole] = useState("");
   const [hydrated, setHydrated] = useState(false);
+  const [rolePanelsLoaded, setRolePanelsLoaded] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const rolePanelsLoadingRef = useRef(false);
   const messagesLoadingRef = useRef(false);
@@ -155,15 +171,19 @@ export default function AnasayfaPage() {
     setInstallmentAgenda(cachedHome.installmentAgenda);
     setTodayCiro(cachedHome.todayCiro);
     setAppts(cachedHome.appts);
+    setApptLoading(false);
     setDateOffset(cachedHome.dateOffset);
     setMessages(cachedHome.messages);
+    setMessagesLoaded(true);
     setCurrentUserId(cachedHome.currentUserId);
     setAnnouncements(cachedHome.announcements);
+    setAnnouncementsLoaded(true);
     setAnnRole(cachedHome.role);
     setHydrated(Boolean(cachedHome.role));
     setCriticalStockCount(cachedHome.criticalStockCount);
     setFailedSmsCount(cachedHome.failedSmsCount);
     setLastSyncAt(cachedHome.lastSyncAt);
+    setRolePanelsLoaded(true);
   }, []);
 
   useEffect(() => {
@@ -200,18 +220,22 @@ export default function AnasayfaPage() {
   };
 
   const loadMessages = async () => {
+    if (!can("messages:read")) { setMessages([]); setMessagesLoaded(true); return; }
     if (messagesLoadingRef.current) return;
     if (typeof document !== "undefined" && document.hidden) return;
     messagesLoadingRef.current = true;
     try {
       const res = await fetch("/api/messages");
-      if (!res.ok) return;
+      if (!res.ok) { setMessagesLoaded(true); return; }
       const d = await res.json();
       const list = Array.isArray(d) ? d : [];
       setMessages(list);
+      setMessagesLoaded(true);
       markMessagesSeen(list);
       setLastSyncAt(new Date().toISOString());
-    } catch {}
+    } catch {
+      setMessagesLoaded(true);
+    }
     finally {
       messagesLoadingRef.current = false;
     }
@@ -240,11 +264,11 @@ export default function AnasayfaPage() {
           return fallback;
         }
       };
-      const canSeeRoleCiro = ["YONETICI", "SUPERADMIN", "MUHASEBE"].includes(role || "");
-      const canSeeTaksitDash = ["YONETICI", "SUPERADMIN", "MUHASEBE", "BANKO"].includes(role || "");
-      const canSeeLabDash = ["YONETICI", "SUPERADMIN", "DOKTOR", "ASISTAN"].includes(role || "");
-      const canSeeStockDash = ["YONETICI", "SUPERADMIN", "MUHASEBE"].includes(role || "");
-      const canSeeAuditDash = ["YONETICI", "SUPERADMIN"].includes(role || "");
+      const canSeeRoleCiro = can("finance:read");
+      const canSeeTaksitDash = can("installments:read");
+      const canSeeLabDash = can("lab:read");
+      const canSeeStockDash = can("stock:read");
+      const canSeeAuditDash = can("audit:read");
 
       setTodayCiro(0);
 
@@ -343,6 +367,7 @@ export default function AnasayfaPage() {
       setLastSyncAt(new Date().toISOString());
     } finally {
       rolePanelsLoadingRef.current = false;
+      setRolePanelsLoaded(true);
     }
   };
 
@@ -361,7 +386,12 @@ export default function AnasayfaPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     void loadMessages();
-    fetch("/api/announcements").then(r => (r.ok ? r.json() : [])).then(d => setAnnouncements(Array.isArray(d) ? d : [])).catch(() => {});
+    if (can("announcements:read")) {
+      fetch("/api/announcements").then(r => (r.ok ? r.json() : [])).then(d => { setAnnouncements(Array.isArray(d) ? d : []); setAnnouncementsLoaded(true); }).catch(() => setAnnouncementsLoaded(true));
+    } else {
+      setAnnouncements([]);
+      setAnnouncementsLoaded(true);
+    }
     cachedGet<{ role?: string; id?: string }>("/api/auth/me", 60_000).then(d => {
       baseRoleRef.current = d?.role || "";
       const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
@@ -409,6 +439,12 @@ export default function AnasayfaPage() {
   }, []);
 
   useEffect(() => {
+    if (!can("appointments:read")) {
+      setAppts([]);
+      setApptLoading(false);
+      setAppointmentError("");
+      return;
+    }
     setApptLoading(true);
     const controller = new AbortController();
     fetch("/api/appointments?date=" + dateStr, { signal: controller.signal })
@@ -438,7 +474,7 @@ export default function AnasayfaPage() {
         void loadMessages();
         if (annRoleRef.current) void loadRolePanels(annRoleRef.current);
 
-        fetch("/api/appointments?date=" + dateStr)
+        if (can("appointments:read")) fetch("/api/appointments?date=" + dateStr)
           .then(async (r) => {
             if (!r.ok) return; // geçici hata — ekrandaki mevcut randevu listesi olduğu gibi kalsın, yanlışlıkla boşaltılmasın
             const d = await r.json().catch(() => null);
@@ -569,31 +605,32 @@ export default function AnasayfaPage() {
   const todayCancel  = appts.filter(a => a.status === "IPTAL").length;
 
   // Rol bazlı içerik kontrolü
-  const isYonetici   = annRole === "YONETICI" || annRole === "SUPERADMIN";
-  const isDoktorRole = annRole === "DOKTOR";
-  const isAsistanRole = annRole === "ASISTAN";
-  const isBankoRole  = annRole === "BANKO";
-  const isMuhasebeRole = annRole === "MUHASEBE";
-  const canSeeCiro   = isYonetici || isMuhasebeRole;
-  const hideTaksitAlerts = isDoktorRole || isAsistanRole;             // Taksit uyarıları finans dışında gizli
-  const canModerateAllMessages = annRole === "YONETICI" || annRole === "SUPERADMIN";
-  const canSeeInternalChat = true;
-  const canSeeInstallments = isYonetici || isMuhasebeRole || isBankoRole;
-  const canSeeLabTask = isYonetici || isDoktorRole || isAsistanRole;
-  const canSeeStockTask = isYonetici || isMuhasebeRole;
+  const canSeeAppointments = can("appointments:read");
+  const canSeeCiro   = can("finance:read");
+  const canModerateAllMessages = can("messages:write");
+  const canSeeInternalChat = can("messages:read");
+  const canWriteInternalChat = can("messages:write");
+  const canSeeAnnouncements = can("announcements:read");
+  const canWriteAnnouncements = can("announcements:write");
+  const canSeeInstallments = can("installments:read");
+  const canSeeLabTask = can("lab:read");
+  const canSeeStockTask = can("stock:read");
   const roleLabel = ROLE_LABELS[annRole] || "Kullanıcı";
   const lastSyncLabel = lastSyncAt
     ? new Date(lastSyncAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })
     : "--:--";
 
   const homeTasks: HomeTask[] = [];
-  if (todayWaiting > 0) {
+  if (canSeeAppointments && todayWaiting > 0) {
     homeTasks.push({
       id: "t-randevu",
       title: `${todayWaiting} randevu işlem bekliyor`,
       meta: "Durum güncelleme veya karşılama işlemini tamamlayın",
       href: "/randevu",
       tone: "blue",
+      module: "calendar",
+      count: todayWaiting,
+      severity: "Normal",
     });
   }
   // Gecikmiş/yaklaşan taksit sayıları burada ayrıca özetlenmiyor — aynı bilgi
@@ -605,7 +642,10 @@ export default function AnasayfaPage() {
       title: `${crossStats.pendingLabOrders} lab siparişi bekliyor`,
       meta: "Laboratuvar sürecini gözden geçirip aksiyon alın",
       href: "/lab",
-      tone: "blue",
+      tone: "purple",
+      module: "flask",
+      count: crossStats.pendingLabOrders,
+      severity: crossStats.pendingLabOrders > 2 ? "Yüksek" : "Normal",
     });
   }
   if (canSeeStockTask && criticalStockCount > 0) {
@@ -615,23 +655,50 @@ export default function AnasayfaPage() {
       meta: "Satın alma veya stok kontrolü başlatın",
       href: "/stok",
       tone: "red",
+      module: "box",
+      count: criticalStockCount,
+      severity: "Kritik",
     });
   }
-  if (isYonetici && failedSmsCount > 0) {
+  if (can("audit:read") && can("sms:read") && failedSmsCount > 0) {
     homeTasks.push({
       id: "t-sms",
       title: `${failedSmsCount} başarısız SMS kaydı var`,
       meta: "SMS sağlayıcı veya alıcı bilgilerini kontrol edin",
       href: "/sms",
       tone: "amber",
+      module: "sms",
+      count: failedSmsCount,
+      severity: failedSmsCount > 2 ? "Yüksek" : "Normal",
     });
   }
   // Duyuru eksikliği günlük aksiyon değildir; anasayfayı gereksiz kalabalıklaştırmasın.
-  const taskDotClass: Record<HomeTask["tone"], string> = {
-    red: "bg-red-500",
-    amber: "bg-amber-500",
-    blue: "bg-primary",
-    slate: "bg-slate-400",
+  const taskToneClass: Record<HomeTask["tone"], { card: string; badge: string; severity: string }> = {
+    red: {
+      card: "border-red-200 bg-red-50/80 text-red-700 hover:border-red-300 hover:bg-red-50",
+      badge: "bg-red-600 text-white",
+      severity: "bg-red-100 text-red-700",
+    },
+    amber: {
+      card: "border-amber-200 bg-amber-50/80 text-amber-700 hover:border-amber-300 hover:bg-amber-50",
+      badge: "bg-amber-500 text-white",
+      severity: "bg-amber-100 text-amber-700",
+    },
+    blue: {
+      card: "border-primary/20 bg-primary/5 text-primary hover:border-primary/30 hover:bg-primary/10",
+      badge: "bg-primary text-white",
+      severity: "bg-primary/10 text-primary",
+    },
+    purple: {
+      card: "border-violet-200 bg-violet-50/80 text-violet-700 hover:border-violet-300 hover:bg-violet-50",
+      badge: "bg-violet-600 text-white",
+      severity: "bg-violet-100 text-violet-700",
+    },
+    slate: {
+      card: "border-slate-200 bg-slate-50 text-slate-700",
+      badge: "bg-slate-600 text-white",
+      severity: "bg-slate-100 text-slate-600",
+    },
   };
   const hasHomeTasks = homeTasks.length > 0;
 
@@ -646,23 +713,27 @@ export default function AnasayfaPage() {
   // "Bekleyen Lab" burada ayrıca bir sayaç olarak durmuyor — aynı sayı zaten
   // "Bugün Dikkat Gerekenler" görev listesinde ve sidebar rozetinde var,
   // üçüncü bir tekrar gereksizdi.
-  const summaryItems: (SummaryItem & { module: ModuleKey; accentOverride?: "amber" })[] = [
-    { id: "s-appt-total", label: "Bugünkü Randevu", value: String(todayTotal), tone: "blue", href: "/randevu", module: "calendar" },
-    { id: "s-appt-pending", label: "İşlem Bekleyen", value: String(todayWaiting), tone: "amber", href: "/randevu", module: "calendar", accentOverride: "amber" },
+  const summaryItems: SummaryItem[] = [
+    ...(canSeeAppointments ? [
+      { id: "s-appt-total", label: "Bugünkü Randevu", value: String(todayTotal), tone: "blue" as const, href: "/randevu", module: "calendar" as ModuleKey, countValue: todayTotal },
+      { id: "s-appt-pending", label: "İşlem Bekleyen", value: String(todayWaiting), tone: "amber" as const, href: "/randevu", module: "calendar" as ModuleKey, countValue: todayWaiting, accentOverride: "amber" as const },
+    ] : []),
+    ...(canSeeCiro ? [{ id: "s-today-revenue", label: "Bugün Ciro", value: `₺${todayCiro.toLocaleString("tr-TR")}`, tone: "emerald" as const, href: "/muhasebe", module: "finance" as ModuleKey }] : []),
+    { id: "s-open-alerts", label: "Açık Uyarılar", value: String(homeTasks.length), tone: "red", href: "#dikkat-gerekenler", module: "clipboard", countValue: homeTasks.length },
   ];
 
   return (
-    <div className="space-y-4 pb-2">
+    <div className="ui-dashboard-vivid space-y-4 pb-2">
 
       {/* ── HEADER ────────────────────────────── */}
-      <div className="ui-surface overflow-hidden border-primary/15 bg-primary-50/35 px-4 py-4">
+      <div className="ui-dashboard-hero ui-surface overflow-hidden px-4 py-4">
         <div className="flex flex-wrap items-end justify-between gap-3">
           <div>
-            <p className="text-[11px] font-extrabold uppercase tracking-[0.18em] text-primary/70">Klinik Yönetim Paneli</p>
-            <h1 className="font-display text-2xl font-extrabold tracking-tight text-slate-950">Günlük görünüm</h1>
-            <p className="mt-1 text-sm text-slate-500">{dateLabel}</p>
+            <p className="ui-dashboard-hero-eyebrow text-[11px] font-extrabold uppercase tracking-[0.18em]">Klinik Yönetim Paneli</p>
+            <h1 className="ui-dashboard-hero-title font-display text-2xl font-extrabold tracking-tight">Günlük görünüm</h1>
+            <p className="ui-dashboard-hero-date mt-1 text-sm">{dateLabel}</p>
           </div>
-          <p className="pb-0.5 text-xs font-semibold text-slate-500">{roleLabel}{lastSyncAt ? ` · Güncellendi ${lastSyncLabel}` : ""}</p>
+          <p className="ui-dashboard-hero-meta pb-0.5 text-xs font-semibold"><span className="ui-dashboard-live-dot" aria-hidden="true" />{roleLabel}{lastSyncAt ? ` · Güncellendi ${lastSyncLabel}` : ""}</p>
         </div>
       </div>
 
@@ -688,65 +759,82 @@ export default function AnasayfaPage() {
             key={item.id}
             href={item.href}
             style={{ ["--row-delay" as string]: `${idx * 60}ms` }}
-            className={`ui-interactive ui-kpi-in group relative min-w-[150px] overflow-hidden rounded-2xl border px-5 py-4 shadow-sm ${idx === 0 ? "border-primary/15 bg-gradient-to-br from-primary-50 via-white to-white" : "border-amber-200/70 bg-gradient-to-br from-amber-50 via-white to-white"}`}
+            data-tone={item.tone}
+            className="ui-dashboard-kpi ui-interactive ui-kpi-in group relative min-w-[150px] overflow-hidden rounded-2xl border px-5 py-4 shadow-sm"
           >
-            <span
-              aria-hidden="true"
-              className={`pointer-events-none absolute -right-6 -top-6 h-24 w-24 rounded-full blur-2xl transition-opacity duration-200 group-hover:opacity-80 ${idx === 0 ? "bg-primary/15" : "bg-amber-400/20"}`}
-            />
             <div className="relative flex items-start justify-between gap-2">
               <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">{item.label}</p>
               <ModuleIcon module={item.module} accentOverride={item.accentOverride} size="sm" />
             </div>
             <p className={`relative mt-1 text-[2.25rem] font-extrabold leading-none ${summaryValueClass[item.tone]}`}>
-              <CountUp value={idx === 0 ? todayTotal : todayWaiting} />
+              {item.countValue === undefined ? item.value : <CountUp value={item.countValue} />}
             </p>
+            <span className="ui-dashboard-kpi-caption">Detayları görüntüle <ArrowUpRight className="h-3 w-3" /></span>
           </Link>
         ))}
       </div>
 
       {canSeeInstallments && (installmentAgenda.overdue.length > 0 || installmentAgenda.upcoming.length > 0) && (
         <div className={installmentAgenda.overdue.length > 0 ? "ui-surface-critical" : "ui-surface-warning"}>
-          <div className="flex items-center justify-between border-b border-slate-100/80 px-5 py-3">
-            <div>
-              <h2 className="text-sm font-bold text-slate-800">Taksit Takvimi</h2>
-              <p className="text-xs text-slate-500">Geciken ve 7 gün içinde vadesi gelecek ödemeler</p>
+          <div className="flex items-center justify-between gap-3 border-b border-slate-100/80 px-5 py-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-amber-50 text-amber-700">
+                <WalletCards className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <h2 className="truncate text-sm font-extrabold text-slate-800">Taksit Takvimi</h2>
+                <p className="truncate text-xs text-slate-500">Geciken ve 7 gün içinde vadesi gelecek ödemeler</p>
+              </div>
             </div>
             <Link href="/muhasebe?tab=taksit" className="text-xs font-semibold text-primary hover:underline">Tümüne Git →</Link>
           </div>
 
-          <div className="p-1">
+          <div className="space-y-2 p-3">
             {installmentAgenda.overdue.length > 0 && (
               <>
-                <div className="flex items-center justify-between px-3 pt-2">
+                <div className="flex items-center justify-between">
                   <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Gecikmiş</p>
                   <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-700">{installmentAgenda.overdue.length}</span>
                 </div>
-                {installmentAgenda.overdue.map((item) => (
-                  <div key={item.id} className="flex items-start gap-3 rounded-xl px-3 py-2 hover:bg-slate-50">
-                    <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-red-500" />
-                    <p className="text-xs">
-                      <span className="font-semibold text-slate-800">{item.patientName}</span>
-                      <span className="text-slate-500"> · ₺{item.amount.toLocaleString("tr-TR")} · {item.days} gün gecikti</span>
-                    </p>
-                  </div>
+                {installmentAgenda.overdue.map((item, idx) => (
+                  <Link
+                    key={item.id}
+                    href="/muhasebe?tab=taksit"
+                    style={{ ["--row-delay" as string]: `${idx * 35}ms` }}
+                    className="ui-row-in ui-pressable group flex items-start gap-3 rounded-lg border border-red-200 bg-red-50/70 px-3 py-2.5 text-red-700 hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-200 focus-visible:ring-offset-2"
+                  >
+                    <ModuleIcon module="finance" size="sm" className="mt-0.5 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-extrabold text-slate-800">{item.patientName}</p>
+                      <p className="mt-0.5 text-[11px] font-medium text-slate-600">₺{item.amount.toLocaleString("tr-TR")} · {item.days} gün gecikti</p>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-red-600 px-2 py-0.5 text-[10px] font-extrabold text-white">Gecikti</span>
+                    <ArrowUpRight className="mt-1 h-3.5 w-3.5 shrink-0 text-red-400 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                  </Link>
                 ))}
               </>
             )}
             {installmentAgenda.upcoming.length > 0 && (
               <>
-                <div className="flex items-center justify-between px-3 pt-3">
+                <div className="flex items-center justify-between pt-1">
                   <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Yaklaşan</p>
                   <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-bold text-amber-700">{installmentAgenda.upcoming.length}</span>
                 </div>
-                {installmentAgenda.upcoming.map((item) => (
-                  <div key={item.id} className="flex items-start gap-3 rounded-xl px-3 py-2 hover:bg-slate-50">
-                    <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-amber-500" />
-                    <p className="text-xs">
-                      <span className="font-semibold text-slate-800">{item.patientName}</span>
-                      <span className="text-slate-500"> · ₺{item.amount.toLocaleString("tr-TR")} · {item.days === 0 ? "bugün" : `${item.days} gün sonra`}</span>
-                    </p>
-                  </div>
+                {installmentAgenda.upcoming.map((item, idx) => (
+                  <Link
+                    key={item.id}
+                    href="/muhasebe?tab=taksit"
+                    style={{ ["--row-delay" as string]: `${idx * 35}ms` }}
+                    className="ui-row-in ui-pressable group flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2.5 text-amber-700 hover:bg-amber-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-200 focus-visible:ring-offset-2"
+                  >
+                    <ModuleIcon module="finance" size="sm" className="mt-0.5 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-extrabold text-slate-800">{item.patientName}</p>
+                      <p className="mt-0.5 text-[11px] font-medium text-slate-600">₺{item.amount.toLocaleString("tr-TR")} · {item.days === 0 ? "bugün" : `${item.days} gün sonra`}</p>
+                    </div>
+                    <span className="shrink-0 rounded-full bg-amber-500 px-2 py-0.5 text-[10px] font-extrabold text-white">{item.days === 0 ? "Bugün" : "Yakın"}</span>
+                    <ArrowUpRight className="mt-1 h-3.5 w-3.5 shrink-0 text-amber-500 transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                  </Link>
                 ))}
               </>
             )}
@@ -758,7 +846,7 @@ export default function AnasayfaPage() {
       <div className="grid gap-5 xl:grid-cols-3">
 
         {/* LEFT: Appointments */}
-        <div className="xl:col-span-2 space-y-3">
+        {canSeeAppointments && <div className="xl:col-span-2 space-y-3">
           {/* Tarih nav */}
           <div className="ui-surface flex items-center justify-between px-5 py-3">
             <button aria-label="Önceki gün" onClick={() => setDateOffset(d => d - 1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:bg-slate-50">
@@ -777,7 +865,7 @@ export default function AnasayfaPage() {
           </div>
 
           {/* Timeline */}
-          <div className="ui-surface overflow-hidden">
+          <div className="ui-dashboard-panel ui-surface overflow-hidden">
             <div className="flex flex-col gap-2 border-b border-slate-100 px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2">
                 <h2 className="text-sm font-bold text-slate-800">Randevu Takvimi</h2>
@@ -789,12 +877,14 @@ export default function AnasayfaPage() {
                 <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-400" />İptal: {todayCancel}</span>
               </div>
             </div>
-            {appts.length === 0 ? (
+            {apptLoading && appts.length === 0 ? (
+              <ListRowSkeleton rows={4} />
+            ) : appts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center">
                 <CalendarEmptyIcon className="ui-empty-illustration mb-3" />
                 <p className="text-sm font-bold text-slate-800">Bu gün için randevu yok</p>
                 <p className="mt-1 max-w-xs text-xs leading-5 text-slate-500">Takvim boş — yeni bir randevu ekleyerek günü planlamaya başlayın.</p>
-                <Link href="/randevu" className="ui-interactive mt-4 rounded-lg bg-gradient-to-b from-primary to-primary-strong px-4 py-1.5 text-xs font-bold text-white shadow-[0_2px_8px_rgb(var(--app-primary)/0.35)]">Randevu Ekle</Link>
+                <Button href="/randevu" size="sm" icon={CalendarClock} className="mt-4">Randevu Ekle</Button>
               </div>
             ) : (
               <div className="divide-y divide-slate-50">
@@ -827,99 +917,170 @@ export default function AnasayfaPage() {
               <Link href="/randevu" className="text-xs font-semibold text-primary hover:underline">Tüm Randevulara Git →</Link>
             </div>
           </div>
-        </div>
+        </div>}
 
-        {/* RIGHT: tek panelde "Bugün" — Aksiyon Merkezi + Duyurular birleşik */}
-        <div className="ui-surface overflow-hidden">
-          <div className="flex items-center justify-between border-b border-slate-50 px-4 py-3">
-            <h3 className="text-sm font-bold text-slate-800">Bugün Dikkat Gerekenler</h3>
-            {hasHomeTasks && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">{homeTasks.length}</span>}
+        {/* RIGHT: Aksiyon Merkezi */}
+        <div id="dikkat-gerekenler" className={`ui-dashboard-panel ui-surface overflow-hidden ${canSeeAppointments ? "" : "xl:col-span-3"}`}>
+          <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-primary/15 bg-primary/10 text-primary">
+                <CalendarClock className="h-4 w-4" />
+              </span>
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-extrabold text-slate-800">Bugün Dikkat Gerekenler</h3>
+                <p className="truncate text-[11px] font-medium text-slate-500">Operasyonel takip ve hızlı aksiyonlar</p>
+              </div>
+            </div>
+            <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-extrabold text-slate-700">{homeTasks.length}</span>
           </div>
 
-          {hasHomeTasks ? (
-            <div className="space-y-1 p-2">
-              {homeTasks.map((task) => (
-                task.href === "/anasayfa" ? (
-                  <div key={task.id} className="flex items-start gap-3 rounded-xl px-3 py-2">
-                    <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${taskDotClass[task.tone]}`} />
-                    <div>
-                      <p className="text-xs font-semibold text-slate-800">{task.title}</p>
-                      {task.meta && <p className="mt-0.5 text-[11px] text-slate-500">{task.meta}</p>}
-                    </div>
-                  </div>
-                ) : (
-                  <Link key={task.id} href={task.href} className="group/task flex items-start gap-3 rounded-xl px-3 py-2 transition-colors duration-150 hover:bg-slate-50">
-                    <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${taskDotClass[task.tone]}`} />
+          {!rolePanelsLoaded ? (
+            <div className="space-y-2.5 p-3">
+              <div className="h-16 animate-pulse rounded-lg bg-slate-100" />
+              <div className="h-16 animate-pulse rounded-lg bg-slate-100" />
+            </div>
+          ) : hasHomeTasks ? (
+            <div className="space-y-2.5 p-3">
+              {homeTasks.map((task, idx) => {
+                const tone = taskToneClass[task.tone];
+                return (
+                  <Link
+                    key={task.id}
+                    href={task.href}
+                    style={{ ["--row-delay" as string]: `${idx * 45}ms` }}
+                    className={`ui-row-in ui-pressable group/task flex min-h-[72px] items-start gap-3 rounded-lg border p-3 shadow-[0_1px_2px_rgb(15_23_42/0.03)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/35 focus-visible:ring-offset-2 ${tone.card}`}
+                  >
+                    <ModuleIcon module={task.module} size="md" className="mt-0.5 shrink-0" />
                     <div className="min-w-0 flex-1">
-                      <p className="text-xs font-semibold text-slate-800">{task.title}</p>
-                      {task.meta && <p className="mt-0.5 text-[11px] text-slate-500">{task.meta}</p>}
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <p className="min-w-0 flex-1 truncate text-xs font-extrabold text-slate-800">{task.title}</p>
+                        <span className={`rounded-full px-2 py-0.5 text-[10px] font-extrabold leading-4 ${tone.badge}`}>{task.count}</span>
+                      </div>
+                      {task.meta && <p className="mt-1 line-clamp-2 text-[11px] font-medium leading-4 text-slate-600">{task.meta}</p>}
+                      <span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${tone.severity}`}>{task.severity}</span>
                     </div>
-                    <ChevronRight className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-300 opacity-0 transition-all duration-150 -translate-x-1 group-hover/task:opacity-100 group-hover/task:translate-x-0" />
+                    <ArrowUpRight className="mt-1 h-4 w-4 shrink-0 text-slate-400 opacity-70 transition-transform duration-150 group-hover/task:translate-x-0.5 group-hover/task:-translate-y-0.5 group-hover/task:opacity-100" />
                   </Link>
-                )
-              ))}
+                );
+              })}
             </div>
           ) : (
-            <div className="flex items-center gap-2 px-4 py-4">
-              <StatusFeedback type="success" size={16} />
-              <p className="text-xs font-semibold text-slate-600">Bugün için bekleyen bir işlem yok — her şey yolunda.</p>
+            <div className="mx-3 my-3 flex min-h-[76px] items-center gap-3 rounded-lg border border-emerald-100 bg-emerald-50/65 px-3 py-3">
+              <StatusFeedback type="success" size={22} />
+              <div>
+                <p className="text-xs font-extrabold text-emerald-800">Bugün bekleyen işlem yok</p>
+                <p className="mt-0.5 text-[11px] font-medium text-emerald-700/80">Kritik operasyon kuyruğu temiz görünüyor.</p>
+              </div>
             </div>
           )}
 
-          <div className="flex items-center justify-between border-y border-slate-50 bg-slate-50/70 px-4 py-2">
-            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-500">Duyurular</p>
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">{announcements.length}</span>
+          {canSeeAnnouncements && <><div className="mt-1 border-t border-slate-100 bg-slate-50/70 px-4 py-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-500">
+                  <Megaphone className="h-3.5 w-3.5" />
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate text-[11px] font-extrabold uppercase tracking-wide text-slate-600">Duyurular</p>
+                  <p className="truncate text-[10px] font-medium text-slate-400">Klinik içi bilgilendirmeler</p>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                {announcements.length > 0 && <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-extrabold text-primary">Yeni</span>}
+                <Link href="#anasayfa-duyurular" className="text-[11px] font-bold text-slate-500 hover:text-primary">Tümünü Gör</Link>
+              </div>
+            </div>
           </div>
-          <div className="max-h-40 divide-y divide-slate-50 overflow-y-auto">
-            {announcements.length === 0 && (
-              <div className="flex flex-col items-center gap-1.5 py-6 text-center">
+          <div id="anasayfa-duyurular" className="max-h-48 scroll-mt-24 space-y-2 overflow-y-auto px-3 py-3">
+            {!announcementsLoaded ? (
+              <div className="space-y-2">
+                <div className="h-14 animate-pulse rounded-lg bg-slate-100" />
+                <div className="h-14 animate-pulse rounded-lg bg-slate-100" />
+              </div>
+            ) : announcements.length === 0 && (
+              <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-slate-200 bg-white py-6 text-center">
                 <ModuleIcon module="log" size="sm" />
                 <p className="text-xs font-semibold text-slate-500">Henüz duyuru yok</p>
               </div>
             )}
-            {announcements.map(a => (
-              <div key={a.id} className="flex items-start gap-2 px-4 py-2.5">
-                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-amber-400" />
-                <p className="flex-1 text-xs leading-relaxed text-slate-700">{a.text}</p>
-                {annRole === "YONETICI" && (
-                  <button onClick={() => deleteAnn(a.id)} className="shrink-0 rounded p-0.5 text-slate-300 transition hover:text-red-400">
+            {announcements.map((a, idx) => (
+              <div
+                key={a.id}
+                style={{ ["--row-delay" as string]: `${idx * 35}ms` }}
+                className="ui-announcement-item ui-row-in flex items-start gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5 shadow-[0_1px_2px_rgb(15_23_42/0.03)]"
+              >
+                <span className="ui-announcement-mark mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-amber-200 bg-amber-50 text-amber-600">
+                  <Megaphone className="h-3.5 w-3.5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <p className="min-w-0 flex-1 truncate text-xs font-extrabold text-slate-800">
+                      {a.text.split(":")[0] || "Klinik duyurusu"}
+                    </p>
+                    <span className="shrink-0 text-[10px] font-semibold text-slate-400">
+                      {new Date(a.createdAt).toLocaleDateString("tr-TR", { day: "2-digit", month: "short" })}
+                    </span>
+                  </div>
+                  <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-slate-600">{a.text}</p>
+                </div>
+                {canWriteAnnouncements && (
+                  <button type="button" onClick={() => deleteAnn(a.id)} aria-label="Duyuruyu sil" className="shrink-0 rounded-md p-1 text-slate-300 transition hover:bg-red-50 hover:text-red-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-200">
                     <X className="h-3.5 w-3.5" />
                   </button>
                 )}
               </div>
             ))}
           </div>
-          {annRole === "YONETICI" && (
+          {canWriteAnnouncements && (
             <div className="flex gap-2 border-t border-slate-50 p-3">
               <input value={annText} onChange={e => setAnnText(e.target.value)} onKeyDown={e => e.key === "Enter" && addAnn()} placeholder="Duyuru metni…" className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none" />
-              <button onClick={addAnn} disabled={annSaving || !annText.trim()} className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white transition hover:bg-amber-600 disabled:opacity-50">Ekle</button>
+              <Button size="sm" icon={Megaphone} onClick={addAnn} loading={annSaving} disabled={!annText.trim()}>Ekle</Button>
             </div>
-          )}
+          )}</>}
         </div>
       </div>
 
       {/* ── BOTTOM ────────────────────────────── */}
       <div className="grid gap-5">
         {/* Chat */}
-        {canSeeInternalChat && <div className="ui-surface flex flex-col overflow-hidden">
-          <div className="flex items-center justify-between border-b border-slate-50 px-4 py-3">
-            <h3 className="text-sm font-bold text-slate-800">Klinik İçi Mesajlar</h3>
+        {canSeeInternalChat && <div id="klinik-ici-mesajlar" className="ui-surface flex flex-col overflow-hidden">
+          <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-4 py-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <ModuleIcon module="sms" size="sm" />
+              <div className="min-w-0">
+                <h3 className="truncate text-sm font-extrabold text-slate-800">Klinik İçi Mesajlar</h3>
+                <p className="truncate text-[11px] font-medium text-slate-500">Ekip notları ve hızlı koordinasyon</p>
+              </div>
+            </div>
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-600">{messages.length}</span>
           </div>
           <div ref={chatScrollRef} className="max-h-48 flex-1 space-y-2 overflow-y-auto px-4 py-3">
-            {messages.length === 0 && (
-              <div className="flex flex-col items-center gap-1.5 py-6 text-center">
+            {!messagesLoaded ? (
+              <div className="space-y-2">
+                <div className="h-14 animate-pulse rounded-lg bg-slate-100" />
+                <div className="h-14 animate-pulse rounded-lg bg-slate-100" />
+              </div>
+            ) : messages.length === 0 && (
+              <div className="flex flex-col items-center gap-1.5 rounded-lg border border-dashed border-slate-200 bg-slate-50/60 py-6 text-center">
                 <ModuleIcon module="sms" size="sm" />
                 <p className="text-xs font-semibold text-slate-500">Henüz mesaj yok — ekibinizle burada iletişim kurun</p>
               </div>
             )}
-            {messages.map(m => (
-              <div key={m.id} className="flex items-start gap-2">
-                <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[10px] font-bold text-white">{m.user.fullName.charAt(0)}</div>
+            {messages.map((m, idx) => (
+              <div
+                key={m.id}
+                style={{ ["--row-delay" as string]: `${idx * 30}ms` }}
+                className="ui-row-in flex items-start gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2.5 shadow-[0_1px_2px_rgb(15_23_42/0.03)]"
+              >
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-extrabold text-white shadow-sm">{m.user.fullName.charAt(0)}</div>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[10px] font-semibold text-slate-600">{m.user.fullName} <span className="font-normal text-slate-400">{new Date(m.createdAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}</span></p>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <p className="truncate text-xs font-extrabold text-slate-800">{m.user.fullName}</p>
+                    <span className="rounded-full bg-slate-100 px-1.5 py-0.5 text-[9px] font-bold text-slate-500">{ROLE_LABELS[m.user.role] || m.user.role}</span>
+                    <span className="text-[10px] font-medium text-slate-400">{new Date(m.createdAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })}</span>
+                  </div>
                   {editingMsgId === m.id ? (
-                    <div className="mt-1 flex items-center gap-1.5">
+                    <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center">
                       <input
                         value={editingMsgText}
                         onChange={(e) => setEditingMsgText(e.target.value)}
@@ -930,29 +1091,31 @@ export default function AnasayfaPage() {
                           }
                           if (e.key === "Escape") cancelEditMessage();
                         }}
-                        className="flex-1 rounded-md border border-slate-200 px-2 py-1 text-xs focus:border-primary focus:outline-none"
+                        className="min-h-8 flex-1 rounded-md border border-slate-200 px-2 py-1 text-xs focus:border-primary focus:outline-none"
                       />
-                      <button onClick={saveEditMessage} className="rounded-md bg-primary px-2 py-1 text-[10px] font-semibold text-white">Kaydet</button>
-                      <button onClick={cancelEditMessage} className="rounded-md border border-slate-200 px-2 py-1 text-[10px] font-semibold text-slate-600">Vazgeç</button>
+                      <div className="flex gap-1.5">
+                        <Button size="sm" icon={Check} onClick={saveEditMessage}>Kaydet</Button>
+                        <Button size="sm" variant="secondary" onClick={cancelEditMessage}>Vazgeç</Button>
+                      </div>
                     </div>
                   ) : (
-                    <p className="text-xs leading-relaxed text-slate-700">{m.text}</p>
+                    <p className="mt-1 text-xs leading-relaxed text-slate-700">{m.text}</p>
                   )}
                 </div>
 
-                {(m.userId === currentUserId || canModerateAllMessages) && editingMsgId !== m.id && (
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => beginEditMessage(m)} className="rounded-md border border-slate-200 px-2 py-1 text-[10px] font-semibold text-slate-600 hover:bg-slate-50">Düzenle</button>
-                    <button onClick={() => deleteMessage(m.id)} className="rounded-md border border-red-200 px-2 py-1 text-[10px] font-semibold text-red-600 hover:bg-red-50">Sil</button>
+                {canWriteInternalChat && (m.userId === currentUserId || canModerateAllMessages) && editingMsgId !== m.id && (
+                  <div className="flex shrink-0 flex-col gap-1 sm:flex-row">
+                    <Button size="sm" variant="secondary" icon={Pencil} onClick={() => beginEditMessage(m)}>Düzenle</Button>
+                    <Button size="sm" variant="danger" icon={Trash2} onClick={() => deleteMessage(m.id)}>Sil</Button>
                   </div>
                 )}
               </div>
             ))}
           </div>
-          <div className="flex gap-2 border-t border-slate-100 p-3">
+          {canWriteInternalChat && <div className="flex gap-2 border-t border-slate-100 p-3">
             <input aria-label="Mesaj yaz" value={msgText} onChange={e => setMsgText(e.target.value)} onKeyDown={e => e.key === "Enter" && !e.shiftKey && (e.preventDefault(), sendMessage())} placeholder="Kısa mesaj yazın" className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
-            <button onClick={sendMessage} disabled={msgLoading || !msgText.trim()} className="rounded-lg bg-primary px-4 py-2 text-sm font-bold text-white transition hover:bg-primary-strong disabled:opacity-50">Gönder</button>
-          </div>
+            <Button icon={Send} onClick={sendMessage} loading={msgLoading} disabled={!msgText.trim()}>Gönder</Button>
+          </div>}
         </div>}
       </div>
     </div>

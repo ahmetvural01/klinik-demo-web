@@ -28,6 +28,29 @@ export async function PUT(request: NextRequest) {
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
 
   const body = await request.json();
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
+  }
+  const port = Number(body.port ?? 587);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return NextResponse.json({ message: "SMTP portu 1-65535 arasında olmalı" }, { status: 400 });
+  }
+  if (body.secure !== undefined && typeof body.secure !== "boolean") {
+    return NextResponse.json({ message: "Güvenli bağlantı bilgisi geçersiz" }, { status: 400 });
+  }
+  if (body.isActive !== undefined && typeof body.isActive !== "boolean") {
+    return NextResponse.json({ message: "Aktiflik bilgisi geçersiz" }, { status: 400 });
+  }
+  const host = typeof body.host === "string" ? body.host.trim() : "";
+  const username = typeof body.username === "string" ? body.username.trim() : "";
+  const fromName = typeof body.fromName === "string" ? body.fromName.trim() : "Klinik Yönetim Paneli";
+  const fromEmail = typeof body.fromEmail === "string" ? body.fromEmail.trim() : "noreply@klinik.local";
+  if (host.length > 255 || username.length > 254 || fromName.length > 160 || !/^\S+@\S+\.\S+$/.test(fromEmail)) {
+    return NextResponse.json({ message: "SMTP sunucu veya gönderen bilgileri geçersiz" }, { status: 400 });
+  }
+  if (body.isActive === true && (!host || !username || !body.password)) {
+    return NextResponse.json({ message: "Aktif SMTP için sunucu, kullanıcı adı ve şifre zorunlu" }, { status: 400 });
+  }
 
   const existing = await prisma.smtpConfig.findUnique({ where: { id: 1 } });
   // SMTP şifresi önceden düz metin kaydediliyordu — veritabanına erişimi olan
@@ -36,30 +59,30 @@ export async function PUT(request: NextRequest) {
   // kullanılan alan-bazlı AES-256-GCM şifreleme burada da uygulanıyor.
   const passwordToSave = body.password === "••••••••" && existing
     ? existing.password
-    : encryptField(body.password || "");
+    : body.password ? encryptField(String(body.password)) : "";
 
   const config = await prisma.smtpConfig.upsert({
     where: { id: 1 },
     update: {
-      host: body.host || "",
-      port: Number(body.port) || 587,
-      secure: Boolean(body.secure),
-      username: body.username || "",
+      host,
+      port,
+      secure: body.secure ?? false,
+      username,
       password: passwordToSave,
-      fromName: body.fromName || "Klinik Yönetim Paneli",
-      fromEmail: body.fromEmail || "noreply@klinik.local",
-      isActive: Boolean(body.isActive),
+      fromName,
+      fromEmail,
+      isActive: body.isActive ?? false,
     },
     create: {
       id: 1,
-      host: body.host || "",
-      port: Number(body.port) || 587,
-      secure: Boolean(body.secure),
-      username: body.username || "",
+      host,
+      port,
+      secure: body.secure ?? false,
+      username,
       password: passwordToSave,
-      fromName: body.fromName || "Klinik Yönetim Paneli",
-      fromEmail: body.fromEmail || "noreply@klinik.local",
-      isActive: Boolean(body.isActive),
+      fromName,
+      fromEmail,
+      isActive: body.isActive ?? false,
     },
   });
 
@@ -73,6 +96,9 @@ export async function POST(request: NextRequest) {
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
 
   const body = await request.json();
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
+  }
 
   if (body.action !== "test") {
     return NextResponse.json({ message: "Geçersiz işlem" }, { status: 400 });
@@ -80,6 +106,16 @@ export async function POST(request: NextRequest) {
 
   if (!body.host || !body.username || !body.password || !body.testTo) {
     return NextResponse.json({ message: "host, username, password ve testTo zorunlu" }, { status: 400 });
+  }
+  const port = Number(body.port ?? 587);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return NextResponse.json({ message: "SMTP portu 1-65535 arasında olmalı" }, { status: 400 });
+  }
+  if (body.secure !== undefined && typeof body.secure !== "boolean") {
+    return NextResponse.json({ message: "Güvenli bağlantı bilgisi geçersiz" }, { status: 400 });
+  }
+  if (!/^\S+@\S+\.\S+$/.test(String(body.testTo).trim())) {
+    return NextResponse.json({ message: "Geçerli bir test e-posta adresi girin" }, { status: 400 });
   }
 
   // Form alanı kaydedilmiş şifreyi maskeli ("••••••••") gösterir — kullanıcı
@@ -95,8 +131,8 @@ export async function POST(request: NextRequest) {
   try {
     const transporter = nodemailer.createTransport({
       host: body.host,
-      port: Number(body.port) || 587,
-      secure: Boolean(body.secure),
+      port,
+      secure: body.secure ?? false,
       auth: { user: body.username, pass: testPassword },
       disableFileAccess: true,
       disableUrlAccess: true,

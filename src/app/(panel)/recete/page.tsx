@@ -7,7 +7,7 @@ import { useSearchParams } from "next/navigation";
 import { useState, useEffect } from "react";
 import { formatDate } from "@/lib/format";
 import { cachedGet } from "@/lib/client-cache";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { Printer } from "lucide-react";
@@ -37,6 +37,7 @@ type Patient = {
 };
 
 export default function PrescriptionPage() {
+  const { can } = usePermissions();
   const search = useSearchParams();
   const prescriptionId = search.get("id") || "";
   const patientId = search.get("patientId") || "";
@@ -45,23 +46,7 @@ export default function PrescriptionPage() {
   const [patient, setPatient] = useState<Patient | null>(null);
   const [setting, setSetting] = useState<Setting | null>(null);
   const [loading, setLoading] = useState(false);
-  const [userRole, setUserRole] = useState("");
-  const hidePhone = shouldHidePatientPhone(userRole);
-
-  useEffect(() => {
-    cachedGet<{ role?: string }>("/api/auth/me", 60_000)
-      .then(d => {
-        const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
-        setUserRole(preview || d?.role || "");
-      })
-      .catch(() => {});
-    const onPreview = () => {
-      const preview = sessionStorage.getItem("dev-preview-role");
-      cachedGet<{ role?: string }>("/api/auth/me", 60_000).then(d => setUserRole(preview || d?.role || "")).catch(() => {});
-    };
-    window.addEventListener("preview-role-change", onPreview);
-    return () => window.removeEventListener("preview-role-change", onPreview);
-  }, []);
+  const hidePhone = !can("patients:phone");
 
   const load = async () => {
     if (!prescriptionId || !patientId) return;

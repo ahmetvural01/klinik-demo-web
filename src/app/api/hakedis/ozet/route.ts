@@ -11,11 +11,6 @@ export const GET = withApiTiming("hakedis-ozet", async function GET(_req: NextRe
   const auth = await requireAuth("finance:read");
   if (auth.error) return auth.error;
 
-  const allowedRoles = ["SUPERADMIN", "YONETICI", "ADMIN"];
-  if (!allowedRoles.includes(auth.user.role)) {
-    return NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 });
-  }
-
   const institutionId = auth.user.institutionId;
   const activeDoctors = await prisma.user.findMany({
     where: effectiveDoctorWhere(institutionId),

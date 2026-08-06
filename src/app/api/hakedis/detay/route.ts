@@ -5,7 +5,7 @@ import { computeDoctorMonthlyHakedis, computeDoctorMonthlyOdenen, findEligibleDo
 // GET /api/hakedis/detay?doctorId=X&year=Y&month=M
 // Bir doktorun tek bir aya ait hakediş hesabına giren tüm satırları döner.
 export const GET = withApiTiming("hakedis-detay", async function GET(req: NextRequest) {
-  const auth = await requireAuth("finance:read");
+  const auth = await requireAuth("earnings:read");
   if (auth.error) return auth.error;
 
   const { searchParams } = new URL(req.url);

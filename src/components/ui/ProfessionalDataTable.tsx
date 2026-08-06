@@ -54,7 +54,7 @@ export function ProfessionalDataTable<TData>({
   const rows = table.getRowModel().rows;
 
   return (
-    <div className="ui-surface overflow-hidden">
+    <div className="ui-data-table ui-surface overflow-hidden">
       <div className="overflow-x-auto">
         <table className="min-w-[760px] w-full text-sm">
           <thead className="sticky top-0 z-10">
@@ -63,7 +63,7 @@ export function ProfessionalDataTable<TData>({
                 {headerGroup.headers.map((header) => (
                   <th
                     key={header.id}
-                    className={`whitespace-nowrap px-3 py-2.5 text-xs font-bold uppercase tracking-wide text-slate-500 sm:px-4 ${
+                    className={`whitespace-nowrap px-3 py-3 text-xs font-extrabold uppercase tracking-wide text-slate-500 sm:px-4 ${
                       header.column.id === "actions" ? "md:sticky md:right-0 md:z-10 md:bg-white/95 md:shadow-[-4px_0_6px_-4px_rgba(0,0,0,0.08)]" : ""
                     }`}
                   >
@@ -72,7 +72,7 @@ export function ProfessionalDataTable<TData>({
                         type="button"
                         onClick={header.column.getToggleSortingHandler()}
                         disabled={!header.column.getCanSort()}
-                        className="flex items-center gap-1 text-left uppercase tracking-wide disabled:cursor-default"
+                        className="ui-table-sort-button flex items-center gap-1 text-left uppercase tracking-wide disabled:cursor-default"
                       >
                         {flexRender(header.column.columnDef.header, header.getContext())}
                         {header.column.getCanSort() && (
@@ -103,15 +103,21 @@ export function ProfessionalDataTable<TData>({
                   tabIndex={onRowClick ? 0 : undefined}
                   role={onRowClick ? "button" : undefined}
                   aria-label={onRowClick ? getRowAriaLabel?.(row.original) : undefined}
-                  onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                  onClick={onRowClick ? (event) => {
+                    const target = event.target as HTMLElement;
+                    if (target.closest("button, a, input, select, textarea, [role='button']")) return;
+                    onRowClick(row.original);
+                  } : undefined}
                   onKeyDown={onRowClick ? (event) => {
+                    const target = event.target as HTMLElement;
+                    if (target.closest("button, a, input, select, textarea, [role='button']")) return;
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
                       onRowClick(row.original);
                     }
                   } : undefined}
                   style={{ ["--row-delay" as string]: `${Math.min(rowIndex, 14) * 18}ms` }}
-                  className={`ui-row-in group transition-colors hover:bg-primary/[0.045] ${onRowClick ? "cursor-pointer focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25" : ""}`}
+                  className={`ui-row-in group transition-colors hover:bg-primary/[0.045] ${onRowClick ? "ui-table-row-clickable cursor-pointer focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25" : ""}`}
                 >
                   {row.getVisibleCells().map((cell) => (
                     <td

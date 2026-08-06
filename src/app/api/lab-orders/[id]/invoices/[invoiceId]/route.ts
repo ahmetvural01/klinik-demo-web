@@ -127,26 +127,43 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
   try {
     const fresh = await (prisma as any).$transaction(async (tx: any) => {
       await tx.$queryRaw`SELECT "id" FROM "LabOrder" WHERE "id" = ${params.id} FOR UPDATE`;
-      await assertDebtReductionAllowed(tx, invoice, parsed.data.amount);
+      const currentInvoice = await tx.labOrderInvoice.findFirst({
+        where: { id: params.invoiceId, labOrderId: params.id },
+        include: {
+          labOrder: {
+            select: {
+              id: true,
+              firmaId: true,
+              labName: true,
+              labType: true,
+              status: true,
+              patient: { select: { fullName: true } },
+            },
+          },
+        },
+      });
+      if (!currentInvoice) throw new Error("LAB_INVOICE_CHANGED");
+      if (currentInvoice.labOrder.status === "IPTAL") throw new Error("LAB_ORDER_CANCELLED");
+      await assertDebtReductionAllowed(tx, currentInvoice, parsed.data.amount);
       const oldDebt = await tx.firmaIslem.findFirst({
         where: {
           status: "AKTIF",
-          aciklama: { contains: labSourceToken({ labInvoiceId: invoice.id }) },
+          aciklama: { contains: labSourceToken({ labInvoiceId: currentInvoice.id }) },
         },
         select: {
           firmaId: true,
           debtAllocations: { select: { paymentIslemId: true } },
         },
       });
-      await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, { labInvoiceId: invoice.id });
+      await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, { labInvoiceId: currentInvoice.id });
 
       const updated = await tx.labOrderInvoice.update({
-        where: { id: invoice.id },
+        where: { id: currentInvoice.id },
         data: {
           item: parsed.data.item,
           amount: parsed.data.amount,
           invoiceNo: parsed.data.invoiceNo || null,
-          issuedAt: parsed.data.issuedAt ? new Date(parsed.data.issuedAt) : invoice.issuedAt,
+          issuedAt: parsed.data.issuedAt ? new Date(parsed.data.issuedAt) : currentInvoice.issuedAt,
           note: parsed.data.note || null,
         },
       });
@@ -155,9 +172,9 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
         tx,
         userId: auth.user.id,
         institutionId: auth.user.institutionId || null,
-        labName: invoice.labOrder.labName,
-        labType: invoice.labOrder.labType,
-        patientName: invoice.labOrder.patient?.fullName || null,
+        labName: currentInvoice.labOrder.labName,
+        labType: currentInvoice.labOrder.labType,
+        patientName: currentInvoice.labOrder.patient?.fullName || null,
         item: updated.item,
         amount: Number(updated.amount),
         invoiceNo: updated.invoiceNo,
@@ -165,9 +182,9 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
         note: updated.note,
         labOrderId: params.id,
         labInvoiceId: updated.id,
-        firmaId: invoice.labOrder.firmaId,
+        firmaId: currentInvoice.labOrder.firmaId,
       });
-      if (integration && !invoice.labOrder.firmaId) {
+      if (integration && !currentInvoice.labOrder.firmaId) {
         await tx.labOrder.update({
           where: { id: params.id },
           data: { firmaId: integration.firmaId },
@@ -194,6 +211,12 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
     await bumpRealtimeInstitution(auth.user.institutionId || null);
     return NextResponse.json(fresh);
   } catch (error) {
+    if (error instanceof Error && error.message === "LAB_INVOICE_CHANGED") {
+      return NextResponse.json({ error: "Fatura başka bir işlemde değiştirildi. Listeyi yenileyip tekrar deneyin." }, { status: 409 });
+    }
+    if (error instanceof Error && error.message === "LAB_ORDER_CANCELLED") {
+      return NextResponse.json({ error: "İptal edilmiş siparişin faturası değiştirilemez." }, { status: 409 });
+    }
     console.error("[lab invoice PATCH]", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Laboratuvar faturası güncellenemedi" },
@@ -213,9 +236,24 @@ export async function DELETE(_req: NextRequest, props: RouteParams) {
   try {
     const fresh = await (prisma as any).$transaction(async (tx: any) => {
       await tx.$queryRaw`SELECT "id" FROM "LabOrder" WHERE "id" = ${params.id} FOR UPDATE`;
-      await assertDebtReductionAllowed(tx, invoice, 0);
-      await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, { labInvoiceId: invoice.id });
-      await tx.labOrderInvoice.delete({ where: { id: invoice.id } });
+      const currentInvoice = await tx.labOrderInvoice.findFirst({
+        where: { id: params.invoiceId, labOrderId: params.id },
+        include: {
+          labOrder: {
+            select: {
+              firmaId: true,
+              labName: true,
+              labType: true,
+              status: true,
+              patient: { select: { fullName: true } },
+            },
+          },
+        },
+      });
+      if (!currentInvoice) throw new Error("LAB_INVOICE_CHANGED");
+      await assertDebtReductionAllowed(tx, currentInvoice, 0);
+      await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, { labInvoiceId: currentInvoice.id });
+      await tx.labOrderInvoice.delete({ where: { id: currentInvoice.id } });
       await updateOrderInvoiceSummary(tx, params.id);
       return loadFreshOrder(tx, params.id);
     });
@@ -224,6 +262,9 @@ export async function DELETE(_req: NextRequest, props: RouteParams) {
     await bumpRealtimeInstitution(auth.user.institutionId || null);
     return NextResponse.json(fresh);
   } catch (error) {
+    if (error instanceof Error && error.message === "LAB_INVOICE_CHANGED") {
+      return NextResponse.json({ error: "Fatura başka bir işlemde değiştirildi. Listeyi yenileyip tekrar deneyin." }, { status: 409 });
+    }
     console.error("[lab invoice DELETE]", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Laboratuvar faturası iptal edilemedi" },

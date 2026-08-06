@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { patientSchema } from "@/lib/validators";
 import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 import { turkeyTodayStartUtc } from "@/lib/tz";
 
 type Params = { params: Promise<{ id: string }> };
@@ -300,7 +300,7 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
   }
 
   // DOKTOR ve ASISTAN telefon numaralarını göremez
-  if (shouldHidePatientPhone(auth.user.role)) {
+  if (await shouldHidePatientPhoneForRole(auth.user.role)) {
     return NextResponse.json({ ...patient, phone: "***" });
   }
 

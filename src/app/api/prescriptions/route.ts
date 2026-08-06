@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { prescriptionSchema } from "@/lib/validators";
 import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 export const GET = withApiTiming("prescriptions", async function GET(request: NextRequest) {
   const auth = await requireAuth("prescriptions:read");
@@ -12,7 +13,7 @@ export const GET = withApiTiming("prescriptions", async function GET(request: Ne
   const prescriptions = await prisma.prescription.findMany({
     where: {
       ...(patientId ? { patientId } : {}),
-      ...(auth.user.role !== "SUPERADMIN" ? { patient: { institutionId: auth.user.institutionId } } : {}),
+      ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
     },
     orderBy: { createdAt: "desc" },
     // patientId verilmeden (kurum geneli) çağrılırsa tek istek tüm reçete
@@ -36,7 +37,7 @@ export async function POST(request: NextRequest) {
 
   if (auth.user.role !== "SUPERADMIN") {
     const patient = await prisma.patient.findFirst({
-      where: { id: parsed.data.patientId, institutionId: auth.user.institutionId, archivedAt: null },
+      where: { id: parsed.data.patientId, institutionId: auth.user.institutionId as string, archivedAt: null },
       select: { id: true },
     });
     if (!patient) {
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
   const resolvedDoctorId = parsed.data.doctorId || auth.user.id;
   if (auth.user.role !== "SUPERADMIN") {
     const doctor = await prisma.user.findFirst({
-      where: { id: resolvedDoctorId, institutionId: auth.user.institutionId },
+      where: { id: resolvedDoctorId, ...effectiveDoctorWhere(auth.user.institutionId) },
       select: { id: true },
     });
     if (!doctor) {

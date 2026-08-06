@@ -2,27 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { patientFollowUpEventCreateSchema } from "@/lib/validators";
-import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 type Params = { params: Promise<{ id: string }> };
 
 export async function GET(_: NextRequest, props: Params) {
   const params = await props.params;
   try {
-    const auth = await requireAuth("appointments:read");
+  const auth = await requireAuth("hastatracking:read");
     if (auth.error) return auth.error;
-
-    const institutionDoctors = auth.user.institutionId
-      ? await prisma.user.findMany({
-          where: effectiveDoctorWhere(auth.user.institutionId),
-          select: { id: true },
-        })
-      : [];
-    const doctorIds = institutionDoctors.map((doctor) => doctor.id);
 
     const followUp = await prisma.patientFollowUp.findUnique({
       where: { id: params.id },
-      select: { id: true, doctorId: true, appointment: { select: { doctorId: true } }, createdBy: { select: { institutionId: true } } },
+      select: { id: true, patient: { select: { institutionId: true } } },
     });
 
     if (!followUp) {
@@ -30,9 +21,7 @@ export async function GET(_: NextRequest, props: Params) {
     }
 
     if (auth.user.institutionId) {
-      const followUpDoctorId = followUp.doctorId || followUp.appointment?.doctorId || null;
-      const sameInstitution = followUp.createdBy.institutionId === auth.user.institutionId || (followUpDoctorId ? doctorIds.includes(followUpDoctorId) : false);
-      if (!sameInstitution) {
+      if (followUp.patient.institutionId !== auth.user.institutionId) {
         return NextResponse.json({ message: "Takip kaydı kurum kapsamı dışında" }, { status: 403 });
       }
     }
@@ -56,23 +45,14 @@ export async function GET(_: NextRequest, props: Params) {
 export async function POST(request: NextRequest, props: Params) {
   const params = await props.params;
   try {
-    const auth = await requireAuth("appointments:write");
+  const auth = await requireAuth("hastatracking:write");
     if (auth.error) return auth.error;
-
-    const institutionDoctors = auth.user.institutionId
-      ? await prisma.user.findMany({
-          where: effectiveDoctorWhere(auth.user.institutionId),
-          select: { id: true },
-        })
-      : [];
-    const doctorIds = institutionDoctors.map((doctor) => doctor.id);
 
     const followUp = await prisma.patientFollowUp.findUnique({
       where: { id: params.id },
       include: {
-        patient: { select: { id: true, fullName: true } },
+        patient: { select: { id: true, fullName: true, institutionId: true } },
         createdBy: { select: { id: true, institutionId: true } },
-        appointment: { select: { doctorId: true } },
       },
     });
 
@@ -81,9 +61,7 @@ export async function POST(request: NextRequest, props: Params) {
     }
 
     if (auth.user.institutionId) {
-      const followUpDoctorId = followUp.doctorId || followUp.appointment?.doctorId || null;
-      const sameInstitution = followUp.createdBy.institutionId === auth.user.institutionId || (followUpDoctorId ? doctorIds.includes(followUpDoctorId) : false);
-      if (!sameInstitution) {
+      if (followUp.patient.institutionId !== auth.user.institutionId) {
         return NextResponse.json({ message: "Takip kaydı kurum kapsamı dışında" }, { status: 403 });
       }
     }

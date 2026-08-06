@@ -56,6 +56,9 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
   if (auth.error) return auth.error;
+  if (!auth.user.institutionId) {
+    return NextResponse.json({ error: "Belge yüklemek için kurum bağlamı zorunlu" }, { status: 403 });
+  }
 
   try {
     const formData = await req.formData();
@@ -97,7 +100,7 @@ export async function POST(req: NextRequest) {
     try {
       document = await prisma.document.create({
         data: {
-          institutionId: auth.user.institutionId || null,
+          institutionId: auth.user.institutionId,
           patientId,
           uploadedById: auth.user.id,
           category: category as DocumentCategory,

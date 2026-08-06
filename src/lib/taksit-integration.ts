@@ -207,6 +207,9 @@ export async function payTaksit(
   posId?: string | null,
   tarih?: Date,
 ): Promise<{ updated: boolean; planCompleted: boolean }> {
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { updated: false, planCompleted: false };
+  }
   const taksit = await tx.taksit.findUnique({
     where: { id: taksitId },
     select: { id: true, planId: true, kalan: true, odenen: true, status: true },

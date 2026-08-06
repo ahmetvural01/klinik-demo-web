@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming } from "@/lib/api";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 
 /**
  * GET /api/muhasebe/alacaklar
@@ -13,6 +14,7 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
     if (auth.error) return auth.error;
 
     const institutionId = auth.user.institutionId;
+    const hidePatientPhone = await shouldHidePatientPhoneForRole(auth.user.role);
 
     const treatmentOnlyWhere = {
       NOT: [
@@ -139,7 +141,7 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
         return {
           id: p.id,
           fullName: p.fullName,
-          phone: p.phone,
+          phone: hidePatientPhone ? "" : p.phone,
           brutTedavi,
           indirim,
           netTedavi,

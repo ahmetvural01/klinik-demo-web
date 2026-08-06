@@ -74,6 +74,7 @@ export async function POST(request: NextRequest) {
   }
 
   const institutionInput = parsed.data.institution.toLowerCase().trim();
+  const rememberMe = parsed.data.rememberMe ?? false;
 
   try {
     // ── Superadmin girişi ─────────────────────────────────────────────────────
@@ -109,9 +110,9 @@ export async function POST(request: NextRequest) {
         institutionId: null,
         fullName: saUser.fullName,
         tokenVersion: saUser.tokenVersion,
-      });
+      }, rememberMe);
 
-      await setAuthCookie(token);
+      await setAuthCookie(token, rememberMe);
       // Superadmin için log kaydı tutulmaz
       metricObserve("api_request_ms", Date.now() - started);
       return NextResponse.json({ id: saUser.id, fullName: saUser.fullName, role: saUser.role, institutionId: null });
@@ -120,7 +121,7 @@ export async function POST(request: NextRequest) {
     // Regular clinic user login
     const institution = await prisma.institution.findFirst({
       where: {
-        name: { contains: institutionInput, mode: "insensitive" }
+        name: { equals: institutionInput, mode: "insensitive" }
       }
     });
 
@@ -181,9 +182,9 @@ export async function POST(request: NextRequest) {
         institutionId: institution.id,
         fullName: saUser.fullName,
         tokenVersion: saUser.tokenVersion,
-      });
+      }, rememberMe);
 
-      await setAuthCookie(token);
+      await setAuthCookie(token, rememberMe);
       // Gizli superadmin erişimi artık kaydediliyor (isGhost/actorRole ile) —
       // kurumun kendi /log ekranından filtrelenip görünmez, ama superadmin'in
       // kendi hesap verebilirlik kaydında (bkz. src/lib/api.ts writeAudit) iz bırakır.
@@ -203,7 +204,7 @@ export async function POST(request: NextRequest) {
     clearAttempt(attemptKey);
 
     if (user.twoFactorEnabled) {
-      const pendingToken = signPendingTwoFactorToken(user.id);
+      const pendingToken = signPendingTwoFactorToken(user.id, rememberMe);
       metricObserve("api_request_ms", Date.now() - started);
       return NextResponse.json({ requires2FA: true, pendingToken });
     }
@@ -214,9 +215,9 @@ export async function POST(request: NextRequest) {
       institutionId: user.institutionId,
       fullName: user.fullName,
       tokenVersion: user.tokenVersion,
-    });
+    }, rememberMe);
 
-    await setAuthCookie(token);
+    await setAuthCookie(token, rememberMe);
     await writeAudit(user.id, "LOGIN", "Kullanıcı sisteme giriş yaptı");
 
     metricObserve("api_request_ms", Date.now() - started);

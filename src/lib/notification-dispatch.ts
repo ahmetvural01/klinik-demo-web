@@ -65,6 +65,21 @@ function hashMessage(message: string) {
   return crypto.createHash("sha256").update(message).digest("hex");
 }
 
+function resultFromDispatch(existing: {
+  status: string;
+  channel: "SMS" | "WHATSAPP";
+  lastError: string | null;
+  providerMessageId: string | null;
+}): DispatchResult {
+  return {
+    success: existing.status === "SENT" || existing.status === "DELIVERED",
+    channel: existing.channel,
+    suppressed: existing.status === "SUPPRESSED",
+    reason: existing.status === "SUPPRESSED" ? existing.lastError || undefined : undefined,
+    providerMessageId: existing.providerMessageId || undefined,
+  };
+}
+
 export async function dispatchPatientMessage(params: DispatchParams): Promise<DispatchResult> {
   const { institutionId, patientId, eventType, purpose, templateCode, message, idempotencyKey, actorId } = params;
   void templateCode; // Şablon çözümlemesi çağıran tarafta yapılıyor; burada yalnızca kayıt amaçlı tutulur.
@@ -73,13 +88,7 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
     where: { institutionId_idempotencyKey: { institutionId, idempotencyKey } },
   });
   if (existing) {
-    return {
-      success: existing.status === "SENT" || existing.status === "DELIVERED",
-      channel: existing.channel,
-      suppressed: existing.status === "SUPPRESSED",
-      reason: existing.status === "SUPPRESSED" ? existing.lastError || undefined : undefined,
-      providerMessageId: existing.providerMessageId || undefined,
-    };
+    return resultFromDispatch(existing);
   }
 
   const patient = await prisma.patient.findFirst({
@@ -104,6 +113,37 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
     return { success: false, channel: "SMS", error: "Kurum bulunamadı." };
   }
 
+  // Sağlayıcıya gitmeden önce idempotency anahtarını sahiplen. Önceki akışta
+  // kayıt yalnızca gönderimden SONRA oluşturulduğu için eşzamanlı iki istek de
+  // SMS/WhatsApp sağlayıcısına ulaşabiliyor, yalnızca ikinci DB kaydı reddediliyordu.
+  let dispatchId: string;
+  try {
+    const claimed = await prisma.smsDispatch.create({
+      data: {
+        institutionId,
+        patientId,
+        eventType,
+        purpose,
+        channel: "SMS",
+        status: "QUEUED",
+        phoneMasked: maskPhone(patient.phone),
+        messageHash: hashMessage(message),
+        idempotencyKey,
+        createdById: actorId || null,
+      },
+      select: { id: true },
+    });
+    dispatchId = claimed.id;
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
+      const concurrent = await prisma.smsDispatch.findUnique({
+        where: { institutionId_idempotencyKey: { institutionId, idempotencyKey } },
+      });
+      if (concurrent) return resultFromDispatch(concurrent);
+    }
+    throw error;
+  }
+
   const logDispatch = (data: {
     channel: "SMS" | "WHATSAPP";
     status: "SENT" | "FAILED" | "SUPPRESSED";
@@ -112,23 +152,16 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
     lastError?: string;
     sentAt?: Date;
   }) =>
-    prisma.smsDispatch.create({
+    prisma.smsDispatch.update({
+      where: { id: dispatchId },
       data: {
-        institutionId,
-        patientId,
-        eventType,
-        purpose,
         channel: data.channel,
         status: data.status,
-        phoneMasked: maskPhone(patient.phone),
-        messageHash: hashMessage(message),
-        idempotencyKey,
         providerCode: data.providerCode || null,
         providerMessageId: data.providerMessageId || null,
         lastError: data.lastError || null,
         sentAt: data.sentAt || null,
         attemptCount: data.status === "FAILED" ? 1 : 0,
-        createdById: actorId || null,
       },
     });
 

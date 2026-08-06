@@ -144,14 +144,12 @@ async function main() {
   void systemSuperadmin;
   void ahmetSuperadmin;
 
-  await prisma.priceItem.createMany({
-    data: [
-      { code: "11", treatment: "Dis Hekimi Muayenesi", amount: 660, isCustom: false },
-      { code: "21", treatment: "Kompozit Dolgu", amount: 2500, isCustom: true },
-      { code: "31", treatment: "Implant", amount: 7000, isCustom: true }
-    ],
-    skipDuplicates: true
-  });
+  // Not: institutionId'siz (kurumsuz) bir PriceItem hiçbir klinik sorgusunda
+  // eşleşmez — standart katalog zaten uygulama katmanında (bkz.
+  // src/lib/dental-treatment-catalog.ts, /api/prices route'undaki
+  // catalogAsPriceItems) her kuruma otomatik sunuluyor. Burada eskiden
+  // oluşturulan institutionId'siz satırlar sahipsiz/erişilemez kalıyordu
+  // (bkz. denetim raporu) — bu yüzden kaldırıldı.
 
   await prisma.platformSmsWallet.upsert({
     where: { id: 1 },

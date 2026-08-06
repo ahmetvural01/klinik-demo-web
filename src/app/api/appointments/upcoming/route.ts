@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth("appointments:read");
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
       startAt: { gte: now },
       status: { not: "IPTAL" },
       patient: {
-        ...(auth.user.role !== "SUPERADMIN" ? { institutionId: auth.user.institutionId } : {}),
+        ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
         OR: [
           { fullName: { contains: q, mode: "insensitive" } },
           { tcNo: { contains: q, mode: "insensitive" } },
@@ -41,7 +41,7 @@ export async function GET(request: NextRequest) {
     take,
   });
 
-  const hidePhone = shouldHidePatientPhone(auth.user.role);
+  const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
   const result = hidePhone
     ? appointments.map((a) => ({
         ...a,

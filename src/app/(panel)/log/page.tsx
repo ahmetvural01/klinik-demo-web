@@ -9,6 +9,7 @@ import { Modal } from "@/components/ui/Modal";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { ModuleIcon } from "@/components/ui/ModuleIcon";
 import { getAuditActionLabel, getAuditScopeLabel } from "@/lib/audit-labels";
+import { turkeyDateKey } from "@/lib/tz";
 
 type Log = {
   id: string;
@@ -76,12 +77,11 @@ export default function LogPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [fromDate, setFromDate] = useState(() => {
-    const today = new Date();
-    const from = new Date(today);
-    from.setDate(from.getDate() - 30);
-    return from.toISOString().split("T")[0];
+    const from = new Date(`${turkeyDateKey()}T00:00:00.000Z`);
+    from.setUTCDate(from.getUTCDate() - 30);
+    return turkeyDateKey(from);
   });
-  const [toDate, setToDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [toDate, setToDate] = useState(() => turkeyDateKey());
   const [pageSize, setPageSize] = useState(25);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");

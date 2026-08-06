@@ -3,7 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { formatZodError, patientSchema } from "@/lib/validators";
 import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
-import { shouldHidePatientPhone } from "@/lib/patient-visibility";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 import { sendSmsConsentRequest } from "@/lib/sms-consent";
 import { listPatientIdsForDerivedBucket } from "@/lib/sms-consent-stats";
 
@@ -124,7 +124,7 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
         : Promise.resolve(0),
     ]);
 
-    const hidePhone = shouldHidePatientPhone(auth.user.role);
+    const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
     // Liste ekranı, uzun anamnez metinlerini taşımaz. Satırda gerekli olan tek
     // bilgi medikal uyarının varlığıdır; detay metinleri hasta kartından açılır.
     const listed = patients.map(({ surgeries, medications, otherDiseases, ...patient }) => ({
@@ -159,6 +159,12 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("patients:write");
   if (auth.error) return auth.error;
+  if (!auth.user.institutionId) {
+    // institutionId nullable olduğu için bu kontrol olmadan SUPERADMIN'in
+    // ghost olmayan (kurum bağlamsız) oturumu, hiçbir klinikten görünmeyen
+    // "hayalet" hasta kaydı oluşturabilirdi (bkz. denetim raporu).
+    return NextResponse.json({ message: "Hasta kaydı için kurum bağlamı zorunlu" }, { status: 403 });
+  }
 
   const body = await request.json();
   const parsed = patientSchema.safeParse(body);

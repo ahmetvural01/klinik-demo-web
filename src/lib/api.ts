@@ -272,6 +272,19 @@ export async function requireAuth(permission?: string) {
   return { user };
 }
 
+export async function requireAnyAuth(permissions: readonly string[]) {
+  const auth = await requireAuth();
+  if (auth.error) return auth;
+  if (auth.user.ghost) return auth;
+
+  const role = auth.user.role as import("@prisma/client").Role;
+  const allowed = (await Promise.all(permissions.map((permission) => can(role, permission)))).some(Boolean);
+  if (!allowed) {
+    return { error: NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 }) };
+  }
+  return auth;
+}
+
 async function getRequestIp(): Promise<string | null> {
   try {
     const h = await headers();

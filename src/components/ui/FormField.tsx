@@ -40,8 +40,8 @@ export function FormField({ label, htmlFor, required, error, hint, success, chil
     : children;
 
   return (
-    <label htmlFor={htmlFor} className="block">
-      <span className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-800">
+    <label htmlFor={htmlFor} className="ui-form-field block">
+      <span className="ui-form-label mb-1.5 flex items-center gap-1.5 text-xs font-bold text-slate-800">
         {label}
         {required && <span className="text-red-500">*</span>}
         {showSuccess && (
@@ -73,7 +73,7 @@ export interface FormSectionProps {
 
 export function FormSection({ icon: Icon, title, description, children }: FormSectionProps) {
   return (
-    <section className="ui-surface p-4 sm:p-5">
+    <section className="ui-form-section ui-surface p-4 sm:p-5">
       <div className="mb-4 flex items-start gap-3 border-b border-slate-100/80 pb-3">
         <IconFrame icon={Icon} active size="lg" />
         <div>
@@ -89,7 +89,7 @@ export function FormSection({ icon: Icon, title, description, children }: FormSe
 export function FormErrorBanner({ message }: { message?: string | null }) {
   if (!message) return null;
   return (
-    <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+    <div className="ui-error-banner rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
       {message}
     </div>
   );
