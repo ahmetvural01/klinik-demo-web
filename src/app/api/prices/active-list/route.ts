@@ -32,7 +32,11 @@ export async function PUT(request: NextRequest) {
   const setting = await prisma.setting.upsert({
     where: { institutionId: auth.user.institutionId },
     update: { activePriceList },
-    create: { institutionId: auth.user.institutionId, activePriceList },
+    create: {
+      institutionId: auth.user.institutionId,
+      institutionName: (await prisma.institution.findUnique({ where: { id: auth.user.institutionId }, select: { name: true } }))?.name || "",
+      activePriceList,
+    },
     select: { activePriceList: true },
   });
   await writeAudit(auth.user.id, "PRICE_SOURCE_UPDATE", `Aktif fiyat kaynağı: ${activePriceList}`);
