@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 import { patientFollowUpEventCreateSchema } from "@/lib/validators";
 
 type Params = { params: Promise<{ id: string }> };
@@ -10,24 +11,22 @@ export async function GET(_: NextRequest, props: Params) {
   try {
   const auth = await requireAuth("hastatracking:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
+    const institutionId = auth.user.institutionId;
+    if (!institutionId) return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 403 });
 
-    const followUp = await prisma.patientFollowUp.findUnique({
-      where: { id: params.id },
-      select: { id: true, patient: { select: { institutionId: true } } },
+    const followUp = await prisma.patientFollowUp.findFirst({
+      where: { id: params.id, institutionId, branchId: branch.branchId },
+      select: { id: true, patient: { select: { institutionId: true, homeBranchId: true } } },
     });
 
     if (!followUp) {
       return NextResponse.json({ message: "Takip kaydı bulunamadı" }, { status: 404 });
     }
 
-    if (auth.user.institutionId) {
-      if (followUp.patient.institutionId !== auth.user.institutionId) {
-        return NextResponse.json({ message: "Takip kaydı kurum kapsamı dışında" }, { status: 403 });
-      }
-    }
-
     const events = await prisma.patientFollowUpEvent.findMany({
-      where: { followUpId: params.id },
+      where: { followUpId: params.id, institutionId, branchId: branch.branchId, voidedAt: null },
       include: {
         createdBy: { select: { id: true, fullName: true } },
         updatedBy: { select: { id: true, fullName: true } },
@@ -47,23 +46,21 @@ export async function POST(request: NextRequest, props: Params) {
   try {
   const auth = await requireAuth("hastatracking:write");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
+    const institutionId = auth.user.institutionId;
+    if (!institutionId) return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 403 });
 
-    const followUp = await prisma.patientFollowUp.findUnique({
-      where: { id: params.id },
+    const followUp = await prisma.patientFollowUp.findFirst({
+      where: { id: params.id, institutionId, branchId: branch.branchId },
       include: {
-        patient: { select: { id: true, fullName: true, institutionId: true } },
+        patient: { select: { id: true, fullName: true, institutionId: true, homeBranchId: true } },
         createdBy: { select: { id: true, institutionId: true } },
       },
     });
 
     if (!followUp) {
       return NextResponse.json({ message: "Takip kaydı bulunamadı" }, { status: 404 });
-    }
-
-    if (auth.user.institutionId) {
-      if (followUp.patient.institutionId !== auth.user.institutionId) {
-        return NextResponse.json({ message: "Takip kaydı kurum kapsamı dışında" }, { status: 403 });
-      }
     }
 
     const body = await request.json();
@@ -81,6 +78,8 @@ export async function POST(request: NextRequest, props: Params) {
 
     const event = await prisma.patientFollowUpEvent.create({
       data: {
+        institutionId,
+        branchId: branch.branchId,
         followUpId: followUp.id,
         patientId: followUp.patientId,
         occurredAt: new Date(parsed.data.occurredAt),

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Modal } from "@/components/ui/Modal";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { showToastSafe } from "@/lib/toast-client";
 
 const MONEY = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 2 });
@@ -54,6 +55,8 @@ export interface HakedisMonthlyPanelProps {
 export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshToken }: HakedisMonthlyPanelProps) {
   const [months, setMonths] = useState<HakedisMonth[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
 
   const [detailOpen, setDetailOpen] = useState(false);
   const [detail, setDetail] = useState<HakedisDetail | null>(null);
@@ -63,13 +66,19 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
     if (!doctorId) { setMonths([]); return; }
     let cancelled = false;
     setLoading(true);
+    setLoadError("");
     fetch(`/api/hakedis?doctorId=${doctorId}&months=12`, { cache: "no-store" })
       .then(r => r.ok ? r.json() : Promise.reject())
       .then(data => { if (!cancelled) setMonths(data.months || []); })
-      .catch(() => { if (!cancelled) showToast("error", "Hakediş dökümü yüklenemedi"); })
+      .catch(() => {
+        if (!cancelled) {
+          setMonths([]);
+          setLoadError("Hakediş dökümü yüklenemedi.");
+        }
+      })
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [doctorId, refreshToken]);
+  }, [doctorId, refreshToken, reloadKey]);
 
   const openDetail = async (year: number, month: number) => {
     setDetailOpen(true);
@@ -168,6 +177,8 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
         </div>
         {loading ? (
           <div className="p-8 text-center text-sm text-slate-400">Yükleniyor…</div>
+        ) : loadError ? (
+          <LoadErrorState compact message={loadError} onRetry={() => setReloadKey((value) => value + 1)} />
         ) : months.length === 0 ? (
           <div className="p-8 text-center text-sm text-slate-400">Bu doktor için hakediş verisi yok</div>
         ) : (

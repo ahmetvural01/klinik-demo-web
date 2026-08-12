@@ -1,27 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import { PaymentMethod, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
-
-class HttpError extends Error {
-  status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
+import { requireActiveBranch } from "@/lib/branch-context";
+import { createIntegratedPayment } from "@/lib/payment-ledger";
+import { BusinessRuleError } from "@/lib/public-error";
 
 // PATCH: Taksit öde (kısmi veya tam)
 export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string; tid: string }> }) {
   const params = await props.params;
   const requestKey = req.headers.get("Idempotency-Key")?.trim() || null;
+  let institutionId: string | null = null;
+  let activeBranchId: string | null = null;
   try {
     const auth = await requireAuth("installments:write");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
     const user = auth.user;
     if (!user.institutionId) {
       return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
     }
+    institutionId = user.institutionId;
+    activeBranchId = branch.branchId;
 
     if (requestKey && (requestKey.length < 8 || requestKey.length > 180)) {
       return NextResponse.json({ error: "İşlem anahtarı geçersiz" }, { status: 400 });
@@ -57,24 +58,30 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
 
     if (posId) {
       const pos = await (prisma as any).posDevice.findFirst({
-        where: { id: posId, institutionId: user.institutionId, isActive: true },
+        where: { id: posId, institutionId: user.institutionId, branchId: branch.branchId, isActive: true },
         select: { id: true },
       });
       if (!pos) return NextResponse.json({ error: "POS cihazı bulunamadı" }, { status: 404 });
     }
 
     if (requestKey) {
-      const duplicate = await prisma.payment.findUnique({
-        where: { requestKey },
-        include: { taksitOdemeler: { select: { taksitId: true } } },
+      const duplicate = await prisma.payment.findFirst({
+        where: { requestKey, institutionId: user.institutionId, branchId: branch.branchId },
+        include: { taksitOdemeler: { where: { status: "ACTIVE" }, select: { taksitId: true } } },
       });
       if (duplicate) {
         if (!duplicate.taksitOdemeler.some((item) => item.taksitId === params.tid)) {
           return NextResponse.json({ error: "İşlem anahtarı başka bir tahsilatta kullanılmış" }, { status: 409 });
         }
         const current = await (prisma as any).taksit.findUnique({
-          where: { id: params.tid },
-          include: { odemeler: { orderBy: { tarih: "asc" } } },
+          where: {
+            id_institutionId_branchId: {
+              id: params.tid,
+              institutionId: user.institutionId,
+              branchId: branch.branchId,
+            },
+          },
+          include: { odemeler: { where: { status: "ACTIVE" }, orderBy: { tarih: "asc" } } },
         });
         return NextResponse.json(current);
       }
@@ -90,34 +97,43 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     // raporu, CLAUDE.md Decimal kuralı).
     let odemeAmtDecimal = new Prisma.Decimal(0);
     const updated = await (prisma as any).$transaction(async (tx: any) => {
-      await tx.$queryRaw`SELECT id FROM "Taksit" WHERE id = ${params.tid} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM "Taksit" WHERE id = ${params.tid} AND "institutionId" = ${user.institutionId} AND "branchId" = ${branch.branchId} FOR UPDATE`;
       const taksit = await tx.taksit.findUnique({
-        where: { id: params.tid },
-        include: { plan: { include: { patient: { select: { institutionId: true } } } } }
+        where: {
+          id_institutionId_branchId: {
+            id: params.tid,
+            institutionId: user.institutionId,
+            branchId: branch.branchId,
+          },
+        },
+          include: { plan: { include: { patient: { select: { institutionId: true } } } } }
       });
-      if (!taksit) throw new HttpError(404, "Taksit bulunamadı");
-      if (taksit.planId !== params.id) throw new HttpError(404, "Taksit bulunamadı");
+      if (!taksit) throw new BusinessRuleError("Taksit bulunamadı", 404);
+      if (taksit.planId !== params.id) throw new BusinessRuleError("Taksit bulunamadı", 404);
+      if (taksit.plan.branchId !== branch.branchId || taksit.plan.institutionId !== user.institutionId) {
+        throw new BusinessRuleError("Taksit bulunamadı", 404);
+      }
       if (taksit.plan.patient?.institutionId !== user.institutionId) {
-        throw new HttpError(404, "Taksit bulunamadı");
+        throw new BusinessRuleError("Taksit bulunamadı", 404);
       }
       if (taksit.plan.status === "IPTAL") {
-        throw new HttpError(409, "İptal edilmiş plana tahsilat yapılamaz");
+        throw new BusinessRuleError("İptal edilmiş plana tahsilat yapılamaz", 409);
       }
       if (taksit.plan.status === "TAMAMLANDI") {
-        throw new HttpError(409, "Tamamlanmış plana yeni tahsilat yapılamaz");
+        throw new BusinessRuleError("Tamamlanmış plana yeni tahsilat yapılamaz", 409);
       }
       if (taksit.status === "ODENDI") {
-        throw new HttpError(400, "Bu taksit zaten ödenmiş");
+        throw new BusinessRuleError("Bu taksit zaten ödenmiş", 400);
       }
       if (taksit.status === "IPTAL") {
-        throw new HttpError(409, "İptal edilmiş taksite tahsilat yapılamaz");
+        throw new BusinessRuleError("İptal edilmiş taksite tahsilat yapılamaz", 409);
       }
       if (posId) {
         const currentPos = await tx.posDevice.findFirst({
-          where: { id: posId, institutionId: user.institutionId, isActive: true },
+          where: { id: posId, institutionId: user.institutionId, branchId: branch.branchId, isActive: true },
           select: { id: true },
         });
-        if (!currentPos) throw new HttpError(409, "Seçilen POS artık kullanılamıyor");
+        if (!currentPos) throw new BusinessRuleError("Seçilen POS artık kullanılamıyor", 409);
       }
 
       const kalan = taksit.kalan as Prisma.Decimal;
@@ -125,7 +141,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       const odenenD = taksit.odenen as Prisma.Decimal;
       odemeAmtDecimal = new Prisma.Decimal(requestedAmount);
       if (odemeAmtDecimal.gt(kalan)) {
-        throw new HttpError(400, `Ödeme tutarı kalan bakiyeden (${kalan.toString()} TL) büyük olamaz`);
+        throw new BusinessRuleError(`Ödeme tutarı kalan bakiyeden (${kalan.toString()} TL) büyük olamaz`, 400);
       }
       const yeniOdenen = odenenD.plus(odemeAmtDecimal);
       const yeniKalan = Prisma.Decimal.max(new Prisma.Decimal(0), tutarD.minus(yeniOdenen));
@@ -138,22 +154,24 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       // sessizce kayboluyordu (bkz. denetim raporu — kritik veri
       // tutarlılığı sorunu). /api/payments ile AYNI iz bırakması için
       // burada da bir Payment kaydı oluşturulup TaksitOdeme'ye bağlanıyor.
-      const linkedPayment = await tx.payment.create({
-        data: {
+      const { payment: linkedPayment } = await createIntegratedPayment({
+          tx,
           institutionId: taksit.plan.patient.institutionId || user.institutionId,
+          branchId: branch.branchId,
           patientId: taksit.plan.patientId,
           doctorId: taksit.plan.doctorId,
           requestKey,
-          method: yontem,
-          amount: odemeAmtDecimal,
+          method: yontem as PaymentMethod,
+          amount: odemeAmtDecimal.toNumber(),
           description: note || `Taksit tahsilatı (${taksit.siraNo}. taksit)`,
           posId: posId || null,
-          status: "ACTIVE",
-        },
+          integrateInstallments: false,
       });
 
       await tx.taksitOdeme.create({
         data: {
+          institutionId: taksit.plan.patient.institutionId || user.institutionId,
+          branchId: branch.branchId,
           taksitId: params.tid,
           paymentId: linkedPayment.id,
           tarih: new Date(),
@@ -163,12 +181,24 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         }
       });
       await tx.taksit.update({
-        where: { id: params.tid },
+        where: {
+          id_institutionId_branchId: {
+            id: params.tid,
+            institutionId: user.institutionId,
+            branchId: branch.branchId,
+          },
+        },
         data: { odenen: yeniOdenen, kalan: yeniKalan, status: yeniStatus }
       });
 
       // Plan durumunu güncelle
-      const taksitler = await tx.taksit.findMany({ where: { planId: taksit.planId } });
+      const taksitler = await tx.taksit.findMany({
+        where: {
+          planId: taksit.planId,
+          institutionId: user.institutionId,
+          branchId: branch.branchId,
+        },
+      });
       const tumOdendi = taksitler.every((t: { id: string; status: string }) =>
         t.id === params.tid ? yeniStatus === "ODENDI" : t.status === "ODENDI" || t.status === "IPTAL"
       );
@@ -178,20 +208,32 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       const planStatus = tumOdendi ? "TAMAMLANDI" : birOdendi ? "DEVAM_EDIYOR" : "AKTIF";
 
       await tx.taksitPlan.update({
-        where: { id: taksit.planId },
+        where: {
+          id_institutionId_branchId: {
+            id: taksit.planId,
+            institutionId: user.institutionId,
+            branchId: branch.branchId,
+          },
+        },
         data: { status: planStatus }
       });
 
       return tx.taksit.findUnique({
-        where: { id: params.tid },
-        include: { odemeler: { orderBy: { tarih: "asc" } } }
+        where: {
+          id_institutionId_branchId: {
+            id: params.tid,
+            institutionId: user.institutionId,
+            branchId: branch.branchId,
+          },
+        },
+        include: { odemeler: { where: { status: "ACTIVE" }, orderBy: { tarih: "asc" } } }
       });
     }, { isolationLevel: "Serializable" });
 
     await writeAudit(auth.user.id, "TAKSIT_ODEME", `${odemeAmtDecimal.toString()} TL taksit ödemesi alındı (${params.tid})`);
     return NextResponse.json(updated);
   } catch (e) {
-    if (e instanceof HttpError) {
+    if (e instanceof BusinessRuleError) {
       return NextResponse.json({ error: e.message }, { status: e.status });
     }
     if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2034") {
@@ -200,15 +242,21 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         { status: 409 }
       );
     }
-    if (requestKey && e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2002") {
-      const duplicate = await prisma.payment.findUnique({
-        where: { requestKey },
-        include: { taksitOdemeler: { select: { taksitId: true } } },
+    if (requestKey && institutionId && activeBranchId && e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2002") {
+      const duplicate = await prisma.payment.findFirst({
+        where: { requestKey, institutionId, branchId: activeBranchId },
+        include: { taksitOdemeler: { where: { status: "ACTIVE" }, select: { taksitId: true } } },
       });
       if (duplicate?.taksitOdemeler.some((item) => item.taksitId === params.tid)) {
         const current = await (prisma as any).taksit.findUnique({
-          where: { id: params.tid },
-          include: { odemeler: { orderBy: { tarih: "asc" } } },
+          where: {
+            id_institutionId_branchId: {
+              id: params.tid,
+              institutionId,
+              branchId: activeBranchId,
+            },
+          },
+          include: { odemeler: { where: { status: "ACTIVE" }, orderBy: { tarih: "asc" } } },
         });
         return NextResponse.json(current);
       }

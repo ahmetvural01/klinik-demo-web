@@ -1,14 +1,29 @@
 import { isIP } from "net";
 import { prisma } from "@/lib/prisma";
 import { decryptField, encryptField } from "@/lib/field-crypto";
+import { getMetaWhatsappReadiness } from "@/lib/meta-whatsapp";
 
 export type WhatsappSendResult = {
   success: boolean;
+  deliveryCertainty?: "ACCEPTED" | "REJECTED" | "UNKNOWN";
   providerMessageId?: string;
   providerRaw: string;
   error?: string;
   providerCode?: string;
 };
+
+function classifyDelivery(result: WhatsappSendResult): WhatsappSendResult {
+  if (result.success) return { ...result, deliveryCertainty: "ACCEPTED" };
+  const unknownMarkers = new Set([
+    "META_REQUEST_ERROR",
+    "TWILIO_REQUEST_ERROR",
+    "CUSTOM_PROVIDER_ERROR",
+  ]);
+  return {
+    ...result,
+    deliveryCertainty: unknownMarkers.has(result.providerRaw) ? "UNKNOWN" : "REJECTED",
+  };
+}
 
 export type WhatsappSendOptions = {
   institutionId?: string | null;
@@ -35,6 +50,7 @@ type ProviderConfig = {
   username: string | null;
   password: string | null;
   apiKey: string | null;
+  accessTokenEncrypted: string | null;
   sender: string | null;
   headersJson: string | null;
   bodyTemplate: string | null;
@@ -42,6 +58,7 @@ type ProviderConfig = {
   phoneNumberId: string | null;
   businessAccountId: string | null;
   apiVersion: string;
+  connectionStatus: string;
   appointmentTemplateName: string | null;
   appointmentTemplateLanguage: string;
 };
@@ -148,8 +165,8 @@ async function sendWithMetaProvider(
   message: string,
   options: WhatsappSendOptions,
 ): Promise<WhatsappSendResult> {
-  const token = decryptField(provider.apiKey || "");
-  if (!provider.phoneNumberId || !token) {
+  const token = decryptField(provider.accessTokenEncrypted || provider.apiKey || "");
+  if (!provider.phoneNumberId || !token || provider.connectionStatus !== "CONNECTED") {
     return {
       success: false,
       providerRaw: "META_CONFIG_MISSING",
@@ -187,26 +204,46 @@ async function sendWithMetaProvider(
         text: { preview_url: false, body: message },
       };
 
-  const response = await fetch(
-    `https://graph.facebook.com/${provider.apiVersion || "v23.0"}/${provider.phoneNumberId}/messages`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
+  try {
+    const response = await fetch(
+      `https://graph.facebook.com/${process.env.META_GRAPH_API_VERSION || provider.apiVersion || "v25.0"}/${provider.phoneNumberId}/messages`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15_000),
       },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(12_000),
-    },
-  );
-  const raw = (await response.text()).trim();
-  return {
-    success: response.ok,
-    providerMessageId: extractMessageId(raw),
-    providerRaw: raw,
-    error: response.ok ? undefined : `Meta WhatsApp API HTTP ${response.status}`,
-    providerCode: provider.code,
-  };
+    );
+    const raw = (await response.text()).trim();
+    let metaError = `Meta WhatsApp API HTTP ${response.status}`;
+    let errorCode: number | undefined;
+    try {
+      const parsed = JSON.parse(raw) as { error?: { message?: string; code?: number }; messages?: Array<{ id?: string }> };
+      errorCode = parsed.error?.code;
+      if (parsed.error?.message) metaError = `${parsed.error.message}${errorCode ? ` [${errorCode}]` : ""}`;
+    } catch {
+      // Ham Meta yanıtı loga veya istemciye taşınmaz.
+    }
+    return {
+      success: response.ok,
+      providerMessageId: extractMessageId(raw),
+      providerRaw: response.ok ? "META_ACCEPTED" : `META_HTTP_${response.status}${errorCode ? `_CODE_${errorCode}` : ""}`,
+      error: response.ok ? undefined : metaError.slice(0, 500),
+      providerCode: provider.code,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      providerRaw: "META_REQUEST_ERROR",
+      error: error instanceof Error && error.name === "TimeoutError"
+        ? "Meta WhatsApp API zaman aşımına uğradı."
+        : "Meta WhatsApp API bağlantısı kurulamadı.",
+      providerCode: provider.code,
+    };
+  }
 }
 
 async function sendWithTwilioProvider(
@@ -370,7 +407,11 @@ export async function testWhatsappProviderSend(providerId: string, phoneRaw: str
       providerCode: provider.code,
     };
   }
-  return sendWithProvider(provider, normalizedPhone, message, {});
+  const result = await sendWithProvider(provider, normalizedPhone, message, {});
+  if (result.success) {
+    await prisma.whatsappProviderConfig.update({ where: { id: provider.id }, data: { lastSuccessfulSendAt: new Date(), connectionError: null } });
+  }
+  return result;
 }
 
 export async function sendWhatsapp(
@@ -387,10 +428,11 @@ export async function sendWhatsapp(
     };
   }
 
+  let patientBranchId: string | null = null;
   if (options.patientId) {
-    const patient = await prisma.patient.findUnique({
-      where: { id: options.patientId },
-      select: { whatsappOptInAt: true, whatsappOptOutAt: true },
+    const patient = await prisma.patient.findFirst({
+      where: { id: options.patientId, institutionId: options.institutionId || undefined, archivedAt: null },
+      select: { whatsappOptInAt: true, whatsappOptOutAt: true, homeBranchId: true },
     });
     if (patient?.whatsappOptOutAt || !patient?.whatsappOptInAt) {
       return {
@@ -399,6 +441,7 @@ export async function sendWhatsapp(
         error: "Hastanın WhatsApp iletişim izni bulunmuyor.",
       };
     }
+    patientBranchId = patient.homeBranchId;
   }
 
   if (!options.institutionId) {
@@ -409,11 +452,25 @@ export async function sendWhatsapp(
     };
   }
 
+  if (!getMetaWhatsappReadiness().ready) {
+    return {
+      success: false,
+      providerRaw: "META_PLATFORM_NOT_READY",
+      error: "WhatsApp bağlantı hizmeti henüz kullanıma hazır değil.",
+    };
+  }
+
   // Platform genelinde paylaşılan bir WhatsApp sağlayıcısı yok — her klinik
   // yalnızca kendi bağladığı sağlayıcıyı kullanır, mesaj hiçbir zaman ortak bir
   // numaradan gitmez (bkz. docs/ILETISIM-MIMARISI-RAPORU.md §3).
   const providers = await prisma.whatsappProviderConfig.findMany({
-    where: { isActive: true, institutionId: options.institutionId },
+    where: {
+      isActive: true,
+      institutionId: options.institutionId,
+      code: "META_EMBEDDED",
+      providerType: "META_CLOUD",
+      connectionStatus: "CONNECTED",
+    },
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
   });
   if (providers.length === 0) {
@@ -424,34 +481,69 @@ export async function sendWhatsapp(
     };
   }
 
+  const messageBranchId = patientBranchId || (options.appointmentId
+    ? (await prisma.appointment.findFirst({
+        where: { id: options.appointmentId, institutionId: options.institutionId },
+        select: { branchId: true },
+      }))?.branchId
+    : null);
+  if (!messageBranchId) {
+    return {
+      success: false,
+      providerRaw: "NO_MESSAGE_BRANCH",
+      error: "WhatsApp mesajının şube kapsamı belirlenemedi.",
+    };
+  }
+
   const errors: string[] = [];
   for (const provider of providers) {
-    const result = await sendWithProvider(provider, normalizedPhone, message, options);
+    const result = classifyDelivery(await sendWithProvider(provider, normalizedPhone, message, options));
     if (options.institutionId) {
       await prisma.whatsappMessage.create({
         data: {
           institutionId: options.institutionId,
+          branchId: messageBranchId,
           providerId: provider.id,
           patientId: options.patientId || null,
           appointmentId: options.appointmentId || null,
           externalMessageId: result.providerMessageId || null,
           direction: "OUTBOUND",
-          status: result.success ? "SENT" : "FAILED",
+           status: result.success ? "SENT" : result.deliveryCertainty === "UNKNOWN" ? "PENDING" : "FAILED",
           phone: normalizedPhone,
           content: encryptField(message),
           templateName: options.template?.name || provider.appointmentTemplateName || null,
           errorDetail: result.success ? null : result.error || result.providerRaw.slice(0, 1000),
           sentAt: result.success ? new Date() : null,
-          failedAt: result.success ? null : new Date(),
+           failedAt: result.deliveryCertainty === "REJECTED" ? new Date() : null,
         },
       });
     }
-    if (result.success) return result;
+    if (result.success) {
+      await prisma.whatsappProviderConfig.update({
+        where: { id: provider.id },
+        data: { lastSuccessfulSendAt: new Date(), connectionError: null },
+      });
+      return result;
+    }
+    if (result.deliveryCertainty === "UNKNOWN") {
+      return result;
+    }
+    if (provider.providerType === "META_CLOUD" && /META_HTTP_(401|403)|CODE_190/.test(result.providerRaw)) {
+      await prisma.whatsappProviderConfig.update({
+        where: { id: provider.id },
+        data: {
+          isActive: false,
+          connectionStatus: "ERROR",
+          connectionError: "Meta yetkilendirmesi geçersiz veya süresi dolmuş. Yeniden bağlanın.",
+        },
+      });
+    }
     errors.push(`${provider.code}: ${result.error || result.providerRaw}`);
   }
 
   return {
     success: false,
+    deliveryCertainty: "REJECTED",
     providerRaw: errors.join(" | "),
     error: "Tüm etkin WhatsApp sağlayıcılarıyla gönderim başarısız oldu.",
   };

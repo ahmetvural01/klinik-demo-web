@@ -1,0 +1,2 @@
+# Cost routing
+Free-first provider policy. Never create/rotate accounts to circumvent quotas. Rate-limited provider enters cooldown and eligible work moves to next configured tier. Paid escalation remains disabled unless AI_ALLOW_PAID=1. Local Ollama is the zero-API-cost fallback when available.

@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireAuth("payments:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Kurum bilgisi bulunamadı" }, { status: 403 });
   }
   const { id } = await params;
 
-  const pkg = await prisma.patientPackage.findFirst({ where: { id, institutionId: auth.user.institutionId } });
+  const pkg = await prisma.patientPackage.findFirst({ where: { id, institutionId: auth.user.institutionId, branchId: branch.branchId } });
   if (!pkg) return NextResponse.json({ message: "Paket bulunamadı" }, { status: 404 });
   if (pkg.status === "IPTAL") {
     return NextResponse.json({ ok: true, alreadyCancelled: true });

@@ -1,11 +1,11 @@
+import Image from "next/image";
 import { BrowserBar } from "./DeviceFrames";
-
-/* eslint-disable @next/next/no-img-element */
+import { BRAND_DOMAIN } from "@/lib/brand";
 
 const HERO_GRADIENT = "linear-gradient(120deg, rgb(7 64 57), rgb(13 125 111) 55%, rgb(56 189 168))";
 
 function ModuleIconImg({ name, size = 18 }: { name: string; size?: number }) {
-  return <img src={`/icons/modules/${name}.svg`} alt="" width={size} height={size} />;
+  return <Image src={`/icons/modules/${name}.svg`} alt="" width={size} height={size} unoptimized />;
 }
 
 function TopBar({ icon, title }: { icon: string; title: string }) {
@@ -28,7 +28,7 @@ function TopBar({ icon, title }: { icon: string; title: string }) {
 export function DashboardScreen() {
   return (
     <>
-      <BrowserBar path="klinikmodern.app/anasayfa" />
+      <BrowserBar path={`${BRAND_DOMAIN}/anasayfa`} />
       <div className="bg-slate-50 p-4">
         <TopBar icon="home" title="Anasayfa" />
         <div className="mt-3 rounded-xl p-4 text-white shadow-sm" style={{ background: HERO_GRADIENT }}>
@@ -76,7 +76,7 @@ export function DashboardScreen() {
 export function CalendarScreen() {
   return (
     <>
-      <BrowserBar path="klinikmodern.app/randevu" />
+      <BrowserBar path={`${BRAND_DOMAIN}/randevu`} />
       <div className="bg-slate-50 p-4">
         <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
           <div className="flex items-center gap-2 text-slate-800">
@@ -115,7 +115,7 @@ export function CalendarScreen() {
 export function PatientScreen() {
   return (
     <>
-      <BrowserBar path="klinikmodern.app/hasta-detay" />
+      <BrowserBar path={`${BRAND_DOMAIN}/hasta-detay`} />
       <div className="bg-slate-50 p-4">
         <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
           <div className="flex items-center gap-2 text-slate-800">
@@ -160,7 +160,7 @@ export function PatientScreen() {
 export function FinanceScreen() {
   return (
     <>
-      <BrowserBar path="klinikmodern.app/muhasebe" />
+      <BrowserBar path={`${BRAND_DOMAIN}/muhasebe`} />
       <div className="bg-slate-50 p-4">
         <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
           <div className="flex items-center gap-2 text-slate-700">
@@ -195,7 +195,7 @@ export function FinanceScreen() {
 export function StockScreen() {
   return (
     <>
-      <BrowserBar path="klinikmodern.app/stok" />
+      <BrowserBar path={`${BRAND_DOMAIN}/stok`} />
       <div className="bg-slate-50 p-4">
         <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
           <div className="flex items-center gap-2 text-slate-700">
@@ -226,7 +226,7 @@ export function StockScreen() {
 export function LabScreen() {
   return (
     <>
-      <BrowserBar path="klinikmodern.app/lab" />
+      <BrowserBar path={`${BRAND_DOMAIN}/lab`} />
       <div className="bg-slate-50 p-4">
         <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
           <div className="flex items-center gap-2 text-slate-700">
@@ -259,7 +259,7 @@ export function LabScreen() {
 export function MessagingScreen() {
   return (
     <>
-      <BrowserBar path="klinikmodern.app/sms" />
+      <BrowserBar path={`${BRAND_DOMAIN}/sms`} />
       <div className="bg-slate-50 p-4">
         <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2">
           <div className="flex items-center gap-2 text-slate-700">

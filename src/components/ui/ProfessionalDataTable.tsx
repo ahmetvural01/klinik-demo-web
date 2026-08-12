@@ -105,12 +105,17 @@ export function ProfessionalDataTable<TData>({
                   aria-label={onRowClick ? getRowAriaLabel?.(row.original) : undefined}
                   onClick={onRowClick ? (event) => {
                     const target = event.target as HTMLElement;
-                    if (target.closest("button, a, input, select, textarea, [role='button']")) return;
+                    // Satır role="button" taşıdığı için closest() kendisine de eşleşir —
+                    // currentTarget hariç tutulmazsa satır tıklaması hiç çalışmaz (bkz.
+                    // ListTable.tsx'teki aynı düzeltme / denetim raporu).
+                    const interactive = target.closest("button, a, input, select, textarea, [role='button']");
+                    if (interactive && interactive !== event.currentTarget) return;
                     onRowClick(row.original);
                   } : undefined}
                   onKeyDown={onRowClick ? (event) => {
                     const target = event.target as HTMLElement;
-                    if (target.closest("button, a, input, select, textarea, [role='button']")) return;
+                    const interactive = target.closest("button, a, input, select, textarea, [role='button']");
+                    if (interactive && interactive !== event.currentTarget) return;
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
                       onRowClick(row.original);

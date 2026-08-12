@@ -2,19 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { decryptField } from "@/lib/field-crypto";
-import { normalizeWhatsappPhone, sendWhatsapp } from "@/lib/whatsapp";
+import { normalizeWhatsappPhone } from "@/lib/whatsapp";
+import { dispatchPatientMessage } from "@/lib/notification-dispatch";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 function parseTake(value: string | null) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? Math.min(200, Math.max(1, Math.trunc(parsed))) : 100;
 }
 
-async function requireAnyAuth(primaryPermission: string, fallbackPermission: string | null = null) {
-  const primary = await requireAuth(primaryPermission);
-  if (!primary.error) return primary;
-  if (!fallbackPermission) return primary;
-  const fallback = await requireAuth(fallbackPermission);
-  return fallback.error ? primary : fallback;
+async function requireWhatsappModule(institutionId: string) {
+  const institution = await prisma.institution.findFirst({
+    where: { id: institutionId, isActive: true, whatsappEnabled: true },
+    select: { id: true },
+  });
+  return Boolean(institution);
 }
 
 function presentMessage<T extends { content: string | null; errorDetail: string | null }>(message: T) {
@@ -25,12 +27,32 @@ function presentMessage<T extends { content: string | null; errorDetail: string 
   };
 }
 
+function whatsappBranchScope(branch: { id: string; isHeadquarters: boolean; isBranchManager: boolean }) {
+  return {
+    branchId: branch.id,
+    // Hasta ile henüz eşleşmeyen numaralar merkez şubeye düşer; bunları
+    // yalnız merkez şube yöneticisi görüp doğru hastaya yönlendirebilir.
+    ...(branch.isHeadquarters && branch.isBranchManager ? {} : { patientId: { not: null } }),
+  };
+}
+
 export async function GET(request: NextRequest) {
-  const auth = await requireAnyAuth("whatsapp:read", "sms:read");
+  const auth = await requireAuth("whatsapp:read");
   if (auth.error) return auth.error;
   if (!auth.user.institutionId) return NextResponse.json({ messages: [] });
+  const activeBranch = requireActiveBranch(auth.user.branchContext);
+  if (!activeBranch.ok) return NextResponse.json({ message: activeBranch.message }, { status: 403 });
+  const activeBranchSummary = auth.user.branchContext.activeBranch;
+  if (!activeBranchSummary) return NextResponse.json({ message: "Aktif şube bulunamadı." }, { status: 403 });
 
   const institutionId = auth.user.institutionId;
+  if (!(await requireWhatsappModule(institutionId))) {
+    return NextResponse.json({ message: "WhatsApp modülü bu klinik için açık değil." }, { status: 403 });
+  }
+  // Eşleşmiş konuşmalar hastanın şubesine aittir. Henüz hastayla eşleşmeyen
+  // numaralar tüm şubelere yayılmaz; yalnız merkez şube yöneticisinin gelen
+  // kutusunda görünür ve buradan doğru hastaya yönlendirilebilir.
+  const branchScope = whatsappBranchScope(activeBranchSummary);
   const q = (request.nextUrl.searchParams.get("q") || "").trim();
   const direction = (request.nextUrl.searchParams.get("direction") || "").toUpperCase();
   const status = (request.nextUrl.searchParams.get("status") || "").toUpperCase();
@@ -48,14 +70,17 @@ export async function GET(request: NextRequest) {
   if (mode === "conversations") {
     const where = {
       institutionId,
-      ...(q
-        ? {
-            OR: [
-              { phone: { contains: q } },
-              { patient: { fullName: { contains: q, mode: "insensitive" as const } } },
-            ],
-          }
-        : {}),
+      AND: [
+        branchScope,
+        ...(q
+          ? [{
+              OR: [
+                { phone: { contains: q } },
+                { patient: { fullName: { contains: q, mode: "insensitive" as const } } },
+              ],
+            }]
+          : []),
+      ],
     };
     const [latestMessages, unreadGroups] = await Promise.all([
       prisma.whatsappMessage.findMany({
@@ -81,6 +106,7 @@ export async function GET(request: NextRequest) {
           institutionId,
           direction: "INBOUND",
           seenAt: null,
+          ...branchScope,
         },
         _count: { _all: true },
       }),
@@ -100,7 +126,7 @@ export async function GET(request: NextRequest) {
   if (phone) {
     const take = parseTake(request.nextUrl.searchParams.get("take"));
     const descending = await prisma.whatsappMessage.findMany({
-      where: { institutionId, phone },
+      where: { institutionId, phone, ...branchScope },
       include: {
         patient: {
           select: {
@@ -139,14 +165,17 @@ export async function GET(request: NextRequest) {
       institutionId,
       ...(direction && direction !== "ALL" ? { direction } : {}),
       ...(status && status !== "ALL" ? { status } : {}),
-      ...(q
-        ? {
-            OR: [
-              { phone: { contains: q } },
-              { patient: { fullName: { contains: q, mode: "insensitive" } } },
-            ],
-          }
-        : {}),
+      AND: [
+        branchScope,
+        ...(q
+          ? [{
+              OR: [
+                { phone: { contains: q } },
+                { patient: { fullName: { contains: q, mode: "insensitive" as const } } },
+              ],
+            }]
+          : []),
+      ],
     },
     include: {
       patient: { select: { id: true, fullName: true } },
@@ -162,11 +191,18 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PATCH(request: NextRequest) {
-  const auth = await requireAnyAuth("whatsapp:read", "sms:read");
+  const auth = await requireAuth("whatsapp:read");
   if (auth.error) return auth.error;
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 400 });
   }
+  if (!(await requireWhatsappModule(auth.user.institutionId))) {
+    return NextResponse.json({ message: "WhatsApp modülü bu klinik için açık değil." }, { status: 403 });
+  }
+  const activeBranch = requireActiveBranch(auth.user.branchContext);
+  if (!activeBranch.ok) return NextResponse.json({ message: activeBranch.message }, { status: 403 });
+  const activeBranchSummary = auth.user.branchContext.activeBranch;
+  if (!activeBranchSummary) return NextResponse.json({ message: "Aktif şube bulunamadı." }, { status: 403 });
   const body = await request.json().catch(() => null) as { phone?: unknown } | null;
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return NextResponse.json({ message: "Geçersiz istek gövdesi." }, { status: 400 });
@@ -181,6 +217,7 @@ export async function PATCH(request: NextRequest) {
       phone,
       direction: "INBOUND",
       seenAt: null,
+      ...whatsappBranchScope(activeBranchSummary),
     },
     data: { seenAt: new Date() },
   });
@@ -188,13 +225,18 @@ export async function PATCH(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireAnyAuth("whatsapp:write", "sms:write");
+  const auth = await requireAuth("whatsapp:write");
   if (auth.error) return auth.error;
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 400 });
   }
+  if (!(await requireWhatsappModule(auth.user.institutionId))) {
+    return NextResponse.json({ message: "WhatsApp modülü bu klinik için açık değil." }, { status: 403 });
+  }
+  const activeBranch = requireActiveBranch(auth.user.branchContext);
+  if (!activeBranch.ok) return NextResponse.json({ message: activeBranch.message }, { status: 403 });
 
-  const body = await request.json().catch(() => null) as { patientId?: unknown; message?: unknown; templateName?: unknown; templateLanguage?: unknown } | null;
+  const body = await request.json().catch(() => null) as { requestKey?: unknown; patientId?: unknown; message?: unknown; templateName?: unknown; templateLanguage?: unknown } | null;
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return NextResponse.json({ message: "Geçersiz istek gövdesi." }, { status: 400 });
   }
@@ -202,6 +244,7 @@ export async function POST(request: NextRequest) {
   const templateName = String(body.templateName || "").trim();
   const templateLanguage = String(body.templateLanguage || "tr").trim() || "tr";
   const patientId = String(body.patientId || "").trim();
+  const requestKey = String(body.requestKey || "").trim();
   if (!patientId || (!content && !templateName)) {
     return NextResponse.json({ message: "Hasta ve mesaj zorunludur." }, { status: 400 });
   }
@@ -211,23 +254,17 @@ export async function POST(request: NextRequest) {
   if (templateName.length > 180 || templateLanguage.length > 20) {
     return NextResponse.json({ message: "WhatsApp şablon bilgisi geçersiz." }, { status: 400 });
   }
-
-  // Canlı sohbet yanıtı dispatchPatientMessage'ın olay/şablon mimarisine
-  // uymuyor (serbest metin, anlık, tek seferlik) ama yetki ve izin
-  // kontrollerinden muaf DEĞİLDİR: SuperAdmin'in WhatsApp yetkisi kapalıysa
-  // kliniğin sağlayıcısı olsa bile mesaj gönderilemez.
-  const institution = await prisma.institution.findUnique({
-    where: { id: auth.user.institutionId },
-    select: { whatsappEnabled: true },
-  });
-  if (!institution?.whatsappEnabled) {
-    return NextResponse.json({ message: "WhatsApp modülü kliniğiniz için açık değil." }, { status: 403 });
+  if (!/^[A-Za-z0-9:_-]{12,160}$/.test(requestKey)) {
+    return NextResponse.json({ message: "Mesaj istek anahtarı geçersiz. Lütfen yeniden deneyin." }, { status: 400 });
   }
 
+  // Serbest metin yanıtı da merkezi dispatch sözleşmesinden geçer; böylece
+  // izin, tenant, idempotency ve sağlayıcı kaydı diğer hasta mesajlarıyla aynıdır.
   const patient = await prisma.patient.findFirst({
     where: {
       id: patientId,
       institutionId: auth.user.institutionId,
+      homeBranchId: activeBranch.branchId,
       archivedAt: null,
     },
     select: {
@@ -266,17 +303,22 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const result = await sendWhatsapp(patient.phone, content, {
+  const result = await dispatchPatientMessage({
     institutionId: auth.user.institutionId,
     patientId: patient.id,
-    countryCode: patient.phoneCountryCode,
-    template: templateName ? { name: templateName, language: templateLanguage, bodyParameters: content ? [content] : [] } : undefined,
+    eventType: "MANUAL_WHATSAPP",
+    purpose: "SERVICE",
+    templateCode: templateName || "WHATSAPP_REPLY",
+    message: content || templateName,
+    whatsappMessage: content || templateName,
+    channelPreference: "WHATSAPP",
+    allowSmsFallback: false,
+    idempotencyKey: `whatsapp-reply:${requestKey}`,
+    actorId: auth.user.id,
+    whatsappTemplate: templateName ? { name: templateName, language: templateLanguage, bodyParameters: content ? [content] : [] } : undefined,
   });
   if (!result.success) {
-    // sendWhatsapp() her denemeyi (başarılı/başarısız) WhatsappMessage'a zaten
-    // kaydediyor — burada ayrıca audit log'a da yazılır ki "kim, ne zaman,
-    // hangi hastaya göndermeye çalıştı" personel bazında da izlenebilsin.
-    await writeAudit(auth.user.id, "WHATSAPP_REPLY_FAILED", `Hasta: ${patient.id} · Hata: ${result.error || result.providerRaw || "bilinmeyen hata"}`);
+    await writeAudit(auth.user.id, "WHATSAPP_REPLY_FAILED", `Hasta: ${patient.id} · Hata: ${result.error || result.reason || "bilinmeyen hata"}`);
     return NextResponse.json({ message: result.error || "WhatsApp mesajı gönderilemedi." }, { status: 503 });
   }
   await writeAudit(auth.user.id, "WHATSAPP_REPLY", `Hasta: ${patient.id} · Mesaj: ${result.providerMessageId || "-"}`);

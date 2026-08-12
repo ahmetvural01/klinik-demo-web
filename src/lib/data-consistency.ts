@@ -41,10 +41,11 @@ const addIssue = (
   issues.push(input);
 };
 
-function paymentInstitutionScope(institutionId?: string | null) {
+function paymentInstitutionScope(institutionId?: string | null, branchId?: string | null) {
   return {
     status: "ACTIVE",
     ...(institutionId ? { institutionId } : {}),
+    ...(branchId ? { branchId } : {}),
   };
 }
 
@@ -60,12 +61,55 @@ function countNormalizedDuplicates(rows: Array<{ id: string; name: string }>) {
   return duplicateCount;
 }
 
-async function countPurchaseTotalMismatches(institutionId?: string | null) {
+async function countStockInvariantMismatches(institutionId?: string | null, branchId?: string | null) {
+  const scope = {
+    ...(institutionId ? { institutionId } : {}),
+    ...(branchId ? { branchId } : {}),
+  };
+  const [items, entries, exits, lots] = await Promise.all([
+    prisma.stockItem.findMany({
+      where: { isActive: true, ...scope },
+      select: { id: true, quantity: true },
+      take: 5000,
+    }),
+    prisma.stockMovement.groupBy({
+      by: ["stockItemId"],
+      where: { type: "GIRIS", ...scope },
+      _sum: { quantity: true },
+    }),
+    prisma.stockMovement.groupBy({
+      by: ["stockItemId"],
+      where: { type: "CIKIS", ...scope },
+      _sum: { quantity: true },
+    }),
+    prisma.stockLot.groupBy({
+      by: ["stockItemId"],
+      where: scope,
+      _sum: { quantityRemaining: true },
+    }),
+  ]);
+  const entryByItem = new Map(entries.map((row) => [row.stockItemId, Number(row._sum.quantity || 0)]));
+  const exitByItem = new Map(exits.map((row) => [row.stockItemId, Number(row._sum.quantity || 0)]));
+  const lotByItem = new Map(lots.map((row) => [row.stockItemId, Number(row._sum.quantityRemaining || 0)]));
+
+  let ledgerMismatch = 0;
+  let lotMismatch = 0;
+  for (const item of items) {
+    const quantity = Number(item.quantity || 0);
+    const ledgerQuantity = (entryByItem.get(item.id) || 0) - (exitByItem.get(item.id) || 0);
+    if (quantity !== ledgerQuantity) ledgerMismatch += 1;
+    if (quantity !== (lotByItem.get(item.id) || 0)) lotMismatch += 1;
+  }
+  return { ledgerMismatch, lotMismatch };
+}
+
+async function countPurchaseTotalMismatches(institutionId?: string | null, branchId?: string | null) {
   const purchases = await prisma.purchase.findMany({
     where: {
       status: "AKTIF",
       receiptStatus: "TESLIM_ALINDI",
       ...(institutionId ? { institutionId } : {}),
+      ...(branchId ? { branchId } : {}),
     },
     select: {
       id: true,
@@ -96,19 +140,20 @@ async function countPurchaseTotalMismatches(institutionId?: string | null) {
   return { count: mismatched.length, records };
 }
 
-async function countLabInvoiceTotalMismatches(institutionId?: string | null) {
+async function countLabInvoiceTotalMismatches(institutionId?: string | null, branchId?: string | null) {
   const orders = await prisma.labOrder.findMany({
     where: {
       status: { not: "IPTAL" },
       OR: [
         { price: { not: 0 } },
-        { invoices: { some: {} } },
+        { invoices: { some: { status: "ACTIVE" } } },
       ],
-      ...(institutionId ? { patient: { institutionId } } : {}),
+      ...(institutionId ? { institutionId } : {}),
+      ...(branchId ? { branchId } : {}),
     },
     select: {
       price: true,
-      invoices: { select: { amount: true } },
+      invoices: { where: { status: "ACTIVE" }, select: { amount: true } },
     },
     orderBy: { updatedAt: "desc" },
     take: 1000,
@@ -122,11 +167,12 @@ async function countLabInvoiceTotalMismatches(institutionId?: string | null) {
   }).length;
 }
 
-async function countOverpaidFirms(institutionId?: string | null) {
+async function countOverpaidFirms(institutionId?: string | null, branchId?: string | null) {
   const firms = await prisma.firma.findMany({
     where: {
       isActive: true,
       ...(institutionId ? { institutionId } : {}),
+      ...(branchId ? { branchId } : {}),
     },
     select: {
       islemler: {
@@ -146,8 +192,8 @@ async function countOverpaidFirms(institutionId?: string | null) {
   }).length;
 }
 
-async function countFirmaPaymentAllocationMismatches(institutionId?: string | null) {
-  const scope = institutionId ? { firma: { institutionId } } : {};
+async function countFirmaPaymentAllocationMismatches(institutionId?: string | null, branchId?: string | null) {
+  const scope = { ...(institutionId ? { institutionId } : {}), ...(branchId ? { branchId } : {}) };
   const [payments, debts, allocations] = await Promise.all([
     prisma.firmaIslem.findMany({
       where: { ...scope, status: "AKTIF", islemTipi: "ODEME" },
@@ -176,7 +222,10 @@ async function countFirmaPaymentAllocationMismatches(institutionId?: string | nu
       take: 5000,
     }),
     prisma.firmaPaymentAllocation.findMany({
-      where: institutionId ? { firma: { institutionId } } : {},
+      where: {
+        ...(institutionId ? { firma: { institutionId } } : {}),
+        ...(branchId ? { paymentIslem: { branchId }, debtIslem: { branchId } } : {}),
+      },
       select: {
         firmaId: true,
         paymentIslem: { select: { firmaId: true, status: true, islemTipi: true } },
@@ -218,12 +267,14 @@ async function countFirmaPaymentAllocationMismatches(institutionId?: string | nu
 // burada da otomatik güncellenir.
 const LAB_INVOICE_TOKEN_PREFIX = `${LAB_SOURCE_PREFIX}INVOICE:`;
 
-async function countUnlinkedLabInvoices(institutionId?: string | null) {
+async function countUnlinkedLabInvoices(institutionId?: string | null, branchId?: string | null) {
   const invoices = await prisma.labOrderInvoice.findMany({
     where: {
+      status: "ACTIVE",
       labOrder: {
         status: { not: "IPTAL" },
-        ...(institutionId ? { patient: { institutionId } } : {}),
+        ...(institutionId ? { institutionId } : {}),
+        ...(branchId ? { branchId } : {}),
         firmaId: { not: null },
       },
     },
@@ -244,6 +295,8 @@ async function countUnlinkedLabInvoices(institutionId?: string | null) {
     where: {
       status: "AKTIF",
       aciklama: { contains: LAB_INVOICE_TOKEN_PREFIX },
+      ...(institutionId ? { institutionId } : {}),
+      ...(branchId ? { branchId } : {}),
     },
     select: { aciklama: true },
   });
@@ -269,8 +322,8 @@ async function countUnlinkedLabInvoices(institutionId?: string | null) {
   return { count: unlinked.length, records };
 }
 
-export async function buildDataConsistencyReport(institutionId?: string | null): Promise<ConsistencyPayload> {
-  const paymentScope = paymentInstitutionScope(institutionId);
+export async function buildDataConsistencyReport(institutionId?: string | null, branchId?: string | null): Promise<ConsistencyPayload> {
+  const paymentScope = paymentInstitutionScope(institutionId, branchId);
 
   const [
     paymentMissingPatient,
@@ -293,6 +346,7 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
     recentPayments,
     activeStockNames,
     activeFirmaNames,
+    stockInvariantMismatches,
   ] = await Promise.all([
     prisma.payment.count({
       where: {
@@ -320,7 +374,8 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
       where: {
         status: { not: "IPTAL" },
         firmaId: null,
-        ...(institutionId ? { patient: { institutionId } } : {}),
+        ...(institutionId ? { institutionId } : {}),
+        ...(branchId ? { branchId } : {}),
       },
     }),
     prisma.labOrder.count({
@@ -328,7 +383,8 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
         status: { not: "IPTAL" },
         firmaId: { not: null },
         firma: { kategori: { not: "LAB" } },
-        ...(institutionId ? { patient: { institutionId } } : {}),
+        ...(institutionId ? { institutionId } : {}),
+        ...(branchId ? { branchId } : {}),
       },
     }),
     prisma.labOrderInvoice.count({
@@ -336,7 +392,8 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
         labOrder: {
           status: { not: "IPTAL" },
           firmaId: null,
-          ...(institutionId ? { patient: { institutionId } } : {}),
+          ...(institutionId ? { institutionId } : {}),
+          ...(branchId ? { branchId } : {}),
         },
       },
     }),
@@ -347,6 +404,7 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
           status: "AKTIF",
           receiptStatus: "TESLIM_ALINDI",
           ...(institutionId ? { institutionId } : {}),
+          ...(branchId ? { branchId } : {}),
         },
       },
     }),
@@ -355,34 +413,36 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
         isActive: true,
         quantity: { lt: 0 },
         ...(institutionId ? { institutionId } : {}),
+        ...(branchId ? { branchId } : {}),
       },
     }),
     prisma.taksit.count({
       where: {
         status: "ODENDI",
         kalan: { gt: 0 },
-        ...(institutionId ? { plan: { patient: { institutionId } } } : {}),
+        ...(institutionId || branchId ? { plan: { ...(institutionId ? { institutionId } : {}), ...(branchId ? { branchId } : {}) } } : {}),
       },
     }),
     prisma.taksit.count({
       where: {
         status: { in: ["BEKLIYOR", "GECIKTI"] },
         kalan: { lte: 0 },
-        ...(institutionId ? { plan: { patient: { institutionId } } } : {}),
+        ...(institutionId || branchId ? { plan: { ...(institutionId ? { institutionId } : {}), ...(branchId ? { branchId } : {}) } } : {}),
       },
     }),
     prisma.labOrder.count({
       where: {
         status: "DEVAM_EDIYOR",
         trips: { none: {} },
-        ...(institutionId ? { patient: { institutionId } } : {}),
+        ...(institutionId ? { institutionId } : {}),
+        ...(branchId ? { branchId } : {}),
       },
     }),
-    countUnlinkedLabInvoices(institutionId),
-    countPurchaseTotalMismatches(institutionId),
-    countLabInvoiceTotalMismatches(institutionId),
-    countOverpaidFirms(institutionId),
-    countFirmaPaymentAllocationMismatches(institutionId),
+    countUnlinkedLabInvoices(institutionId, branchId),
+    countPurchaseTotalMismatches(institutionId, branchId),
+    countLabInvoiceTotalMismatches(institutionId, branchId),
+    countOverpaidFirms(institutionId, branchId),
+    countFirmaPaymentAllocationMismatches(institutionId, branchId),
     prisma.payment.findMany({
       where: paymentScope,
       select: {
@@ -400,6 +460,7 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
       where: {
         isActive: true,
         ...(institutionId ? { institutionId } : {}),
+        ...(branchId ? { branchId } : {}),
       },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
@@ -409,11 +470,13 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
       where: {
         isActive: true,
         ...(institutionId ? { institutionId } : {}),
+        ...(branchId ? { branchId } : {}),
       },
       select: { id: true, name: true },
       orderBy: { name: "asc" },
       take: 2000,
     }),
+    countStockInvariantMismatches(institutionId, branchId),
   ]);
 
   const labInvoiceNoFirmaMovement = labInvoiceNoFirmaMovementResult.count;
@@ -624,6 +687,28 @@ export async function buildDataConsistencyReport(institutionId?: string | null):
     detail: "Stok miktarı sıfırın altına düşmüş kartlar var; tüketim veya giriş kayıtları kontrol edilmeli.",
     count: negativeStock,
     action: "Stok geçmişinden giriş/çıkış hareketlerini doğrulayın.",
+    href: "/stok",
+  });
+
+  addIssue(issues, {
+    id: "stock-ledger-mismatch",
+    severity: "critical",
+    area: "Stok",
+    title: "Stok kartı ile hareket defteri uyuşmuyor",
+    detail: "Kart miktarı, girişler eksi çıkışlar toplamına eşit değil.",
+    count: stockInvariantMismatches.ledgerMismatch,
+    action: "Stok hareketlerini ve başlangıç kayıtlarını doğrulayın.",
+    href: "/stok",
+  });
+
+  addIssue(issues, {
+    id: "stock-lot-mismatch",
+    severity: "critical",
+    area: "Stok",
+    title: "Stok kartı ile lot bakiyesi uyuşmuyor",
+    detail: "Kart miktarı, kullanılabilir lotların kalan miktar toplamına eşit değil.",
+    count: stockInvariantMismatches.lotMismatch,
+    action: "Lot kayıtlarını ve tüketim dağıtımlarını doğrulayın.",
     href: "/stok",
   });
 

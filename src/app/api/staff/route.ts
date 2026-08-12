@@ -6,13 +6,18 @@ import { validateWorkHoursRange } from "@/lib/working-hours-core";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { checkStaffLimit } from "@/lib/staff-limits";
 import { TC_NO_REGEX, TC_NO_MESSAGE } from "@/lib/validators";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 const STAFF_ROLES = new Set<Role>(["YONETICI", "DOKTOR", "ASISTAN", "BANKO", "MUHASEBE"]);
 
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     const auth = await requireAuth("staff:read");
     if (auth.error) return auth.error;
+    const activeBranch = requireActiveBranch(auth.user.branchContext);
+    if (!activeBranch.ok || !auth.user.institutionId) {
+      return NextResponse.json({ message: activeBranch.ok ? "Kurum bilgisi bulunamadı." : activeBranch.message }, { status: 403 });
+    }
 
     const staff = await prisma.user.findMany({
       where: {
@@ -20,7 +25,8 @@ export async function GET(request: NextRequest) {
         // Rol adına değil oturumun institutionId'sine göre kapsanır: bir SUPERADMIN
         // "gizli erişim" ile belirli bir kliniğe girdiğinde de token institutionId
         // taşır — sadece o kliniğin personeli görünmeli, tüm kurumlarınki değil.
-        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        institutionId: auth.user.institutionId,
+        branchMemberships: { some: { branchId: activeBranch.branchId, isActive: true } },
       },
       // passwordHash/twoFactorSecret/twoFactorBackupCodes ASLA client'a
       // gönderilmemeli — bunlar önceden `include` ile tüm User satırını
@@ -38,6 +44,7 @@ export async function GET(request: NextRequest) {
         genelYuzde: true,
         maasYuzde: true,
         profile: { select: { workStart: true, workEnd: true, photoUrl: true, hideAsDoctor: true } },
+        branchMemberships: { where: { branchId: activeBranch.branchId, isActive: true }, select: { branchId: true, isPrimary: true, kkYuzde: true, genelYuzde: true, maasYuzde: true, branch: { select: { name: true, code: true } } } },
       },
       orderBy: { createdAt: "desc" }
     });
@@ -48,8 +55,13 @@ export async function GET(request: NextRequest) {
     // sızıyordu (bkz. denetim raporu). Yalnızca YONETICI/SUPERADMIN görebilir.
     const canSeeRates = auth.user.role === "YONETICI" || auth.user.role === "SUPERADMIN";
     const result = canSeeRates
-      ? staff
-      : staff.map(({ kkYuzde, genelYuzde, maasYuzde, ...rest }) => rest);
+      ? staff.map((person) => ({
+          ...person,
+          kkYuzde: person.branchMemberships[0]?.kkYuzde ?? person.kkYuzde,
+          genelYuzde: person.branchMemberships[0]?.genelYuzde ?? person.genelYuzde,
+          maasYuzde: person.branchMemberships[0]?.maasYuzde ?? person.maasYuzde,
+        }))
+      : staff.map(({ kkYuzde: _kkYuzde, genelYuzde: _genelYuzde, maasYuzde: _maasYuzde, ...rest }) => rest);
 
     return NextResponse.json(result);
   } catch (error) {
@@ -62,7 +74,7 @@ export async function POST(request: NextRequest) {
   const auth = await requireAuth("staff:write");
   if (auth.error) return auth.error;
 
-  if (!auth.user.institutionId && auth.user.role !== "SUPERADMIN") {
+  if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Kurum bilgisi olmadan personel oluşturulamaz." }, { status: 403 });
   }
 
@@ -103,16 +115,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: workHoursError }, { status: 400 });
   }
 
-  const targetInstitutionId = auth.user.institutionId || body.institutionId || null;
-  if (!targetInstitutionId || typeof targetInstitutionId !== "string") {
-    return NextResponse.json({ message: "Personelin bağlı olacağı kurum zorunludur." }, { status: 400 });
-  }
+  const targetInstitutionId = auth.user.institutionId;
 
   // Personel eklerken şifre sorulmadan, sistem akıcı olsun diye varsayılan
   // şifre TC kimlik no olur — kullanıcı ilk girişte doğrudan şifre değiştirme
   // adımına yönlendirilir (bkz. kullanıcı geri bildirimi).
   const usingDefaultPassword = !body.password;
   const passwordHash = await bcrypt.hash(body.password || body.identityNo, 10);
+  const activeBranch = requireActiveBranch(auth.user.branchContext);
+  if (!activeBranch.ok) return NextResponse.json({ message: activeBranch.message }, { status: 409 });
 
   let created;
   try {
@@ -152,7 +163,13 @@ export async function POST(request: NextRequest) {
             // doktor listesinde görünmez; tedavi de veriyorsa formdan işaretlenerek gösterilebilir.
             hideAsDoctor: role === "YONETICI" ? (typeof body.hideAsDoctor === "boolean" ? body.hideAsDoctor : true) : false,
           }
-        }
+        },
+        branchMemberships: {
+          create: {
+            branchId: activeBranch.branchId,
+            isPrimary: true,
+          },
+        },
       },
       select: {
         id: true,

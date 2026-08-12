@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Shield, Edit3, PlusCircle } from "lucide-react";
+import { Edit3, PlusCircle } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
@@ -15,54 +15,39 @@ type Admin = {
   identityNo: string;
   email?: string | null;
   isActive: boolean;
-  modules: string[];
   createdAt: string;
 };
 
 const inputClass = "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
 
-const ALL_MODULES = [
-  { key: "dashboard", label: "Dashboard" },
-  { key: "institutions", label: "Klinikler" },
-  { key: "roles", label: "Rol Yetkileri" },
-  { key: "invoices", label: "Faturalar" },
-  { key: "sms", label: "SMS" },
-  { key: "ads", label: "Reklamlar" },
-  { key: "smtp", label: "SMTP" },
-  { key: "reports", label: "Raporlar" },
-  { key: "support", label: "Destek" },
-  { key: "audit", label: "Denetim" },
-  { key: "announcements", label: "Duyurular" },
-  { key: "settings", label: "Ayarlar" },
-  { key: "admins", label: "Admin Yönetimi" },
-];
-
 export default function AdminsPage() {
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Admin | null>(null);
-  const [modules, setModules] = useState<string[]>([]);
   const [editIsActive, setEditIsActive] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ fullName: "", identityNo: "", email: "", password: "" });
-  const [createModules, setCreateModules] = useState<string[]>(ALL_MODULES.map((m) => m.key));
   const [creating, setCreating] = useState(false);
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
-    fetch("/api/superadmin/admins")
-      .then((r) => r.json())
-      .then((d) => setAdmins(Array.isArray(d) ? d : d.admins ?? []))
-      .catch(() => setAdmins([]))
-      .finally(() => setLoading(false));
+    try {
+      const response = await fetch("/api/superadmin/admins", { cache: "no-store" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.message || "Sistem yöneticileri yüklenemedi.");
+      setAdmins(Array.isArray(data) ? data : data?.admins ?? []);
+    } catch (error) {
+      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "Sistem yöneticileri yüklenemedi.", type: "error" });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
 
   const openEdit = (admin: Admin) => {
     setSelected(admin);
-    setModules(admin.modules ?? []);
     setEditIsActive(admin.isActive);
   };
 
@@ -73,7 +58,7 @@ export default function AdminsPage() {
       const res = await fetch(`/api/superadmin/admins/${selected.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ modules, isActive: editIsActive }),
+        body: JSON.stringify({ isActive: editIsActive }),
       });
       if (!res.ok) throw new Error("Kaydedilemedi");
       showToastSafe({ title: "Kaydedildi", message: "Admin bilgileri güncellendi", type: "success", icon: "settings" });
@@ -87,21 +72,9 @@ export default function AdminsPage() {
     }
   };
 
-  const toggleModule = (key: string) => {
-    setModules((prev) =>
-      prev.includes(key) ? prev.filter((m) => m !== key) : [...prev, key]
-    );
-  };
-
-  const toggleCreateModule = (key: string) => {
-    setCreateModules((prev) =>
-      prev.includes(key) ? prev.filter((m) => m !== key) : [...prev, key]
-    );
-  };
-
   const submitCreate = async () => {
-    if (!createForm.fullName.trim() || !createForm.identityNo.trim() || createForm.password.length < 6) {
-      showToastSafe({ title: "Eksik alan", message: "Ad soyad, TC ve en az 6 haneli şifre zorunlu", type: "error" });
+    if (!createForm.fullName.trim() || !createForm.identityNo.trim() || createForm.password.length < 8 || createForm.password.length > 72) {
+      showToastSafe({ title: "Eksik alan", message: "Ad soyad, TC ve 8-72 karakter uzunluğunda şifre zorunlu", type: "error" });
       return;
     }
     setCreating(true);
@@ -114,7 +87,6 @@ export default function AdminsPage() {
           identityNo: createForm.identityNo.trim(),
           email: createForm.email.trim() || undefined,
           password: createForm.password,
-          modules: createModules,
         }),
       });
       const d = await res.json();
@@ -122,7 +94,6 @@ export default function AdminsPage() {
       showToastSafe({ title: "Oluşturuldu", message: `${d.fullName} admin olarak eklendi`, type: "success", icon: "person" });
       setShowCreate(false);
       setCreateForm({ fullName: "", identityNo: "", email: "", password: "" });
-      setCreateModules(ALL_MODULES.map((m) => m.key));
       load();
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
@@ -144,18 +115,9 @@ export default function AdminsPage() {
       render: (a) => <span className="font-mono text-slate-600">{a.identityNo}</span>,
     },
     {
-      key: "modules",
-      header: "Modüller",
-      render: (a) => (
-        <div className="flex flex-wrap gap-1">
-          {(a.modules ?? []).slice(0, 4).map((m) => (
-            <Badge key={m} tone="info">{m}</Badge>
-          ))}
-          {(a.modules ?? []).length > 4 && (
-            <span className="text-xs text-slate-400">+{(a.modules ?? []).length - 4}</span>
-          )}
-        </div>
-      ),
+      key: "access",
+      header: "Erişim",
+      render: () => <Badge tone="info">Tam erişim</Badge>,
     },
     {
       key: "isActive",
@@ -172,7 +134,7 @@ export default function AdminsPage() {
       header: "İşlem",
       render: (a) => (
         <Button size="sm" variant="secondary" icon={Edit3} onClick={() => openEdit(a)}>
-          Yetki Düzenle
+          Hesabı Düzenle
         </Button>
       ),
     },
@@ -199,7 +161,7 @@ export default function AdminsPage() {
       <Modal
         open={!!selected}
         onClose={() => setSelected(null)}
-        title="Modül Erişimi"
+        title="Admin Hesabı"
         description={selected?.fullName}
         size="lg"
         footer={
@@ -210,12 +172,7 @@ export default function AdminsPage() {
         }
       >
         <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <Shield className="h-4 w-4" />
-            </span>
-            <p className="text-xs text-slate-500">Bu admin kullanıcısının erişebileceği modülleri seçin.</p>
-          </div>
+          <p className="text-sm text-slate-600">Platform yöneticileri tüm sistem yönetimi işlevlerine erişir.</p>
           <label className="flex cursor-pointer items-center gap-2">
             <input
               type="checkbox"
@@ -225,34 +182,6 @@ export default function AdminsPage() {
             />
             <span className="text-sm text-slate-700">Hesap aktif</span>
           </label>
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            {ALL_MODULES.map((m) => (
-              <label key={m.key} className="flex cursor-pointer items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={modules.includes(m.key)}
-                  onChange={() => toggleModule(m.key)}
-                  className="rounded border-slate-300 text-primary focus:ring-primary/30"
-                />
-                <span className="text-sm text-slate-700">{m.label}</span>
-              </label>
-            ))}
-          </div>
-          <div className="flex gap-3 border-t border-slate-100 pt-3">
-            <button
-              onClick={() => setModules(ALL_MODULES.map((m) => m.key))}
-              className="text-xs font-semibold text-primary hover:underline"
-            >
-              Tümünü Seç
-            </button>
-            <span className="text-slate-300">|</span>
-            <button
-              onClick={() => setModules([])}
-              className="text-xs font-semibold text-red-500 hover:underline"
-            >
-              Tümünü Kaldır
-            </button>
-          </div>
         </div>
       </Modal>
 
@@ -279,26 +208,11 @@ export default function AdminsPage() {
             <FormField label="E-posta">
               <input className={inputClass} value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} />
             </FormField>
-            <FormField label="Şifre" required hint="En az 6 karakter">
+            <FormField label="Şifre" required hint="8-72 karakter">
               <input type="password" className={inputClass} value={createForm.password} onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })} />
             </FormField>
           </div>
-          <div>
-            <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-500">Modül Erişimi</p>
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {ALL_MODULES.map((m) => (
-                <label key={m.key} className="flex cursor-pointer items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={createModules.includes(m.key)}
-                    onChange={() => toggleCreateModule(m.key)}
-                    className="rounded border-slate-300 text-primary focus:ring-primary/30"
-                  />
-                  <span className="text-sm text-slate-700">{m.label}</span>
-                </label>
-              ))}
-            </div>
-          </div>
+          <p className="text-xs text-slate-500">Yeni hesap platform yönetimi işlevlerinin tamamına erişir.</p>
         </div>
       </Modal>
     </section>

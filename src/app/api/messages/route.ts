@@ -1,23 +1,24 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 
-let lastCleanupAt = 0;
 export async function GET() {
   const auth = await requireAuth("messages:read");
   if (auth.error) return auth.error;
 
-  if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
+  if (!auth.user.institutionId) {
     return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
   }
 
-  const institutionScope = auth.user.role === "SUPERADMIN"
-    ? {}
-    : { user: { institutionId: auth.user.institutionId } };
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) {
+    return NextResponse.json({ error: branch.message }, { status: 409 });
+  }
 
   try {
     const messages = await prisma.message.findMany({
-      where: institutionScope,
+      where: { institutionId: auth.user.institutionId, branchId: branch.branchId, deletedAt: null },
       orderBy: { createdAt: "desc" },
       take: 50,
       include: { user: { select: { fullName: true, role: true } } },
@@ -33,6 +34,13 @@ export async function GET() {
 export async function POST(req: Request) {
   const auth = await requireAuth("messages:write");
   if (auth.error) return auth.error;
+  if (!auth.user.institutionId) {
+    return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+  }
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) {
+    return NextResponse.json({ error: branch.message }, { status: 409 });
+  }
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -47,7 +55,12 @@ export async function POST(req: Request) {
 
   try {
     const message = await prisma.message.create({
-      data: { userId: auth.user.id, text: normalizedText },
+      data: {
+        userId: auth.user.id,
+        institutionId: auth.user.institutionId,
+        branchId: branch.branchId,
+        text: normalizedText,
+      },
       include: { user: { select: { fullName: true, role: true } } },
     });
 

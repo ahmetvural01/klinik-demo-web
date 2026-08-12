@@ -2,15 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { firmaCreateSchema, formatZodError } from "@/lib/validators";
+import { requireActiveBranch } from "@/lib/branch-context";
 
-export const GET = withApiTiming("firma", async function GET(req: NextRequest) {
+export const GET = withApiTiming("firma", async function GET(_req: NextRequest) {
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
     const firmaWhere = {
       isActive: true,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      branchId: branch.branchId,
     };
 
     const [firmas, islemSums] = await Promise.all([
@@ -77,6 +81,8 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
     if (!auth.user.institutionId) {
       return NextResponse.json({ message: "Firma kaydı için kurum bağlamı zorunlu" }, { status: 403 });
     }
@@ -90,6 +96,7 @@ export async function POST(req: NextRequest) {
       data: {
         name,
         institutionId: auth.user.institutionId,
+        branchId: branch.branchId,
         phone,
         iban,
         ibanName,

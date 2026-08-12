@@ -1,12 +1,13 @@
 import type { Metadata } from "next";
-import { Manrope, Plus_Jakarta_Sans } from "next/font/google";
+import { Manrope, Plus_Jakarta_Sans as PlusJakartaSans } from "next/font/google";
 import "./globals.css";
 import { getActiveThemeId } from "@/lib/active-theme";
 import { getThemePackage, themeCssVars } from "@/lib/theme-packages";
+import { BRAND_TITLE } from "@/lib/brand";
 
 export const metadata: Metadata = {
-  title: "Klinik Yönetim Paneli",
-  description: "Diş klinikleri için yönetim sistemi"
+  title: BRAND_TITLE,
+  description: "Randevu, hasta, tedavi, finans ve klinik operasyonlarını kurum ve rol bazlı yöneten bütünleşik klinik yazılımı.",
 };
 
 const manrope = Manrope({
@@ -15,7 +16,7 @@ const manrope = Manrope({
   display: "swap",
 });
 
-const jakarta = Plus_Jakarta_Sans({
+const jakarta = PlusJakartaSans({
   subsets: ["latin", "latin-ext"],
   variable: "--font-jakarta",
   display: "swap",

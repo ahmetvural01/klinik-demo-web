@@ -8,21 +8,33 @@ export async function POST(request: NextRequest) {
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
 
-  const body = await request.json();
-  const { invoiceId, channels } = body as { invoiceId: string; channels: string[] };
-
-  if (!invoiceId || !channels || !Array.isArray(channels) || channels.length === 0) {
-    return NextResponse.json({ message: "invoiceId ve channels zorunlu" }, { status: 400 });
+  const body = await request.json().catch(() => null) as { invoiceId?: unknown; channels?: unknown } | null;
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek gövdesi." }, { status: 400 });
   }
+  const invoiceId = typeof body.invoiceId === "string" ? body.invoiceId.trim() : "";
+  const rawChannels = Array.isArray(body.channels) ? body.channels : [];
+
+  if (!invoiceId || rawChannels.length === 0) {
+    return NextResponse.json({ message: "Fatura ve en az bir gönderim kanalı seçilmelidir." }, { status: 400 });
+  }
+  if (rawChannels.some((channel) => channel !== "EMAIL" && channel !== "SMS")) {
+    return NextResponse.json({ message: "Geçersiz gönderim kanalı seçildi." }, { status: 400 });
+  }
+  const channels = [...new Set(rawChannels)] as ReminderChannel[];
 
   const invoice = await prisma.invoice.findUnique({ where: { id: invoiceId }, include: { institution: true } });
   if (!invoice) return NextResponse.json({ message: "Fatura bulunamadı" }, { status: 404 });
+  if (invoice.status === "PAID") {
+    return NextResponse.json({ message: "Ödenmiş faturaya hatırlatma gönderilemez." }, { status: 409 });
+  }
 
   let results;
   try {
-    results = await sendInvoiceReminder(invoiceId, channels as ReminderChannel[]);
+    results = await sendInvoiceReminder(invoiceId, channels);
   } catch (error) {
-    return NextResponse.json({ message: error instanceof Error ? error.message : "Hatırlatma gönderilemedi" }, { status: 400 });
+    console.error("[superadmin invoice reminder POST]", error);
+    return NextResponse.json({ message: "Hatırlatma gönderilemedi. Lütfen tekrar deneyin." }, { status: 503 });
   }
 
   await writeAudit(

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,8 @@ export async function PATCH(
   const params = await props.params;
   const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -21,9 +24,7 @@ export async function PATCH(
     where: {
       id: params.tripId,
       labOrderId: params.id,
-      ...(auth.user.role !== "SUPERADMIN"
-        ? { labOrder: { patient: { institutionId: auth.user.institutionId } } }
-        : {}),
+      labOrder: { ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}), branchId: branch.branchId },
     },
     select: {
       id: true,
@@ -33,6 +34,8 @@ export async function PATCH(
       labOrder: {
         select: {
           id: true,
+          institutionId: true,
+          branchId: true,
           status: true,
           patientId: true,
           doctorId: true,
@@ -138,6 +141,8 @@ export async function PATCH(
             : String(existing.description || "");
           await tx.patientFollowUp.create({
             data: {
+              institutionId: existing.labOrder.institutionId,
+              branchId: existing.labOrder.branchId,
               patientId: existing.labOrder.patientId,
               doctorId: existing.labOrder.doctorId,
               createdById: auth.user.id,
@@ -180,7 +185,7 @@ export async function PATCH(
     return tx.labOrder.findUnique({
       where: { id: params.id },
       include: {
-        invoices: { orderBy: { issuedAt: "asc" } },
+        invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
         patient: { select: { id: true, fullName: true, phone: true } },
         doctor: { select: { id: true, fullName: true } },
         trips: { orderBy: { order: "asc" } },

@@ -1,0 +1,47 @@
+$ErrorActionPreference = "Continue"
+$Root = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+Set-Location $Root
+$Cfg = Get-Content ".ai-factory\config\v3-runtime.json" -Raw | ConvertFrom-Json
+$Logs = Join-Path $Root ".ai-factory\logs"
+New-Item -ItemType Directory -Force $Logs | Out-Null
+$Stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$CloudLog = Join-Path $Logs "cloud-$Stamp.log"
+$LocalLog = Join-Path $Logs "local-$Stamp.log"
+
+if (-not (Get-Command cline -ErrorAction SilentlyContinue)) { Write-Host "Cline CLI bulunamadi." -ForegroundColor Red; exit 1 }
+if (-not (Get-Command ollama -ErrorAction SilentlyContinue)) { Write-Host "Ollama bulunamadi." -ForegroundColor Red; exit 1 }
+
+$env:CLINE_COMMAND_PERMISSIONS = '{"deny":["git push*","git reset --hard*","git clean -fd*","rm -rf*","Remove-Item -Recurse -Force*","npm audit fix*","prisma migrate reset*","npx prisma migrate reset*"],"allowRedirects":false}'
+
+$CloudPrompt = Get-Content ".ai-factory\config\cloud-mission.txt" -Raw
+Write-Host "KlinikModern AI Factory v3 - OpenRouter free first" -ForegroundColor Cyan
+
+& cline --team-name $Cfg.teamName -P $Cfg.cloud.provider -m $Cfg.cloud.model -c $Root --retries 1 --thinking medium --json $CloudPrompt 2>&1 | Tee-Object -FilePath $CloudLog
+$CloudExit = $LASTEXITCODE
+$CloudText = if(Test-Path $CloudLog){Get-Content $CloudLog -Raw}else{""}
+
+$Fallback = ($CloudExit -ne 0)
+foreach($p in $Cfg.fallback.patterns){
+    if($CloudText -match [regex]::Escape([string]$p)){ $Fallback=$true; break }
+}
+if(-not $Fallback){
+    Write-Host "Bulut oturumu kota hatasi olmadan tamamlandi." -ForegroundColor Green
+    exit 0
+}
+
+Write-Host "OpenRouter kullanilamiyor. Ayni team GERCEK Ollama provider ile devam ediyor..." -ForegroundColor Yellow
+try { $null=Invoke-RestMethod "http://127.0.0.1:11434/api/tags" -TimeoutSec 5 }
+catch { Write-Host "Ollama API cevap vermiyor." -ForegroundColor Red; exit 1 }
+
+$Models = (& ollama list 2>&1 | Out-String)
+if($Models -notmatch [regex]::Escape([string]$Cfg.local.model)){
+    Write-Host ("Yerel model bulunamadi: "+$Cfg.local.model) -ForegroundColor Red
+    exit 1
+}
+
+$LocalPrompt = Get-Content ".ai-factory\config\local-mission.txt" -Raw
+& cline --team-name $Cfg.teamName -P $Cfg.local.provider -m $Cfg.local.model -c $Root --retries 1 --thinking low --json $LocalPrompt 2>&1 | Tee-Object -FilePath $LocalLog
+$LocalExit=$LASTEXITCODE
+Write-Host ("Cloud log: "+$CloudLog)
+Write-Host ("Local log: "+$LocalLog)
+exit $LocalExit

@@ -27,12 +27,18 @@ async function main() {
     select: { id: true, institutionId: true },
   });
   if (!user?.institutionId) throw new Error("Test için aktif doktor/yönetici bulunamadı.");
+  const branch = await prisma.clinicBranch.findFirstOrThrow({
+    where: { institutionId: user.institutionId, isActive: true },
+    orderBy: [{ isHeadquarters: "desc" }, { sortOrder: "asc" }],
+  });
 
   const patient = await prisma.patient.create({
-    data: { institutionId: user.institutionId, fullName: `Taksit Ledger Testi ${Date.now()}`, gender: "ERKEK", phone: `555${Date.now().toString().slice(-7)}` },
+    data: { institutionId: user.institutionId, homeBranchId: branch.id, fullName: `Taksit Ledger Testi ${Date.now()}`, gender: "ERKEK", phone: `555${Date.now().toString().slice(-7)}` },
   });
   const plan = await prisma.taksitPlan.create({
     data: {
+      institutionId: user.institutionId,
+      branchId: branch.id,
       patientId: patient.id,
       doctorId: user.id,
       toplamBorc: new Prisma.Decimal(1000),
@@ -43,6 +49,8 @@ async function main() {
   });
   const taksit = await prisma.taksit.create({
     data: {
+      institutionId: user.institutionId,
+      branchId: branch.id,
       planId: plan.id,
       siraNo: 1,
       vadeDate: new Date(),
@@ -70,6 +78,7 @@ async function main() {
       const linkedPayment = await tx.payment.create({
         data: {
           institutionId: t.plan.patient!.institutionId || user.institutionId!,
+          branchId: branch.id,
           patientId: t.plan.patientId,
           doctorId: t.plan.doctorId,
           method: "NAKIT",
@@ -81,7 +90,7 @@ async function main() {
       createdPaymentIds.push(linkedPayment.id);
 
       await tx.taksitOdeme.create({
-        data: { taksitId: taksit.id, paymentId: linkedPayment.id, tarih: new Date(), tutar: odemeAmtDecimal, yontem: "NAKIT" },
+        data: { institutionId: user.institutionId!, branchId: branch.id, taksitId: taksit.id, paymentId: linkedPayment.id, tarih: new Date(), tutar: odemeAmtDecimal, yontem: "NAKIT" },
       });
       await tx.taksit.update({ where: { id: taksit.id }, data: { odenen: yeniOdenen, kalan: yeniKalan, status: yeniStatus } });
 

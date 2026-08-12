@@ -1,9 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { CountUp } from "@/components/ui/CountUp";
-import { CheckCircle2, XCircle, TriangleAlert, CircleDashed } from "lucide-react";
+import { CheckCircle2, XCircle, TriangleAlert, CircleDashed, MessageCircle, Smartphone, CalendarClock } from "lucide-react";
 import type { BadgeTone } from "@/components/ui/Badge";
 
 const TONE_ICON: Record<BadgeTone, typeof CheckCircle2> = {
@@ -29,15 +30,22 @@ import TemplatesTab from "./_tabs/TemplatesTab";
 import CelebrationDaysTab from "./_tabs/CelebrationDaysTab";
 import WhatsappMessagesTab from "./_tabs/WhatsappMessagesTab";
 import WhatsappSettingsTab from "./_tabs/WhatsappSettingsTab";
+import { usePermissions } from "@/components/auth/PermissionProvider";
+
+type SmsTab = "kayitlar" | "whatsapp" | "baglanti" | "ayarlar" | "sablonlar" | "kutlama-gunleri" | "toplu";
 
 type SmsSettings = {
   smsEnabled: boolean;
   paymentReminderSmsEnabled: boolean;
   paymentReminderWindowDays: number;
+  paymentReminderDaysBefore: number[];
+  paymentReminderOnDueDate: boolean;
+  paymentReminderOverdueEnabled: boolean;
+  paymentReminderOverdueEveryDays: number;
+  defaultNotificationChannel: "SMS" | "WHATSAPP";
+  whatsappSmsFallback: boolean;
   reviewLink: string;
   birthdaySmsEnabled: boolean;
-  defaultNotificationChannel: "SMS" | "WHATSAPP";
-  whatsappEnabled: boolean;
   institutionName: string;
   appUrl: string;
 };
@@ -46,10 +54,14 @@ const DEFAULT_SMS_SETTINGS: SmsSettings = {
   smsEnabled: true,
   paymentReminderSmsEnabled: false,
   paymentReminderWindowDays: 3,
+  paymentReminderDaysBefore: [3],
+  paymentReminderOnDueDate: true,
+  paymentReminderOverdueEnabled: true,
+  paymentReminderOverdueEveryDays: 3,
+  defaultNotificationChannel: "SMS",
+  whatsappSmsFallback: true,
   reviewLink: "",
   birthdaySmsEnabled: false,
-  defaultNotificationChannel: "SMS",
-  whatsappEnabled: false,
   institutionName: "",
   appUrl: "",
 };
@@ -59,10 +71,16 @@ function parseSmsSettings(data: Record<string, unknown> | null): SmsSettings {
     smsEnabled: data?.smsEnabled !== undefined ? Boolean(data.smsEnabled) : true,
     paymentReminderSmsEnabled: Boolean(data?.paymentReminderSmsEnabled),
     paymentReminderWindowDays: Number(data?.paymentReminderWindowDays) || 3,
+    paymentReminderDaysBefore: Array.isArray(data?.paymentReminderDaysBefore)
+      ? data.paymentReminderDaysBefore.map(Number).filter((day) => day >= 1 && day <= 30)
+      : [Number(data?.paymentReminderWindowDays) || 3],
+    paymentReminderOnDueDate: data?.paymentReminderOnDueDate !== false,
+    paymentReminderOverdueEnabled: data?.paymentReminderOverdueEnabled !== false,
+    paymentReminderOverdueEveryDays: Number(data?.paymentReminderOverdueEveryDays) || 3,
+    defaultNotificationChannel: data?.defaultNotificationChannel === "WHATSAPP" ? "WHATSAPP" : "SMS",
+    whatsappSmsFallback: data?.whatsappSmsFallback !== false,
     reviewLink: typeof data?.reviewLink === "string" ? data.reviewLink : "",
     birthdaySmsEnabled: Boolean(data?.birthdaySmsEnabled),
-    defaultNotificationChannel: data?.defaultNotificationChannel === "WHATSAPP" ? "WHATSAPP" : "SMS",
-    whatsappEnabled: Boolean(data?.whatsappEnabled),
     institutionName: typeof data?.institutionName === "string" ? data.institutionName : "",
     appUrl: typeof data?.appUrl === "string" ? data.appUrl : "",
   };
@@ -195,12 +213,23 @@ const CONSENT_SUMMARY_ITEMS: { key: keyof ConsentSummary; label: string; tone: "
 function ConsentSummaryCard() {
   const [summary, setSummary] = useState<ConsentSummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   useEffect(() => {
     fetch("/api/sms/consent-summary")
-      .then((r) => r.json())
-      .then((d) => setSummary(d?.summary || null))
-      .catch(() => setSummary(null))
+      .then(async (r) => {
+        const data = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(data?.message || "SMS izin özeti yüklenemedi.");
+        return data;
+      })
+      .then((d) => {
+        setSummary(d?.summary || null);
+        setLoadError(false);
+      })
+      .catch(() => {
+        setSummary(null);
+        setLoadError(true);
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -220,16 +249,17 @@ function ConsentSummaryCard() {
             href={`/hasta?smsConsent=${item.key}`}
             className="ui-interactive rounded-xl border border-slate-100 bg-slate-50 px-3 py-2.5 text-center hover:border-primary/30 hover:bg-white"
           >
-            <span className="block text-lg font-black text-slate-900">{loading ? "…" : (summary?.[item.key] ?? 0)}</span>
+            <span className="block text-lg font-black text-slate-900">{loading ? "…" : loadError ? "—" : (summary?.[item.key] ?? 0)}</span>
             <span className="mt-0.5 block text-[11px] font-bold uppercase text-slate-500">{item.label}</span>
           </a>
         ))}
       </div>
+      {loadError && <p role="alert" className="mt-3 text-xs font-semibold text-red-600">SMS izin özeti yüklenemedi. Sayfayı yenileyerek tekrar deneyin.</p>}
     </div>
   );
 }
 
-function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
+function SmsManagement({ onGoToSettings, canManage }: { onGoToSettings: () => void; canManage: boolean }) {
   const [settings, setSettings] = useState<SmsSettings>(DEFAULT_SMS_SETTINGS);
   const [logs, setLogs] = useState<SmsLog[]>([]);
   const [loading, setLoading] = useState(true);
@@ -244,12 +274,13 @@ function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
     setLoading(true);
     try {
       const [settingsRes, logsRes] = await Promise.all([
-        fetch("/api/settings"),
+        canManage ? fetch("/api/settings") : Promise.resolve(null),
         fetch("/api/logs?category=sms-delivery&limit=150"),
       ]);
-      const settingsData = await settingsRes.json().catch(() => null);
+      const settingsData = settingsRes ? await settingsRes.json().catch(() => null) : null;
       const logsData = await logsRes.json().catch(() => null);
 
+      if (!logsRes.ok) throw new Error("SMS kayıtları yüklenemedi");
       if (settingsData) setSettings(parseSmsSettings(settingsData));
       setLogs(Array.isArray(logsData?.logs) ? logsData.logs.filter((log: SmsLog) => isSmsDeliveryAction(log.action)) : []);
     } catch {
@@ -257,7 +288,7 @@ function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
     } finally {
       setLoading(false);
     }
-  }, [showToast]);
+  }, [canManage, showToast]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -312,13 +343,13 @@ function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
         icon="sms"
         title="SMS Kayıtları"
         description="Gönderim hareketlerini, izin durumlarını ve başarısız denemeleri tek yerden izleyin."
-        actions={(
-          <button onClick={onGoToSettings} title="Ayarlar sekmesine git" className="transition hover:opacity-80">
+        actions={canManage ? (
+          <button onClick={onGoToSettings} title="Otomasyonlar sekmesine git" className="transition hover:opacity-80">
             <Badge tone={settings.smsEnabled ? "success" : "critical"} icon={settings.smsEnabled ? CheckCircle2 : XCircle} size="md">
               {settings.smsEnabled ? "SMS aktif" : "SMS pasif"}
             </Badge>
           </button>
-        )}
+        ) : undefined}
       />
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -365,11 +396,14 @@ function SmsManagement({ onGoToSettings }: { onGoToSettings: () => void }) {
   );
 }
 
-type WhatsappProviderStatus = "DISABLED" | "NO_PROVIDER" | "INACTIVE" | "ACTIVE";
-
-function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWhatsappSettings: () => void; onGoToRecords: () => void }) {
+function SmsSettingsPanel({
+  onGoToRecords,
+  whatsappAvailable,
+}: {
+  onGoToRecords: () => void;
+  whatsappAvailable: boolean;
+}) {
   const [settings, setSettings] = useState<SmsSettings>(DEFAULT_SMS_SETTINGS);
-  const [waStatus, setWaStatus] = useState<WhatsappProviderStatus>("DISABLED");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -385,17 +419,8 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
       if (!res.ok || !data) throw new Error();
       const parsed = parseSmsSettings(data);
       setSettings(parsed);
-
-      if (parsed.whatsappEnabled) {
-        const providerRes = await fetch("/api/whatsapp/provider");
-        const providerData = await providerRes.json().catch(() => null);
-        if (!providerData?.provider) setWaStatus("NO_PROVIDER");
-        else setWaStatus(providerData.provider.isActive ? "ACTIVE" : "INACTIVE");
-      } else {
-        setWaStatus("DISABLED");
-      }
     } catch {
-      showToast("error", "SMS ayarları yüklenemedi");
+      showToast("error", "İletişim ayarları yüklenemedi");
     } finally {
       setLoading(false);
     }
@@ -412,26 +437,19 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
         body: JSON.stringify(settings),
       });
       if (!res.ok) throw new Error();
-      showToast("success", "SMS ayarları kaydedildi");
+      showToast("success", "İletişim otomasyonları kaydedildi");
     } catch {
-      showToast("error", "SMS ayarları kaydedilemedi");
+      showToast("error", "İletişim ayarları kaydedilemedi");
     } finally {
       setSaving(false);
     }
   };
 
   const toggleItems: { key: keyof Pick<SmsSettings, "smsEnabled" | "paymentReminderSmsEnabled" | "birthdaySmsEnabled">; label: string; hint: string }[] = [
-    { key: "smsEnabled", label: "SMS sistemi aktif", hint: "Kapalıysa otomatik ve manuel bütün SMS gönderimleri durdurulur (WhatsApp bundan etkilenmez)." },
+    { key: "smsEnabled", label: "SMS sistemi aktif", hint: "Kapalıysa otomatik ve manuel bütün SMS gönderimleri durdurulur." },
     { key: "paymentReminderSmsEnabled", label: "Ödeme hatırlatma ayarları aktif", hint: "Vadesi yaklaşan veya geciken taksitlerde otomatik hatırlatma gönderilir." },
     { key: "birthdaySmsEnabled", label: "Doğum günü ayarları aktif", hint: "Doğum günü olan hastalara otomatik kutlama mesajı gönderilir. Meslek günü/resmi bayram gibi diğer kutlamalar ayrı ayrı Kutlama Günleri sekmesinden açılır." },
   ];
-
-  const waStatusBadge: Record<WhatsappProviderStatus, { tone: "success" | "warning" | "neutral" | "critical"; label: string }> = {
-    DISABLED: { tone: "neutral", label: "Kapalı" },
-    NO_PROVIDER: { tone: "warning", label: "Açık, bağlantı tanımlı değil" },
-    INACTIVE: { tone: "warning", label: "Açık, bağlantı pasif" },
-    ACTIVE: { tone: "success", label: "Açık ve aktif" },
-  };
 
   const previewMessage = SMS_CONSENT_MESSAGE_TEMPLATE
     .replace("{{institutionName}}", settings.institutionName || "Kliniğiniz")
@@ -441,14 +459,36 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
     <section className="space-y-4" aria-busy={loading}>
       <PageHeader
         icon="settings"
-        title="SMS Ayarları"
-        description="Gönderim tercihleri, izin akışı ve WhatsApp bağlantı durumunu yönetin."
+        title="İletişim Otomasyonları"
+        description="SMS ve WhatsApp için ortak kanal, zamanlama ve otomatik gönderim kurallarını yönetin."
         actions={(
           <Badge tone={settings.smsEnabled ? "success" : "critical"} icon={settings.smsEnabled ? CheckCircle2 : XCircle} size="md">
             {settings.smsEnabled ? "SMS aktif" : "SMS pasif"}
           </Badge>
         )}
       />
+
+      <div className="ui-surface p-4">
+        <div className="mb-3 flex items-center gap-2"><Smartphone className="h-5 w-5 text-primary" /><h2 className="text-sm font-black text-slate-900">Kanal önceliği</h2></div>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {([
+            ["SMS", "Önce SMS", "Uygun gönderimler SMS üzerinden iletilir.", Smartphone],
+            ["WHATSAPP", "Önce WhatsApp", "Hasta izni ve bağlantı uygunsa WhatsApp kullanılır.", MessageCircle],
+          ] as const).map(([value, title, description, Icon]) => (
+            <button key={value} type="button" disabled={value === "WHATSAPP" && !whatsappAvailable}
+              onClick={() => setSettings({ ...settings, defaultNotificationChannel: value })}
+              className={`flex min-h-[82px] items-start gap-3 rounded-lg border p-3 text-left transition ${settings.defaultNotificationChannel === value ? "border-primary bg-primary/5 shadow-sm" : "border-slate-200 hover:border-slate-300"} disabled:cursor-not-allowed disabled:opacity-40`}>
+              <Icon className="mt-0.5 h-5 w-5 text-primary" /><span><span className="block text-sm font-bold text-slate-900">{title}</span><span className="mt-1 block text-xs leading-5 text-slate-500">{description}</span></span>
+            </button>
+          ))}
+        </div>
+        {whatsappAvailable && settings.defaultNotificationChannel === "WHATSAPP" && (
+          <label className="mt-3 flex cursor-pointer items-center justify-between gap-4 border-t border-slate-100 pt-3">
+            <span><span className="block text-sm font-bold text-slate-800">WhatsApp başarısızsa SMS dene</span><span className="block text-xs text-slate-500">Mesajın kaybolmaması için izin ve bakiye uygunsa otomatik yedek kanal kullanılır.</span></span>
+            <input type="checkbox" className="h-5 w-5 accent-primary" checked={settings.whatsappSmsFallback} onChange={(event) => setSettings({ ...settings, whatsappSmsFallback: event.target.checked })} />
+          </label>
+        )}
+      </div>
 
       <div className="ui-surface p-4">
         <div className="grid gap-3 lg:grid-cols-2">
@@ -492,75 +532,27 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
           {settings.appUrl ? (
             <Badge tone="success" size="sm">Yapılandırıldı ({settings.appUrl})</Badge>
           ) : (
-            <Badge tone="critical" size="sm">APP_URL tanımlı değil — bağlantılar çalışmaz</Badge>
+            <Badge tone="critical" size="sm">Onay bağlantısı henüz kullanıma hazır değil</Badge>
           )}
         </div>
       </div>
 
-      {settings.whatsappEnabled && (
-        <div className="ui-surface p-4">
-          <p className="mb-3 text-sm font-bold text-slate-800">Varsayılan Bildirim Kanalı</p>
-          <p className="mb-3 text-xs text-slate-500">
-            Randevu oluşturma, hatırlatma, ödeme hatırlatma ve değerlendirme
-            SMS&apos;lerinin hangi kanaldan gideceğini belirler. WhatsApp seçiliyken, WhatsApp izni
-            olmayan hastalar için otomatik olarak SMS&apos;e düşülür.
-          </p>
-          <div className="flex flex-wrap gap-3">
-            {(["SMS", "WHATSAPP"] as const).map((channel) => (
-              <label
-                key={channel}
-                className={`flex cursor-pointer items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition ${
-                  settings.defaultNotificationChannel === channel
-                    ? "border-primary bg-primary/5 text-primary"
-                    : "border-slate-200 text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="defaultNotificationChannel"
-                  className="h-4 w-4 accent-primary"
-                  checked={settings.defaultNotificationChannel === channel}
-                  onChange={() => setSettings({ ...settings, defaultNotificationChannel: channel })}
-                />
-                {channel === "SMS" ? "SMS" : "WhatsApp"}
-              </label>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {settings.whatsappEnabled && (
-        <div className="ui-surface p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-bold text-slate-800">WhatsApp Bağlantı Durumu</p>
-              <p className="mt-0.5 text-xs text-slate-500">Sağlayıcı bağlantı testi ve tam ayarlar WhatsApp Ayarları sekmesindedir.</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge tone={waStatusBadge[waStatus].tone} icon={TONE_ICON[waStatusBadge[waStatus].tone]} size="md">{waStatusBadge[waStatus].label}</Badge>
-              <Button variant="secondary" size="sm" onClick={onGoToWhatsappSettings}>
-                {waStatus === "ACTIVE" ? "Bağlantıyı Yönet / Test Et" : "WhatsApp Ayarlarına Git"}
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
-
       <div className="ui-surface p-4">
+        <div className="mb-4 flex items-center gap-2"><CalendarClock className="h-5 w-5 text-amber-600" /><div><h2 className="text-sm font-black text-slate-900">Ödeme hatırlatma takvimi</h2><p className="text-xs text-slate-500">Birden fazla zaman seçilebilir; aynı taksit aynı gün içinde yalnızca bir kez işlenir.</p></div></div>
         <div className="grid gap-4 md:grid-cols-2">
-          <FormField label="Ödeme Hatırlatması — Vadeden Kaç Gün Önce" hint="1-30 gün arası değer girilebilir.">
-            <input
-              type="number"
-              min={1}
-              max={30}
-              className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-              value={settings.paymentReminderWindowDays}
-              onChange={(event) => setSettings({
-                ...settings,
-                paymentReminderWindowDays: Math.max(1, Math.min(30, parseInt(event.target.value) || 1)),
+          <FormField label="Vadeden önce" hint="Hatırlatma gönderilecek günleri seçin.">
+            <div className="flex flex-wrap gap-2">
+              {[1, 2, 3, 5, 7, 14].map((day) => {
+                const active = settings.paymentReminderDaysBefore.includes(day);
+                return <button key={day} type="button" aria-pressed={active} onClick={() => setSettings({ ...settings, paymentReminderDaysBefore: active ? settings.paymentReminderDaysBefore.filter((item) => item !== day) : [...settings.paymentReminderDaysBefore, day].sort((a, b) => a - b) })} className={`min-w-12 rounded-md border px-3 py-2 text-sm font-bold transition ${active ? "border-primary bg-primary text-white" : "border-slate-200 bg-white text-slate-600 hover:border-primary/40"}`}>{day} gün</button>;
               })}
-            />
+            </div>
           </FormField>
+          <div className="space-y-3">
+            <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-slate-200 p-3"><span className="text-sm font-bold text-slate-800">Ödeme gününde hatırlat</span><input type="checkbox" className="h-5 w-5 accent-primary" checked={settings.paymentReminderOnDueDate} onChange={(event) => setSettings({ ...settings, paymentReminderOnDueDate: event.target.checked })} /></label>
+            <label className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-slate-200 p-3"><span><span className="block text-sm font-bold text-slate-800">Geciken ödemeleri tekrarla</span><span className="block text-xs text-slate-500">Belirlediğiniz aralıkta yeniden gönderilir.</span></span><input type="checkbox" className="h-5 w-5 accent-primary" checked={settings.paymentReminderOverdueEnabled} onChange={(event) => setSettings({ ...settings, paymentReminderOverdueEnabled: event.target.checked })} /></label>
+            {settings.paymentReminderOverdueEnabled && <FormField label="Gecikmede tekrar aralığı"><div className="flex items-center gap-2"><input type="number" min={1} max={30} className="w-24 rounded-lg border border-slate-200 px-3 py-2 text-sm" value={settings.paymentReminderOverdueEveryDays} onChange={(event) => setSettings({ ...settings, paymentReminderOverdueEveryDays: Math.max(1, Math.min(30, Number(event.target.value) || 1)) })} /><span className="text-sm text-slate-600">günde bir</span></div></FormField>}
+          </div>
           <FormField label="Değerlendirme Bağlantısı" hint="Google yorum linki gibi bir bağlantı; SMS şablonunda [Değerlendirme Bağlantısı] etiketiyle kullanılır.">
             <input
               type="url"
@@ -577,9 +569,8 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
         <p className="mb-2 text-sm font-bold text-slate-800">Gönderim Başarısızlıklarının Açıklaması</p>
         <ul className="space-y-1.5 text-xs text-slate-600">
           <li><strong className="font-bold text-slate-700">Hastanın SMS iletişim izni bulunmuyor</strong> — hasta henüz ONAYLIYORUM dememiş, reddetmiş ya da izin bağlantısı hiç gönderilememiş.</li>
-          <li><strong className="font-bold text-slate-700">SMS bakiyesi yetersiz</strong> — kurumun SMS kredisi tükenmiş, Süperadmin&apos;den paket satın alınmalı.</li>
+          <li><strong className="font-bold text-slate-700">SMS bakiyesi yetersiz</strong> — kurumun SMS kredisi tükenmiş, sistem yöneticinizden paket satın alınmalı.</li>
           <li><strong className="font-bold text-slate-700">Kurum SMS gönderimini kapatmış</strong> — yukarıdaki &quot;SMS sistemi aktif&quot; anahtarı kapalı.</li>
-          <li><strong className="font-bold text-slate-700">WhatsApp denendi, başarısız oldu</strong> — sağlayıcı tanımlı değil/pasif ya da bağlantı hatası; sistem otomatik olarak SMS&apos;e düşer, bu düşüş kayıtta belirtilir.</li>
           <li>Geçersiz telefon numarası içeren gönderimler sağlayıcı tarafından reddedilir ve kayıtlarda hata mesajıyla görünür.</li>
         </ul>
         <button
@@ -604,22 +595,19 @@ function SmsSettingsPanel({ onGoToWhatsappSettings, onGoToRecords }: { onGoToWha
 }
 
 export default function SmsPage() {
-  type SmsTab = "kayitlar" | "whatsapp" | "whatsapp-ayarlar" | "ayarlar" | "sablonlar" | "kutlama-gunleri" | "toplu";
+  const searchParams = useSearchParams();
+  const { can, hasFeature, role } = usePermissions();
   const [tab, setTab] = useState<SmsTab>("kayitlar");
   const [mountedTabs, setMountedTabs] = useState<Set<SmsTab>>(() => new Set(["kayitlar"]));
-  // WhatsApp sekmeleri, SuperAdmin kliniğe modülü açmadıkça hiç görünmez —
-  // yalnızca "kapalı" bir ekran göstermek bile yanıltıcıydı: personel var
-  // olmayan bir özelliğe tıklayıp boş/işlevsiz bir sekmeyle karşılaşıyordu
-  // (bkz. kullanıcı geri bildirimi). null = henüz yüklenmedi (sekmeler
-  // yanıp sönmesin diye bu sırada da gösterilmez).
-  const [whatsappEnabled, setWhatsappEnabled] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    fetch("/api/settings")
-      .then((r) => r.json())
-      .then((d) => setWhatsappEnabled(Boolean(d?.whatsappEnabled)))
-      .catch(() => setWhatsappEnabled(false));
-  }, []);
+  const whatsappEnabled = hasFeature("whatsapp");
+  const canReadSms = can("sms:read");
+  const canWriteSms = can("sms:write");
+  const canReadWhatsapp = whatsappEnabled && can("whatsapp:read");
+  const canWriteWhatsapp = whatsappEnabled && can("whatsapp:write");
+  const canManageWhatsappConnection = canWriteWhatsapp && (role === "YONETICI" || role === "SUPERADMIN");
+  const canWriteCommunication = canWriteSms || canWriteWhatsapp;
+  const canManageAutomations = canWriteSms && can("settings:read") && can("settings:write");
+  const canBulkSend = can("sms:bulk");
 
   const activateTab = useCallback((nextTab: SmsTab) => {
     setMountedTabs((current) => {
@@ -631,19 +619,35 @@ export default function SmsPage() {
     setTab(nextTab);
   }, []);
 
+  useEffect(() => {
+    const requestedTab = searchParams.get("tab");
+    if (requestedTab === "baglanti" && canManageWhatsappConnection) activateTab("baglanti");
+    else if (requestedTab === "whatsapp" && canReadWhatsapp) activateTab("whatsapp");
+  }, [activateTab, canManageWhatsappConnection, canReadWhatsapp, searchParams]);
+
+  useEffect(() => {
+    const unavailable = (tab === "kayitlar" && !canReadSms)
+      || (tab === "ayarlar" && !canManageAutomations)
+      || (tab === "whatsapp" && !canReadWhatsapp)
+      || (tab === "baglanti" && !canManageWhatsappConnection)
+      || (tab === "toplu" && !canBulkSend);
+    if (!unavailable) return;
+    activateTab(canReadSms ? "kayitlar" : canReadWhatsapp ? "whatsapp" : "sablonlar");
+  }, [activateTab, canBulkSend, canManageAutomations, canManageWhatsappConnection, canReadSms, canReadWhatsapp, tab]);
+
   return (
     <div className="space-y-4">
       <div className="flex w-fit max-w-full items-center gap-0.5 overflow-x-auto rounded-lg bg-slate-100/80 p-1" role="tablist">
         {([
-          { key: "kayitlar" as const, label: "Kayıtlar" },
-          { key: "ayarlar" as const, label: "Ayarlar" },
-          ...(whatsappEnabled ? [
-            { key: "whatsapp" as const, label: "WhatsApp" },
-            { key: "whatsapp-ayarlar" as const, label: "WhatsApp Ayarları" },
+          ...(canReadSms ? [{ key: "kayitlar" as const, label: "Kayıtlar" }] : []),
+          ...(canManageAutomations ? [{ key: "ayarlar" as const, label: "Otomasyonlar" }] : []),
+          ...(canReadWhatsapp ? [
+            { key: "whatsapp" as const, label: "Görüşmeler" },
           ] : []),
+          ...(canManageWhatsappConnection ? [{ key: "baglanti" as const, label: "WhatsApp Bağlantısı" }] : []),
           { key: "sablonlar" as const, label: "Şablonlar" },
           { key: "kutlama-gunleri" as const, label: "Kutlama Günleri" },
-          { key: "toplu" as const, label: "Toplu Gönderim" },
+          ...(canBulkSend ? [{ key: "toplu" as const, label: "Toplu Gönderim" }] : []),
         ]).map((t) => (
           <button
             key={t.key}
@@ -662,13 +666,13 @@ export default function SmsPage() {
       {/* Sekmeler DOM'dan tamamen kaldırılmak yerine gizleniyor — özellikle Toplu
           Gönderim'deki seçili hasta listesi gibi girilmiş verinin, kullanıcı
           başka bir sekmeye bakıp geri döndüğünde kaybolmaması için. */}
-      {mountedTabs.has("kayitlar") && <div className={tab === "kayitlar" ? "" : "hidden"}><SmsManagement onGoToSettings={() => activateTab("ayarlar")} /></div>}
-      {mountedTabs.has("ayarlar") && <div className={tab === "ayarlar" ? "" : "hidden"}><SmsSettingsPanel onGoToWhatsappSettings={() => activateTab("whatsapp-ayarlar")} onGoToRecords={() => activateTab("kayitlar")} /></div>}
-      {whatsappEnabled && mountedTabs.has("whatsapp") && <div className={tab === "whatsapp" ? "" : "hidden"}><WhatsappMessagesTab /></div>}
-      {whatsappEnabled && mountedTabs.has("whatsapp-ayarlar") && <div className={tab === "whatsapp-ayarlar" ? "" : "hidden"}><WhatsappSettingsTab /></div>}
-      {mountedTabs.has("toplu") && <div className={tab === "toplu" ? "" : "hidden"}><BulkSendTab /></div>}
-      {mountedTabs.has("sablonlar") && <div className={tab === "sablonlar" ? "" : "hidden"}><TemplatesTab /></div>}
-      {mountedTabs.has("kutlama-gunleri") && <div className={tab === "kutlama-gunleri" ? "" : "hidden"}><CelebrationDaysTab /></div>}
+      {canReadSms && mountedTabs.has("kayitlar") && <div className={tab === "kayitlar" ? "" : "hidden"}><SmsManagement canManage={canManageAutomations} onGoToSettings={() => activateTab("ayarlar")} /></div>}
+      {canManageAutomations && mountedTabs.has("ayarlar") && <div className={tab === "ayarlar" ? "" : "hidden"}><SmsSettingsPanel whatsappAvailable={canWriteWhatsapp} onGoToRecords={() => activateTab("kayitlar")} /></div>}
+      {canReadWhatsapp && mountedTabs.has("whatsapp") && <div className={tab === "whatsapp" ? "" : "hidden"}><WhatsappMessagesTab /></div>}
+      {canManageWhatsappConnection && mountedTabs.has("baglanti") && <div className={tab === "baglanti" ? "" : "hidden"}><WhatsappSettingsTab connectionOnly /></div>}
+      {canBulkSend && mountedTabs.has("toplu") && <div className={tab === "toplu" ? "" : "hidden"}><BulkSendTab /></div>}
+      {mountedTabs.has("sablonlar") && <div className={tab === "sablonlar" ? "" : "hidden"}><TemplatesTab readOnly={!canWriteCommunication} /></div>}
+      {mountedTabs.has("kutlama-gunleri") && <div className={tab === "kutlama-gunleri" ? "" : "hidden"}><CelebrationDaysTab readOnly={!canWriteCommunication} /></div>}
     </div>
   );
 }

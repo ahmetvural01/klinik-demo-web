@@ -5,6 +5,7 @@ import Link from "next/link";
 import { HakedisMonthlyPanel } from "@/components/hakedis/HakedisMonthlyPanel";
 import { cachedGet } from "@/lib/client-cache";
 import { ModuleIcon } from "@/components/ui/ModuleIcon";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 
 type CurrentUser = { id?: string; role?: string; fullName?: string };
 type Doctor = { id: string; fullName: string; role: string; profile?: { hideAsDoctor?: boolean | null } | null };
@@ -22,12 +23,16 @@ export default function FinansPage() {
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [selectedDoctorId, setSelectedDoctorId] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setLoadError("");
     Promise.all([
-      cachedGet<CurrentUser>("/api/auth/me", 60_000),
-      cachedGet<Doctor[]>("/api/staff", 60_000),
+      cachedGet<CurrentUser>("/api/auth/me", 60_000, { throwOnError: true, force: reloadKey > 0 }),
+      cachedGet<Doctor[]>("/api/staff", 60_000, { throwOnError: true, force: reloadKey > 0 }),
     ])
       .then(([user, staff]) => {
         if (!active) return;
@@ -37,14 +42,15 @@ export default function FinansPage() {
         if (user?.role === "DOKTOR" && user.id) setSelectedDoctorId(user.id);
         else if (eligible.length === 1) setSelectedDoctorId(eligible[0].id);
       })
-      .catch(() => {
+      .catch((error) => {
         if (!active) return;
         setCurrentUser(null);
         setDoctors([]);
+        setLoadError(error instanceof Error ? error.message : "Hakediş bilgileri yüklenemedi.");
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [reloadKey]);
 
   const isDoctorView = currentUser?.role === "DOKTOR";
   const selectedDoctor = useMemo(
@@ -69,7 +75,9 @@ export default function FinansPage() {
         )}
       </header>
 
-      {!isDoctorView && (
+      {loadError && <LoadErrorState message={loadError} onRetry={() => setReloadKey((value) => value + 1)} />}
+
+      {!loadError && !isDoctorView && (
         <div className="max-w-md">
           <label className="mb-1 block text-xs font-bold text-slate-600">Doktor</label>
           <select
@@ -83,7 +91,7 @@ export default function FinansPage() {
         </div>
       )}
 
-      {loading ? (
+      {loadError ? null : loading ? (
         <div className="rounded-xl border border-slate-200 bg-white py-12 text-center text-sm text-slate-500">Hakediş bilgileri yükleniyor…</div>
       ) : selectedDoctorId ? (
         <HakedisMonthlyPanel doctorId={selectedDoctorId} canPay={false} />

@@ -29,6 +29,7 @@ export type NotificationEventType =
   | "BIRTHDAY_GREETING"
   | "HOLIDAY_GREETING"
   | "SMS_CONSENT_REQUEST"
+  | "MANUAL_WHATSAPP"
   | "MANUAL_SMS"
   | "BULK_SMS";
 
@@ -37,6 +38,8 @@ export type DispatchPurpose = "SERVICE" | "GREETING" | "CONSENT_REQUEST";
 export type DispatchResult = {
   success: boolean;
   channel: "SMS" | "WHATSAPP";
+  /** Only true when the provider was definitely not invoked. */
+  retryable?: boolean;
   suppressed?: boolean;
   reason?: string;
   error?: string;
@@ -50,10 +53,14 @@ export type DispatchParams = {
   purpose: DispatchPurpose;
   templateCode: string;
   message: string;
+  whatsappMessage?: string;
+  channelPreference?: "AUTO" | "SMS" | "WHATSAPP";
   /** Aynı olayın ikinci kez gönderilmesini engeller, ör. `appt:${id}:reminder`. */
   idempotencyKey: string;
   actorId?: string | null;
   whatsappTemplate?: { name?: string; language?: string; bodyParameters?: string[] };
+  /** Kanal zorlandığında sağlayıcı hatasının SMS'e dönüşüp dönüşmeyeceği. */
+  allowSmsFallback?: boolean;
 };
 
 function maskPhone(phone: string) {
@@ -71,9 +78,28 @@ function resultFromDispatch(existing: {
   lastError: string | null;
   providerMessageId: string | null;
 }): DispatchResult {
+  if (existing.status === "QUEUED") {
+    return {
+      success: false,
+      channel: existing.channel,
+      retryable: false,
+      error: "Gönderimin sonucu kesinleşmedi; çift mesaj riskini önlemek için otomatik olarak tekrar gönderilmedi.",
+    };
+  }
+
+  if (existing.status === "FAILED") {
+    return {
+      success: false,
+      channel: existing.channel,
+      retryable: false,
+      error: existing.lastError || "Gönderim başarısız oldu.",
+    };
+  }
+
   return {
-    success: existing.status === "SENT" || existing.status === "DELIVERED",
+    success: existing.status === "SENT" || existing.status === "DELIVERED" || existing.status === "READ",
     channel: existing.channel,
+    retryable: false,
     suppressed: existing.status === "SUPPRESSED",
     reason: existing.status === "SUPPRESSED" ? existing.lastError || undefined : undefined,
     providerMessageId: existing.providerMessageId || undefined,
@@ -96,6 +122,7 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
     select: {
       phone: true,
       phoneCountryCode: true,
+      homeBranchId: true,
       whatsappOptInAt: true,
       whatsappOptOutAt: true,
     },
@@ -106,7 +133,17 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
 
   const [institution, setting, smsPreference] = await Promise.all([
     prisma.institution.findUnique({ where: { id: institutionId }, select: { whatsappEnabled: true } }),
-    prisma.setting.findUnique({ where: { institutionId }, select: { defaultNotificationChannel: true, smsEnabled: true } }),
+    prisma.setting.findUnique({
+      where: { institutionId },
+      select: {
+        defaultNotificationChannel: true,
+        smsEnabled: true,
+        whatsappSmsFallback: true,
+        whatsappAppointmentEnabled: true,
+        whatsappPaymentEnabled: true,
+        whatsappInfoEnabled: true,
+      },
+    }),
     prisma.patientSmsPreference.findUnique({ where: { patientId }, select: { status: true } }),
   ]);
   if (!institution) {
@@ -121,6 +158,7 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
     const claimed = await prisma.smsDispatch.create({
       data: {
         institutionId,
+        branchId: patient.homeBranchId,
         patientId,
         eventType,
         purpose,
@@ -146,7 +184,7 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
 
   const logDispatch = (data: {
     channel: "SMS" | "WHATSAPP";
-    status: "SENT" | "FAILED" | "SUPPRESSED";
+    status: "QUEUED" | "SENT" | "FAILED" | "SUPPRESSED";
     providerCode?: string;
     providerMessageId?: string;
     lastError?: string;
@@ -169,24 +207,57 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
   // PENDING olduğu için) ve her zaman SMS ile gider — WhatsApp izni SMS izninden
   // bağımsız olduğu için "SMS izni istiyoruz" mesajını WhatsApp'tan göndermek
   // anlamsız olurdu.
+  const eventWhatsappEnabled = eventType.startsWith("APPOINTMENT_")
+    ? (setting?.whatsappAppointmentEnabled ?? true)
+    : eventType === "PAYMENT_REMINDER"
+      ? (setting?.whatsappPaymentEnabled ?? true)
+      : (setting?.whatsappInfoEnabled ?? true);
+  const wantsWhatsapp = params.channelPreference === "WHATSAPP"
+    || (params.channelPreference !== "SMS" && setting?.defaultNotificationChannel === "WHATSAPP");
   const canUseWhatsapp =
     purpose !== "CONSENT_REQUEST" &&
     institution.whatsappEnabled &&
-    setting?.defaultNotificationChannel === "WHATSAPP" &&
+    wantsWhatsapp &&
+    eventWhatsappEnabled &&
     Boolean(patient.whatsappOptInAt) &&
     !patient.whatsappOptOutAt;
 
   // WhatsApp başarısız olursa gerekçesi burada tutulur ve SMS'e düşüldüğünde
   // (başarılı ya da SUPPRESSED) kayda açıkça yazılır — sessiz düşüş yok.
   let whatsappFailureNote: string | undefined;
+  const allowSmsFallback = params.allowSmsFallback ?? setting?.whatsappSmsFallback ?? true;
+
+  if (purpose !== "CONSENT_REQUEST" && wantsWhatsapp && !canUseWhatsapp) {
+    const unavailableReason = !institution.whatsappEnabled
+      ? "WhatsApp modülü kurum için açık değil."
+      : !eventWhatsappEnabled
+        ? "Bu bildirim türü için WhatsApp gönderimi kapalı."
+        : !patient.whatsappOptInAt || patient.whatsappOptOutAt
+          ? "Hastanın WhatsApp iletişim izni bulunmuyor."
+          : "WhatsApp kullanılamıyor.";
+    if (!allowSmsFallback) {
+      await logDispatch({ channel: "WHATSAPP", status: "SUPPRESSED", lastError: unavailableReason });
+      return { success: false, channel: "WHATSAPP", suppressed: true, reason: unavailableReason };
+    }
+    whatsappFailureNote = `${unavailableReason} SMS yedek kanalı denendi.`;
+  }
 
   if (canUseWhatsapp) {
-    const waResult = await sendWhatsapp(patient.phone, message, {
-      institutionId,
-      patientId,
-      countryCode: patient.phoneCountryCode,
-      template: params.whatsappTemplate,
-    });
+    let waResult;
+    try {
+      waResult = await sendWhatsapp(patient.phone, params.whatsappMessage || message, {
+        institutionId,
+        patientId,
+        countryCode: patient.phoneCountryCode,
+        template: params.whatsappTemplate,
+      });
+    } catch (error) {
+      waResult = {
+        success: false,
+        deliveryCertainty: "UNKNOWN" as const,
+        error: error instanceof Error ? error.message : "WhatsApp sağlayıcısına ulaşılamadı.",
+      };
+    }
     if (waResult.success) {
       await logDispatch({
         channel: "WHATSAPP",
@@ -197,10 +268,25 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
       });
       return { success: true, channel: "WHATSAPP", providerMessageId: waResult.providerMessageId };
     }
+    if (waResult.deliveryCertainty === "UNKNOWN") {
+      const reason = `WhatsApp sağlayıcısının yanıtı kesinleşmedi (${waResult.error || "bağlantı kesildi"}). Çift mesajı önlemek için SMS yedek kanalı çalıştırılmadı.`;
+      await logDispatch({
+        channel: "WHATSAPP",
+        status: "QUEUED",
+        providerCode: waResult.providerCode,
+        providerMessageId: waResult.providerMessageId,
+        lastError: reason,
+      });
+      return { success: false, channel: "WHATSAPP", retryable: false, error: reason };
+    }
     // WhatsApp denendi ama başarısız oldu (sağlayıcı tanımlı değil/pasif,
     // bağlantı hatası, geçersiz şablon vb.) — hastaya bilgilendirme hiç
     // gitmemesindense SMS'e düşülür; gerekçe aşağıdaki her kayıtta belirtilir.
-    whatsappFailureNote = `WhatsApp denendi, başarısız oldu (${waResult.error || waResult.providerRaw || "bilinmeyen hata"}).`;
+    whatsappFailureNote = `WhatsApp denendi, başarısız oldu (${waResult.error || "sağlayıcı hatası"}).`;
+    if (!allowSmsFallback) {
+      await logDispatch({ channel: "WHATSAPP", status: "FAILED", lastError: whatsappFailureNote });
+      return { success: false, channel: "WHATSAPP", error: whatsappFailureNote };
+    }
   }
 
   const withWhatsappNote = (reason: string) => (whatsappFailureNote ? `${whatsappFailureNote} ${reason}` : reason);
@@ -230,7 +316,21 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
     return { success: false, channel: "SMS", suppressed: true, reason };
   }
 
-  const smsResult = await sendSms(patient.phone, message);
+  let smsResult;
+  try {
+    smsResult = await sendSms(patient.phone, message);
+  } catch (error) {
+    // Sağlayıcı çağrısı başlamadan/sonuç üretmeden hata verdiyse ayrılan kredi
+    // mutlaka geri alınır. Dış servis sonucu belirsizse aynı idempotency anahtarı
+    // otomatik yeniden gönderimi engelleyerek çift mesajı önceler.
+    await prisma.institution.update({
+      where: { id: institutionId },
+      data: { smsBalance: { increment: 1 } },
+    });
+    const smsError = withWhatsappNote(error instanceof Error ? error.message : "SMS sağlayıcısına ulaşılamadı.");
+    await logDispatch({ channel: "SMS", status: "FAILED", lastError: smsError });
+    return { success: false, channel: "SMS", retryable: false, error: smsError };
+  }
   if (smsResult.success) {
     await logDispatch({
       channel: "SMS",

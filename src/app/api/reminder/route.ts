@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 // GET hatırlatmalar, POST ekle
 export async function GET(req: NextRequest) {
   try {
     const auth = await requireAuth("appointments:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
     const { searchParams } = new URL(req.url);
     const status = searchParams.get("status") || "AKTIF";
@@ -15,13 +18,11 @@ export async function GET(req: NextRequest) {
     }
     const where: Record<string, unknown> = {};
     if (status !== "HEPSI") where.status = status;
-    if (auth.user.role !== "SUPERADMIN") {
-      if (!auth.user.institutionId) return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
-      where.OR = [
-        { patient: { institutionId: auth.user.institutionId } },
-        { plan: { patient: { institutionId: auth.user.institutionId } } },
-      ];
-    }
+    if (!auth.user.institutionId) return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
+    where.OR = [
+      { patient: { institutionId: auth.user.institutionId, homeBranchId: branch.branchId } },
+      { plan: { institutionId: auth.user.institutionId, branchId: branch.branchId } },
+    ];
 
     const reminders = await (prisma as any).reminder.findMany({
       where,
@@ -29,7 +30,7 @@ export async function GET(req: NextRequest) {
       orderBy: { reminderDate: "asc" }
     });
     return NextResponse.json(reminders);
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
   }
 }
@@ -38,6 +39,8 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await requireAuth("appointments:write");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
     const body = await req.json();
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -54,17 +57,19 @@ export async function POST(req: NextRequest) {
     if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
       return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
     }
+    const institutionId = auth.user.institutionId;
+    if (!institutionId) return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
 
     const [patient, plan] = await Promise.all([
       patientId
         ? (prisma as any).patient.findFirst({
-            where: { id: patientId, archivedAt: null, ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}) },
+            where: { id: patientId, archivedAt: null, ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}), homeBranchId: branch.branchId },
             select: { id: true },
           })
         : Promise.resolve(null),
       planId
         ? (prisma as any).taksitPlan.findFirst({
-            where: { id: planId, ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}) },
+            where: { id: planId, ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}), branchId: branch.branchId },
             select: { id: true, patientId: true },
           })
         : Promise.resolve(null),
@@ -77,6 +82,8 @@ export async function POST(req: NextRequest) {
 
     const r = await (prisma as any).reminder.create({
       data: {
+        institutionId,
+        branchId: branch.branchId,
         patientId: patientId || null,
         planId: planId || null,
         note, reminderDate: parsedReminderDate, status: "AKTIF"
@@ -84,7 +91,7 @@ export async function POST(req: NextRequest) {
     });
     await writeAudit(auth.user.id, "REMINDER_CREATE", "Hatırlatma eklendi");
     return NextResponse.json(r, { status: 201 });
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
   }
 }

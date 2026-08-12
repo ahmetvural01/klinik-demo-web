@@ -1,0 +1,2 @@
+# Agent policy
+150 specialist definitions exist under `.cline/agents`. Activate only relevant specialists. Separate implementers from reviewers/red-team. Deterministic tools outrank model opinion. Consolidate duplicate findings.

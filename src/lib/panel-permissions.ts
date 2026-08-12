@@ -35,7 +35,7 @@ const PANEL_ROUTE_REQUIREMENTS: Array<{ prefix: string; requirement: PanelPermis
   { prefix: "/stok", requirement: { anyOf: ["stock:read"] } },
   { prefix: "/firma", requirement: { anyOf: ["finance:read"] } },
   { prefix: "/personel", requirement: { anyOf: ["staff:read"] } },
-  { prefix: "/sms", requirement: { anyOf: ["sms:read"] } },
+  { prefix: "/sms", requirement: { anyOf: ["sms:read", "whatsapp:read"] } },
   { prefix: "/sistem-izleme", requirement: { anyOf: ["audit:read"] } },
   { prefix: "/log", requirement: { anyOf: ["audit:read"] } },
   { prefix: "/ayar", requirement: { anyOf: ["settings:read"] } },

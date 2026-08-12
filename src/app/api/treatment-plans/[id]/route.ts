@@ -2,16 +2,34 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 const PLAN_STATUSES = ["PLANLANDI", "DEVAM_EDIYOR", "TAMAMLANDI", "IPTAL"];
 const CLOSED_PLAN_STATUSES = new Set(["TAMAMLANDI", "IPTAL"]);
 const STEP_STATUSES = new Set(["BEKLIYOR", "YAPILDI", "TAMAMLANDI", "IPTAL"]);
 const COMPLETED_STEP_STATUSES = new Set(["YAPILDI", "TAMAMLANDI"]);
+const PLAN_TRANSITIONS: Record<string, ReadonlySet<string>> = {
+  PLANLANDI: new Set(["DEVAM_EDIYOR", "IPTAL"]),
+  DEVAM_EDIYOR: new Set(["TAMAMLANDI", "IPTAL"]),
+  TAMAMLANDI: new Set(),
+  IPTAL: new Set(),
+};
+const STEP_TRANSITIONS: Record<string, ReadonlySet<string>> = {
+  BEKLIYOR: new Set(["YAPILDI", "TAMAMLANDI", "IPTAL"]),
+  YAPILDI: new Set(),
+  TAMAMLANDI: new Set(),
+  IPTAL: new Set(),
+};
 
-function treatmentPlanTenantWhere(id: string, institutionId: string | null | undefined, role: string) {
+function isAllowedTransition(current: string, next: string, transitions: Record<string, ReadonlySet<string>>) {
+  return current === next || Boolean(transitions[current]?.has(next));
+}
+
+function treatmentPlanTenantWhere(id: string, institutionId: string | null | undefined, branchId: string) {
   return {
     id,
-    ...(role !== "SUPERADMIN" ? { patient: { institutionId } } : {}),
+    institutionId: institutionId || "__no_institution__",
+    branchId,
   };
 }
 
@@ -19,17 +37,19 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   const params = await props.params;
   const auth = await requireAuth("treatment:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
   const user = auth.user;
   if (user.role !== "SUPERADMIN" && !user.institutionId) {
     return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
   }
 
   const plan = await (prisma as any).treatmentPlan.findFirst({
-    where: treatmentPlanTenantWhere(params.id, user.institutionId, user.role),
+    where: treatmentPlanTenantWhere(params.id, user.institutionId, branch.branchId),
     include: {
       patient: { select: { id: true, fullName: true, tcNo: true, phone: true } },
       doctor:  { select: { id: true, fullName: true } },
-      steps:   { orderBy: { order: "asc" } },
+      steps:   { where: { archivedAt: null }, orderBy: { order: "asc" } },
     },
   });
 
@@ -39,7 +59,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   const result = hidePhone
     ? {
         ...plan,
-        patient: plan.patient ? { ...plan.patient, phone: "***" } : plan.patient,
+        patient: plan.patient ? { ...plan.patient, phone: "***", tcNo: plan.patient.tcNo ? "***" : plan.patient.tcNo } : plan.patient,
       }
     : plan;
   return NextResponse.json(result);
@@ -49,6 +69,8 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   const params = await props.params;
   const auth = await requireAuth("treatment:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
   const user = auth.user;
   if (user.role !== "SUPERADMIN" && !user.institutionId) {
     return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
@@ -62,7 +84,6 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     status?: unknown;
     stepUpdates?: unknown;
     stepDeletes?: unknown;
-    force?: unknown;
   };
 
   if (status !== undefined && (typeof status !== "string" || !PLAN_STATUSES.includes(status))) {
@@ -85,21 +106,28 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     return NextResponse.json({ error: "Silinecek tedavi adımı geçersiz" }, { status: 400 });
   }
   const deleteIds = new Set(normalizedStepDeletes as string[]);
+  const updateIds = normalizedStepUpdates.map((step) => step.id as string);
+  if (new Set(updateIds).size !== updateIds.length) {
+    return NextResponse.json({ error: "Aynı tedavi adımı bir istekte birden fazla güncellenemez" }, { status: 400 });
+  }
   if (normalizedStepUpdates.some((step) => deleteIds.has(step.id as string))) {
     return NextResponse.json({ error: "Aynı adım aynı istekte hem silinip hem güncellenemez" }, { status: 400 });
   }
 
   const existing = await (prisma as any).treatmentPlan.findFirst({
-    where: treatmentPlanTenantWhere(params.id, user.institutionId, user.role),
+    where: treatmentPlanTenantWhere(params.id, user.institutionId, branch.branchId),
     select: { id: true, status: true, patientId: true, doctorId: true, createdAt: true, totalCost: true },
   });
   if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
+  if (typeof status === "string" && !isAllowedTransition(existing.status, status, PLAN_TRANSITIONS)) {
+    return NextResponse.json({ error: `${existing.status} durumundaki plan ${status} durumuna geçirilemez.` }, { status: 409 });
+  }
 
   const referencedStepIds = [...new Set([...deleteIds, ...normalizedStepUpdates.map((step) => step.id as string)])];
   if (referencedStepIds.length > 0) {
     const existingSteps = await (prisma as any).treatmentStep.findMany({
-      where: { planId: params.id, id: { in: referencedStepIds } },
-      select: { id: true },
+      where: { planId: params.id, archivedAt: null, id: { in: referencedStepIds } },
+      select: { id: true, status: true },
     });
     if (existingSteps.length !== referencedStepIds.length) {
       return NextResponse.json({ error: "Tedavi adımlarından biri bu plana ait değil veya bulunamadı" }, { status: 400 });
@@ -123,7 +151,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   // sonra 400 dönülebilir ve kullanıcı hata görürken veri kısmen değişirdi.
   if (status === "TAMAMLANDI" && existing.status !== "TAMAMLANDI") {
     const currentSteps = await (prisma as any).treatmentStep.findMany({
-      where: { planId: params.id },
+      where: { planId: params.id, archivedAt: null },
       select: { id: true, status: true },
     });
     const projectedSteps = currentSteps
@@ -146,92 +174,114 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     }
   }
 
-  if (normalizedStepDeletes.length > 0) {
-    // Payment modeli doğrudan bir tedavi planına bağlı değil (planId FK'sı
-    // yok), bu yüzden adım silindiğinde toplam tutar (totalCost) hastanın bu
-    // plan oluşturulduktan sonra bu doktora yaptığı tahsilatların altına
-    // düşüyorsa uyarıyoruz — kesin bir eşleşme değil (aynı hasta+doktor için
-    // birden fazla plan olabilir) ama ödeme kaydıyla tedavi tutarının
-    // sessizce tutarsızlaşmasına karşı en azından bir sinyal veriyor
-    // (bkz. denetim raporu — tedavi planı tutarı ödeme defterinden kopuk).
-    if (body.force !== true) {
-      const deletedTotal = await (prisma as any).treatmentStep.aggregate({
-        where: { id: { in: normalizedStepDeletes as string[] }, planId: params.id },
-        _sum: { amount: true },
+  let plan;
+  try {
+    plan = await prisma.$transaction(async (transaction) => {
+      const tx = transaction as any;
+      await transaction.$queryRaw`SELECT "id" FROM "TreatmentPlan" WHERE "id" = ${params.id} FOR UPDATE`;
+
+      const lockedPlan = await tx.treatmentPlan.findFirst({
+        where: treatmentPlanTenantWhere(params.id, user.institutionId, branch.branchId),
+        select: { id: true, status: true, patientId: true, doctorId: true, createdAt: true, totalCost: true },
       });
-      const newTotalCost = Number(existing.totalCost || 0) - Number(deletedTotal._sum.amount || 0);
-      const paidSinceCreation = await prisma.payment.aggregate({
-        where: {
-          patientId: existing.patientId,
-          doctorId: existing.doctorId,
-          status: "ACTIVE",
-          createdAt: { gte: existing.createdAt },
-        },
-        _sum: { amount: true },
-      });
-      const paidAmount = Number(paidSinceCreation._sum.amount || 0);
-      if (paidAmount > 0 && newTotalCost < paidAmount - 0.01) {
-        return NextResponse.json({
-          error: `Bu hasta, plan oluşturulduktan sonra bu doktora ${paidAmount.toFixed(2)} TL ödeme yapmış — silinecek adımlarla yeni plan tutarı (${newTotalCost.toFixed(2)} TL) bunun altına düşüyor. Devam etmek istediğinize emin misiniz?`,
-          requiresForce: true,
-        }, { status: 409 });
+      if (!lockedPlan) throw new Error("PLAN_NOT_FOUND");
+      if (typeof status === "string" && !isAllowedTransition(lockedPlan.status, status, PLAN_TRANSITIONS)) {
+        throw new Error("INVALID_PLAN_TRANSITION");
       }
-    }
 
-    await (prisma as any).treatmentStep.deleteMany({
-      where: { id: { in: normalizedStepDeletes as string[] }, planId: params.id },
-    });
-  }
+      let lockedSteps: Array<{ id: string; status: string }> = [];
+      if (referencedStepIds.length > 0) {
+        lockedSteps = await tx.treatmentStep.findMany({
+          where: { planId: params.id, archivedAt: null, id: { in: referencedStepIds } },
+          select: { id: true, status: true },
+        });
+        if (lockedSteps.length !== referencedStepIds.length) throw new Error("STEP_NOT_FOUND");
+      }
 
-  if (normalizedStepUpdates.length > 0) {
-    for (const su of normalizedStepUpdates) {
-      await (prisma as any).treatmentStep.update({
-        where: { id: su.id as string, planId: params.id },
-        data: {
-          status: su.status as string,
-          doneAt: COMPLETED_STEP_STATUSES.has(su.status as string) ? new Date() : null,
+      for (const stepUpdate of normalizedStepUpdates) {
+        const current = lockedSteps.find((step) => step.id === stepUpdate.id);
+        if (!current || !isAllowedTransition(current.status, stepUpdate.status as string, STEP_TRANSITIONS)) {
+          throw new Error("INVALID_STEP_TRANSITION");
+        }
+      }
+      const deletedSteps = lockedSteps.filter((step) => deleteIds.has(step.id));
+      if (deletedSteps.some((step) => step.status !== "BEKLIYOR")) {
+        throw new Error("STEP_HISTORY_PROTECTED");
+      }
+
+      if (normalizedStepDeletes.length > 0) {
+        await tx.treatmentStep.updateMany({
+          where: { id: { in: normalizedStepDeletes as string[] }, planId: params.id, archivedAt: null },
+          data: {
+            archivedAt: new Date(),
+            archivedById: auth.user.id,
+            archiveReason: "Tedavi planı düzenlenirken kaldırıldı",
+          },
+        });
+      }
+
+      for (const stepUpdate of normalizedStepUpdates) {
+        await tx.treatmentStep.update({
+          where: { id: stepUpdate.id as string, planId: params.id, archivedAt: null },
+          data: {
+            status: stepUpdate.status as string,
+            doneAt: COMPLETED_STEP_STATUSES.has(stepUpdate.status as string) ? new Date() : null,
+          },
+        });
+      }
+
+      if (status === "TAMAMLANDI" && lockedPlan.status !== "TAMAMLANDI") {
+        const remainingSteps = await tx.treatmentStep.findMany({
+          where: { planId: params.id, archivedAt: null },
+          select: { status: true },
+        });
+        if (remainingSteps.length === 0) throw new Error("PLAN_HAS_NO_STEPS");
+        if (remainingSteps.some((step: { status: string }) => !COMPLETED_STEP_STATUSES.has(step.status))) {
+          throw new Error("PLAN_HAS_PENDING_STEPS");
+        }
+      }
+
+      const recomputedTotalCost = normalizedStepDeletes.length > 0
+        ? await tx.treatmentStep.aggregate({ where: { planId: params.id, archivedAt: null }, _sum: { amount: true } }).then((result: any) => Number(result._sum.amount ?? 0))
+        : undefined;
+
+      return tx.treatmentPlan.update({
+        where: { id: params.id },
+        data: { ...(status ? { status } : {}), ...(recomputedTotalCost !== undefined ? { totalCost: recomputedTotalCost } : {}) },
+        include: {
+          patient: { select: { id: true, fullName: true } },
+          doctor:  { select: { id: true, fullName: true } },
+          steps:   { where: { archivedAt: null }, orderBy: { order: "asc" } },
         },
       });
+    }, { isolationLevel: "Serializable" });
+  } catch (error) {
+    if (error instanceof Error && error.message === "PLAN_NOT_FOUND") {
+      return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
     }
+    if (error instanceof Error && error.message === "STEP_NOT_FOUND") {
+      return NextResponse.json({ error: "Tedavi adımlarından biri bu plana ait değil veya artık bulunamıyor" }, { status: 409 });
+    }
+    if (error instanceof Error && error.message === "INVALID_PLAN_TRANSITION") {
+      return NextResponse.json({ error: "Tedavi planı başka bir kullanıcı tarafından değiştirildi; bu durum geçişi artık geçerli değil." }, { status: 409 });
+    }
+    if (error instanceof Error && error.message === "INVALID_STEP_TRANSITION") {
+      return NextResponse.json({ error: "Tedavi adımlarından birinin durumu değişti; terminal durumdaki adım yeniden açılamaz." }, { status: 409 });
+    }
+    if (error instanceof Error && error.message === "STEP_HISTORY_PROTECTED") {
+      return NextResponse.json({ error: "İşlem görmüş veya iptal edilmiş tedavi adımı kaldırılamaz; klinik geçmişte korunmalıdır." }, { status: 409 });
+    }
+    if (error instanceof Error && error.message === "PLAN_HAS_NO_STEPS") {
+      return NextResponse.json({ error: "Adımı olmayan bir tedavi planı \"Tamamlandı\" olarak işaretlenemez." }, { status: 400 });
+    }
+    if (error instanceof Error && error.message === "PLAN_HAS_PENDING_STEPS") {
+      return NextResponse.json({ error: "Bekleyen adımları olan bir tedavi planı \"Tamamlandı\" olarak işaretlenemez. Önce tüm adımları \"Yapıldı\" olarak işaretleyin." }, { status: 400 });
+    }
+    if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2034") {
+      return NextResponse.json({ error: "Tedavi planı aynı anda başka bir kullanıcı tarafından değiştirildi. Lütfen yenileyip tekrar deneyin." }, { status: 409 });
+    }
+    throw error;
   }
-
-  // Bir plan "Tamamlandı" işaretlenmeden önce (adım silme/güncellemeleri bu
-  // istekte uygulandıktan SONRA) kalan tüm adımların fiilen "Yapıldı" olması
-  // gerekir — aksi halde 0 adımlı VEYA hâlâ bekleyen adımları olan bir plan
-  // "Tamamlandı" görünüp raporlarda sessizce yanıltıcı veri üretiyordu
-  // (bkz. denetim raporu).
-  if (status === "TAMAMLANDI" && existing.status !== "TAMAMLANDI") {
-    const remainingSteps = await (prisma as any).treatmentStep.findMany({
-      where: { planId: params.id },
-      select: { status: true },
-    });
-    if (remainingSteps.length === 0) {
-      return NextResponse.json(
-        { error: "Adımı olmayan bir tedavi planı \"Tamamlandı\" olarak işaretlenemez." },
-        { status: 400 }
-      );
-    }
-    if (remainingSteps.some((s: { status: string }) => !COMPLETED_STEP_STATUSES.has(s.status))) {
-      return NextResponse.json(
-        { error: "Bekleyen adımları olan bir tedavi planı \"Tamamlandı\" olarak işaretlenemez. Önce tüm adımları \"Yapıldı\" olarak işaretleyin." },
-        { status: 400 }
-      );
-    }
-  }
-
-  const recomputedTotalCost = normalizedStepDeletes.length > 0
-    ? await (prisma as any).treatmentStep.aggregate({ where: { planId: params.id }, _sum: { amount: true } }).then((r: any) => Number(r._sum.amount ?? 0))
-    : undefined;
-
-  const plan = await (prisma as any).treatmentPlan.update({
-    where: { id: params.id },
-    data: { ...(status ? { status } : {}), ...(recomputedTotalCost !== undefined ? { totalCost: recomputedTotalCost } : {}) },
-    include: {
-      patient: { select: { id: true, fullName: true } },
-      doctor:  { select: { id: true, fullName: true } },
-      steps:   { orderBy: { order: "asc" } },
-    },
-  });
 
   await writeAudit(auth.user.id, "TREATMENT_PLAN_UPDATE", `Tedavi planı güncellendi (${params.id})`);
   return NextResponse.json(plan);
@@ -241,17 +291,33 @@ export async function DELETE(req: NextRequest, props: { params: Promise<{ id: st
   const params = await props.params;
   const auth = await requireAuth("treatment:delete");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
   if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
     return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
   }
 
   const existing = await (prisma as any).treatmentPlan.findFirst({
-    where: treatmentPlanTenantWhere(params.id, auth.user.institutionId, auth.user.role),
-    select: { id: true },
+    where: treatmentPlanTenantWhere(params.id, auth.user.institutionId, branch.branchId),
+    select: { id: true, status: true },
   });
   if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
+  if (existing.status === "TAMAMLANDI") {
+    return NextResponse.json({ error: "Tamamlanmış tedavi planı silinemez; klinik geçmişte korunmalıdır." }, { status: 409 });
+  }
 
-  await (prisma as any).treatmentPlan.delete({ where: { id: params.id } });
-  await writeAudit(auth.user.id, "TREATMENT_PLAN_DELETE", `Tedavi planı silindi (${params.id})`);
-  return NextResponse.json({ ok: true });
+  if (existing.status !== "IPTAL") {
+    await (prisma as any).treatmentPlan.update({
+      where: {
+        id_institutionId_branchId: {
+          id: params.id,
+          institutionId: auth.user.institutionId,
+          branchId: branch.branchId,
+        },
+      },
+      data: { status: "IPTAL" },
+    });
+    await writeAudit(auth.user.id, "TREATMENT_PLAN_CANCEL", `Tedavi planı iptal edildi (${params.id})`);
+  }
+  return NextResponse.json({ ok: true, status: "IPTAL" });
 }

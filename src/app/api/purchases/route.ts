@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
+import { requireAllAuth, requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { purchaseCreateSchema, formatZodError } from "@/lib/validators";
 import { applyStockMovement } from "@/lib/stock-ledger";
 import { resolveOrCreateStockItem } from "@/lib/purchase-helpers";
@@ -8,6 +8,8 @@ import { applyFirmaIslemIntegration } from "@/lib/firma-integration";
 import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
 import { purchasePaymentToken } from "@/lib/purchase-payment-links";
 import { isValidDateKey, turkeyDayRangeUtc } from "@/lib/tz";
+import { requireActiveBranch } from "@/lib/branch-context";
+import { publicErrorResponse } from "@/lib/public-error";
 
 function toPublicPurchase(purchase: any) {
   if (!purchase) return purchase;
@@ -24,6 +26,8 @@ export const GET = withApiTiming("purchases", async function GET(req: NextReques
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
     const { searchParams } = new URL(req.url);
     const firmaId = searchParams.get("firmaId");
@@ -40,6 +44,7 @@ export const GET = withApiTiming("purchases", async function GET(req: NextReques
     const where: Record<string, unknown> = {
       status: "AKTIF",
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      branchId: branch.branchId,
     };
     if (firmaId) where.firmaId = firmaId;
     if (from || to) {
@@ -60,7 +65,7 @@ export const GET = withApiTiming("purchases", async function GET(req: NextReques
       include: {
         firma: { select: { id: true, name: true } },
         firmaIslem: { select: { tutar: true, dueDate: true } },
-        items: { select: { lineTotal: true } },
+        items: { where: { archivedAt: null }, select: { lineTotal: true } },
         _count: { select: { items: true } },
       },
       orderBy: { tarih: "desc" },
@@ -91,13 +96,17 @@ export const GET = withApiTiming("purchases", async function GET(req: NextReques
 export async function POST(req: NextRequest) {
   let requestKey: string | null = null;
   let institutionId: string | null = null;
+  let activeBranchId: string | null = null;
   try {
-    const auth = await requireAuth("finance:write");
+    const auth = await requireAllAuth(["finance:write", "stock:write"]);
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
     if (!auth.user.institutionId) {
       return NextResponse.json({ error: "Satın alma kaydı için kurum bağlamı zorunlu" }, { status: 403 });
     }
     institutionId = auth.user.institutionId;
+    activeBranchId = branch.branchId;
     requestKey = req.headers.get("Idempotency-Key")?.trim() || null;
     if (requestKey && (requestKey.length < 8 || requestKey.length > 180)) {
       return NextResponse.json({ error: "İşlem anahtarı geçersiz" }, { status: 400 });
@@ -108,6 +117,7 @@ export async function POST(req: NextRequest) {
         where: {
           requestKey,
           ...(institutionId ? { institutionId } : {}),
+          branchId: branch.branchId,
         },
         include: { items: true },
       });
@@ -138,6 +148,7 @@ export async function POST(req: NextRequest) {
       where: {
         id: firmaId,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
       },
       select: { id: true, name: true, institutionId: true, paymentTerms: true, customPaymentDays: true },
     });
@@ -160,7 +171,7 @@ export async function POST(req: NextRequest) {
       }[] = [];
 
       for (const item of items) {
-        const resolved = await resolveOrCreateStockItem(tx, auth.user.institutionId, firma.name, item);
+        const resolved = await resolveOrCreateStockItem(tx, auth.user.institutionId, branch.branchId, firma.name, item);
         lineData.push({
           stockItemId: resolved.id,
           productName: resolved.name,
@@ -179,6 +190,8 @@ export async function POST(req: NextRequest) {
       const firmaIslem = isReceived
         ? await tx.firmaIslem.create({
             data: {
+              institutionId: auth.user.institutionId,
+              branchId: branch.branchId,
               firmaId: firma.id,
               tarih: transactionDate,
               islemTipi: "ALIM",
@@ -196,6 +209,7 @@ export async function POST(req: NextRequest) {
       const purchase = await tx.purchase.create({
         data: {
           institutionId: auth.user.institutionId,
+          branchId: branch.branchId,
           firmaId: firma.id,
           firmaIslemId: firmaIslem?.id || null,
           tarih: transactionDate,
@@ -220,6 +234,8 @@ export async function POST(req: NextRequest) {
       for (const line of lineData) {
         const purchaseItem = await tx.purchaseItem.create({
           data: {
+            institutionId,
+            branchId: branch.branchId,
             purchaseId: purchase.id,
             stockItemId: line.stockItemId,
             productName: line.productName,
@@ -236,6 +252,7 @@ export async function POST(req: NextRequest) {
               tx,
               stockItemId: line.stockItemId,
               institutionId: auth.user.institutionId,
+              branchId: branch.branchId,
               userId: auth.user.id,
               type: "GIRIS",
               quantity: line.quantity,
@@ -264,6 +281,8 @@ export async function POST(req: NextRequest) {
         const paymentTransactionDate = new Date(paymentDate || tarih);
         paymentIslem = await tx.firmaIslem.create({
           data: {
+            institutionId: auth.user.institutionId,
+            branchId: branch.branchId,
             firmaId: firma.id,
             tarih: paymentTransactionDate,
             islemTipi: "ODEME",
@@ -291,11 +310,11 @@ export async function POST(req: NextRequest) {
             kdvOrani: Number(paymentIslem.kdvOrani),
           },
         });
-        await rebuildFirmaPaymentAllocations(tx, firma.id, {
+        await rebuildFirmaPaymentAllocations(tx, firma.id, branch.branchId, {
           preferredDebtByPayment: new Map([[paymentIslem.id, [firmaIslem!.id]]]),
         });
       } else if (firmaIslem) {
-        await rebuildFirmaPaymentAllocations(tx, firma.id);
+        await rebuildFirmaPaymentAllocations(tx, firma.id, branch.branchId);
       }
 
       return { purchase, items: createdItems, total, firmaIslem, paymentIslem, isReceived };
@@ -327,6 +346,7 @@ export async function POST(req: NextRequest) {
         where: {
           requestKey,
           ...(institutionId ? { institutionId } : {}),
+          ...(activeBranchId ? { branchId: activeBranchId } : {}),
         },
         include: { items: true },
       });
@@ -335,7 +355,7 @@ export async function POST(req: NextRequest) {
       }
     }
     console.error("[purchases POST]", e);
-    const message = e instanceof Error ? e.message : "Satın alma kaydedilemedi";
-    return NextResponse.json({ error: message }, { status: 400 });
+    const publicError = publicErrorResponse(e, "Satın alma kaydedilemedi. Lütfen tekrar deneyin.");
+    return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }
 }

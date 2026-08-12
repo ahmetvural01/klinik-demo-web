@@ -37,16 +37,21 @@ export default function SupportPage() {
   const [replyText, setReplyText] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
-    fetch("/api/superadmin/support")
-      .then((r) => r.json())
-      .then((d) => setTickets(Array.isArray(d) ? d : d.tickets ?? []))
-      .catch(() => setTickets([]))
-      .finally(() => setLoading(false));
+    try {
+      const response = await fetch("/api/superadmin/support", { cache: "no-store" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.message || "Destek talepleri yüklenemedi.");
+      setTickets(Array.isArray(data) ? data : data?.tickets ?? []);
+    } catch (error) {
+      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "Destek talepleri yüklenemedi.", type: "error" });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
 
   const openReply = (t: Ticket) => {
     setReplyTicket(t);

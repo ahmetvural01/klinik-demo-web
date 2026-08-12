@@ -1,0 +1,8 @@
+$ErrorActionPreference="Continue"
+$Root=(Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
+Set-Location $Root
+$Cfg=Get-Content ".ai-factory\config\v3-runtime.json" -Raw|ConvertFrom-Json
+$env:CLINE_COMMAND_PERMISSIONS='{"deny":["git push*","git reset --hard*","git clean -fd*","rm -rf*","Remove-Item -Recurse -Force*","npm audit fix*","prisma migrate reset*","npx prisma migrate reset*"],"allowRedirects":false}'
+$Prompt=Get-Content ".ai-factory\config\local-mission.txt" -Raw
+& cline --team-name $Cfg.teamName -P ollama -m $Cfg.local.model -c $Root --retries 1 --thinking low $Prompt
+exit $LASTEXITCODE

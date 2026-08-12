@@ -14,14 +14,13 @@ import { ModuleIcon, type ModuleKey } from "@/components/ui/ModuleIcon";
 import { useEscapeClose } from "@/lib/use-modal-dismiss";
 import { parseRolePreview, ROLE_PREVIEW_COOKIE, ROLE_PREVIEW_STORAGE } from "@/lib/role-preview";
 import { usePermissions } from "@/components/auth/PermissionProvider";
+import { scopedStorageKey } from "@/lib/scoped-client-storage";
 import { hasAnyPanelPermission, hasPanelPermission } from "@/lib/panel-permissions";
 
 const NAV_LABEL_BASE =
   "min-w-0 overflow-hidden whitespace-nowrap text-left tracking-normal transition-all duration-150 ease-out";
 
 const NAV_LABEL_OPEN = "max-w-[180px] opacity-100 translate-x-0";
-
-const NAV_LABEL_CLOSED = "max-w-0 opacity-0 -translate-x-1";
 
 const NAV_ITEM_OPEN = "grid grid-cols-[36px_minmax(0,1fr)_auto] items-center gap-x-3";
 
@@ -33,7 +32,7 @@ const ROLE_LABELS: Record<string, string> = {
   ASISTAN:   "Asistan",
   BANKO:     "Banko",
   MUHASEBE:  "Muhasebe",
-  SUPERADMIN:"Süper Admin",
+  SUPERADMIN:"Yönetici",
 };
 
 type NavItem = { href: string; label: string; icon: string; badge?: string };
@@ -53,7 +52,7 @@ function buildNavGroups(permissions: string[]): NavGroup[] {
         ...(can("patients:read") ? [{ href: "/hasta", label: "Hastalar", icon: "users" }] : []),
         ...(can("clinictasks:read") ? [{ href: "/gorevler", label: "Görev Merkezi", icon: "clipboard" }] : []),
         ...(can("hastatracking:read") ? [{ href: "/hasta-takip", label: "Hasta Takip", icon: "follow" }] : []),
-        ...(can("sms:read") ? [{ href: "/sms", label: "SMS Yönetimi", icon: "sms" }] : []),
+        ...(canAny("sms:read", "whatsapp:read") ? [{ href: "/sms", label: "İletişim Merkezi", icon: "sms" }] : []),
       ],
     },
     { label: "Tedavi", items: can("lab:read") ? [{ href: "/lab", label: "Laboratuvar", icon: "flask" }] : [] },
@@ -101,7 +100,8 @@ const PREVIEW_ROLES = [
 ];
 
 export function Sidebar({ user }: { user: { fullName: string; role: string; photoUrl?: string | null } }) {
-  const { permissions } = usePermissions();
+  const { permissions, scopeKey } = usePermissions();
+  const unreadStorageKey = scopedStorageKey("clinic-unread-messages", scopeKey);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -118,7 +118,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   useEffect(() => {
     let active = true;
     const loadBrand = async () => {
-      const response = await fetch("/api/settings", { cache: "force-cache" }).catch(() => null);
+      const response = await fetch("/api/settings", { cache: "no-store" }).catch(() => null);
       const data = await response?.json().catch(() => null);
       if (active && response?.ok && data) {
         setBrand({ name: data.institutionName || "Klinik Paneli", logoUrl: data.logoUrl || "" });
@@ -194,13 +194,13 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   // SuperAdmin ise seçili preview rolü, yoksa gerçek rol
   const effectiveRole = (isSuperAdmin && previewRole) ? previewRole : userRole;
   const navGroups = buildNavGroups(permissions);
-  const alerts = usePanelAlerts(effectiveRole, permissions);
+  const alerts = usePanelAlerts(effectiveRole, permissions, scopeKey);
 
   const activePreview = PREVIEW_ROLES.find(r => r.key === previewRole);
 
   useEffect(() => {
     const syncUnread = () => {
-      const raw = localStorage.getItem("clinic-unread-messages") || "0";
+      const raw = localStorage.getItem(unreadStorageKey) || "0";
       const val = Number(raw);
       setMessageUnread(Number.isFinite(val) ? val : 0);
     };
@@ -212,7 +212,7 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
       window.removeEventListener("clinic-unread-messages-change", syncUnread);
       window.removeEventListener("storage", syncUnread);
     };
-  }, []);
+  }, [unreadStorageKey]);
 
   const isActive = (href: string) => {
     const [path, query] = href.split("?");

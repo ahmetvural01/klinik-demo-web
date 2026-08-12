@@ -1,9 +1,12 @@
+import { BusinessRuleError } from "@/lib/public-error";
+
 type TxClient = any;
 
 type StockMovementInput = {
   tx: TxClient;
   stockItemId: string;
   institutionId?: string | null;
+  branchId: string;
   userId: string;
   type: "GIRIS" | "CIKIS";
   quantity: number;
@@ -33,6 +36,8 @@ async function lockStockItem(tx: TxClient, stockItemId: string) {
 
 async function allocateLots(
   tx: TxClient,
+  institutionId: string,
+  branchId: string,
   stockItemId: string,
   movementId: string,
   quantity: number,
@@ -49,6 +54,8 @@ async function allocateLots(
 
   const lots = await tx.stockLot.findMany({
     where: {
+      institutionId,
+      branchId,
       stockItemId,
       status: "AKTIF",
       quantityRemaining: { gt: 0 },
@@ -76,6 +83,8 @@ async function allocateLots(
     });
     await tx.stockMovementLotAllocation.create({
       data: {
+        institutionId,
+        branchId,
         movementId,
         lotId: lot.id,
         quantity: used,
@@ -86,7 +95,7 @@ async function allocateLots(
   }
 
   if (remaining > 0) {
-    throw new Error(
+    throw new BusinessRuleError(
       `Stok partileri ile kart bakiyesi uyumsuz. ${remaining} birim için kullanılabilir parti bulunamadı.`,
     );
   }
@@ -96,6 +105,7 @@ export async function applyStockMovement({
   tx,
   stockItemId,
   institutionId,
+  branchId,
   userId,
   type,
   quantity,
@@ -108,26 +118,27 @@ export async function applyStockMovement({
   expiresAt,
   requestKey,
 }: StockMovementInput) {
-  if (!stockItemId) throw new Error("Stok kalemi zorunlu");
-  if (!Number.isFinite(quantity) || quantity <= 0) throw new Error("Miktar pozitif olmalı");
+  if (!stockItemId) throw new BusinessRuleError("Stok kalemi zorunlu");
+  if (!Number.isFinite(quantity) || quantity <= 0) throw new BusinessRuleError("Miktar pozitif olmalı");
 
   await lockStockItem(tx, stockItemId);
   const item = await tx.stockItem.findFirst({
     where: {
       id: stockItemId,
       ...(institutionId ? { institutionId } : {}),
+      branchId,
     },
   });
 
-  if (!item) throw new Error("Stok kalemi bulunamadı");
-  if (!item.isActive) throw new Error("Pasif stok kalemi güncellenemez");
+  if (!item) throw new BusinessRuleError("Stok kalemi bulunamadı", 404);
+  if (!item.isActive) throw new BusinessRuleError("Pasif stok kalemi güncellenemez", 409);
 
   // Satır kilidi alındıktan SONRA kontrol edilir: aynı requestKey ile eşzamanlı
   // gelen ikinci istek, birincisi commit olana kadar burada bekler (FOR UPDATE),
   // sonra bu kontrolde mevcut hareketi bulup miktarı TEKRAR değiştirmeden döner.
   if (requestKey) {
     const existingMovement = await tx.stockMovement.findFirst({
-      where: { institutionId: item.institutionId, requestKey },
+      where: { branchId: item.branchId, requestKey },
     });
     if (existingMovement) {
       return {
@@ -140,7 +151,7 @@ export async function applyStockMovement({
   }
 
   if (type === "CIKIS" && Number(item.quantity) < quantity) {
-    throw new Error(`Yetersiz stok. Mevcut: ${Number(item.quantity)}, İstenen çıkış: ${quantity}`);
+    throw new BusinessRuleError(`Yetersiz stok. Mevcut: ${Number(item.quantity)}, istenen çıkış: ${quantity}`, 409);
   }
 
   const updated = await tx.stockItem.update({
@@ -156,6 +167,7 @@ export async function applyStockMovement({
     data: {
       stockItemId,
       institutionId: item.institutionId,
+      branchId: item.branchId,
       requestKey: requestKey || null,
       type,
       quantity,
@@ -170,6 +182,7 @@ export async function applyStockMovement({
     await tx.stockLot.create({
       data: {
         institutionId: item.institutionId,
+        branchId: item.branchId,
         stockItemId,
         purchaseItemId: purchaseItemId || null,
         lotNo: lotNo?.trim() || null,
@@ -183,7 +196,7 @@ export async function applyStockMovement({
       },
     });
   } else {
-    await allocateLots(tx, stockItemId, movement.id, quantity);
+    await allocateLots(tx, item.institutionId, item.branchId, stockItemId, movement.id, quantity);
   }
 
   return {
@@ -203,7 +216,7 @@ export async function assertPurchaseItemLotEditable(tx: TxClient, purchaseItemId
       Number(lot.quantityRemaining) < Number(lot.quantityReceived),
   );
   if (consumed) {
-    throw new Error(
+    throw new BusinessRuleError(
       "Bu satın alma partisinden stok çıkışı yapılmış. Ürün, miktar veya maliyet değiştirilemez; düzeltme için ters stok hareketi oluşturun.",
     );
   }
@@ -214,6 +227,7 @@ export async function reversePurchaseItemStock({
   purchaseItemId,
   stockItemId,
   institutionId,
+  branchId,
   userId,
   note,
 }: {
@@ -221,6 +235,7 @@ export async function reversePurchaseItemStock({
   purchaseItemId: string;
   stockItemId: string;
   institutionId?: string | null;
+  branchId: string;
   userId: string;
   note: string;
 }) {
@@ -228,7 +243,7 @@ export async function reversePurchaseItemStock({
   await lockStockItem(tx, stockItemId);
 
   const lots = await tx.stockLot.findMany({
-    where: { purchaseItemId, status: { not: "IPTAL" } },
+    where: { institutionId: institutionId || undefined, branchId, purchaseItemId, status: { not: "IPTAL" } },
   });
   const quantity = lots.reduce(
     (sum: number, lot: { quantityRemaining: number }) => sum + Number(lot.quantityRemaining),
@@ -240,10 +255,11 @@ export async function reversePurchaseItemStock({
     where: {
       id: stockItemId,
       ...(institutionId ? { institutionId } : {}),
+      branchId,
     },
   });
   if (!item || Number(item.quantity) < quantity) {
-    throw new Error("Satın alma partisi kart bakiyesiyle uyuşmuyor; otomatik geri alma durduruldu.");
+    throw new BusinessRuleError("Satın alma partisi kart bakiyesiyle uyuşmuyor; otomatik geri alma durduruldu.", 409);
   }
 
   const updated = await tx.stockItem.update({
@@ -253,6 +269,8 @@ export async function reversePurchaseItemStock({
   const movement = await tx.stockMovement.create({
     data: {
       stockItemId,
+      institutionId: item.institutionId,
+      branchId: item.branchId,
       type: "CIKIS",
       quantity,
       note,
@@ -263,6 +281,8 @@ export async function reversePurchaseItemStock({
   for (const lot of lots) {
     await tx.stockMovementLotAllocation.create({
       data: {
+        institutionId: item.institutionId,
+        branchId: item.branchId,
         movementId: movement.id,
         lotId: lot.id,
         quantity: Number(lot.quantityRemaining),

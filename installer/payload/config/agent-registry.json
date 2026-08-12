@@ -1,0 +1,983 @@
+{
+  "version": 2,
+  "totalSpecialists": 150,
+  "defaultConcurrency": 6,
+  "maxConcurrency": 12,
+  "departments": [
+    {
+      "id": "architecture",
+      "roles": [
+        {
+          "id": "A001",
+          "name": "Lead Software Architect",
+          "department": "architecture",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A002",
+          "name": "Next.js App Router Architect",
+          "department": "architecture",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A003",
+          "name": "TypeScript Architecture Auditor",
+          "department": "architecture",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A004",
+          "name": "Module Boundary Analyst",
+          "department": "architecture",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A005",
+          "name": "Dependency Architecture Auditor",
+          "department": "architecture",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A006",
+          "name": "Refactoring Strategist",
+          "department": "architecture",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A007",
+          "name": "Design Pattern Reviewer",
+          "department": "architecture",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A008",
+          "name": "Scalability Architect",
+          "department": "architecture",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A009",
+          "name": "Technical Debt Analyst",
+          "department": "architecture",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A010",
+          "name": "Architecture Consistency Reviewer",
+          "department": "architecture",
+          "activation": "on-demand"
+        }
+      ]
+    },
+    {
+      "id": "backend",
+      "roles": [
+        {
+          "id": "A011",
+          "name": "Backend Lead",
+          "department": "backend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A012",
+          "name": "API Route Auditor",
+          "department": "backend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A013",
+          "name": "Server Action Auditor",
+          "department": "backend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A014",
+          "name": "Business Logic Reviewer",
+          "department": "backend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A015",
+          "name": "Error Handling Specialist",
+          "department": "backend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A016",
+          "name": "Validation Specialist",
+          "department": "backend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A017",
+          "name": "Background Job Reviewer",
+          "department": "backend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A018",
+          "name": "Idempotency Specialist",
+          "department": "backend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A019",
+          "name": "Transaction Boundary Specialist",
+          "department": "backend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A020",
+          "name": "Backend Integration Reviewer",
+          "department": "backend",
+          "activation": "on-demand"
+        }
+      ]
+    },
+    {
+      "id": "database",
+      "roles": [
+        {
+          "id": "A021",
+          "name": "Database Lead",
+          "department": "database",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A022",
+          "name": "Prisma Schema Auditor",
+          "department": "database",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A023",
+          "name": "Prisma Query Auditor",
+          "department": "database",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A024",
+          "name": "PostgreSQL Performance Analyst",
+          "department": "database",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A025",
+          "name": "Migration Safety Reviewer",
+          "department": "database",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A026",
+          "name": "Indexing Specialist",
+          "department": "database",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A027",
+          "name": "Data Integrity Auditor",
+          "department": "database",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A028",
+          "name": "Transaction Consistency Reviewer",
+          "department": "database",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A029",
+          "name": "Query N+1 Hunter",
+          "department": "database",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A030",
+          "name": "Database Capacity Reviewer",
+          "department": "database",
+          "activation": "on-demand"
+        }
+      ]
+    },
+    {
+      "id": "security",
+      "roles": [
+        {
+          "id": "A031",
+          "name": "Security Lead",
+          "department": "security",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A032",
+          "name": "Authentication Auditor",
+          "department": "security",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A033",
+          "name": "Authorization Auditor",
+          "department": "security",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A034",
+          "name": "Tenant Isolation Auditor",
+          "department": "security",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A035",
+          "name": "IDOR-BOLA Hunter",
+          "department": "security",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A036",
+          "name": "Input Security Reviewer",
+          "department": "security",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A037",
+          "name": "Secret Handling Auditor",
+          "department": "security",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A038",
+          "name": "Session Security Reviewer",
+          "department": "security",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A039",
+          "name": "Dependency Vulnerability Reviewer",
+          "department": "security",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A040",
+          "name": "Security Regression Reviewer",
+          "department": "security",
+          "activation": "on-demand"
+        }
+      ]
+    },
+    {
+      "id": "frontend",
+      "roles": [
+        {
+          "id": "A041",
+          "name": "Frontend Lead",
+          "department": "frontend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A042",
+          "name": "React Component Auditor",
+          "department": "frontend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A043",
+          "name": "State Management Reviewer",
+          "department": "frontend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A044",
+          "name": "Rendering Performance Specialist",
+          "department": "frontend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A045",
+          "name": "Form Architecture Reviewer",
+          "department": "frontend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A046",
+          "name": "Table UX Engineer",
+          "department": "frontend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A047",
+          "name": "Modal Dialog Engineer",
+          "department": "frontend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A048",
+          "name": "Navigation Engineer",
+          "department": "frontend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A049",
+          "name": "Error State Engineer",
+          "department": "frontend",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A050",
+          "name": "Frontend Integration Reviewer",
+          "department": "frontend",
+          "activation": "on-demand"
+        }
+      ]
+    },
+    {
+      "id": "uiux",
+      "roles": [
+        {
+          "id": "A051",
+          "name": "UI UX Lead",
+          "department": "uiux",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A052",
+          "name": "Visual Hierarchy Reviewer",
+          "department": "uiux",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A053",
+          "name": "Design System Auditor",
+          "department": "uiux",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A054",
+          "name": "Responsive Design Reviewer",
+          "department": "uiux",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A055",
+          "name": "Mobile UX Reviewer",
+          "department": "uiux",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A056",
+          "name": "Information Architecture Reviewer",
+          "department": "uiux",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A057",
+          "name": "Interaction Design Reviewer",
+          "department": "uiux",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A058",
+          "name": "Consistency Auditor",
+          "department": "uiux",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A059",
+          "name": "Empty Loading State Reviewer",
+          "department": "uiux",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A060",
+          "name": "Clinical Workflow UX Reviewer",
+          "department": "uiux",
+          "activation": "on-demand"
+        }
+      ]
+    },
+    {
+      "id": "accessibility",
+      "roles": [
+        {
+          "id": "A061",
+          "name": "Accessibility Lead",
+          "department": "accessibility",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A062",
+          "name": "WCAG Auditor",
+          "department": "accessibility",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A063",
+          "name": "Keyboard Navigation Tester",
+          "department": "accessibility",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A064",
+          "name": "Screen Reader Semantics Reviewer",
+          "department": "accessibility",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A065",
+          "name": "Color Contrast Reviewer",
+          "department": "accessibility",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A066",
+          "name": "Form Accessibility Reviewer",
+          "department": "accessibility",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A067",
+          "name": "ARIA Reviewer",
+          "department": "accessibility",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A068",
+          "name": "Focus Management Reviewer",
+          "department": "accessibility",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A069",
+          "name": "Accessible Tables Reviewer",
+          "department": "accessibility",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A070",
+          "name": "Accessibility Regression Reviewer",
+          "department": "accessibility",
+          "activation": "on-demand"
+        }
+      ]
+    },
+    {
+      "id": "qa",
+      "roles": [
+        {
+          "id": "A071",
+          "name": "QA Lead",
+          "department": "qa",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A072",
+          "name": "Smoke Test Engineer",
+          "department": "qa",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A073",
+          "name": "Regression Test Engineer",
+          "department": "qa",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A074",
+          "name": "Edge Case Hunter",
+          "department": "qa",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A075",
+          "name": "Negative Test Specialist",
+          "department": "qa",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A076",
+          "name": "Cross Browser Tester",
+          "department": "qa",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A077",
+          "name": "Mobile Browser Tester",
+          "department": "qa",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A078",
+          "name": "Form Validation Tester",
+          "department": "qa",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A079",
+          "name": "Workflow Test Engineer",
+          "department": "qa",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A080",
+          "name": "QA Evidence Reviewer",
+          "department": "qa",
+          "activation": "on-demand"
+        }
+      ]
+    },
+    {
+      "id": "playwright",
+      "roles": [
+        {
+          "id": "A081",
+          "name": "Playwright Lead",
+          "department": "playwright",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A082",
+          "name": "E2E Scenario Planner",
+          "department": "playwright",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A083",
+          "name": "E2E Test Generator",
+          "department": "playwright",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A084",
+          "name": "Flaky Test Hunter",
+          "department": "playwright",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A085",
+          "name": "Test Healer",
+          "department": "playwright",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A086",
+          "name": "Browser Trace Analyst",
+          "department": "playwright",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A087",
+          "name": "Screenshot Regression Reviewer",
+          "department": "playwright",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A088",
+          "name": "Fixture Engineer",
+          "department": "playwright",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A089",
+          "name": "Auth State Test Engineer",
+          "department": "playwright",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A090",
+          "name": "Playwright Coverage Reviewer",
+          "department": "playwright",
+          "activation": "on-demand"
+        }
+      ]
+    },
+    {
+      "id": "performance",
+      "roles": [
+        {
+          "id": "A091",
+          "name": "Performance Lead",
+          "department": "performance",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A092",
+          "name": "Lighthouse Analyst",
+          "department": "performance",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A093",
+          "name": "Core Web Vitals Reviewer",
+          "department": "performance",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A094",
+          "name": "Bundle Size Analyst",
+          "department": "performance",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A095",
+          "name": "Server Performance Reviewer",
+          "department": "performance",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A096",
+          "name": "Database Latency Analyst",
+          "department": "performance",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A097",
+          "name": "Caching Strategy Reviewer",
+          "department": "performance",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A098",
+          "name": "Image Asset Performance Reviewer",
+          "department": "performance",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A099",
+          "name": "Render Waterfall Analyst",
+          "department": "performance",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A100",
+          "name": "Performance Regression Reviewer",
+          "department": "performance",
+          "activation": "on-demand"
+        }
+      ]
+    },
+    {
+      "id": "clinic_domain",
+      "roles": [
+        {
+          "id": "A101",
+          "name": "Clinic Domain Lead",
+          "department": "clinic_domain",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A102",
+          "name": "Patient Workflow Reviewer",
+          "department": "clinic_domain",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A103",
+          "name": "Appointment Workflow Reviewer",
+          "department": "clinic_domain",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A104",
+          "name": "Treatment Plan Reviewer",
+          "department": "clinic_domain",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A105",
+          "name": "Payment Workflow Reviewer",
+          "department": "clinic_domain",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A106",
+          "name": "Stock Workflow Reviewer",
+          "department": "clinic_domain",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A107",
+          "name": "Laboratory Workflow Reviewer",
+          "department": "clinic_domain",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A108",
+          "name": "Prescription Workflow Reviewer",
+          "department": "clinic_domain",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A109",
+          "name": "SMS Consent Workflow Reviewer",
+          "department": "clinic_domain",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A110",
+          "name": "Clinic Operations Reviewer",
+          "department": "clinic_domain",
+          "activation": "on-demand"
+        }
+      ]
+    },
+    {
+      "id": "privacy",
+      "roles": [
+        {
+          "id": "A111",
+          "name": "Privacy Lead",
+          "department": "privacy",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A112",
+          "name": "Patient Data Minimization Reviewer",
+          "department": "privacy",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A113",
+          "name": "Audit Log Reviewer",
+          "department": "privacy",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A114",
+          "name": "Sensitive Data Exposure Hunter",
+          "department": "privacy",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A115",
+          "name": "Export Privacy Reviewer",
+          "department": "privacy",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A116",
+          "name": "Logging Privacy Reviewer",
+          "department": "privacy",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A117",
+          "name": "Retention Policy Analyst",
+          "department": "privacy",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A118",
+          "name": "Consent Data Reviewer",
+          "department": "privacy",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A119",
+          "name": "Backup Privacy Reviewer",
+          "department": "privacy",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A120",
+          "name": "Privacy Regression Reviewer",
+          "department": "privacy",
+          "activation": "on-demand"
+        }
+      ]
+    },
+    {
+      "id": "devops",
+      "roles": [
+        {
+          "id": "A121",
+          "name": "DevOps Lead",
+          "department": "devops",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A122",
+          "name": "Build Pipeline Reviewer",
+          "department": "devops",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A123",
+          "name": "Environment Configuration Reviewer",
+          "department": "devops",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A124",
+          "name": "Deployment Readiness Reviewer",
+          "department": "devops",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A125",
+          "name": "Health Check Reviewer",
+          "department": "devops",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A126",
+          "name": "CI Quality Gate Engineer",
+          "department": "devops",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A127",
+          "name": "Rollback Strategy Reviewer",
+          "department": "devops",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A128",
+          "name": "Observability Reviewer",
+          "department": "devops",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A129",
+          "name": "Runtime Configuration Reviewer",
+          "department": "devops",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A130",
+          "name": "Release Engineering Reviewer",
+          "department": "devops",
+          "activation": "on-demand"
+        }
+      ]
+    },
+    {
+      "id": "code_quality",
+      "roles": [
+        {
+          "id": "A131",
+          "name": "Code Quality Lead",
+          "department": "code_quality",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A132",
+          "name": "Dead Code Hunter",
+          "department": "code_quality",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A133",
+          "name": "Duplication Hunter",
+          "department": "code_quality",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A134",
+          "name": "Complexity Reviewer",
+          "department": "code_quality",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A135",
+          "name": "Naming Consistency Reviewer",
+          "department": "code_quality",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A136",
+          "name": "Type Safety Reviewer",
+          "department": "code_quality",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A137",
+          "name": "Error Message Reviewer",
+          "department": "code_quality",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A138",
+          "name": "Documentation Drift Reviewer",
+          "department": "code_quality",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A139",
+          "name": "Maintainability Reviewer",
+          "department": "code_quality",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A140",
+          "name": "Independent Code Reviewer",
+          "department": "code_quality",
+          "activation": "on-demand"
+        }
+      ]
+    },
+    {
+      "id": "red_team",
+      "roles": [
+        {
+          "id": "A141",
+          "name": "Red Team Lead",
+          "department": "red_team",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A142",
+          "name": "Workflow Breaker",
+          "department": "red_team",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A143",
+          "name": "Race Condition Hunter",
+          "department": "red_team",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A144",
+          "name": "Permission Bypass Hunter",
+          "department": "red_team",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A145",
+          "name": "Tenant Leakage Challenger",
+          "department": "red_team",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A146",
+          "name": "Malformed Input Attacker",
+          "department": "red_team",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A147",
+          "name": "Unexpected State Hunter",
+          "department": "red_team",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A148",
+          "name": "Data Corruption Challenger",
+          "department": "red_team",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A149",
+          "name": "Regression Challenger",
+          "department": "red_team",
+          "activation": "on-demand"
+        },
+        {
+          "id": "A150",
+          "name": "Release Challenger",
+          "department": "red_team",
+          "activation": "on-demand"
+        }
+      ]
+    }
+  ]
+}

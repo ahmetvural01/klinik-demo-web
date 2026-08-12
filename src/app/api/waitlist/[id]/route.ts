@@ -1,13 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 const VALID_WAITLIST_STATUSES = new Set(["BEKLIYOR", "ARANDI", "YERLESTIRILDI", "IPTAL"]);
+const WAITLIST_TRANSITIONS: Record<string, ReadonlySet<string>> = {
+  BEKLIYOR: new Set(["BEKLIYOR", "ARANDI", "YERLESTIRILDI", "IPTAL"]),
+  ARANDI: new Set(["ARANDI", "YERLESTIRILDI", "IPTAL"]),
+  YERLESTIRILDI: new Set(["YERLESTIRILDI"]),
+  IPTAL: new Set(["IPTAL"]),
+};
 
 export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   try {
     const body = await req.json().catch(() => null);
@@ -23,11 +32,13 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       where: {
         id: params.id,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
       },
     });
     if (!existing) return NextResponse.json({ error: "Kayıt bulunamadı" }, { status: 404 });
-    if (["YERLESTIRILDI", "IPTAL"].includes(existing.status) && body.status !== undefined && body.status !== existing.status) {
-      return NextResponse.json({ error: "Sonuçlanmış bekleme listesi kaydının durumu değiştirilemez" }, { status: 409 });
+    const nextStatus = body.status ?? existing.status;
+    if (!WAITLIST_TRANSITIONS[existing.status]?.has(nextStatus)) {
+      return NextResponse.json({ error: "Bu bekleme listesi durum geçişine izin verilmiyor" }, { status: 409 });
     }
 
     if (body.note !== undefined && body.note !== null && (typeof body.note !== "string" || body.note.length > 1000)) {
@@ -43,8 +54,9 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         where: {
           id: appointmentId,
           patientId: existing.patientId,
+          institutionId: existing.institutionId,
+          branchId: branch.branchId,
           ...(existing.doctorId ? { doctorId: existing.doctorId } : {}),
-          ...(auth.user.institutionId ? { doctor: { institutionId: auth.user.institutionId } } : {}),
         },
         select: { id: true, status: true },
       });
@@ -53,7 +65,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         return NextResponse.json({ error: "İptal edilmiş veya gelinmemiş randevuya yerleştirme yapılamaz" }, { status: 409 });
       }
       const linkedElsewhere = await prisma.waitlist.findFirst({
-        where: { appointmentId, id: { not: existing.id } },
+        where: { appointmentId, id: { not: existing.id }, institutionId: existing.institutionId, branchId: branch.branchId },
         select: { id: true },
       });
       if (linkedElsewhere) return NextResponse.json({ error: "Bu randevu başka bir bekleme kaydına bağlı" }, { status: 409 });
@@ -63,8 +75,8 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       return NextResponse.json({ error: "Yerleştirildi durumu için randevu bağlantısı zorunludur" }, { status: 400 });
     }
 
-    const entry = await prisma.waitlist.update({
-      where: { id: params.id },
+    const changed = await prisma.waitlist.updateMany({
+      where: { id: existing.id, institutionId: existing.institutionId, branchId: existing.branchId, status: existing.status },
       data: {
         ...(body.status ? { status: body.status } : {}),
         ...(body.note !== undefined ? { note: body.note } : {}),
@@ -72,6 +84,12 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         // kalıcı olarak bağlanır (bkz. denetim raporu Tema 4).
         ...(appointmentId ? { appointmentId } : {}),
       },
+    });
+    if (changed.count !== 1) {
+      return NextResponse.json({ error: "Kayıt başka bir işlem tarafından değiştirildi; listeyi yenileyin" }, { status: 409 });
+    }
+    const entry = await prisma.waitlist.findUniqueOrThrow({
+      where: { id_institutionId_branchId: { id: existing.id, institutionId: existing.institutionId, branchId: existing.branchId } },
       include: {
         patient: { select: { id: true, fullName: true, phone: true } },
         doctor: { select: { id: true, fullName: true } },
@@ -90,12 +108,15 @@ export async function DELETE(req: NextRequest, props: { params: Promise<{ id: st
   const params = await props.params;
   const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   try {
     const existing = await prisma.waitlist.findFirst({
       where: {
         id: params.id,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
       },
     });
     if (!existing) return NextResponse.json({ error: "Kayıt bulunamadı" }, { status: 404 });
@@ -105,7 +126,13 @@ export async function DELETE(req: NextRequest, props: { params: Promise<{ id: st
     }
     if (existing.status === "IPTAL") return NextResponse.json({ ok: true, alreadyCancelled: true });
 
-    await prisma.waitlist.update({ where: { id: params.id }, data: { status: "IPTAL" } });
+    const changed = await prisma.waitlist.updateMany({
+      where: { id: existing.id, institutionId: existing.institutionId, branchId: existing.branchId, status: existing.status },
+      data: { status: "IPTAL" },
+    });
+    if (changed.count !== 1) {
+      return NextResponse.json({ error: "Kayıt başka bir işlem tarafından değiştirildi; listeyi yenileyin" }, { status: 409 });
+    }
     await writeAudit(auth.user.id, "WAITLIST_CANCEL", params.id);
     return NextResponse.json({ ok: true });
   } catch (error) {

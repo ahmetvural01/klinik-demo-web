@@ -16,6 +16,13 @@ const SETTING_LABELS: Record<string, string> = {
   smsDefaultInfo: "SMS Bilgilendirme",
   smsDefaultReminder: "SMS Hatırlatma",
   smsDefaultSurvey: "SMS Anket",
+  paymentReminderSmsEnabled: "Ödeme Hatırlatma Otomasyonu",
+  paymentReminderDaysBefore: "Ödeme Öncesi Hatırlatma Günleri",
+  paymentReminderOnDueDate: "Vade Günü Hatırlatma",
+  paymentReminderOverdueEnabled: "Geciken Ödeme Hatırlatma",
+  paymentReminderOverdueEveryDays: "Gecikme Tekrar Aralığı",
+  birthdaySmsEnabled: "Doğum Günü Otomasyonu",
+  defaultNotificationChannel: "Öncelikli İletişim Kanalı",
   reminderLeadHours: "Hatırlatma Süresi (saat)",
   logoUrl: "Kurum Logosu",
   primaryColor: "Ana Renk",
@@ -23,18 +30,20 @@ const SETTING_LABELS: Record<string, string> = {
 };
 
 function normalizeSettingsPayload(body: Record<string, unknown>) {
-  const data = { ...body };
-  if ("activePriceList" in data && data.activePriceList !== "standard" && data.activePriceList !== "custom") {
-    data.activePriceList = "standard";
+  const mutableFields = [
+    "institutionName", "institutionAddress", "institutionPhone", "institutionWebsite",
+    "openingTime", "closingTime", "appointmentDuration", "holidayDays", "dailySchedules",
+    "lunchStart", "lunchEnd", "smsEnabled", "smsDefaultInfo", "smsDefaultReminder",
+    "smsDefaultSurvey", "paymentReminderSmsEnabled", "paymentReminderWindowDays",
+    "paymentReminderDaysBefore", "paymentReminderOnDueDate", "paymentReminderOverdueEnabled",
+    "paymentReminderOverdueEveryDays", "reviewLink", "birthdaySmsEnabled",
+    "defaultNotificationChannel", "whatsappSmsFallback", "whatsappAppointmentEnabled",
+    "whatsappPaymentEnabled", "whatsappInfoEnabled", "activePriceList", "logoUrl",
+  ] as const;
+  const data: Record<string, unknown> = {};
+  for (const key of mutableFields) {
+    if (Object.hasOwn(body, key)) data[key] = body[key];
   }
-  delete data.id;
-  delete data.institutionId;
-  delete data.updatedAt;
-  // Institution tablosunda tutulur, Setting'in parçası değil — PUT gövdesine
-  // sızarsa Prisma "bilinmeyen alan" hatası verir.
-  delete data.whatsappEnabled;
-  delete data.institutionSlug;
-  delete data.appUrl;
   return data;
 }
 
@@ -97,8 +106,19 @@ export async function PUT(request: NextRequest) {
     }
     const institutionId = auth.user.institutionId;
 
-    const body = await request.json();
-    const data = normalizeSettingsPayload(body && typeof body === "object" ? body : {});
+    const body = await request.json().catch(() => null);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return NextResponse.json({ message: "Geçersiz istek gövdesi." }, { status: 400 });
+    }
+    const data = normalizeSettingsPayload(body as Record<string, unknown>);
+    if (data.activePriceList !== undefined && data.activePriceList !== "standard" && data.activePriceList !== "custom") {
+      return NextResponse.json({ message: "Geçersiz fiyat listesi seçimi." }, { status: 400 });
+    }
+    if (data.defaultNotificationChannel !== undefined
+      && data.defaultNotificationChannel !== "SMS"
+      && data.defaultNotificationChannel !== "WHATSAPP") {
+      return NextResponse.json({ message: "Geçersiz iletişim kanalı." }, { status: 400 });
+    }
     const requestedLogo = data.logoUrl;
     delete data.logoUrl;
     const logoUrl = validateLogoUrl(requestedLogo);
@@ -131,6 +151,24 @@ export async function PUT(request: NextRequest) {
       if (!Number.isInteger(windowDays) || windowDays < 1 || windowDays > 30) {
         return NextResponse.json({ message: "Ödeme hatırlatma penceresi 1 ile 30 gün arasında olmalıdır." }, { status: 400 });
       }
+    }
+    if (data.paymentReminderDaysBefore !== undefined) {
+      if (!Array.isArray(data.paymentReminderDaysBefore)) {
+        return NextResponse.json({ message: "Ödeme hatırlatma günleri liste biçiminde olmalıdır." }, { status: 400 });
+      }
+      const daysBefore = [...new Set(data.paymentReminderDaysBefore.map(Number))].sort((a, b) => b - a);
+      if (daysBefore.length > 8 || daysBefore.some((day) => !Number.isInteger(day) || day < 1 || day > 30)) {
+        return NextResponse.json({ message: "En fazla 8 adet, 1 ile 30 arasında hatırlatma günü seçilebilir." }, { status: 400 });
+      }
+      data.paymentReminderDaysBefore = daysBefore;
+      if (daysBefore.length > 0) data.paymentReminderWindowDays = Math.max(...daysBefore);
+    }
+    if (data.paymentReminderOverdueEveryDays !== undefined) {
+      const overdueEveryDays = Number(data.paymentReminderOverdueEveryDays);
+      if (!Number.isInteger(overdueEveryDays) || overdueEveryDays < 1 || overdueEveryDays > 30) {
+        return NextResponse.json({ message: "Geciken ödeme tekrar aralığı 1 ile 30 gün arasında olmalıdır." }, { status: 400 });
+      }
+      data.paymentReminderOverdueEveryDays = overdueEveryDays;
     }
 
     let parsedDailySchedules: unknown = [];

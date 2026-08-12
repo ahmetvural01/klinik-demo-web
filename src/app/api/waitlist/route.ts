@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 import type { WaitlistStatus } from "@prisma/client";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 
@@ -9,6 +10,8 @@ const VALID_WAITLIST_STATUSES = new Set(["BEKLIYOR", "ARANDI", "YERLESTIRILDI", 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth("appointments:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status");
@@ -20,6 +23,7 @@ export async function GET(req: NextRequest) {
     const entries = await prisma.waitlist.findMany({
       where: {
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
         ...(status ? { status: status as WaitlistStatus } : { status: { not: "IPTAL" as WaitlistStatus } }),
       },
       orderBy: { createdAt: "asc" },
@@ -38,6 +42,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
   if (!auth.user.institutionId) return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
   const institutionId = auth.user.institutionId;
 
@@ -66,6 +72,7 @@ export async function POST(req: NextRequest) {
         id: patientId,
         archivedAt: null,
         institutionId,
+        homeBranchId: branch.branchId,
       },
       select: { id: true },
     });
@@ -75,7 +82,7 @@ export async function POST(req: NextRequest) {
       const doctor = await prisma.user.findFirst({
         where: {
           id: doctorId,
-          ...effectiveDoctorWhere(institutionId),
+          ...effectiveDoctorWhere(institutionId, branch.branchId),
         },
         select: { id: true },
       });
@@ -88,7 +95,7 @@ export async function POST(req: NextRequest) {
     const entry = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Patient" WHERE id = ${patientId} FOR UPDATE`;
       const existingActive = await tx.waitlist.findFirst({
-        where: { patientId, doctorId: doctorId || null, status: { in: ["BEKLIYOR", "ARANDI"] }, institutionId },
+        where: { patientId, doctorId: doctorId || null, status: { in: ["BEKLIYOR", "ARANDI"] }, institutionId, branchId: branch.branchId },
         select: { id: true },
       });
       if (existingActive) throw new Error("ACTIVE_WAITLIST_EXISTS");
@@ -96,6 +103,7 @@ export async function POST(req: NextRequest) {
       return tx.waitlist.create({
         data: {
           institutionId,
+          branchId: branch.branchId,
           patientId,
           doctorId: doctorId || null,
           createdById: auth.user.id,

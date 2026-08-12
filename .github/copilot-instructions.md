@@ -1,4 +1,4 @@
-- KlinikModern, KlinikSistem kapsamindaki tum ana modulleri kapsar.
+- KlinikCep, klinik operasyonlarının tüm ana modüllerini kapsar.
 - API ve UI katmanlari role-based yetkilendirme ile calisir.
 - Yeni modul eklenirken once Prisma modeli, sonra API route, sonra panel sayfasi eklenir.
 - Tüm tarih alanlari ISO formatinda API'ye gonderilir.

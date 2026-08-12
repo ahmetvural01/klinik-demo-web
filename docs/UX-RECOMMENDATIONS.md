@@ -1,4 +1,4 @@
-KlinikModern - Hızlı UX İyileştirme Önerileri
+KlinikCep - Hızlı UX İyileştirme Önerileri
 
 Özet
 - Amaç: İlk kullanımdaki sürtünmeyi azaltmak, öğrenme eğrisini kısaltmak ve kritik iş akışlarında hata/tereddütleri azaltmak.

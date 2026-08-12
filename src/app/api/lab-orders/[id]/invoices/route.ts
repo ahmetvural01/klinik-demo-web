@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
 import { applyLabInvoiceFirmaIntegration } from "@/lib/lab-firma-integration";
+import { requireActiveBranch } from "@/lib/branch-context";
 import { formatZodError, labInvoiceCreateSchema } from "@/lib/validators";
+import { publicErrorResponse } from "@/lib/public-error";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +12,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   const params = await props.params;
   const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok || !auth.user.institutionId) return NextResponse.json({ error: branch.ok ? "Kurum bağlamı zorunlu" : branch.message }, { status: 403 });
 
   const requestKey = req.headers.get("Idempotency-Key")?.trim() || null;
   if (requestKey && (requestKey.length < 8 || requestKey.length > 180)) {
@@ -29,9 +33,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       where: {
         requestKey,
         labOrderId: params.id,
-        ...(auth.user.institutionId
-          ? { labOrder: { patient: { institutionId: auth.user.institutionId } } }
-          : {}),
+        labOrder: { institutionId: auth.user.institutionId, branchId: branch.branchId },
       },
     });
     if (existingInvoice) {
@@ -43,7 +45,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   const orderMeta = await (prisma as any).labOrder.findFirst({
     where: {
       id: params.id,
-      ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
+      institutionId: auth.user.institutionId,
+      branchId: branch.branchId,
     },
     select: { notes: true, status: true },
   });
@@ -79,6 +82,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       }
       const createdInvoice = await tx.labOrderInvoice.create({
         data: {
+          institutionId: auth.user.institutionId!,
+          branchId: branch.branchId,
           labOrderId: params.id,
           requestKey,
           item,
@@ -91,11 +96,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
       const [invoiceTotal, latestInvoice] = await Promise.all([
         tx.labOrderInvoice.aggregate({
-          where: { labOrderId: params.id },
+          where: { labOrderId: params.id, status: "ACTIVE" },
           _sum: { amount: true },
         }),
         tx.labOrderInvoice.findFirst({
-          where: { labOrderId: params.id },
+          where: { labOrderId: params.id, status: "ACTIVE" },
           orderBy: [{ issuedAt: "desc" }, { createdAt: "desc" }],
           select: { invoiceNo: true },
         }),
@@ -122,7 +127,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         const integration = await applyLabInvoiceFirmaIntegration({
           tx,
           userId: auth.user.id,
-          institutionId: auth.user.institutionId || null,
+          institutionId: auth.user.institutionId!,
+          branchId: branch.branchId,
           labName: order.labName,
           labType: order.labType,
           patientName: order.patient?.fullName || null,
@@ -163,9 +169,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         where: {
           requestKey,
           labOrderId: params.id,
-          ...(auth.user.institutionId
-            ? { labOrder: { patient: { institutionId: auth.user.institutionId } } }
-            : {}),
+          labOrder: { institutionId: auth.user.institutionId, branchId: branch.branchId },
         },
       });
       if (existingInvoice) {
@@ -174,16 +178,14 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       }
     }
     console.error("[lab invoice POST]", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Laboratuvar faturası kaydedilemedi" },
-      { status: 400 },
-    );
+    const publicError = publicErrorResponse(error, "Laboratuvar faturası kaydedilemedi. Lütfen tekrar deneyin.");
+    return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }
 
-  const fresh = await (prisma as any).labOrder.findUnique({
-    where: { id: params.id },
+  const fresh = await (prisma as any).labOrder.findFirst({
+    where: { id: params.id, institutionId: auth.user.institutionId, branchId: branch.branchId },
     include: {
-      invoices: { orderBy: { issuedAt: "asc" } },
+      invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
       patient: { select: { id: true, fullName: true, phone: true } },
       doctor: { select: { id: true, fullName: true } },
       trips: { orderBy: { order: "asc" } },

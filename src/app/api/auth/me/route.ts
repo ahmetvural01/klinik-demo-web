@@ -1,17 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { decodeTokenUserFromToken, getVisibleRole } from "@/lib/auth";
-import { requireAuth } from "@/lib/api";
+import { getVisibleRole } from "@/lib/auth";
+import { requireAuth, requireSuperadmin } from "@/lib/api";
 import { getPermissionMap } from "@/lib/role-permission-store";
 import type { Role } from "@prisma/client";
+import { getBranchScopedPermissions } from "@/lib/branch-context";
 
 export const dynamic = "force-dynamic";
-
-function readCookie(headers: Headers, name: string) {
-  const raw = headers.get("cookie") || "";
-  const parts = raw.split(";").map((part) => part.trim());
-  const match = parts.find((part) => part.startsWith(`${name}=`));
-  return match ? decodeURIComponent(match.slice(name.length + 1)) : null;
-}
 
 function isSuperadminCaller(request: NextRequest) {
   // Bu uç hem /superadmin sayfalarından hem klinik panelinden çağrılan
@@ -43,20 +37,25 @@ export async function GET(request: NextRequest) {
     const auth = await requireAuth();
     if (auth.error) return auth.error;
     const permissionMap = await getPermissionMap();
-    const permissions = auth.user.ghost ? ["*"] : (permissionMap[auth.user.role as Role] || []);
+    const permissions = getBranchScopedPermissions(
+      auth.user.branchContext,
+      permissionMap[auth.user.role as Role] || [],
+      Boolean(auth.user.ghost),
+    );
     return NextResponse.json({
       id: auth.user.id,
       fullName: auth.user.fullName,
       role: auth.user.role,
-      actualRole: auth.user.actualRole,
       institutionId: auth.user.institutionId,
+      activeBranchId: auth.user.branchContext.activeBranchId,
+      scopeKey: `${auth.user.id}:${auth.user.institutionId || "platform"}:${auth.user.branchContext.activeBranchId || "none"}`,
       permissions,
     });
   }
 
-  const token = readCookie(request.headers, "klinik_token");
-  const user = token ? decodeTokenUserFromToken(token) : null;
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const auth = await requireSuperadmin();
+  if (auth.error) return auth.error;
+  const user = auth.user;
   // SUPERADMIN rolü olduğu gibi döndürülür (superadmin panel sayfaları bu değeri kontrol eder)
   // Klinik panel kullanıcıları için getVisibleRole uygulanır
   const role = user.role === "SUPERADMIN" ? "SUPERADMIN" : getVisibleRole(user.role);

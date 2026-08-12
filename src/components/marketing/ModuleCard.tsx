@@ -1,6 +1,5 @@
+import Image from "next/image";
 import type { ComponentType } from "react";
-
-/* eslint-disable @next/next/no-img-element */
 
 type Size = "large" | "medium" | "small";
 
@@ -21,7 +20,7 @@ export function ModuleCard({ title, benefit, features = [], badge, icon, size = 
       <article className="rounded-xl border border-slate-200 bg-white p-4 transition-colors hover:border-[#0d7d6f]/30">
         <div className="flex items-center gap-2.5">
           <span className="flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-slate-200 bg-slate-50">
-            {icon && <img src={`/icons/modules/${icon}.svg`} alt="" width={20} height={20} />}
+            {icon && <Image src={`/icons/modules/${icon}.svg`} alt="" width={20} height={20} unoptimized />}
           </span>
           <h3 className="text-sm font-black text-slate-900">{title}</h3>
         </div>
@@ -37,7 +36,7 @@ export function ModuleCard({ title, benefit, features = [], badge, icon, size = 
           <div className="p-6">
             <div className="flex items-start justify-between gap-3">
               <span className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border border-slate-200 bg-slate-50">
-                {icon && <img src={`/icons/modules/${icon}.svg`} alt="" width={26} height={26} />}
+                {icon && <Image src={`/icons/modules/${icon}.svg`} alt="" width={26} height={26} unoptimized />}
               </span>
               {badge && (
                 <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-black text-amber-700">
@@ -74,7 +73,7 @@ export function ModuleCard({ title, benefit, features = [], badge, icon, size = 
     <article className="rounded-xl border border-slate-200 bg-white p-5 transition-all hover:-translate-y-0.5 hover:border-[#0d7d6f]/30 hover:shadow-lg hover:shadow-slate-200/60">
       <div className="flex items-start justify-between gap-2">
         <span className="flex h-11 w-11 flex-none items-center justify-center rounded-lg border border-slate-200 bg-slate-50">
-          {icon && <img src={`/icons/modules/${icon}.svg`} alt="" width={24} height={24} />}
+          {icon && <Image src={`/icons/modules/${icon}.svg`} alt="" width={24} height={24} unoptimized />}
         </span>
         {badge && (
           <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[9px] font-black text-amber-700">

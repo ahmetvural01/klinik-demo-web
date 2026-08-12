@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Eye, Plus } from "lucide-react";
 import { cachedGet } from "@/lib/client-cache";
-import { confirmDialog } from "@/lib/confirm-client";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
@@ -149,6 +148,7 @@ export default function InstitutionsPage() {
 
   const enterAsGhost = async () => {
     if (!ghostTarget || !ghostPassword) return;
+    const clinicWindow = window.open("about:blank", "_blank");
     setGhostLoading(true);
     setGhostError(null);
     try {
@@ -159,14 +159,16 @@ export default function InstitutionsPage() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ message: "Hata" }));
+        clinicWindow?.close();
         setGhostError(err.message || "Giriş başarısız");
         return;
       }
-      // Ghost token set edildi, klinik paneline yönlendir
-      window.open("/anasayfa", "_blank");
+      if (clinicWindow && !clinicWindow.closed) clinicWindow.location.replace("/anasayfa");
+      else window.location.assign("/anasayfa");
       setGhostTarget(null);
       setGhostPassword("");
     } catch {
+      clinicWindow?.close();
       setGhostError("Bağlantı hatası — giriş yapılamadı. Lütfen tekrar deneyin.");
     } finally {
       setGhostLoading(false);

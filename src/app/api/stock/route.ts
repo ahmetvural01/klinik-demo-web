@@ -3,30 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { applyStockMovement } from "@/lib/stock-ledger";
 import { formatZodError, stockItemCreateSchema } from "@/lib/validators";
+import { requireActiveBranch } from "@/lib/branch-context";
+import { getCategoryAliases, normalizeCategory } from "@/lib/stock-category";
 
 export const dynamic = "force-dynamic";
-
-const CATEGORY_ALIASES: Record<string, string[]> = {
-  "Anestezi": ["Anestezi", "ANESTEZI"],
-  "İmplant": ["İmplant", "Implant", "İMPLANT", "IMPLANT"],
-  "Protez": ["Protez", "PROTEZ"],
-  "Dolgu": ["Dolgu", "DOLGU"],
-  "Ortodonti": ["Ortodonti", "ORTODONTI"],
-  "Cerrahi": ["Cerrahi", "CERRAHI"],
-  "Sarf": ["Sarf", "SARF"],
-  "Diğer": ["Diğer", "Diger", "DİĞER", "DIGER"],
-};
-
-function normalizeCategory(value?: string | null) {
-  if (!value) return "Sarf";
-  const normalized = value.trim();
-  for (const [label, aliases] of Object.entries(CATEGORY_ALIASES)) {
-    if (aliases.some((alias) => alias.toLocaleLowerCase("tr-TR") === normalized.toLocaleLowerCase("tr-TR"))) {
-      return label;
-    }
-  }
-  return normalized;
-}
 
 function enrichStockItem(item: any, purchaseLines?: any[], activeLots?: any[]) {
   const purchaseItems = Array.isArray(purchaseLines) ? purchaseLines : Array.isArray(item.purchaseItems) ? item.purchaseItems : [];
@@ -72,11 +52,12 @@ function enrichStockItem(item: any, purchaseLines?: any[], activeLots?: any[]) {
 export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
   const auth = await requireAuth("stock:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
   const category = searchParams.get("category");
-  const normalizedCategory = normalizeCategory(category);
-  const categoryAliases = category ? (CATEGORY_ALIASES[normalizedCategory] || [normalizedCategory]) : [];
+  const categoryAliases = category ? getCategoryAliases(category) : [];
 
   let items: any[] = [];
   try {
@@ -84,6 +65,7 @@ export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
       where: {
         isActive: true,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
         ...(category ? { category: { in: categoryAliases } } : {}),
       },
       orderBy: { name: "asc" },
@@ -101,6 +83,7 @@ export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
           purchase: {
             status: "AKTIF",
             ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+            branchId: branch.branchId,
           },
         },
         orderBy: { createdAt: "desc" },
@@ -129,6 +112,7 @@ export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
           status: "AKTIF",
           quantityRemaining: { gt: 0 },
           ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+          branchId: branch.branchId,
         },
         select: {
           stockItemId: true,
@@ -155,6 +139,8 @@ export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireAuth("stock:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
   if (!auth.user.institutionId) {
     return NextResponse.json({ error: "Stok kartı için kurum bağlamı zorunlu" }, { status: 403 });
   }
@@ -171,6 +157,7 @@ export async function POST(req: NextRequest) {
   const existingByName = await (prisma as any).stockItem.findFirst({
     where: {
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      branchId: branch.branchId,
       isActive: true,
       name: { equals: name, mode: "insensitive" },
     },
@@ -190,6 +177,7 @@ export async function POST(req: NextRequest) {
         data: {
           name,
           institutionId: auth.user.institutionId,
+          branchId: branch.branchId,
           category: normalizeCategory(category),
           unit,
           quantity: 0,
@@ -208,6 +196,7 @@ export async function POST(req: NextRequest) {
           tx,
           stockItemId: created.id,
           institutionId: auth.user.institutionId,
+          branchId: branch.branchId,
           userId: auth.user.id,
           type: "GIRIS",
           quantity: initialQuantity,

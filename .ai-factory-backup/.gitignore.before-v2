@@ -1,0 +1,75 @@
+# Dependencies
+node_modules/
+/.pnp
+.pnp.js
+
+# Build outputs
+/.next/
+/.next-dev/
+/out/
+/build/
+/dist/
+
+# Local PostgreSQL data & DB backups (contains real patient data - never commit)
+/.pgdata/
+/backups/
+*.dump
+*.backup
+*.sql
+!prisma/migrations/**/migration.sql
+*.sqlite
+*.db
+
+# Uploaded patient documents / röntgen (contains real patient data - never commit)
+/data/uploads/
+/public/uploads/
+/uploads/
+/storage/
+/tmp/
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.development.local
+.env.test.local
+.env.production.local
+docs/LOCAL-DEPLOYMENT-SECRETS.md
+*.pem
+*.key
+*.p12
+*.pfx
+*service-account*.json
+*credentials*.json
+
+# Prisma generated
+prisma/generated/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# TypeScript incremental build cache
+tsconfig.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+.idea/
+.claude/
+
+# Vercel
+.vercel
+
+# Test/build artifacts
+/test-results/
+/playwright-report/
+/coverage/
+
+# Local codebase-indexing tool cache
+/.codebase-memory/

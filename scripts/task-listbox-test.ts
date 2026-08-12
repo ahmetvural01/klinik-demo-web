@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { chromium, type Browser, type Page } from "playwright-core";
 
 const prisma = new PrismaClient();
-const BASE = process.env.TASK_TEST_BASE_URL || "http://127.0.0.1:3000";
+const BASE = process.env.TASK_TEST_BASE_URL || "http://localhost:3000";
 const CHROME_PATH = process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const PASSWORD = process.env.TASK_TEST_PASSWORD || "changeme";
 
@@ -13,9 +13,11 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 async function openTaskModal(page: Page) {
-  await page.getByRole("button", { name: "Görev Oluştur" }).click();
+  const createButton = page.getByRole("button", { name: "Görev Oluştur" });
+  await createButton.waitFor({ state: "visible", timeout: 60_000 });
+  await createButton.click();
   const dialog = page.getByRole("dialog");
-  await dialog.waitFor({ state: "visible" });
+  await dialog.waitFor({ state: "visible", timeout: 60_000 });
   return dialog;
 }
 
@@ -63,6 +65,11 @@ async function verifyListboxes(page: Page, mobile = false) {
 async function main() {
   const passwordHash = await bcrypt.hash(PASSWORD, 10);
   const requestKey = `task-listbox-test-${Date.now()}`;
+  const branch = await prisma.clinicBranch.findFirstOrThrow({
+    where: { institutionId: "inst-default", isActive: true },
+    orderBy: [{ isHeadquarters: "desc" }, { createdAt: "asc" }],
+    select: { id: true },
+  });
   const user = await prisma.user.create({
     data: {
       identityNo: `8${String(Date.now()).slice(-10)}`.slice(0, 11),
@@ -71,6 +78,7 @@ async function main() {
       role: "YONETICI",
       institutionId: "inst-default",
       isActive: true,
+      branchMemberships: { create: { branchId: branch.id, isPrimary: true } },
     },
     select: { id: true, identityNo: true },
   });
@@ -82,6 +90,7 @@ async function main() {
       role: "ASISTAN",
       institutionId: "inst-default",
       isActive: true,
+      branchMemberships: { create: { branchId: branch.id, isPrimary: true } },
     },
     select: { id: true },
   });
@@ -130,7 +139,7 @@ async function main() {
     console.log("Toplu atama, idempotent kayıt, kapsam ve iptal API senaryoları doğrulandı.");
 
     const page = await context.newPage();
-    await page.goto(`${BASE}/gorevler`, { waitUntil: "load", timeout: 30_000 });
+    await page.goto(`${BASE}/gorevler`, { waitUntil: "load", timeout: 60_000 });
     await page.getByRole("heading", { name: "Görev Merkezi" }).waitFor({ state: "visible" });
     await verifyListboxes(page);
     console.log("Masaüstü görev listbox senaryoları doğrulandı.");

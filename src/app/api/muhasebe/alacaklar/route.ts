@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming } from "@/lib/api";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 /**
  * GET /api/muhasebe/alacaklar
@@ -12,6 +13,8 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
     const institutionId = auth.user.institutionId;
     const hidePatientPhone = await shouldHidePatientPhoneForRole(auth.user.role);
@@ -24,12 +27,17 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
       ],
     };
 
-    const examinationWhere = institutionId
-      ? { ...treatmentOnlyWhere, patient: { institutionId } }
-      : treatmentOnlyWhere;
-    const paymentWhere = institutionId
-      ? { institutionId, status: "ACTIVE", patientId: { not: null } }
-      : { status: "ACTIVE", patientId: { not: null } };
+    const examinationWhere = {
+      ...treatmentOnlyWhere,
+      ...(institutionId ? { institutionId } : {}),
+      branchId: branch.branchId,
+    };
+    const paymentWhere = {
+      ...(institutionId ? { institutionId } : {}),
+      branchId: branch.branchId,
+      status: "ACTIVE",
+      patientId: { not: null },
+    };
 
     // Birbirinden bağımsız defter sorgularını ardışık bekletmek, hasta sayısı
     // arttıkça ekranın açılışını gereksiz yere uzatıyordu. Aynı tutarlı anlık
@@ -78,8 +86,9 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
       }),
       prisma.taksitPlan.findMany({
         where: {
-          status: "AKTIF",
-          ...(institutionId ? { patient: { institutionId } } : {}),
+          status: { in: ["AKTIF", "DEVAM_EDIYOR"] },
+          ...(institutionId ? { institutionId } : {}),
+          branchId: branch.branchId,
         },
         select: { patientId: true },
         distinct: ["patientId"],
@@ -105,10 +114,7 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
       paymentDateMap.set(payment.patientId, payment.createdAt);
     });
 
-    // Aktif taksit planı olan hastaları işaretlemek için — bu hastaların
-    // "Tüm Bakiyeler" bakiyesi taksit ödemelerini yansıtmaz (taksit tahsilatı
-    // ayrı bir tabloda tutulur, Payment'a yazılmaz), UI'da bu belirsizliği
-    // gizlemek yerine açıkça göstermek daha güvenli (bkz. denetim raporu).
+    // Aktif veya ödemesi başlamış taksit planı olan hastaları ayrıca işaretle.
     const activeTaksitPatientIds = new Set(activeTaksitPatientRows.map((r) => r.patientId));
 
     // Patient bilgileri
@@ -118,6 +124,7 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
         id: { in: patientIds },
         archivedAt: null,
         ...(institutionId ? { institutionId } : {}),
+        homeBranchId: branch.branchId,
       },
       select: { id: true, fullName: true, phone: true, discountRate: true },
     });

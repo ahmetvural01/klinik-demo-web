@@ -3,10 +3,17 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import type { BookingRequestStatus } from "@prisma/client";
 
+function comparablePhone(value: string | null | undefined) {
+  return String(value || "").replace(/\D/g, "").slice(-10);
+}
+import { requireActiveBranch } from "@/lib/branch-context";
+
 export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const auth = await requireAuth("appointments:approve");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   try {
     const body = await req.json();
@@ -26,6 +33,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       where: {
         id: params.id,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
       },
     });
     if (!existing) return NextResponse.json({ error: "Talep bulunamadı" }, { status: 404 });
@@ -43,16 +51,28 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       const appointment = await prisma.appointment.findFirst({
         where: {
           id: appointmentId,
-          ...(auth.user.institutionId ? { doctor: { institutionId: auth.user.institutionId } } : {}),
+          institutionId: existing.institutionId,
+          branchId: branch.branchId,
+          ...(existing.doctorId ? { doctorId: existing.doctorId } : {}),
         },
-        select: { id: true, status: true },
+        select: {
+          id: true,
+          status: true,
+          patient: { select: { phone: true, tcNo: true } },
+        },
       });
       if (!appointment) return NextResponse.json({ error: "Randevu bulunamadı" }, { status: 404 });
       if (["IPTAL", "GELMEDI"].includes(appointment.status)) {
         return NextResponse.json({ error: "İptal veya gelmedi durumundaki randevu talebe bağlanamaz" }, { status: 400 });
       }
+      const sameIdentity = Boolean(existing.tcNo && appointment.patient.tcNo && existing.tcNo === appointment.patient.tcNo);
+      const samePhone = comparablePhone(existing.phone).length === 10
+        && comparablePhone(existing.phone) === comparablePhone(appointment.patient.phone);
+      if (!sameIdentity && !samePhone) {
+        return NextResponse.json({ error: "Oluşturulan randevunun hastası bu taleple eşleşmiyor" }, { status: 409 });
+      }
       const alreadyLinked = await prisma.bookingRequest.findFirst({
-        where: { createdAppointmentId: appointmentId, id: { not: params.id } },
+        where: { createdAppointmentId: appointmentId, id: { not: params.id }, institutionId: existing.institutionId, branchId: branch.branchId },
         select: { id: true },
       });
       if (alreadyLinked) {
@@ -61,7 +81,13 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     }
 
     const updated = await prisma.bookingRequest.update({
-      where: { id: params.id },
+      where: {
+        id_institutionId_branchId: {
+          id: existing.id,
+          institutionId: existing.institutionId,
+          branchId: existing.branchId,
+        },
+      },
       data: {
         status: status as BookingRequestStatus,
         ...(appointmentId ? { createdAppointmentId: appointmentId } : {}),

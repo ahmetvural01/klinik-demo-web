@@ -73,6 +73,8 @@ export async function PUT(
   if (body.isActive !== undefined) updateData.isActive = body.isActive;
   if (body.password) {
     updateData.passwordHash = await bcrypt.hash(body.password, 10);
+    updateData.mustChangePassword = false;
+    updateData.tokenVersion = { increment: 1 };
   }
 
   let updated;
@@ -135,7 +137,7 @@ export async function PUT(
     throw error;
   }
 
-  if (existingUser.isActive && body.isActive === false) {
+  if (body.password || (existingUser.isActive && body.isActive === false)) {
     invalidateUserSessionCache(params.userId);
   }
 

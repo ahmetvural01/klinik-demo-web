@@ -4,6 +4,8 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { getDailySchedules, checkLocalWorkingHoursInterval } from "@/lib/working-hours";
 import { checkDoctorWorkingHoursInterval } from "@/lib/working-hours-core";
 import { turkeyDateKey, turkeyLocalDateTimeToUtc } from "@/lib/tz";
+import { requireActiveBranch } from "@/lib/branch-context";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 // GET /api/doctor-blocks?doctorId=xxx&date=2026-05-06
 // GET /api/doctor-blocks?from=2026-05-01&to=2026-05-31  (tüm doktorlar için)
@@ -11,6 +13,10 @@ export async function GET(request: NextRequest) {
   try {
     const auth = await requireAuth("appointments:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok || !auth.user.institutionId) {
+      return NextResponse.json({ message: branch.ok ? "Kurum bilgisi bulunamadı." : branch.message }, { status: 403 });
+    }
 
     const { searchParams } = new URL(request.url);
     const doctorId = searchParams.get("doctorId");
@@ -18,17 +24,16 @@ export async function GET(request: NextRequest) {
     const from     = searchParams.get("from");
     const to       = searchParams.get("to");
 
-    const where: Record<string, unknown> = {};
+    const where: Record<string, unknown> = {
+      institutionId: auth.user.institutionId,
+      branchId: branch.branchId,
+    };
 
     if (doctorId) where.doctorId = doctorId;
     if (date)     where.date = date;
     if (from && to) {
       where.date = { gte: from, lte: to };
     }
-    if (auth.user.role !== "SUPERADMIN") {
-      where.doctor = { institutionId: auth.user.institutionId };
-    }
-
     const blocks = await prisma.doctorBlock.findMany({
       where,
       include: { doctor: { select: { id: true, fullName: true } } },
@@ -47,8 +52,13 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok || !auth.user.institutionId) {
+    return NextResponse.json({ message: branch.ok ? "Kurum bilgisi bulunamadı." : branch.message }, { status: 403 });
+  }
+  const institutionId = auth.user.institutionId;
 
-  const allowedRoles = ["SUPERADMIN", "YONETICI", "ADMIN"];
+  const allowedRoles = ["SUPERADMIN", "YONETICI"];
   if (!allowedRoles.includes(auth.user!.role)) {
     return NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 });
   }
@@ -64,7 +74,7 @@ export async function POST(request: NextRequest) {
     where: {
       id: doctorId,
       isActive: true,
-      ...(auth.user!.role !== "SUPERADMIN" ? { institutionId: auth.user!.institutionId } : {}),
+      ...effectiveDoctorWhere(institutionId, branch.branchId),
     },
     select: {
       id: true,
@@ -76,7 +86,7 @@ export async function POST(request: NextRequest) {
   });
   const isEligibleDoctor = Boolean(
     doctor &&
-    (["DOKTOR", "SUPERADMIN", "ADMIN"].includes(doctor.role) ||
+    (["DOKTOR", "SUPERADMIN"].includes(doctor.role) ||
       (doctor.role === "YONETICI" && !doctor.profile?.hideAsDoctor))
   );
   if (!doctor || !isEligibleDoctor || !doctor.institutionId) {
@@ -117,6 +127,8 @@ export async function POST(request: NextRequest) {
       const [overlappingBlock, overlappingAppointment] = await Promise.all([
       tx.doctorBlock.findFirst({
         where: {
+          institutionId,
+          branchId: branch.branchId,
           doctorId,
           date,
           startTime: { lt: endTime },
@@ -126,6 +138,8 @@ export async function POST(request: NextRequest) {
       }),
       tx.appointment.findFirst({
         where: {
+          institutionId,
+          branchId: branch.branchId,
           doctorId,
           status: { notIn: ["IPTAL", "GELMEDI"] },
           startAt: { lt: turkeyLocalDateTimeToUtc(date, endTime) },
@@ -144,7 +158,15 @@ export async function POST(request: NextRequest) {
       if (overlappingAppointment) throw new Error(`APPOINTMENT_CONFLICT:${overlappingAppointment.patient?.fullName || "Hasta"}`);
 
       return tx.doctorBlock.create({
-      data: { doctorId, date, startTime, endTime, reason: typeof reason === "string" ? reason.trim().slice(0, 500) || null : null },
+      data: {
+        institutionId,
+        branchId: branch.branchId,
+        doctorId,
+        date,
+        startTime,
+        endTime,
+        reason: typeof reason === "string" ? reason.trim().slice(0, 500) || null : null,
+      },
       include: { doctor: { select: { id: true, fullName: true } } },
       });
     }, { isolationLevel: "Serializable" });
@@ -173,8 +195,13 @@ export async function POST(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   const auth = await requireAuth("appointments:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok || !auth.user.institutionId) {
+    return NextResponse.json({ message: branch.ok ? "Kurum bilgisi bulunamadı." : branch.message }, { status: 403 });
+  }
+  const institutionId = auth.user.institutionId;
 
-  const allowedRoles = ["SUPERADMIN", "YONETICI", "ADMIN"];
+  const allowedRoles = ["SUPERADMIN", "YONETICI"];
   if (!allowedRoles.includes(auth.user!.role)) {
     return NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 });
   }
@@ -190,7 +217,8 @@ export async function DELETE(request: NextRequest) {
     const existing = await prisma.doctorBlock.findFirst({
       where: {
         id,
-        ...(auth.user!.role !== "SUPERADMIN" ? { doctor: { institutionId: auth.user!.institutionId } } : {}),
+        institutionId,
+        branchId: branch.branchId,
       },
       select: { id: true, doctorId: true, date: true, startTime: true, endTime: true, reason: true },
     });
@@ -223,10 +251,10 @@ export async function DELETE(request: NextRequest) {
     await prisma.$transaction(async (tx) => {
       await tx.doctorBlock.delete({ where: { id } });
       if (before) {
-        await tx.doctorBlock.create({ data: { doctorId: existing.doctorId, date: existing.date, startTime: before.startTime, endTime: before.endTime, reason: existing.reason } });
+        await tx.doctorBlock.create({ data: { institutionId, branchId: branch.branchId, doctorId: existing.doctorId, date: existing.date, startTime: before.startTime, endTime: before.endTime, reason: existing.reason } });
       }
       if (after) {
-        await tx.doctorBlock.create({ data: { doctorId: existing.doctorId, date: existing.date, startTime: after.startTime, endTime: after.endTime, reason: existing.reason } });
+        await tx.doctorBlock.create({ data: { institutionId, branchId: branch.branchId, doctorId: existing.doctorId, date: existing.date, startTime: after.startTime, endTime: after.endTime, reason: existing.reason } });
       }
     });
     await writeAudit(auth.user.id, "DOCTOR_BLOCK_DELETE", `${id} (${slotStart}-${slotEnd})`);

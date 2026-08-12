@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 import { prisma } from "@/lib/prisma";
 import { sendSmsConsentRequest } from "@/lib/sms-consent";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
@@ -18,9 +19,11 @@ export async function POST(request: NextRequest, props: Params) {
   const params = await props.params;
   const auth = await requireAuth("patients:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
   const ip = getClientIpFromHeaders(request.headers);
-  const actorRate = checkRateLimit(`sms-consent-resend:actor:${auth.user.id}:${ip}`, 20, 15 * 60_000);
+  const actorRate = await checkRateLimit(`sms-consent-resend:actor:${auth.user.id}:${ip}`, 20, 15 * 60_000);
   if (!actorRate.ok) {
     return NextResponse.json({ message: "Çok fazla tekrar gönderim isteği. Lütfen kısa bir süre sonra tekrar deneyin." }, { status: 429 });
   }
@@ -30,6 +33,7 @@ export async function POST(request: NextRequest, props: Params) {
       id: params.id,
       archivedAt: null,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      homeBranchId: branch.branchId,
     },
     select: { id: true, institutionId: true, fullName: true },
   });

@@ -39,12 +39,17 @@ async function main() {
     select: { id: true, institutionId: true },
   });
   if (!user?.institutionId) throw new Error("Test için aktif kurum kullanıcısı bulunamadı.");
+  const institutionId = user.institutionId;
+  const branch = await prisma.clinicBranch.findFirstOrThrow({
+    where: { institutionId, isActive: true },
+    orderBy: [{ isHeadquarters: "desc" }, { sortOrder: "asc" }],
+  });
 
   const firma = await prisma.firma.create({
-    data: { institutionId: user.institutionId, name: `Race Testi Firma ${Date.now()}`, kategori: "TEDARICI" },
+    data: { institutionId, branchId: branch.id, name: `Race Testi Firma ${Date.now()}`, kategori: "TEDARICI" },
   });
   const stockItem = await prisma.stockItem.create({
-    data: { institutionId: user.institutionId, name: `Race Testi Stok ${Date.now()}`, quantity: 0, minQuantity: 1 },
+    data: { institutionId, branchId: branch.id, name: `Race Testi Stok ${Date.now()}`, quantity: 0, minQuantity: 1 },
   });
 
   try {
@@ -53,6 +58,8 @@ async function main() {
     const islemId = await prisma.$transaction(async (tx) => {
       const islem = await tx.firmaIslem.create({
         data: {
+          institutionId,
+          branchId: branch.id,
           firmaId: firma.id,
           tarih: new Date(),
           islemTipi: "ALIM",
@@ -64,7 +71,7 @@ async function main() {
         tx,
         userId: user.id,
         firma: { id: firma.id, name: firma.name, institutionId: firma.institutionId },
-        islem: { id: islem.id, tarih: islem.tarih, islemTipi: "ALIM", tutar: 100 },
+        islem: { id: islem.id, branchId: branch.id, tarih: islem.tarih, islemTipi: "ALIM", tutar: 100 },
         stockItemId: stockItem.id,
         stockQuantity: 10,
       });

@@ -147,7 +147,7 @@ export default function RolePermissionsPage() {
       const res = await fetch("/api/superadmin/role-permissions", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ map }),
+        body: JSON.stringify({ map, version: payload.version }),
       });
       if (!res.ok) {
         showToastSafe({ title: "Hata", message: "Kaydetme sırasında hata oluştu.", type: "error" });
@@ -171,7 +171,7 @@ export default function RolePermissionsPage() {
       const res = await fetch("/api/superadmin/role-permissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reset" }),
+        body: JSON.stringify({ action: "reset", version: payload?.version }),
       });
       if (!res.ok) {
         showToastSafe({ title: "Hata", message: "Sıfırlama sırasında hata oluştu.", type: "error" });

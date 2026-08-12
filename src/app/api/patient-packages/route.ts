@@ -4,18 +4,22 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import type { PaymentMethod } from "@prisma/client";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { addInstallmentPeriod, INSTALLMENT_PERIODS } from "@/lib/installment-schedule";
+import { requireActiveBranch } from "@/lib/branch-context";
+import { createIntegratedPayment } from "@/lib/payment-ledger";
 
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth("payments:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
   if (!auth.user.institutionId) return NextResponse.json({ message: "Kurum bilgisi bulunamadı" }, { status: 403 });
 
   const patientId = req.nextUrl.searchParams.get("patientId");
   if (!patientId) return NextResponse.json({ message: "patientId zorunlu" }, { status: 400 });
 
   const packages = await prisma.patientPackage.findMany({
-    where: { institutionId: auth.user.institutionId, patientId },
+    where: { institutionId: auth.user.institutionId, branchId: branch.branchId, patientId },
     orderBy: { purchasedAt: "desc" },
     include: {
       doctor: { select: { id: true, fullName: true } },
@@ -39,6 +43,8 @@ export async function GET(req: NextRequest) {
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("payments:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Kurum bilgisi bulunamadı" }, { status: 400 });
   }
@@ -49,11 +55,14 @@ export async function POST(request: NextRequest) {
   }
   if (requestKey) {
     const [existingPackage, existingPayment] = await Promise.all([
-      prisma.patientPackage.findUnique({ where: { requestKey } }),
-      prisma.payment.findUnique({ where: { requestKey }, select: { institutionId: true } }),
+      prisma.patientPackage.findUnique({ where: { branchId_requestKey: { branchId: branch.branchId, requestKey } } }),
+      prisma.payment.findUnique({
+        where: { branchId_requestKey: { branchId: branch.branchId, requestKey } },
+        select: { institutionId: true },
+      }),
     ]);
     if (existingPackage) {
-      if (existingPackage.institutionId !== auth.user.institutionId) {
+      if (existingPackage.institutionId !== auth.user.institutionId || existingPackage.branchId !== branch.branchId) {
         return NextResponse.json({ message: "İşlem anahtarı başka bir kuruma ait" }, { status: 409 });
       }
       return NextResponse.json(existingPackage, { status: 200 });
@@ -86,14 +95,11 @@ export async function POST(request: NextRequest) {
 
   const [patient, doctor] = await Promise.all([
     prisma.patient.findFirst({
-      where: { id: patientId, institutionId: auth.user.institutionId, archivedAt: null },
+      where: { id: patientId, institutionId: auth.user.institutionId, homeBranchId: branch.branchId, archivedAt: null },
       select: { id: true },
     }),
     prisma.user.findFirst({
-      where: {
-        id: doctorId,
-        ...effectiveDoctorWhere(auth.user.institutionId),
-      },
+      where: { id: doctorId, ...effectiveDoctorWhere(auth.user.institutionId, branch.branchId) },
       select: { id: true },
     }),
   ]);
@@ -160,6 +166,10 @@ export async function POST(request: NextRequest) {
   if (remaining > 0 && (typeof period !== "string" || !INSTALLMENT_PERIODS.has(period))) {
     return NextResponse.json({ message: "Geçersiz taksit dönemi" }, { status: 400 });
   }
+  if (remaining > 0) {
+    const installmentAuth = await requireAuth("installments:write");
+    if (installmentAuth.error) return installmentAuth.error;
+  }
 
   let result: Awaited<ReturnType<typeof prisma.patientPackage.create>>;
   try {
@@ -168,16 +178,17 @@ export async function POST(request: NextRequest) {
     let taksitPlanId: string | null = null;
 
     if (remaining <= 0) {
-      const payment = await tx.payment.create({
-        data: {
+      const { payment } = await createIntegratedPayment({
+          tx,
           institutionId: auth.user.institutionId as string,
+          branchId: branch.branchId,
           patientId,
           doctorId,
           method,
           requestKey,
           amount: price,
           description: `Paket satışı: ${name}`,
-        },
+          integrateInstallments: false,
       });
       paymentId = payment.id;
     } else {
@@ -191,6 +202,8 @@ export async function POST(request: NextRequest) {
 
       const plan = await tx.taksitPlan.create({
         data: {
+          institutionId: auth.user.institutionId as string,
+          branchId: branch.branchId,
           patientId, doctorId, baslik: `Paket: ${name}`,
           toplamBorc: price, pesnat, taksitSayisi, period, startDate: purchasedAt,
           status: "AKTIF", taksitler: { create: taksitlerCreate },
@@ -199,16 +212,17 @@ export async function POST(request: NextRequest) {
       taksitPlanId = plan.id;
 
       if (pesnat > 0) {
-        const payment = await tx.payment.create({
-          data: {
+        const { payment } = await createIntegratedPayment({
+            tx,
             institutionId: auth.user.institutionId as string,
+            branchId: branch.branchId,
             patientId,
             doctorId,
             method,
             requestKey,
             amount: pesnat,
             description: `Paket peşinatı: ${name}`,
-          },
+            integrateInstallments: false,
         });
         paymentId = payment.id;
       }
@@ -218,6 +232,7 @@ export async function POST(request: NextRequest) {
       data: {
         requestKey,
         institutionId: auth.user.institutionId as string,
+        branchId: branch.branchId,
         patientId, doctorId, definitionId, name,
         sessionsTotal: sessionCount,
         totalPrice: price,
@@ -231,8 +246,10 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     if (requestKey && error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
-      const concurrent = await prisma.patientPackage.findUnique({ where: { requestKey } });
-      if (concurrent?.institutionId === auth.user.institutionId) {
+      const concurrent = await prisma.patientPackage.findUnique({
+        where: { branchId_requestKey: { branchId: branch.branchId, requestKey } },
+      });
+      if (concurrent?.institutionId === auth.user.institutionId && concurrent.branchId === branch.branchId) {
         return NextResponse.json(concurrent, { status: 200 });
       }
     }

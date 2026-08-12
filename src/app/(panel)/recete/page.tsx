@@ -6,7 +6,6 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useState, useEffect } from "react";
 import { formatDate } from "@/lib/format";
-import { cachedGet } from "@/lib/client-cache";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
@@ -23,6 +22,7 @@ type Prescription = {
   drugs: string; // JSON stringify: [{ name, dose, usage, duration, note }]
   note?: string | null;
   createdAt: string;
+  status?: string;
 };
 
 type Patient = {
@@ -195,7 +195,7 @@ export default function PrescriptionPage() {
               <p className="text-xs text-slate-500">{clinicPhone}</p>
             </div>
             <div className="text-right">
-              <div className="text-lg font-black tracking-widest text-[#0f3b78]">REÇETE</div>
+              <div className="text-lg font-black tracking-widest text-[#0f3b78]">{prescription.status === "VOID" ? "İPTAL EDİLMİŞ REÇETE" : "REÇETE"}</div>
               <div className="text-xs text-slate-500 mt-0.5">Tarih: {formatDate(prescription.createdAt)}</div>
             </div>
           </div>

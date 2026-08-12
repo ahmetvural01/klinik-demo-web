@@ -31,6 +31,7 @@ import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { Badge } from "@/components/ui/Badge";
 import { ShieldAlert, Percent } from "lucide-react";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 
 const PatientEmptyIcon = createSceneIllustration("hasta");
 
@@ -112,6 +113,7 @@ function HastaContent() {
   const searchParams = useSearchParams();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const summaryLoadedRef = useRef(false);
+  const loadSequenceRef = useRef(0);
   useSlashFocus(searchInputRef);
 
   const [query, setQuery] = useState(searchParams.get("q") || "");
@@ -126,6 +128,8 @@ function HastaContent() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [doctorId, setDoctorId] = useState("");
   const [doctors, setDoctors] = useState<{ id: string; fullName: string }[]>([]);
+  const [doctorLoadError, setDoctorLoadError] = useState("");
+  const [doctorReloadKey, setDoctorReloadKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
@@ -140,7 +144,7 @@ function HastaContent() {
 
   useEffect(() => {
     if (searchParams.get("yeni") === "1" && canWritePatients) setShowQuickCreate(true);
-  }, [searchParams]);
+  }, [searchParams, canWritePatients]);
 
   const closeQuickCreate = () => {
     setShowQuickCreate(false);
@@ -150,12 +154,17 @@ function HastaContent() {
   };
 
   useEffect(() => {
-    cachedGet<unknown>("/api/staff", 60_000).then((d) => {
+    setDoctorLoadError("");
+    cachedGet<unknown>("/api/staff", 60_000, { throwOnError: true, force: doctorReloadKey > 0 }).then((d) => {
       type StaffMember = { id: string; fullName: string; role: string; profile?: { hideAsDoctor?: boolean | null } | null };
-      const list = (Array.isArray(d) ? d as StaffMember[] : []).filter((u) => u.role === "DOKTOR" || (u.role === "YONETICI" && u.profile?.hideAsDoctor === false));
+      if (!Array.isArray(d)) throw new Error("Doktor listesi beklenmeyen biçimde döndü.");
+      const list = (d as StaffMember[]).filter((u) => u.role === "DOKTOR" || (u.role === "YONETICI" && u.profile?.hideAsDoctor === false));
       setDoctors(list.map((u) => ({ id: u.id, fullName: u.fullName })));
-    }).catch(() => {});
-  }, []);
+    }).catch((loadError) => {
+      setDoctors([]);
+      setDoctorLoadError(loadError instanceof Error ? loadError.message : "Doktor listesi yüklenemedi.");
+    });
+  }, [doctorReloadKey]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -166,6 +175,7 @@ function HastaContent() {
   }, [query]);
 
   const load = useCallback(async (force = false) => {
+    const requestId = ++loadSequenceRef.current;
     setLoading(true);
     setError(null);
     setForbidden(false);
@@ -187,6 +197,7 @@ function HastaContent() {
       // arasındaki farkı net göstermek gerekiyor — cachedGet her HTTP
       // hatasını aynı şekilde null'a indirger (bkz. src/lib/client-cache.ts).
       const res = await fetch(url, { cache: "no-store" });
+      if (requestId !== loadSequenceRef.current) return;
       if (res.status === 401 || res.status === 403) {
         setForbidden(true);
         setPatients([]);
@@ -196,19 +207,27 @@ function HastaContent() {
       }
       if (!res.ok) throw new Error("Hasta listesi yüklenemedi");
       const json: PatientResponse = await res.json();
+      if (requestId !== loadSequenceRef.current) return;
+      const nextPageCount = Math.max(1, Number(json.pageCount || 1));
+      if (page > nextPageCount) {
+        setPageCount(nextPageCount);
+        setPage(nextPageCount);
+        return;
+      }
       setPatients(Array.isArray(json.patients) ? json.patients : []);
       setTotal(Number(json.total || 0));
-      setPageCount(Math.max(1, Number(json.pageCount || 1)));
+      setPageCount(nextPageCount);
       if (json.summary) {
         summaryLoadedRef.current = true;
         setSummary(json.summary);
       }
     } catch (err) {
+      if (requestId !== loadSequenceRef.current) return;
       setError(err instanceof Error ? err.message : "Hasta listesi yüklenemedi");
       // Bir filtre yenilenirken mevcut tabloyu boşaltmak, ekranda gereksiz
       // zıplama yaratır. Son geçerli sonuç kullanıcıda kalır.
     } finally {
-      setLoading(false);
+      if (requestId === loadSequenceRef.current) setLoading(false);
     }
   }, [debouncedQuery, doctorId, smsConsentFilter, page, pageSize, sortDir, sortKey]);
 
@@ -358,6 +377,11 @@ function HastaContent() {
             )}
           </div>
         </div>
+        {doctorLoadError && (
+          <div className="mt-2">
+            <LoadErrorState compact message={doctorLoadError} onRetry={() => setDoctorReloadKey((value) => value + 1)} />
+          </div>
+        )}
       </div>
 
       {smsConsentFilter && (

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming } from "@/lib/api";
 import { computeDoctorMonthlyHakedis, computeDoctorMonthlyOdenen, effectiveDoctorWhere, monthRangeUtc } from "@/lib/hakedis";
 import { turkeyDateKey } from "@/lib/tz";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 // GET /api/hakedis/ozet
 // Kurumdaki tüm uygun doktorlar için içinde bulunulan ayın hakedilen/ödenen/kalan
@@ -10,11 +11,13 @@ import { turkeyDateKey } from "@/lib/tz";
 export const GET = withApiTiming("hakedis-ozet", async function GET(_req: NextRequest) {
   const auth = await requireAuth("finance:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok || !auth.user.institutionId) return NextResponse.json({ message: branch.ok ? "Kurum bağlamı zorunlu" : branch.message }, { status: 403 });
 
   const institutionId = auth.user.institutionId;
   const activeDoctors = await prisma.user.findMany({
-    where: effectiveDoctorWhere(institutionId),
-    select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
+    where: effectiveDoctorWhere(institutionId, branch.branchId),
+    select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true, branchMemberships: { where: { branchId: branch.branchId }, select: { kkYuzde: true, genelYuzde: true, maasYuzde: true }, take: 1 } },
     orderBy: { fullName: "asc" },
   });
 
@@ -26,9 +29,10 @@ export const GET = withApiTiming("hakedis-ozet", async function GET(_req: NextRe
     where: {
       isActive: false,
       ...(institutionId ? { institutionId } : {}),
+      branchMemberships: { some: { branchId: branch.branchId } },
       OR: [{ role: "DOKTOR" }, { role: "YONETICI" }],
     },
-    select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
+    select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true, branchMemberships: { where: { branchId: branch.branchId }, select: { kkYuzde: true, genelYuzde: true, maasYuzde: true }, take: 1 } },
   });
   const doctors = [...activeDoctors, ...inactiveDoctors];
 
@@ -42,14 +46,15 @@ export const GET = withApiTiming("hakedis-ozet", async function GET(_req: NextRe
 
   const inactiveIds = new Set(inactiveDoctors.map((d) => d.id));
   const allRows = await Promise.all(doctors.map(async (doctor) => {
+    const branchRates = doctor.branchMemberships[0];
     const rates = {
-      kkYuzde: Number(doctor.kkYuzde ?? 3),
-      genelYuzde: Number(doctor.genelYuzde ?? 15),
-      maasYuzde: Number(doctor.maasYuzde ?? 40),
+      kkYuzde: Number(branchRates?.kkYuzde ?? doctor.kkYuzde ?? 3),
+      genelYuzde: Number(branchRates?.genelYuzde ?? doctor.genelYuzde ?? 15),
+      maasYuzde: Number(branchRates?.maasYuzde ?? doctor.maasYuzde ?? 40),
     };
     const [hakedisRows, odenenMap] = await Promise.all([
-      computeDoctorMonthlyHakedis({ doctorId: doctor.id, rates, rangeStart: start, rangeEnd: end }),
-      computeDoctorMonthlyOdenen({ doctorId: doctor.id, institutionId, rangeStart: start, rangeEnd: end }),
+      computeDoctorMonthlyHakedis({ doctorId: doctor.id, institutionId: auth.user.institutionId!, branchId: branch.branchId, rates, rangeStart: start, rangeEnd: end }),
+      computeDoctorMonthlyOdenen({ doctorId: doctor.id, institutionId, branchId: branch.branchId, rangeStart: start, rangeEnd: end }),
     ]);
     const monthRow = hakedisRows.find((r) => r.year === year && r.month === month);
     const hakedilen = monthRow?.hakedilen ?? 0;

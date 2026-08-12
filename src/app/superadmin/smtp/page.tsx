@@ -41,9 +41,12 @@ export default function SmtpPage() {
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   useEffect(() => {
-    fetch("/api/superadmin/smtp")
-      .then((r) => r.json())
-      .then((d: SmtpConfig) => {
+    const load = async () => {
+      try {
+        const response = await fetch("/api/superadmin/smtp", { cache: "no-store" });
+        const d = await response.json().catch(() => null) as SmtpConfig & { message?: string } | null;
+        if (!response.ok) throw new Error(d?.message || "SMTP ayarları yüklenemedi.");
+        if (!d) throw new Error("SMTP ayarları için geçersiz sunucu yanıtı alındı.");
         if (d.host) {
           setForm((f) => ({
             ...f,
@@ -62,9 +65,13 @@ export default function SmtpPage() {
             isActive: d.isActive ?? false,
           }));
         }
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+      } catch (error) {
+        showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "SMTP ayarları yüklenemedi.", type: "error" });
+      } finally {
+        setLoading(false);
+      }
+    };
+    void load();
   }, []);
 
   const handleSave = async () => {

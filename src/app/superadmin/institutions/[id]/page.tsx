@@ -17,6 +17,7 @@ import {
   type SubscriptionPlanId,
   type BillingCycleId,
 } from "@/lib/subscription-plans";
+import { BranchControlPanel } from "@/components/superadmin/BranchControlPanel";
 
 type ServiceMode = "NORMAL" | "LIMITED" | "READ_ONLY" | "SUSPENDED";
 type AdIntensity = "LOW" | "MEDIUM" | "HIGH";
@@ -71,6 +72,7 @@ type Institution = {
   adIntensity: AdIntensity;
   adsEnabled: boolean;
   whatsappEnabled: boolean;
+  whatsappPlatform: { ready: boolean; missing: string[] };
   maxActiveDoctors: number | null;
   maxActiveUsers: number | null;
   paymentGraceUntil: string | null;
@@ -92,6 +94,9 @@ type Institution = {
         name: string;
         providerType: string;
         isActive: boolean;
+        connectionStatus: "NOT_CONNECTED" | "CONNECTING" | "CONNECTED" | "ERROR" | "DISCONNECTED";
+        displayPhoneNumber: string | null;
+        verifiedName: string | null;
         updatedAt: string;
       }
     | { exists: false };
@@ -474,8 +479,15 @@ export default function InstitutionDetailPage() {
     }
   };
 
+  const openGhostLogin = () => {
+    setGhostPassword("");
+    setGhostError(null);
+    setGhostOpen(true);
+  };
+
   const enterAsGhost = async () => {
     if (!institution || !ghostPassword) return;
+    const clinicWindow = window.open("about:blank", "_blank");
     setGhostLoading(true);
     setGhostError(null);
     try {
@@ -486,13 +498,16 @@ export default function InstitutionDetailPage() {
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({ message: "Hata" }));
+        clinicWindow?.close();
         setGhostError(err.message || "Giriş başarısız");
         return;
       }
-      window.open("/anasayfa", "_blank");
+      if (clinicWindow && !clinicWindow.closed) clinicWindow.location.replace("/anasayfa");
+      else window.location.assign("/anasayfa");
       setGhostOpen(false);
       setGhostPassword("");
     } catch {
+      clinicWindow?.close();
       setGhostError("Bağlantı hatası — giriş yapılamadı. Lütfen tekrar deneyin.");
     } finally {
       setGhostLoading(false);
@@ -609,7 +624,7 @@ export default function InstitutionDetailPage() {
                 variant="secondary"
                 size="sm"
                 icon={Eye}
-                onClick={() => { setGhostOpen(true); setGhostPassword(""); setGhostError(null); }}
+                onClick={() => openGhostLogin()}
               >
                 Kliniğe Gir
               </Button>
@@ -666,11 +681,13 @@ export default function InstitutionDetailPage() {
               value={`${institution.users.filter((u) => u.role === "DOKTOR" && u.isActive).length} / ${institution.maxActiveDoctors ?? "∞"}`}
             />
             <StatBox
-              label="Kullanıcı Kullanımı"
+              label="Personel Kullanımı"
               value={`${institution.users.filter((u) => u.isActive).length} / ${institution.maxActiveUsers ?? "∞"}`}
             />
           </div>
         </section>
+
+        <BranchControlPanel institutionId={institution.id} />
 
         {/* Invoices */}
         <section className="space-y-2">
@@ -680,8 +697,8 @@ export default function InstitutionDetailPage() {
 
         {/* Users */}
         <section className="space-y-2">
-          <h2 className="text-sm font-black text-slate-900">Kullanıcılar</h2>
-          <ListTable columns={userColumns} rows={institution.users} rowKey={(r) => r.id} emptyText="Kullanıcı bulunamadı" />
+          <h2 className="text-sm font-black text-slate-900">Personel</h2>
+          <ListTable columns={userColumns} rows={institution.users} rowKey={(r) => r.id} emptyText="Personel bulunamadı" />
         </section>
 
         {/* SMS transactions */}
@@ -801,7 +818,7 @@ export default function InstitutionDetailPage() {
                     <option value="YILLIK">Yıllık</option>
                   </select>
                 </FormField>
-                <FormField label="Maks. Aktif Kullanıcı" hint="Boş bırakılırsa sınırsız — plan değişince otomatik dolar, elle de değiştirebilirsiniz">
+                <FormField label="Maks. Aktif Personel" hint="Boş bırakılırsa sınırsız — plan değişince otomatik dolar, elle de değiştirebilirsiniz">
                   <input
                     type="number"
                     className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
@@ -871,26 +888,21 @@ export default function InstitutionDetailPage() {
                     checked={editForm.whatsappEnabled}
                     onChange={(e) => setEditForm((f) => f && { ...f, whatsappEnabled: e.target.checked })}
                   />
-                  Bu klinik için WhatsApp bildirimlerini etkinleştir
+                  Bu kliniğe WhatsApp modülü erişimi ver
                 </label>
-                <Button variant="secondary" size="sm" href="/superadmin/sms">
-                  WhatsApp Yönetimine Git
-                </Button>
               </div>
               <p className="mt-1.5 text-xs text-slate-500">
-                Açıldığında randevu bildirimleri gibi süreçler SMS bakiyesi tüketmeden WhatsApp üzerinden
-                gönderilmeye çalışılır (aktif bir sağlayıcı yoksa otomatik olarak SMS&apos;e döner).
-                Sağlayıcı ayarları SMS Yönetimi &gt; WhatsApp sekmesinden yapılır.
+                Bu ayar yalnızca kliniğin WhatsApp modülüne erişim hakkını yönetir. Bağlantı, numara ve mesajlaşma ayarlarını yetkili klinik yöneticisi kendi panelinden yönetir.
               </p>
               <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
                 {institution.whatsappProvider?.exists ? (
                   <p>
-                    Mevcut sağlayıcı: <strong>{institution.whatsappProvider.name}</strong> ({institution.whatsappProvider.code})
-                    , durum: <strong>{institution.whatsappProvider.isActive ? "aktif" : "pasif"}</strong>.
+                    Bağlantı: <strong>{institution.whatsappProvider.verifiedName || institution.whatsappProvider.name}</strong>
+                    {institution.whatsappProvider.displayPhoneNumber ? ` · ${institution.whatsappProvider.displayPhoneNumber}` : ""}, durum: <strong>{institution.whatsappProvider.connectionStatus}</strong>.
                   </p>
                 ) : (
                   <p>
-                    Bu klinik için henüz WhatsApp sağlayıcısı tanımlı değil. Modül açık olsa bile gerçek gönderim için SMS Yönetimi &gt; WhatsApp sekmesinden bağlantı kurulması gerekir.
+                    Bu klinik henüz kendi WhatsApp Business hesabını bağlamadı.
                   </p>
                 )}
               </div>
@@ -967,7 +979,7 @@ export default function InstitutionDetailPage() {
         open={ghostOpen}
         onClose={() => setGhostOpen(false)}
         title="Kliniğe Gizli Giriş"
-        description={`${institution.name} kliniğine giriş yapmak için superadmin şifrenizi girin.`}
+        description={`${institution.name} kliniğine güvenli geçiş yapmak için superadmin şifrenizi girin.`}
         size="sm"
         footer={
           <>

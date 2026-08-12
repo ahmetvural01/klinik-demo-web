@@ -14,10 +14,17 @@ function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
 
-async function createTestItem(institutionId: string, label: string) {
+async function createTestItem(institutionId: string, label: string, branchId?: string) {
+  const branch = branchId
+    ? await prisma.clinicBranch.findFirstOrThrow({ where: { id: branchId, institutionId } })
+    : await prisma.clinicBranch.findFirstOrThrow({
+        where: { institutionId, isActive: true },
+        orderBy: [{ isHeadquarters: "desc" }, { sortOrder: "asc" }],
+      });
   return prisma.stockItem.create({
     data: {
       institutionId,
+      branchId: branch.id,
       name: `Idempotency Testi ${label} ${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       category: "SARF",
       unit: "adet",
@@ -48,6 +55,9 @@ async function main() {
     const tempInstitution = await prisma.institution.create({
       data: { name: `Idempotency Test Kurum ${suffix}`, email: `idem-test-${suffix}@example.invalid` },
     });
+    await prisma.clinicBranch.create({
+      data: { institutionId: tempInstitution.id, name: "Merkez Şube", slug: "merkez", isHeadquarters: true },
+    });
     const tempUser = await prisma.user.create({
       data: {
         institutionId: tempInstitution.id,
@@ -63,6 +73,7 @@ async function main() {
   }
 
   const createdItemIds: string[] = [];
+  let tempBranchId: string | null = null;
 
   try {
     // ── Senaryo 1: Aynı requestKey ile aynı hareketi iki kez gönderme ──────────
@@ -72,10 +83,10 @@ async function main() {
       const requestKey = `test-s1-${Date.now()}`;
 
       const r1 = await prisma.$transaction((tx) =>
-        applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, userId: userA.id, type: "GIRIS", quantity: 10, requestKey }),
+        applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, branchId: item.branchId, userId: userA.id, type: "GIRIS", quantity: 10, requestKey }),
       );
       const r2 = await prisma.$transaction((tx) =>
-        applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, userId: userA.id, type: "GIRIS", quantity: 10, requestKey }),
+        applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, branchId: item.branchId, userId: userA.id, type: "GIRIS", quantity: 10, requestKey }),
       );
 
       assert(!(r1 as any).duplicate, "Senaryo 1: ilk istek duplicate işaretlenmemeli.");
@@ -98,10 +109,10 @@ async function main() {
 
       const [r1, r2] = await Promise.all([
         prisma.$transaction((tx) =>
-          applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, userId: userA.id, type: "GIRIS", quantity: 7, requestKey }),
+          applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, branchId: item.branchId, userId: userA.id, type: "GIRIS", quantity: 7, requestKey }),
         ),
         prisma.$transaction((tx) =>
-          applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, userId: userA.id, type: "GIRIS", quantity: 7, requestKey }),
+          applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, branchId: item.branchId, userId: userA.id, type: "GIRIS", quantity: 7, requestKey }),
         ),
       ]);
 
@@ -122,10 +133,10 @@ async function main() {
       createdItemIds.push(item.id);
 
       await prisma.$transaction((tx) =>
-        applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, userId: userA.id, type: "GIRIS", quantity: 5, requestKey: `test-s3-a-${Date.now()}` }),
+        applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, branchId: item.branchId, userId: userA.id, type: "GIRIS", quantity: 5, requestKey: `test-s3-a-${Date.now()}` }),
       );
       await prisma.$transaction((tx) =>
-        applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, userId: userA.id, type: "GIRIS", quantity: 5, requestKey: `test-s3-b-${Date.now()}` }),
+        applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, branchId: item.branchId, userId: userA.id, type: "GIRIS", quantity: 5, requestKey: `test-s3-b-${Date.now()}` }),
       );
 
       const finalItem = await prisma.stockItem.findUniqueOrThrow({ where: { id: item.id } });
@@ -143,10 +154,10 @@ async function main() {
       const sharedKey = `test-s4-shared-${Date.now()}`;
 
       const rA = await prisma.$transaction((tx) =>
-        applyStockMovement({ tx, stockItemId: itemA.id, institutionId: userA.institutionId, userId: userA.id, type: "GIRIS", quantity: 3, requestKey: sharedKey }),
+        applyStockMovement({ tx, stockItemId: itemA.id, institutionId: userA.institutionId, branchId: itemA.branchId, userId: userA.id, type: "GIRIS", quantity: 3, requestKey: sharedKey }),
       );
       const rB = await prisma.$transaction((tx) =>
-        applyStockMovement({ tx, stockItemId: itemB.id, institutionId: userB.institutionId, userId: userB.id, type: "GIRIS", quantity: 3, requestKey: sharedKey }),
+        applyStockMovement({ tx, stockItemId: itemB.id, institutionId: userB.institutionId, branchId: itemB.branchId, userId: userB.id, type: "GIRIS", quantity: 3, requestKey: sharedKey }),
       );
 
       assert(!(rA as any).duplicate && !(rB as any).duplicate, "Senaryo 4: aynı requestKey farklı kurumlarda İKİSİ DE gerçek hareket olarak işlenmeli.");
@@ -156,6 +167,35 @@ async function main() {
       console.log("✓ Senaryo 4: aynı requestKey farklı kurumlarda çakışmadı, ikisi de bağımsız işlendi.");
     } else {
       console.log("⚠ Senaryo 4 atlandı: ikinci bir aktif kurum bulunamadı.");
+    }
+
+    // ── Senaryo 4B: Aynı requestKey aynı kurumun farklı şubelerinde çakışmamalı ──
+    {
+      const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      const tempBranch = await prisma.clinicBranch.create({
+        data: {
+          institutionId: userA.institutionId,
+          name: `Idempotency Test Şube ${suffix}`,
+          slug: `idem-test-${suffix}`,
+        },
+      });
+      tempBranchId = tempBranch.id;
+
+      const itemA = await createTestItem(userA.institutionId, "S4BA");
+      const itemB = await createTestItem(userA.institutionId, "S4BB", tempBranch.id);
+      createdItemIds.push(itemA.id, itemB.id);
+      const sharedKey = `test-s4b-shared-${Date.now()}`;
+
+      const rA = await prisma.$transaction((tx) =>
+        applyStockMovement({ tx, stockItemId: itemA.id, institutionId: userA.institutionId, branchId: itemA.branchId, userId: userA.id, type: "GIRIS", quantity: 2, requestKey: sharedKey }),
+      );
+      const rB = await prisma.$transaction((tx) =>
+        applyStockMovement({ tx, stockItemId: itemB.id, institutionId: userA.institutionId, branchId: itemB.branchId, userId: userA.id, type: "GIRIS", quantity: 4, requestKey: sharedKey }),
+      );
+
+      assert(!(rA as any).duplicate && !(rB as any).duplicate, "Senaryo 4B: aynı anahtar farklı şubelerde bağımsız işlenmeli.");
+      assert(Number(rA.item.quantity) === 2 && Number(rB.item.quantity) === 4, "Senaryo 4B: şube stokları birbirine karışmamalı.");
+      console.log("✓ Senaryo 4B: aynı requestKey aynı kurumun farklı şubelerinde bağımsız işlendi.");
     }
 
     // ── Senaryo 5: İlk istek iş kuralı hatasıyla başarısız olur, aynı key ile retry başarılı olmalı ──
@@ -169,7 +209,7 @@ async function main() {
         // Stokta hiç ürün yokken CIKIS istemek iş kuralı hatası fırlatır —
         // transaction rollback olur, requestKey ile hiçbir satır YAZILMAMIŞ olmalı.
         await prisma.$transaction((tx) =>
-          applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, userId: userA.id, type: "CIKIS", quantity: 5, requestKey }),
+          applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, branchId: item.branchId, userId: userA.id, type: "CIKIS", quantity: 5, requestKey }),
         );
       } catch {
         firstFailed = true;
@@ -181,7 +221,7 @@ async function main() {
 
       // Aynı requestKey ile, bu sefer geçerli bir GİRİŞ retry edilir — başarılı olmalı.
       const retry = await prisma.$transaction((tx) =>
-        applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, userId: userA.id, type: "GIRIS", quantity: 4, requestKey }),
+        applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, branchId: item.branchId, userId: userA.id, type: "GIRIS", quantity: 4, requestKey }),
       );
       assert(!(retry as any).duplicate, "Senaryo 5: retry, önceki başarısız deneme yüzünden yanlışlıkla duplicate sayılmamalı.");
       const finalItem = await prisma.stockItem.findUniqueOrThrow({ where: { id: item.id } });
@@ -193,8 +233,8 @@ async function main() {
     {
       const item = await createTestItem(userA.institutionId, "S6");
       createdItemIds.push(item.id);
-      await prisma.$transaction((tx) => applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, userId: userA.id, type: "GIRIS", quantity: 20, requestKey: `test-s6-in-${Date.now()}` }));
-      await prisma.$transaction((tx) => applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, userId: userA.id, type: "CIKIS", quantity: 8, requestKey: `test-s6-out-${Date.now()}` }));
+      await prisma.$transaction((tx) => applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, branchId: item.branchId, userId: userA.id, type: "GIRIS", quantity: 20, requestKey: `test-s6-in-${Date.now()}` }));
+      await prisma.$transaction((tx) => applyStockMovement({ tx, stockItemId: item.id, institutionId: userA.institutionId, branchId: item.branchId, userId: userA.id, type: "CIKIS", quantity: 8, requestKey: `test-s6-out-${Date.now()}` }));
 
       const finalItem = await prisma.stockItem.findUniqueOrThrow({ where: { id: item.id } });
       const movements = await prisma.stockMovement.findMany({ where: { stockItemId: item.id } });
@@ -211,6 +251,7 @@ async function main() {
     await prisma.stockMovement.deleteMany({ where: { stockItemId: { in: createdItemIds } } });
     await prisma.stockLot.deleteMany({ where: { stockItemId: { in: createdItemIds } } });
     await prisma.stockItem.deleteMany({ where: { id: { in: createdItemIds } } });
+    if (tempBranchId) await prisma.clinicBranch.delete({ where: { id: tempBranchId } }).catch(() => {});
     if (tempUserId) await prisma.user.delete({ where: { id: tempUserId } }).catch(() => {});
     if (tempInstitutionId) await prisma.institution.delete({ where: { id: tempInstitutionId } }).catch(() => {});
   }

@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { invalidateInstitutionCache, requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { getPlanDefaultLimits, type SubscriptionPlanId } from "@/lib/subscription-plans";
+import { getMetaWhatsappReadiness } from "@/lib/meta-whatsapp";
 
 const VALID_SUBSCRIPTION_PLANS = new Set(["TEMEL", "PROFESYONEL", "KURUMSAL"]);
 const VALID_BILLING_CYCLES = new Set(["AYLIK", "YILLIK"]);
@@ -79,7 +81,7 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
   });
 
   const whatsappProvider = await prisma.whatsappProviderConfig.findFirst({
-    where: { institutionId: params.id },
+    where: { institutionId: params.id, code: "META_EMBEDDED" },
     orderBy: [{ isActive: "desc" }, { priority: "asc" }, { createdAt: "asc" }],
     select: {
       id: true,
@@ -87,6 +89,9 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
       name: true,
       providerType: true,
       isActive: true,
+      connectionStatus: true,
+      displayPhoneNumber: true,
+      verifiedName: true,
       updatedAt: true,
     },
   });
@@ -94,6 +99,7 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
   return NextResponse.json({
     ...institution,
     allAds,
+    whatsappPlatform: getMetaWhatsappReadiness(),
     whatsappProvider: whatsappProvider
       ? {
           exists: true,
@@ -102,6 +108,9 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
           name: whatsappProvider.name,
           providerType: whatsappProvider.providerType,
           isActive: whatsappProvider.isActive,
+          connectionStatus: whatsappProvider.connectionStatus,
+          displayPhoneNumber: whatsappProvider.displayPhoneNumber,
+          verifiedName: whatsappProvider.verifiedName,
           updatedAt: whatsappProvider.updatedAt,
         }
       : { exists: false },
@@ -178,7 +187,6 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
 
   const existing = await prisma.institution.findUnique({ where: { id: params.id } });
   if (!existing) return NextResponse.json({ message: "Bulunamadı" }, { status: 404 });
-
   // Plan değiştiyse ve limitler elle gönderilmediyse, yeni planın varsayılan
   // doktor/kullanıcı limitlerine düş — süperadmin özel bir sayı girdiyse
   // (body.maxActiveDoctors/maxActiveUsers gönderildiyse) o değer her zaman kazanır.
@@ -210,7 +218,7 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
       ...(body.email && { email: body.email }),
       ...(body.phone !== undefined && { phone: body.phone }),
       ...(body.address !== undefined && { address: body.address }),
-      ...(body.taxNo !== undefined && { taxNo: body.taxNo }),
+      ...(body.taxNo !== undefined && { taxNo: typeof body.taxNo === "string" ? body.taxNo.trim() || null : null }),
       ...(body.website !== undefined && { website: body.website }),
       ...(body.subscriptionPlan && { subscriptionPlan: body.subscriptionPlan }),
       ...(body.billingCycle && { billingCycle: body.billingCycle }),
@@ -239,10 +247,40 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
           data: { institutionName: body.name.trim() },
         });
       }
+      if (body.whatsappEnabled === false) {
+        await Promise.all([
+          tx.setting.updateMany({
+            where: { institutionId: params.id },
+            data: { defaultNotificationChannel: "SMS" },
+          }),
+          tx.whatsappProviderConfig.updateMany({
+            where: { institutionId: params.id },
+            data: {
+              isActive: false,
+              connectionStatus: "DISCONNECTED",
+              accessTokenEncrypted: null,
+              registrationPinEncrypted: null,
+              apiKey: null,
+              password: null,
+              appSecret: null,
+              verifyToken: null,
+              connectionError: null,
+              disconnectedAt: new Date(),
+            },
+          }),
+          tx.whatsappSignupSession.deleteMany({ where: { institutionId: params.id } }),
+        ]);
+      }
       return institution;
     });
   } catch (error) {
     console.error("[superadmin institutions PUT]", error);
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      const target = Array.isArray(error.meta?.target) ? error.meta.target.join(",") : String(error.meta?.target || "");
+      if (target.includes("taxNo")) return NextResponse.json({ message: "Bu vergi numarası başka bir klinikte kullanılıyor." }, { status: 409 });
+      if (target.includes("email")) return NextResponse.json({ message: "Bu e-posta adresi başka bir klinikte kullanılıyor." }, { status: 409 });
+      if (target.includes("name")) return NextResponse.json({ message: "Bu klinik adı başka bir kurumda kullanılıyor." }, { status: 409 });
+    }
     return NextResponse.json({ message: "Klinik güncellenemedi" }, { status: 400 });
   }
 

@@ -2,7 +2,8 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { validateWorkHoursRange } from "@/lib/working-hours-core";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { invalidateUserSessionCache, requireAuth, writeAudit } from "@/lib/api";
+import { setAuthCookie, signToken } from "@/lib/auth";
 
 function fmt(v: unknown): string {
   if (v === null || v === undefined || v === "") return "-";
@@ -60,6 +61,9 @@ export async function PUT(request: NextRequest) {
     currentProfile = null;
   }
   const passwordUpdated = Boolean(body.newPassword);
+  if (body.newPassword !== undefined && (typeof body.newPassword !== "string" || body.newPassword.length < 8 || body.newPassword.length > 72)) {
+    return NextResponse.json({ message: "Şifre 8-72 karakter olmalı" }, { status: 400 });
+  }
   const workStart = body.workStart ?? currentProfile?.workStart ?? "08:30";
   const workEnd = body.workEnd ?? currentProfile?.workEnd ?? "18:00";
   const workHoursError = validateWorkHoursRange(workStart, workEnd, "Çalışma saatleri");
@@ -70,10 +74,19 @@ export async function PUT(request: NextRequest) {
   if (body.newPassword) {
     const passwordHash = await bcrypt.hash(body.newPassword, 10);
     try {
-      await prisma.user.update({
+      const updatedUser = await prisma.user.update({
         where: { id: auth.user.id },
-        data: { passwordHash }
+        data: { passwordHash, mustChangePassword: false, tokenVersion: { increment: 1 } },
       });
+      invalidateUserSessionCache(auth.user.id);
+      const freshToken = signToken({
+        userId: updatedUser.id,
+        role: updatedUser.role,
+        institutionId: updatedUser.institutionId,
+        fullName: updatedUser.fullName,
+        tokenVersion: updatedUser.tokenVersion,
+      });
+      await setAuthCookie(freshToken);
     } catch (error) {
       console.error("[profile PUT password] fallback:", error);
       return NextResponse.json({ message: "Şifre güncellenemedi" }, { status: 503 });

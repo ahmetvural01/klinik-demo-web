@@ -1,0 +1,2 @@
+# Multi-tenancy
+Treat KlinikModern as a production multi-tenant clinic SaaS. Every institution-owned read/write/aggregate/background job must be tenant-scoped unless explicitly authorized global/superadmin behavior. UI hiding is not authorization.

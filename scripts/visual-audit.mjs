@@ -2,12 +2,17 @@ import { chromium } from "playwright-core";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-const baseUrl = process.env.VISUAL_BASE_URL || "http://localhost:3001";
+const baseUrl = process.env.VISUAL_BASE_URL || "http://localhost:3000";
 const chromePath =
   process.env.CHROME_PATH ||
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const outputDir = path.resolve("tmp", "visual-audit");
 const visualPassword = process.env.VISUAL_PASSWORD || process.env.DEMO_ADMIN_PASSWORD;
+
+const testIp = (lane, viewportIndex = 0) => {
+  const ip = `198.51.100.${lane + viewportIndex}`;
+  return { "x-forwarded-for": ip, "x-real-ip": ip };
+};
 
 if (!visualPassword) {
   throw new Error("VISUAL_PASSWORD veya DEMO_ADMIN_PASSWORD ayarlayın.");
@@ -65,7 +70,10 @@ const browser = await chromium.launch({
 const report = [];
 
 try {
-  const authContext = await browser.newContext({ locale: "tr-TR" });
+  const authContext = await browser.newContext({
+    locale: "tr-TR",
+    extraHTTPHeaders: testIp(1),
+  });
   const login = await authContext.request.post(`${baseUrl}/api/auth/login`, {
     data: {
       institution: process.env.VISUAL_INSTITUTION || process.env.DEMO_INSTITUTION_NAME || "demo-klinik",
@@ -88,11 +96,12 @@ try {
   }
   await authContext.close();
 
-  for (const viewport of viewports) {
+  for (const [viewportIndex, viewport] of viewports.entries()) {
     const publicContext = await browser.newContext({
       viewport: { width: viewport.width, height: viewport.height },
       deviceScaleFactor: 1,
       locale: "tr-TR",
+      extraHTTPHeaders: testIp(10, viewportIndex),
     });
     const publicPage = await publicContext.newPage();
     for (const route of selectRoutes(publicRoutes)) {
@@ -166,6 +175,7 @@ try {
       deviceScaleFactor: 1,
       locale: "tr-TR",
       storageState: authState,
+      extraHTTPHeaders: testIp(20, viewportIndex),
     });
 
     const patientResponse = await context.request.get(

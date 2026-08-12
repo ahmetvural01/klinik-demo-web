@@ -53,7 +53,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     });
     await writeAudit(auth.user.id, "EXPENSE_CATEGORY_UPDATE", params.id);
     return NextResponse.json(cat);
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
   }
 }

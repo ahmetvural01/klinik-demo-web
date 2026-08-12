@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 
 type PreviewSummary = {
   patientsTotal: number;
@@ -47,6 +48,8 @@ type PreviewResponse = {
   prescriptionWarnings: { rowNumber: number; message: string }[];
 };
 
+type BranchOption = { id: string; name: string; isHeadquarters: boolean; isActive: boolean };
+
 type CommitResponse = {
   patientsCreated: number;
   patientsSkippedExisting: number;
@@ -68,6 +71,11 @@ export default function InstitutionImportPage() {
   const institutionId = params.id;
 
   const [institutionName, setInstitutionName] = useState<string>("");
+  const [branches, setBranches] = useState<BranchOption[]>([]);
+  const [targetBranchId, setTargetBranchId] = useState<string>("");
+  const [metadataLoading, setMetadataLoading] = useState(true);
+  const [metadataError, setMetadataError] = useState<string | null>(null);
+  const [metadataReloadKey, setMetadataReloadKey] = useState(0);
   const [file, setFile] = useState<File | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<PreviewResponse | null>(null);
@@ -76,11 +84,28 @@ export default function InstitutionImportPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetch(`/api/superadmin/institutions/${institutionId}`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d?.name) setInstitutionName(d.name); })
-      .catch(() => {});
-  }, [institutionId]);
+    setMetadataLoading(true);
+    setMetadataError(null);
+    Promise.all([
+      fetch(`/api/superadmin/institutions/${institutionId}`, { cache: "no-store" }),
+      fetch(`/api/superadmin/institutions/${institutionId}/branches`, { cache: "no-store" }),
+    ])
+      .then(async ([institutionResponse, branchResponse]) => {
+        const institutionData = await institutionResponse.json().catch(() => ({}));
+        const branchData = await branchResponse.json().catch(() => ({}));
+        if (!institutionResponse.ok) throw new Error(institutionData?.message || "Klinik bilgisi yüklenemedi.");
+        if (!branchResponse.ok) throw new Error(branchData?.message || "Şube listesi yüklenemedi.");
+        if (!institutionData?.name) throw new Error("Klinik bilgisi beklenmeyen biçimde döndü.");
+        const active: BranchOption[] = (branchData?.branches || []).filter((branch: BranchOption) => branch.isActive);
+        if (active.length === 0) throw new Error("Veri aktarımı için aktif bir şube bulunamadı.");
+        setInstitutionName(institutionData.name);
+        setBranches(active);
+        const hq = active.find((branch) => branch.isHeadquarters) || active[0];
+        if (hq) setTargetBranchId(hq.id);
+      })
+      .catch((error) => setMetadataError(error instanceof Error ? error.message : "Aktarım bilgileri yüklenemedi."))
+      .finally(() => setMetadataLoading(false));
+  }, [institutionId, metadataReloadKey]);
 
   const downloadTemplate = () => {
     window.location.href = `/api/superadmin/institutions/${institutionId}/import/template`;
@@ -129,6 +154,7 @@ export default function InstitutionImportPage() {
     try {
       const body = new FormData();
       body.append("file", file);
+      if (targetBranchId) body.append("branchId", targetBranchId);
       const res = await fetch(`/api/superadmin/institutions/${institutionId}/import/commit`, { method: "POST", body });
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(data?.message || "Aktarım başarısız");
@@ -151,6 +177,19 @@ export default function InstitutionImportPage() {
   const hasAnythingToImport = preview
     ? preview.summary.patientsNew > 0 || preview.summary.paymentsValid > 0 || preview.summary.treatmentsValid > 0 || preview.summary.prescriptionsValid > 0
     : false;
+
+  if (metadataLoading) {
+    return <div className="flex min-h-64 items-center justify-center"><Spinner className="h-8 w-8 text-primary" /></div>;
+  }
+
+  if (metadataError) {
+    return (
+      <section className="mx-auto max-w-4xl space-y-5">
+        <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={() => router.push(`/superadmin/institutions/${institutionId}`)}>Geri</Button>
+        <LoadErrorState message={metadataError} onRetry={() => setMetadataReloadKey((value) => value + 1)} />
+      </section>
+    );
+  }
 
   return (
     <section className="mx-auto max-w-4xl space-y-5">
@@ -180,6 +219,25 @@ export default function InstitutionImportPage() {
           </Button>
         </div>
       </div>
+
+      {/* Hedef şube (birden fazla şubesi olan kurumlar için) */}
+      {branches.length > 1 && (
+        <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+          <h2 className="text-sm font-black text-slate-900">Hedef Şube</h2>
+          <p className="mt-1 text-xs text-slate-500">
+            Bu kurumun birden fazla şubesi var. Aktarılacak hasta/ödeme/tedavi/reçete kayıtları hangi şubeye ait olacak?
+          </p>
+          <select
+            className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
+            value={targetBranchId}
+            onChange={(e) => setTargetBranchId(e.target.value)}
+          >
+            {branches.map((b) => (
+              <option key={b.id} value={b.id}>{b.name}{b.isHeadquarters ? " (Merkez)" : ""}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Adım 2: Yükle */}
       <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">

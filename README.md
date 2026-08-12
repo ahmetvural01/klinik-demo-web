@@ -1,6 +1,6 @@
-# KlinikModern
+# KlinikCep
 
-KlinikSistem benzeri tum ana modulleri iceren modern full-stack klinik paneli.
+Klinik operasyonlarının ana modüllerini tek üründe birleştiren modern, çok kiracılı yönetim platformu.
 
 ## Icerik
 

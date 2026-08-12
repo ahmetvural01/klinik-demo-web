@@ -1,3 +1,4 @@
+/* eslint-disable no-console -- This CLI prints the requested diagnostic report. */
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
@@ -56,3 +57,4 @@ async function checkSuperadmin() {
 }
 
 checkSuperadmin();
+/* eslint-disable no-console -- This CLI prints the requested diagnostic report. */

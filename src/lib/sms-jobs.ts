@@ -3,8 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { dispatchPatientMessage, type NotificationEventType } from "@/lib/notification-dispatch";
 import { writeAudit } from "@/lib/api";
 import { metricIncrement, metricObserve } from "@/lib/metrics";
-import { resolveSmsTemplate } from "@/lib/sms-templates";
+import { renderCommunicationTemplate, resolveSmsTemplate } from "@/lib/sms-templates";
 import { maskPatientName, maskPatientPhone } from "@/lib/audit-mask";
+import { can } from "@/lib/rbac";
+import { isInstitutionOperational } from "@/lib/operational-state";
 
 const EVENT_TYPE_BY_SMS_TYPE: Record<SmsDispatchJob["smsType"], NotificationEventType> = {
   BILGI: "APPOINTMENT_INFO",
@@ -18,17 +20,15 @@ const MAX_JOB_ATTEMPTS = 3;
 
 export type SmsDispatchJob = {
   institutionId: string;
+  branchId: string;
   userId: string;
   appointmentIds: string[];
   smsType: "BILGI" | "HATIRLATMA" | "ANKET";
+  requestId?: string;
   queuedAt: string;
   attempt?: number;
   lastError?: string;
 };
-
-function renderTemplate(template: string, vars: Record<string, string>) {
-  return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
-}
 
 function getRedis() {
   if (!process.env.REDIS_URL) return null;
@@ -60,19 +60,66 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
   const started = Date.now();
   metricIncrement("sms_jobs_total");
 
-  const [settings, institution] = await Promise.all([
+  const [settings, institution, branch, actor] = await Promise.all([
     prisma.setting.findUnique({ where: { institutionId: job.institutionId } }),
-    prisma.institution.findUnique({ where: { id: job.institutionId } }),
+    prisma.institution.findUnique({
+      where: { id: job.institutionId },
+      select: {
+        id: true,
+        name: true,
+        phone: true,
+        isActive: true,
+        serviceMode: true,
+        suspendedUntil: true,
+        isDemo: true,
+        demoExpiresAt: true,
+      },
+    }),
+    prisma.clinicBranch.findFirst({
+      where: { id: job.branchId, institutionId: job.institutionId, isActive: true },
+      select: { id: true },
+    }),
+    prisma.user.findUnique({
+      where: { id: job.userId },
+      select: { id: true, institutionId: true, role: true, isActive: true },
+    }),
   ]);
 
-  if (!institution) {
-    return { sent: 0, failed: 0, failedRecipients: [], message: "Klinik bulunamadı." };
+  if (!institution || !isInstitutionOperational(institution) || !branch) {
+    return { sent: 0, failed: 0, failedRecipients: [], message: "Klinik veya şube gönderim sırasında aktif değil." };
+  }
+  if (!actor?.isActive || (actor.role !== "SUPERADMIN" && actor.institutionId !== job.institutionId)) {
+    return { sent: 0, failed: 0, failedRecipients: [], message: "İşi oluşturan kullanıcının erişimi artık geçerli değil." };
+  }
+  if (actor.role !== "SUPERADMIN") {
+    const membership = await prisma.userBranch.findFirst({
+      where: {
+        userId: actor.id,
+        institutionId: job.institutionId,
+        branchId: job.branchId,
+        isActive: true,
+      },
+      select: { permissionCodes: true },
+    });
+    const branchPermissions = Array.isArray(membership?.permissionCodes)
+      ? membership.permissionCodes.filter((value): value is string => typeof value === "string")
+      : null;
+    const branchAllows = Boolean(membership) && (
+      branchPermissions === null
+      || branchPermissions.includes("*")
+      || branchPermissions.includes("sms:write")
+    );
+    if (!branchAllows || !await can(actor.role, "sms:write")) {
+      return { sent: 0, failed: 0, failedRecipients: [], message: "İşi oluşturan kullanıcının SMS yetkisi kaldırılmış." };
+    }
   }
 
+  const requestedIds = [...new Set(job.appointmentIds)];
   const appointments = await prisma.appointment.findMany({
     where: {
-      id: { in: job.appointmentIds },
-      doctor: { institutionId: job.institutionId },
+      id: { in: requestedIds },
+      institutionId: job.institutionId,
+      branchId: job.branchId,
     },
     include: {
       patient: { select: { id: true, fullName: true, phone: true, phoneCountryCode: true } },
@@ -80,8 +127,19 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
     },
   });
 
-  if (!appointments.length) {
-    return { sent: 0, failed: 0, failedRecipients: [], message: "Randevu bulunamadı." };
+  if (appointments.length !== requestedIds.length) {
+    return { sent: 0, failed: 0, failedRecipients: [], message: "Randevu seçimi gönderim sırasında değişti; iş güvenli biçimde iptal edildi." };
+  }
+  const now = new Date();
+  const ineligible = appointments.filter((appointment) => {
+    if (job.smsType === "ANKET") return appointment.status !== "TAMAMLANDI";
+    if (job.smsType === "HATIRLATMA") {
+      return appointment.startAt <= now || ["IPTAL", "GELMEDI", "TAMAMLANDI"].includes(appointment.status);
+    }
+    return appointment.status === "IPTAL";
+  });
+  if (ineligible.length > 0) {
+    return { sent: 0, failed: 0, failedRecipients: [], message: "Randevulardan biri artık bu bildirim türü için uygun değil." };
   }
 
   // Bakiye rezervasyonu artık toplu değil, her alıcı için dispatchPatientMessage
@@ -91,7 +149,7 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
   const smsTemplate = await resolveSmsTemplate(job.institutionId, job.smsType);
 
   let sent = 0;
-  const failedRecipients: { appointmentId: string; phone: string; reason: string }[] = [];
+  const failedRecipients: { appointmentId: string; phone: string; reason: string; retryable: boolean }[] = [];
 
   const updateData: Record<string, boolean> = {};
   if (job.smsType === "BILGI") updateData.smsInfo = true;
@@ -111,16 +169,14 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
           ? `${institutionName}: Sayın ${appt.patient.fullName}, randevu hatırlatması. Tarih: ${dateText}, Doktor: ${appt.doctor.fullName}.`
           : `${institutionName}: Randevunuz tamamlandi. Degerlendirmeniz bizim icin cok degerli.`;
 
-      const message = smsTemplate
-        ? renderTemplate(smsTemplate.content, {
-            institutionName,
-            institutionPhone,
-            patientName: appt.patient.fullName,
-            doctorName: appt.doctor.fullName,
-            dateTime: dateText,
-            surveyLink: settings?.reviewLink || "",
-          })
-        : fallbackMessage;
+      const rendered = renderCommunicationTemplate(smsTemplate, {
+        institutionName,
+        institutionPhone,
+        patientName: appt.patient.fullName,
+        doctorName: appt.doctor.fullName,
+        dateTime: dateText,
+        surveyLink: settings?.reviewLink || "",
+      }, fallbackMessage);
 
       const result = await dispatchPatientMessage({
         institutionId: job.institutionId,
@@ -128,16 +184,11 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
         eventType: EVENT_TYPE_BY_SMS_TYPE[job.smsType],
         purpose: "SERVICE",
         templateCode: job.smsType,
-        message,
-        // job.queuedAt aynı kalır (retry'lar aynı iş nesnesini tekrar kuyruğa
-        // alır) — bu yüzden geçici bir hatanın tekrar denemesi güvenle
-        // tekilleştirilir, ama personelin AYRI bir "gönder" tıklaması (yeni
-        // queuedAt) yine gerçek bir yeni gönderim sayılır.
-        idempotencyKey: `sms-job:${job.smsType}:${appt.id}:${job.queuedAt}`,
+        message: rendered.smsMessage,
+        whatsappMessage: rendered.whatsappMessage,
+        idempotencyKey: `sms-job:${job.smsType}:${appt.id}:${job.requestId || job.queuedAt}`,
         actorId: job.userId,
-        whatsappTemplate: {
-          bodyParameters: [appt.patient.fullName, dateText, appt.doctor.fullName],
-        },
+        whatsappTemplate: rendered.whatsappTemplate,
       });
       return { appt, result };
     }));
@@ -152,6 +203,7 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
           appointmentId: appt.id,
           phone: appt.patient.phone,
           reason: result.reason || result.error || "Bilinmeyen hata",
+          retryable: result.retryable === true,
         });
         await writeAudit(job.userId, `SMS_${job.smsType}_FAILED`, `${maskPatientName(appt.patient.fullName)} (${maskPatientPhone(appt.patient.phone)}) - ${result.reason || result.error || "Bilinmeyen hata"}`);
       }
@@ -179,7 +231,7 @@ export async function runSmsWorker() {
 
     try {
       const job = JSON.parse(raw) as SmsDispatchJob;
-      if (!job?.institutionId || !job?.userId || !Array.isArray(job.appointmentIds)) {
+      if (!job?.institutionId || !job?.branchId || !job?.userId || !Array.isArray(job.appointmentIds)) {
         console.error("[sms-worker] Geçersiz iş atlandı:", raw);
         await redis.lpush(SMS_DEAD_LETTER_KEY, JSON.stringify({
           failedAt: new Date().toISOString(),
@@ -189,10 +241,11 @@ export async function runSmsWorker() {
         continue;
       }
       const result = await processSmsDispatchJob(job);
-      if (result.failed > 0 && result.failedRecipients.length > 0) {
+      const retryableRecipients = result.failedRecipients.filter((item) => item.retryable);
+      if (retryableRecipients.length > 0) {
         await retryOrDeadLetter(redis, job, {
-          appointmentIds: result.failedRecipients.map((item) => item.appointmentId),
-          reason: result.failedRecipients.map((item) => item.reason).join(" | "),
+          appointmentIds: retryableRecipients.map((item) => item.appointmentId),
+          reason: retryableRecipients.map((item) => item.reason).join(" | "),
         });
       }
     } catch (error) {

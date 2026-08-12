@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { jwtVerify } from "jose";
-import { extractModuleFromPath, hasModuleAccess } from "@/lib/superadmin-modules";
 import { metricIncrement } from "@/lib/metrics";
-import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
-import { parseRolePreview, ROLE_PREVIEW_COOKIE } from "@/lib/role-preview";
+import { checkLocalRateLimit, getClientIpFromHeaders } from "@/lib/edge-rate-limit";
 
 const TOKEN_NAME = "klinik_token";
 const GHOST_TOKEN_NAME = "klinik_ghost_token";
@@ -37,9 +35,7 @@ const PUBLIC_PREFIXES = [
 // verilse bile middleware /api/appointments'ı sabit olarak 403'lüyordu — bkz.
 // denetim raporu). Middleware'de yalnızca GERÇEKTEN değiştirilemez, rol
 // bazında değil sabit güvenlik kuralları kalır: oturum doğrulama, public/
-// private rota ayrımı ve süperadmin'in kendi modül erişim kısıtlaması
-// (superadmin-modules.ts — bu platform operatörünün KENDİ hesabına uygulanan
-// ayrı bir mekanizma, klinik rol yetkileriyle ilgisi yok). Sayfa/API bazlı
+// private rota ayrımı. Sayfa/API bazlı
 // asıl yetki reddi artık her zaman requireAuth() içinden, Türkçe ve anlaşılır
 // bir mesajla (`{"message": "Bu işlem için yetkiniz yok."}`, 403) döner.
 
@@ -73,7 +69,7 @@ export async function middleware(request: NextRequest) {
   const ip = getClientIpFromHeaders(request.headers);
 
   if (pathname.startsWith("/api/")) {
-    const limit = checkRateLimit(`mw:${ip}`, 400, 60_000);
+    const limit = checkLocalRateLimit(`mw:${ip}`, 400, 60_000);
     if (!limit.ok) {
       metricIncrement("rate_limit_hits_total");
       return NextResponse.json({ message: "Çok fazla istek gönderildi. Lütfen kısa bir süre sonra tekrar deneyin." }, { status: 429 });
@@ -116,44 +112,7 @@ export async function middleware(request: NextRequest) {
   try {
     const secret = process.env.JWT_SECRET;
     if (!secret) throw new Error("JWT_SECRET tanımlı değil");
-    const verified = await jwtVerify(token, new TextEncoder().encode(secret), { algorithms: ["HS256"] });
-    const payload = verified.payload as {
-      role?: string;
-      superadminModules?: string[];
-    };
-    const previewRole = payload.role === "SUPERADMIN"
-      ? parseRolePreview(request.cookies.get(ROLE_PREVIEW_COOKIE)?.value)
-      : null;
-    const effectiveRole = previewRole || payload.role;
-
-    if (
-      effectiveRole === "SUPERADMIN" &&
-      pathname !== "/superadmin/yetki-yok" &&
-      pathname !== "/api/auth/superadmin/permissions"
-    ) {
-      const requiredModule = extractModuleFromPath(pathname);
-      // Süperadmin yüzeyindeki (/superadmin veya /api/superadmin altındaki) bir
-      // sayfa/route superadmin-modules.ts'teki MODULE_ROUTE_RULES'a kaydedilmeyi
-      // unutursa, extractModuleFromPath null döner ve modül kısıtlaması hiç
-      // UYGULANMAZ (fail-open) — kısıtlı bir süperadmin hesabı o route'a modülü
-      // kapalı olsa bile erişebilirdi (bkz. denetim raporu). Bu yüzden süperadmin
-      // yüzeyinde eşleşmeyen bir route varsayılan olarak REDDEDİLİR; yeni bir
-      // route eklerken MODULE_ROUTE_RULES'a kaydedilmesi zorunlu hale gelir.
-      const isSuperadminSurface = pathname.startsWith("/superadmin/") || pathname.startsWith("/api/superadmin/");
-      if (isSuperadminSurface && !requiredModule) {
-        if (pathname.startsWith("/api/")) {
-          return NextResponse.json({ message: "Bu modüle erişim yetkiniz yok" }, { status: 403 });
-        }
-        return NextResponse.redirect(new URL("/superadmin/yetki-yok", request.url));
-      }
-      if (requiredModule && !hasModuleAccess(payload.superadminModules, requiredModule)) {
-        if (pathname.startsWith("/api/")) {
-          return NextResponse.json({ message: "Bu modüle erişim yetkiniz yok" }, { status: 403 });
-        }
-        return NextResponse.redirect(new URL("/superadmin/yetki-yok", request.url));
-      }
-    }
-
+    await jwtVerify(token, new TextEncoder().encode(secret), { algorithms: ["HS256"] });
     // Rol bazlı sayfa/API yetkilendirmesi artık BURADA yapılmaz — her API
     // route'u kendi requireAuth(permission) çağrısıyla DB tabanlı yetki
     // matrisine göre karar verir (bkz. yukarıdaki not). Sayfa linki zaten

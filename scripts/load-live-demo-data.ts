@@ -2,6 +2,8 @@ import { AppointmentStatus, Prisma, PrismaClient, Role } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
+let demoInstitutionId = "";
+let demoBranchId = "";
 const PASSWORD = process.env.LIVE_DEMO_PASSWORD || "";
 if (!PASSWORD) {
   throw new Error("LIVE_DEMO_PASSWORD ortam değişkeni zorunludur.");
@@ -142,6 +144,24 @@ async function upsertStaff(institutionId: string) {
       },
     });
     users[u.identityNo] = user;
+    await prisma.userBranch.upsert({
+      where: { userId_branchId: { userId: user.id, branchId: demoBranchId } },
+      update: {
+        isActive: true,
+        genelYuzde: u.genelYuzde === undefined ? undefined : dec(u.genelYuzde),
+        kkYuzde: u.kkYuzde === undefined ? undefined : dec(u.kkYuzde),
+        maasYuzde: u.maasYuzde === undefined ? undefined : dec(u.maasYuzde),
+      },
+      create: {
+        userId: user.id,
+        institutionId,
+        branchId: demoBranchId,
+        isActive: true,
+        genelYuzde: u.genelYuzde === undefined ? undefined : dec(u.genelYuzde),
+        kkYuzde: u.kkYuzde === undefined ? undefined : dec(u.kkYuzde),
+        maasYuzde: u.maasYuzde === undefined ? undefined : dec(u.maasYuzde),
+      },
+    });
     await prisma.profile.upsert({
       where: { userId: user.id },
       update: { workStart: "09:00", workEnd: "18:00", hideAsDoctor: false },
@@ -154,6 +174,11 @@ async function upsertStaff(institutionId: string) {
     data: { passwordHash, isActive: true },
   });
   users.manager = manager;
+  await prisma.userBranch.upsert({
+    where: { userId_branchId: { userId: manager.id, branchId: demoBranchId } },
+    update: { isActive: true, isPrimary: true, isBranchManager: true },
+    create: { userId: manager.id, institutionId, branchId: demoBranchId, isActive: true, isPrimary: true, isBranchManager: true },
+  });
   return users;
 }
 
@@ -234,7 +259,7 @@ async function upsertPatients(institutionId: string) {
       ? await prisma.patient.update({ where: { id: existingByTc.id }, data: patientData })
       : existingByName
         ? await prisma.patient.update({ where: { id: existingByName.id }, data: { ...patientData, tcNo } })
-        : await prisma.patient.create({ data: { institutionId, tcNo, ...patientData } });
+        : await prisma.patient.create({ data: { institutionId, homeBranchId: demoBranchId, tcNo, ...patientData } });
     map[fullName] = patient;
   }
   return map;
@@ -300,9 +325,9 @@ async function upsertPos(institutionId: string) {
   const result: Record<string, string> = {};
   for (const name of names) {
     const pos = await prisma.posDevice.upsert({
-      where: { institutionId_name: { institutionId, name } },
+      where: { branchId_name: { branchId: demoBranchId, name } },
       update: { isActive: true },
-      create: { institutionId, name, isActive: true },
+      create: { institutionId, branchId: demoBranchId, name, isActive: true },
     });
     result[name] = pos.id;
   }
@@ -321,9 +346,9 @@ async function upsertFirms(institutionId: string) {
   const firms: Record<string, Awaited<ReturnType<typeof prisma.firma.upsert>>> = {};
   for (const f of rows) {
     const firma = await prisma.firma.upsert({
-      where: { institutionId_name: { institutionId, name: f.name } },
+      where: { branchId_name: { branchId: demoBranchId, name: f.name } },
       update: { kategori: f.kategori, phone: f.phone, notes: f.notes, isActive: true, paymentTerms: "COD", vendorScore: 0 },
-      create: { institutionId, name: f.name, kategori: f.kategori, phone: f.phone, notes: f.notes, isActive: true, paymentTerms: "COD", vendorScore: 0 },
+      create: { institutionId, branchId: demoBranchId, name: f.name, kategori: f.kategori, phone: f.phone, notes: f.notes, isActive: true, paymentTerms: "COD", vendorScore: 0 },
     });
     firms[f.name] = firma;
 
@@ -332,6 +357,8 @@ async function upsertFirms(institutionId: string) {
       update: {},
       create: {
         id: `contact-${firma.id}`,
+        institutionId,
+        branchId: demoBranchId,
         firmaId: firma.id,
         ad: f.kategori === "LAB" ? "Operasyon Yetkilisi" : "Satış Yetkilisi",
         unvan: f.kategori === "LAB" ? "Laboratuvar Koordinatörü" : "Cari Hesap Sorumlusu",
@@ -345,6 +372,19 @@ async function upsertFirms(institutionId: string) {
 }
 
 async function createAppointment(patientId: string, doctorId: string, startAt: Date, status: AppointmentStatus, type = "STANDART", note?: string) {
+  const patient = await prisma.patient.findUnique({
+    where: { id: patientId },
+    select: { institutionId: true, homeBranchId: true },
+  });
+  if (!patient) throw new Error(`Randevu hastasi bulunamadi: ${patientId}`);
+
+  const branchId = patient.homeBranchId || (await prisma.clinicBranch.findFirst({
+    where: { institutionId: patient.institutionId, isActive: true },
+    orderBy: [{ isHeadquarters: "desc" }, { sortOrder: "asc" }, { createdAt: "asc" }],
+    select: { id: true },
+  }))?.id;
+  if (!branchId) throw new Error(`Kurum icin aktif sube bulunamadi: ${patient.institutionId}`);
+
   const existing = await prisma.appointment.findFirst({ where: { patientId, doctorId, startAt } });
   if (existing) {
     return prisma.appointment.update({
@@ -353,7 +393,17 @@ async function createAppointment(patientId: string, doctorId: string, startAt: D
     });
   }
   return prisma.appointment.create({
-    data: { patientId, doctorId, startAt, endAt: addMinutes(startAt, 30), status, type: type as any, note },
+    data: {
+      institutionId: patient.institutionId,
+      branchId,
+      patientId,
+      doctorId,
+      startAt,
+      endAt: addMinutes(startAt, 30),
+      status,
+      type: type as any,
+      note,
+    },
   });
 }
 
@@ -363,7 +413,7 @@ async function createExamination(patientId: string, doctorId: string, treatmentN
     return prisma.examination.update({ where: { id: existing.id }, data: { amount: dec(amount), status, diagnosedAt: at(dayOffset, 11) } });
   }
   return prisma.examination.create({
-    data: { patientId, doctorId, treatmentName, toothNo: toothNo || undefined, amount: dec(amount), status, diagnosedAt: at(dayOffset, 11) },
+    data: { institutionId: demoInstitutionId, branchId: demoBranchId, patientId, doctorId, treatmentName, toothNo: toothNo || undefined, amount: dec(amount), status, diagnosedAt: at(dayOffset, 11) },
   });
 }
 
@@ -376,7 +426,7 @@ async function createPayment(institutionId: string, patientId: string, doctorId:
     });
   }
   return prisma.payment.create({
-    data: { institutionId, patientId, doctorId, amount: dec(amount), method, posId: posId || undefined, description, createdAt: at(-daysAgo, 12) },
+    data: { institutionId, branchId: demoBranchId, patientId, doctorId, amount: dec(amount), method, posId: posId || undefined, description, createdAt: at(-daysAgo, 12) },
   });
 }
 
@@ -421,6 +471,8 @@ async function upsertClinicalFlow(
     update: { status: "DEVAM_EDIYOR", totalCost: dec(28900), notes: "İmplant sonrası zirkonyum üst yapı planı" },
     create: {
       id: `plan-${patients["Akif Balcı"].id}`,
+      institutionId,
+      branchId: demoBranchId,
       patientId: patients["Akif Balcı"].id,
       doctorId: drElif.id,
       title: "İmplant ve zirkonyum üst yapı planı",
@@ -432,9 +484,9 @@ async function upsertClinicalFlow(
   await prisma.treatmentStep.deleteMany({ where: { planId: plan.id } });
   await prisma.treatmentStep.createMany({
     data: [
-      { planId: plan.id, order: 1, treatmentName: "İmplant cerrahisi", toothNo: "36", amount: dec(22400), status: "TAMAMLANDI", doneAt: at(-7, 13) },
-      { planId: plan.id, order: 2, treatmentName: "Ölçü ve prova", toothNo: "36", amount: dec(0), status: "BEKLIYOR" },
-      { planId: plan.id, order: 3, treatmentName: "Zirkonyum kaplama", toothNo: "36", amount: dec(6500), status: "BEKLIYOR" },
+      { institutionId, branchId: demoBranchId, planId: plan.id, order: 1, treatmentName: "İmplant cerrahisi", toothNo: "36", amount: dec(22400), status: "TAMAMLANDI", doneAt: at(-7, 13) },
+      { institutionId, branchId: demoBranchId, planId: plan.id, order: 2, treatmentName: "Ölçü ve prova", toothNo: "36", amount: dec(0), status: "BEKLIYOR" },
+      { institutionId, branchId: demoBranchId, planId: plan.id, order: 3, treatmentName: "Zirkonyum kaplama", toothNo: "36", amount: dec(6500), status: "BEKLIYOR" },
     ],
   });
 
@@ -443,6 +495,8 @@ async function upsertClinicalFlow(
     update: { toplamBorc: dec(26000), pesnat: dec(5000), taksitSayisi: 4, status: "AKTIF" },
     create: {
       id: `taksit-${patients["Zeynep Arslan"].id}`,
+      institutionId,
+      branchId: demoBranchId,
       patientId: patients["Zeynep Arslan"].id,
       doctorId: drElif.id,
       baslik: "Zirkonyum tedavisi ödeme planı",
@@ -460,6 +514,8 @@ async function upsertClinicalFlow(
     const paid = i === 1;
     await prisma.taksit.create({
       data: {
+        institutionId,
+        branchId: demoBranchId,
         planId: taksitPlan.id,
         siraNo: i,
         vadeDate: at(i * 30, 9),
@@ -485,6 +541,8 @@ async function upsertClinicalFlow(
     },
     create: {
       id: `follow-${patients["Ayşe Yılmaz"].id}`,
+      institutionId,
+      branchId: demoBranchId,
       patientId: patients["Ayşe Yılmaz"].id,
       doctorId: drMert.id,
       createdById: manager.id,
@@ -497,6 +555,8 @@ async function upsertClinicalFlow(
   });
   await prisma.patientFollowUpEvent.create({
     data: {
+      institutionId,
+      branchId: demoBranchId,
       followUpId: follow.id,
       patientId: patients["Ayşe Yılmaz"].id,
       createdById: manager.id,
@@ -515,6 +575,7 @@ async function upsertClinicalFlow(
     create: {
       id: "task-live-lab-prova-1",
       institutionId,
+      branchId: demoBranchId,
       patientId: patients["Zeynep Arslan"].id,
       title: "Zeynep Arslan için prova randevusu planla",
       details: "Laboratuvardan gelen zirkonyum prova için hasta aranacak.",
@@ -536,6 +597,8 @@ async function upsertClinicalFlow(
     update: { drugs: "Amoksisilin 1000 mg 2x1, İbuprofen 400 mg gerektiğinde", note: "Kanal tedavisi öncesi ağrı kontrolü" },
     create: {
       id: `rx-${patients["Mehmet Kaya"].id}`,
+      institutionId,
+      branchId: demoBranchId,
       patientId: patients["Mehmet Kaya"].id,
       doctorId: drMert.id,
       drugs: "Amoksisilin 1000 mg 2x1, İbuprofen 400 mg gerektiğinde",
@@ -563,12 +626,16 @@ async function upsertClinicalFlow(
   });
 }
 
-async function createFirmaIslem(firmaId: string, key: string, data: Omit<Prisma.FirmaIslemUncheckedCreateInput, "id" | "firmaId">) {
+async function createFirmaIslem(
+  firmaId: string,
+  key: string,
+  data: Omit<Prisma.FirmaIslemUncheckedCreateInput, "id" | "firmaId" | "institutionId" | "branchId">,
+) {
   const id = `fi-${key}`;
   return prisma.firmaIslem.upsert({
     where: { id },
     update: { ...data, firmaId },
-    create: { id, firmaId, ...data },
+    create: { id, firmaId, institutionId: demoInstitutionId, branchId: demoBranchId, ...data },
   });
 }
 
@@ -588,7 +655,7 @@ async function upsertStockAndPurchases(
   const stocks: Record<string, Awaited<ReturnType<typeof prisma.stockItem.upsert>>> = {};
   for (const s of stockRows) {
     const item = await prisma.stockItem.upsert({
-      where: { institutionId_name: { institutionId, name: s.name } },
+      where: { branchId_name: { branchId: demoBranchId, name: s.name } },
       update: {
         category: s.category,
         unit: s.unit,
@@ -600,7 +667,7 @@ async function upsertStockAndPurchases(
         storageLocation: s.storageLocation,
         isActive: true,
       },
-      create: { institutionId, ...s, unitPrice: dec(s.unitPrice), isActive: true },
+      create: { institutionId, branchId: demoBranchId, ...s, unitPrice: dec(s.unitPrice), isActive: true },
     });
     stocks[s.name] = item;
   }
@@ -618,7 +685,7 @@ async function upsertStockAndPurchases(
   const p1 = await prisma.purchase.upsert({
     where: { firmaIslemId: purchase1.id },
     update: { tarih: at(-5, 10), faturaNo: "MSD-2026-001", aciklama: "Nitril eldiven ve ölçü silikonu alımı", kdvOrani: 20, status: "AKTIF" },
-    create: { institutionId, firmaId: firms["Medikal Sarf Deposu"].id, firmaIslemId: purchase1.id, tarih: at(-5, 10), faturaNo: "MSD-2026-001", aciklama: "Nitril eldiven ve ölçü silikonu alımı", kdvOrani: 20, createdById: managerId },
+    create: { institutionId, branchId: demoBranchId, firmaId: firms["Medikal Sarf Deposu"].id, firmaIslemId: purchase1.id, tarih: at(-5, 10), faturaNo: "MSD-2026-001", aciklama: "Nitril eldiven ve ölçü silikonu alımı", kdvOrani: 20, createdById: managerId },
   });
   await prisma.purchaseItem.deleteMany({ where: { purchaseId: p1.id } });
   for (const row of [
@@ -626,10 +693,10 @@ async function upsertStockAndPurchases(
     { stock: stocks["Ölçü Silikonu Putty"], productName: "Ölçü Silikonu Putty", quantity: 6, unit: "takım", unitPrice: 650 },
   ]) {
     const movement = await prisma.stockMovement.create({
-      data: { stockItemId: row.stock.id, institutionId, type: "GIRIS", quantity: row.quantity, unitPrice: dec(row.unitPrice), supplier: "Medikal Sarf Deposu", note: `Satın alma faturası ${purchase1.faturaNo}`, userId: managerId },
+      data: { stockItemId: row.stock.id, institutionId, branchId: demoBranchId, type: "GIRIS", quantity: row.quantity, unitPrice: dec(row.unitPrice), supplier: "Medikal Sarf Deposu", note: `Satın alma faturası ${purchase1.faturaNo}`, userId: managerId },
     });
     await prisma.purchaseItem.create({
-      data: { purchaseId: p1.id, stockItemId: row.stock.id, productName: row.productName, quantity: row.quantity, unit: row.unit, unitPrice: dec(row.unitPrice), lineTotal: dec(row.quantity * row.unitPrice), stockMovementId: movement.id },
+      data: { institutionId, branchId: demoBranchId, purchaseId: p1.id, stockItemId: row.stock.id, productName: row.productName, quantity: row.quantity, unit: row.unit, unitPrice: dec(row.unitPrice), lineTotal: dec(row.quantity * row.unitPrice), stockMovementId: movement.id },
     });
   }
 
@@ -651,6 +718,7 @@ async function upsertStockAndPurchases(
     create: {
       id: "expense-medikal-sarf-odeme-1",
       institutionId,
+      branchId: demoBranchId,
       tarih: at(-4, 12),
       categoryId: expenseCategories["Sarf ve Malzeme"],
       category: "Sarf ve Malzeme",
@@ -676,7 +744,7 @@ async function upsertStockAndPurchases(
   const p2 = await prisma.purchase.upsert({
     where: { firmaIslemId: purchase2.id },
     update: { tarih: at(-2, 11), faturaNo: "ADT-2026-014", aciklama: "Artikain anestezi ve kompozit refil alımı", kdvOrani: 20, status: "AKTIF" },
-    create: { institutionId, firmaId: firms["Aydın Dental Tedarik"].id, firmaIslemId: purchase2.id, tarih: at(-2, 11), faturaNo: "ADT-2026-014", aciklama: "Artikain anestezi ve kompozit refil alımı", kdvOrani: 20, createdById: managerId },
+    create: { institutionId, branchId: demoBranchId, firmaId: firms["Aydın Dental Tedarik"].id, firmaIslemId: purchase2.id, tarih: at(-2, 11), faturaNo: "ADT-2026-014", aciklama: "Artikain anestezi ve kompozit refil alımı", kdvOrani: 20, createdById: managerId },
   });
   await prisma.purchaseItem.deleteMany({ where: { purchaseId: p2.id } });
   for (const row of [
@@ -685,18 +753,18 @@ async function upsertStockAndPurchases(
     { stock: stocks["İmplant Cerrahi Set"], productName: "İmplant Cerrahi Set", quantity: 4, unit: "set", unitPrice: 1440 },
   ]) {
     const movement = await prisma.stockMovement.create({
-      data: { stockItemId: row.stock.id, institutionId, type: "GIRIS", quantity: row.quantity, unitPrice: dec(row.unitPrice), supplier: "Aydın Dental Tedarik", note: `Satın alma faturası ${purchase2.faturaNo}`, userId: managerId },
+      data: { stockItemId: row.stock.id, institutionId, branchId: demoBranchId, type: "GIRIS", quantity: row.quantity, unitPrice: dec(row.unitPrice), supplier: "Aydın Dental Tedarik", note: `Satın alma faturası ${purchase2.faturaNo}`, userId: managerId },
     });
     await prisma.purchaseItem.create({
-      data: { purchaseId: p2.id, stockItemId: row.stock.id, productName: row.productName, quantity: row.quantity, unit: row.unit, unitPrice: dec(row.unitPrice), lineTotal: dec(row.quantity * row.unitPrice), stockMovementId: movement.id },
+      data: { institutionId, branchId: demoBranchId, purchaseId: p2.id, stockItemId: row.stock.id, productName: row.productName, quantity: row.quantity, unit: row.unit, unitPrice: dec(row.unitPrice), lineTotal: dec(row.quantity * row.unitPrice), stockMovementId: movement.id },
     });
   }
 
   await prisma.stockMovement.create({
-    data: { stockItemId: stocks["Nitril Eldiven Mavi M"].id, institutionId, type: "CIKIS", quantity: 3, note: "Cerrahi işlem tüketimi", userId: managerId },
+    data: { stockItemId: stocks["Nitril Eldiven Mavi M"].id, institutionId, branchId: demoBranchId, type: "CIKIS", quantity: 3, note: "Cerrahi işlem tüketimi", userId: managerId },
   });
   await prisma.stockMovement.create({
-    data: { stockItemId: stocks["Artikain Anestezi Ampul"].id, institutionId, type: "CIKIS", quantity: 5, note: "Kanal ve implant randevuları", userId: managerId },
+    data: { stockItemId: stocks["Artikain Anestezi Ampul"].id, institutionId, branchId: demoBranchId, type: "CIKIS", quantity: 5, note: "Kanal ve implant randevuları", userId: managerId },
   });
 }
 
@@ -724,6 +792,8 @@ async function upsertLabFlows(
       update: { labName: firma.name, firmaId: firma.id, labType: o.labType, teeth: o.teeth || null, price: dec(o.price), invoiceNo: o.invoiceNo, status: "DEVAM_EDIYOR", notes: `${o.labType} iş akışı` },
       create: {
         id: o.id,
+        institutionId,
+        branchId: demoBranchId,
         patientId: patients[o.patient].id,
         doctorId: o.doctor.id,
         labName: firma.name,
@@ -741,6 +811,8 @@ async function upsertLabFlows(
     for (const [description, sentOffset, receivedOffset] of o.trips) {
       await prisma.labTrip.create({
         data: {
+          institutionId,
+          branchId: demoBranchId,
           labOrderId: order.id,
           order: idx,
           description,
@@ -757,7 +829,7 @@ async function upsertLabFlows(
     await prisma.labOrderInvoice.upsert({
       where: { labOrderId_invoiceNo: { labOrderId: order.id, invoiceNo: o.invoiceNo } },
       update: { item: `${o.labType} laboratuvar hizmet bedeli`, amount: dec(o.price), issuedAt: at(0, 12), note: "Laboratuvar faturası" },
-      create: { labOrderId: order.id, item: `${o.labType} laboratuvar hizmet bedeli`, amount: dec(o.price), invoiceNo: o.invoiceNo, issuedAt: at(0, 12), note: "Laboratuvar faturası" },
+      create: { institutionId, branchId: demoBranchId, labOrderId: order.id, item: `${o.labType} laboratuvar hizmet bedeli`, amount: dec(o.price), invoiceNo: o.invoiceNo, issuedAt: at(0, 12), note: "Laboratuvar faturası" },
     });
 
     await createFirmaIslem(firma.id, `lab-${o.id}-hizmet`, {
@@ -777,6 +849,8 @@ async function upsertLabFlows(
         update: { status: "ACIK", labOrderId: order.id, note: "Dentin prova geldi. Hasta prova randevusu için aranacak.", nextActionAt: at(0, 14) },
         create: {
           id: `follow-${order.id}`,
+          institutionId,
+          branchId: demoBranchId,
           patientId: patients[o.patient].id,
           doctorId: o.doctor.id,
           createdById: manager.id,
@@ -790,6 +864,8 @@ async function upsertLabFlows(
       });
       await prisma.patientFollowUpEvent.create({
         data: {
+          institutionId,
+          branchId: demoBranchId,
           followUpId: follow.id,
           patientId: patients[o.patient].id,
           createdById: manager.id,
@@ -821,6 +897,7 @@ async function upsertLabFlows(
     create: {
       id: "expense-marmara-lab-odeme-1",
       institutionId,
+      branchId: demoBranchId,
       tarih: at(0, 15),
       categoryId: expenseCategories["Laboratuvar Ödemesi"],
       category: "Laboratuvar Ödemesi",
@@ -842,6 +919,7 @@ async function upsertAccountingExtras(institutionId: string, users: Record<strin
     create: {
       id: "expense-kira-temmuz-2026",
       institutionId,
+      branchId: demoBranchId,
       tarih: at(-6, 10),
       categoryId: expenseCategories["Kira"],
       category: "Kira",
@@ -858,6 +936,7 @@ async function upsertAccountingExtras(institutionId: string, users: Record<strin
     create: {
       id: "expense-hakedis-elif-2026-07",
       institutionId,
+      branchId: demoBranchId,
       tarih: at(0, 17),
       categoryId: expenseCategories["Doktor Hakedişi"],
       category: "Doktor Hakedişi",
@@ -882,6 +961,7 @@ async function upsertOtherModules(institutionId: string, users: Record<string, A
     create: {
       id: "waitlist-nazli-gunes-kontrol",
       institutionId,
+      branchId: demoBranchId,
       patientId: patients["Nazlı Güneş"].id,
       doctorId: drElif.id,
       createdById: manager.id,
@@ -898,6 +978,7 @@ async function upsertOtherModules(institutionId: string, users: Record<string, A
     create: {
       id: "booking-onur-kaplan-web",
       institutionId,
+      branchId: demoBranchId,
       doctorId: drElif.id,
       fullName: "Onur Kaplan",
       phone: "05551000117",
@@ -914,6 +995,8 @@ async function upsertOtherModules(institutionId: string, users: Record<string, A
     update: { reminderDate: at(25, 10), status: "AKTIF", note: "Zeynep Arslan taksit ödeme hatırlatması" },
     create: {
       id: "reminder-zeynep-taksit",
+      institutionId,
+      branchId: demoBranchId,
       patientId: patients["Zeynep Arslan"].id,
       reminderDate: at(25, 10),
       status: "AKTIF",
@@ -922,7 +1005,12 @@ async function upsertOtherModules(institutionId: string, users: Record<string, A
   });
 
   await prisma.message.create({
-    data: { userId: users["10000000013"].id, text: "Bugün laboratuvardan gelen prova işleri için hasta takip listesini kontrol edin." },
+    data: {
+      userId: users["10000000013"].id,
+      institutionId,
+      branchId: demoBranchId,
+      text: "Bugün laboratuvardan gelen prova işleri için hasta takip listesini kontrol edin.",
+    },
   });
   await prisma.announcement.create({
     data: {
@@ -940,6 +1028,13 @@ async function main() {
     where: { name: { contains: DEMO_INSTITUTION_NAME, mode: "insensitive" } },
   });
   if (!institution) throw new Error("Demo kurumu bulunamadı.");
+  demoInstitutionId = institution.id;
+  const branch = await prisma.clinicBranch.upsert({
+    where: { institutionId_slug: { institutionId: institution.id, slug: "merkez" } },
+    update: { isActive: true, isHeadquarters: true },
+    create: { institutionId: institution.id, name: "Merkez Şube", slug: "merkez", isHeadquarters: true },
+  });
+  demoBranchId = branch.id;
 
   await cleanupOldVisibleDemoPrefixes(institution.id);
   await upsertSettings(institution.id, institution.name);

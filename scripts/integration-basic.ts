@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 export {};
 
-const BASE_URL = process.env.INTEGRATION_BASE_URL || "http://localhost:3001";
+const BASE_URL = process.env.INTEGRATION_BASE_URL || "http://localhost:3000";
 
 async function main() {
   const health = await fetch(`${BASE_URL}/api/system/health`);

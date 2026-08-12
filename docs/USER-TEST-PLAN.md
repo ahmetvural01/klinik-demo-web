@@ -1,4 +1,4 @@
-KlinikModern - 7 Günlük Kullanıcı Testi Planı
+KlinikCep - 7 Günlük Kullanıcı Testi Planı
 
 Hedef: İlk kullanım sürtüşmesini ölçmek ve 10 hızlı iyileştirme önerisini doğrulamak.
 

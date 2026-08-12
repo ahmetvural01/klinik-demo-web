@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 
 // Bu endpoint manuel veya bir cron job ile çağrılabilir.
 // Örnek: vercel.json crons, ya da bir zamanlanmış görev ile her gün çağrılır.
-export async function POST(request: NextRequest) {
+export async function POST(_request: NextRequest) {
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });

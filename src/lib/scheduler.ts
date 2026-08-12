@@ -1,8 +1,10 @@
+/* eslint-disable no-console -- Scheduler lifecycle logs are intentional server diagnostics. */
 import { runDueInvoiceReminderSweep } from "@/lib/billing-reminders";
 import { runPatientPaymentReminderSweep } from "@/lib/patient-payment-reminders";
 import { runBirthdaySmsSweep } from "@/lib/birthday-reminders";
 import { runCelebrationDaySmsSweep } from "@/lib/celebration-sms";
 import { runAppointmentReminderSweep } from "@/lib/appointment-reminders";
+import { withDistributedLease } from "@/lib/security-store";
 
 // Render'da tek, sürekli çalışan bir Node süreci olarak barındırıyoruz
 // (next start, custom sunucu değil) — bu yüzden ayrı bir cron servisi
@@ -18,7 +20,9 @@ type GlobalWithFlag = typeof globalThis & { [FLAG]?: boolean };
 
 async function runBillingSweepSafely() {
   try {
-    const result = await runDueInvoiceReminderSweep();
+    const lease = await withDistributedLease("scheduler:billing", 55 * 60_000, runDueInvoiceReminderSweep);
+    if (!lease.acquired || !lease.value) return;
+    const result = lease.value;
     if (result.checked > 0) {
       console.log(
         `[scheduler] Fatura hatırlatma taraması: ${result.checked} fatura kontrol edildi, ${result.sent} e-posta gönderildi, ${result.failed} başarısız, ${result.skippedRecent} yakın zamanda hatırlatıldığı için atlandı.`
@@ -31,7 +35,9 @@ async function runBillingSweepSafely() {
 
 async function runPatientReminderSweepSafely() {
   try {
-    const result = await runPatientPaymentReminderSweep();
+    const lease = await withDistributedLease("scheduler:patient-payment", 55 * 60_000, runPatientPaymentReminderSweep);
+    if (!lease.acquired || !lease.value) return;
+    const result = lease.value;
     if (result.checked > 0) {
       console.log(
         `[scheduler] Hasta taksit hatırlatma taraması: ${result.institutionsChecked} kurum, ${result.checked} taksit kontrol edildi, ${result.sent} SMS gönderildi, ${result.failed} başarısız, ${result.skippedRecent} yakın zamanda hatırlatıldı, ${result.skippedNoBalance} SMS bakiyesi yetersiz.`
@@ -44,7 +50,9 @@ async function runPatientReminderSweepSafely() {
 
 async function runBirthdaySweepSafely() {
   try {
-    const result = await runBirthdaySmsSweep();
+    const lease = await withDistributedLease("scheduler:birthday", 55 * 60_000, runBirthdaySmsSweep);
+    if (!lease.acquired || !lease.value) return;
+    const result = lease.value;
     if (result.checked > 0) {
       console.log(
         `[scheduler] Doğum günü SMS taraması: ${result.institutionsChecked} kurum, ${result.checked} hasta kontrol edildi, ${result.sent} SMS gönderildi, ${result.failed} başarısız, ${result.skippedAlreadySent} bu yıl zaten gönderilmiş, ${result.skippedNoBalance} SMS bakiyesi yetersiz.`
@@ -57,7 +65,9 @@ async function runBirthdaySweepSafely() {
 
 async function runCelebrationDaySweepSafely() {
   try {
-    const result = await runCelebrationDaySmsSweep();
+    const lease = await withDistributedLease("scheduler:celebration", 55 * 60_000, runCelebrationDaySmsSweep);
+    if (!lease.acquired || !lease.value) return;
+    const result = lease.value;
     if (result.checked > 0) {
       console.log(
         `[scheduler] Kutlama günü SMS taraması: ${result.daysChecked} gün, ${result.institutionsChecked} kurum, ${result.checked} hasta kontrol edildi, ${result.sent} SMS gönderildi, ${result.failed} başarısız, ${result.skippedAlreadySent} bu yıl zaten gönderilmiş, ${result.skippedNoBalance} SMS bakiyesi yetersiz.`
@@ -70,7 +80,9 @@ async function runCelebrationDaySweepSafely() {
 
 async function runAppointmentSweepSafely() {
   try {
-    const result = await runAppointmentReminderSweep();
+    const lease = await withDistributedLease("scheduler:appointment", 55_000, runAppointmentReminderSweep);
+    if (!lease.acquired || !lease.value) return;
+    const result = lease.value;
     if (result.processed > 0) {
       console.log(
         `[scheduler] Randevu hatırlatmaları: ${result.processed} kayıt işlendi, ${result.sentWhatsapp} WhatsApp, ${result.sentSms} SMS gönderildi, ${result.failed} başarısız.`,
@@ -105,3 +117,4 @@ export function startBillingReminderScheduler() {
 
   console.log("[scheduler] Randevu, fatura, taksit, doğum günü ve kutlama günü zamanlayıcıları başlatıldı.");
 }
+/* eslint-disable no-console -- Scheduler lifecycle logs are intentional server diagnostics. */

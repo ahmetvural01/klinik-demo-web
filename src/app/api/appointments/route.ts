@@ -8,9 +8,9 @@ import { findDoctorBlockConflict } from "@/lib/doctor-block-conflict";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 import { getDailySchedules, checkWorkingHoursInterval } from "@/lib/working-hours";
 import { checkDoctorWorkingHoursInterval } from "@/lib/working-hours-core";
-import { resolveSmsTemplate } from "@/lib/sms-templates";
-
-const APPT_REMINDER_PREFIX = "[APPT_REMINDER]";
+import { renderCommunicationTemplate, resolveSmsTemplate } from "@/lib/sms-templates";
+import { requireActiveBranch } from "@/lib/branch-context";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 type AppointmentSmsStatus = {
   info: "sent" | "skipped" | "failed";
@@ -21,17 +21,13 @@ type AppointmentSmsStatus = {
   surveyMessage: string;
 };
 
-function renderTemplate(template: string, vars: Record<string, string>) {
-  return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
-}
-
 async function sendAppointmentInfoSms(params: {
   appointmentId: string;
   institutionId: string;
   createdByUserId: string;
 }): Promise<{ status: AppointmentSmsStatus["info"]; message: string }> {
-  const appointment = await prisma.appointment.findUnique({
-    where: { id: params.appointmentId },
+  const appointment = await prisma.appointment.findFirst({
+    where: { id: params.appointmentId, institutionId: params.institutionId },
     include: {
       patient: {
         select: {
@@ -61,15 +57,13 @@ async function sendAppointmentInfoSms(params: {
   const institutionName = settings?.institutionName || institution.name;
   const institutionPhone = settings?.institutionPhone || institution.phone || "";
   const fallbackMessage = `${institutionName}: Sayın ${appointment.patient.fullName}, randevunuz oluşturuldu. Tarih: ${dateText}, Doktor: ${appointment.doctor.fullName}.`;
-  const message = smsTemplate
-    ? renderTemplate(smsTemplate.content, {
-        institutionName,
-        institutionPhone,
-        patientName: appointment.patient.fullName,
-        doctorName: appointment.doctor.fullName,
-        dateTime: dateText,
-      })
-    : fallbackMessage;
+  const rendered = renderCommunicationTemplate(smsTemplate, {
+    institutionName,
+    institutionPhone,
+    patientName: appointment.patient.fullName,
+    doctorName: appointment.doctor.fullName,
+    dateTime: dateText,
+  }, fallbackMessage);
 
   // Kanal seçimi (WhatsApp/SMS), hasta SMS izni, bakiye rezervasyonu/iadesi
   // ve idempotency artık tek merkezden yönetiliyor (bkz. src/lib/notification-dispatch.ts).
@@ -79,12 +73,11 @@ async function sendAppointmentInfoSms(params: {
     eventType: "APPOINTMENT_INFO",
     purpose: "SERVICE",
     templateCode: "BILGI",
-    message,
+    message: rendered.smsMessage,
+    whatsappMessage: rendered.whatsappMessage,
     idempotencyKey: `appt-info:${appointment.id}`,
     actorId: params.createdByUserId,
-    whatsappTemplate: {
-      bodyParameters: [appointment.patient.fullName, dateText, appointment.doctor.fullName],
-    },
+    whatsappTemplate: rendered.whatsappTemplate,
   });
 
   if (result.success) {
@@ -111,38 +104,9 @@ async function sendAppointmentInfoSms(params: {
   return { status: "failed", message: result.error || "Bilgilendirme SMS'i gönderilemedi." };
 }
 
-async function scheduleAppointmentReminder(appointment: { id: string; patientId: string; startAt: Date; smsReminder: boolean }) {
-  // Hatırlatma kapalıysa açık reminder kaydı bırakma.
-  if (!appointment.smsReminder) return;
-
-  const reminderDate = turkeyDayBeforeStartUtc(appointment.startAt);
-
-  const note = `${APPT_REMINDER_PREFIX}:${appointment.id}`;
-
-  await prisma.reminder.create({
-    data: {
-      patientId: appointment.patientId,
-      note,
-      reminderDate,
-      status: "AKTIF",
-    },
-  });
-}
-
-async function isDoctorVisibleManager(userId: string) {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { role: true, profile: { select: { hideAsDoctor: true } } },
-  });
-  if (!user) return false;
-  if (["DOKTOR", "SUPERADMIN", "ADMIN"].includes(user.role)) return true;
-  if (user.role === "YONETICI") return !Boolean(user.profile?.hideAsDoctor);
-  return false;
-}
-
-async function isEligibleAppointmentDoctor(doctorId: string, institutionId?: string | null) {
-  const doctor = await prisma.user.findUnique({
-    where: { id: doctorId },
+async function isEligibleAppointmentDoctor(doctorId: string, institutionId: string | null | undefined, branchId: string) {
+  return prisma.user.findFirst({
+    where: { id: doctorId, ...effectiveDoctorWhere(institutionId, branchId) },
     select: {
       isActive: true,
       role: true,
@@ -151,18 +115,12 @@ async function isEligibleAppointmentDoctor(doctorId: string, institutionId?: str
       profile: { select: { hideAsDoctor: true, workStart: true, workEnd: true } },
     },
   });
-
-  if (!doctor || !doctor.isActive) return null;
-  if (institutionId && doctor.institutionId !== institutionId) return null;
-  if (["DOKTOR", "SUPERADMIN", "ADMIN"].includes(doctor.role)) return doctor;
-  if (doctor.role === "YONETICI" && !doctor.profile?.hideAsDoctor) return doctor;
-  return null;
 }
 
-async function isEligibleClinicUnit(clinicUnitId: string | null | undefined, institutionId?: string | null) {
+async function isEligibleClinicUnit(clinicUnitId: string | null | undefined, institutionId: string | null | undefined, branchId: string) {
   if (!clinicUnitId) return null;
   return prisma.clinicUnit.findFirst({
-    where: { id: clinicUnitId, ...(institutionId ? { institutionId } : {}), isActive: true },
+    where: { id: clinicUnitId, branchId, ...(institutionId ? { institutionId } : {}), isActive: true },
     select: { id: true, name: true },
   });
 }
@@ -170,6 +128,8 @@ async function isEligibleClinicUnit(clinicUnitId: string | null | undefined, ins
 export const GET = withApiTiming("appointments", async function GET(request: NextRequest) {
   const auth = await requireAuth("appointments:read");
   if (auth.error) return auth.error;
+  const activeBranch = requireActiveBranch(auth.user.branchContext);
+  if (!activeBranch.ok) return NextResponse.json({ message: activeBranch.message }, { status: 403 });
 
   const from = request.nextUrl.searchParams.get("from");
   const to = request.nextUrl.searchParams.get("to");
@@ -189,7 +149,8 @@ export const GET = withApiTiming("appointments", async function GET(request: Nex
   try {
     appointments = await prisma.appointment.findMany({
       where: {
-        ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: activeBranch.branchId,
         startAt: (dateFrom || dateTo) ? { gte: dateFrom, lte: dateTo } : undefined,
         doctorId: doctorId || undefined,
         patientId: patientId || undefined,
@@ -212,6 +173,7 @@ export const GET = withApiTiming("appointments", async function GET(request: Nex
         patient: { select: { id: true, fullName: true, phone: true, tcNo: true, hasContagiousDisease: true, contagiousDiseaseNote: true, whatsappOptInAt: true, whatsappOptOutAt: true } },
         doctor: { select: { id: true, fullName: true, role: true } },
         clinicUnit: { select: { id: true, name: true, code: true } },
+        branch: { select: { id: true, name: true, code: true, colorCode: true } },
       },
       orderBy: { startAt: "asc" },
       take: 500, // Güvenlik limiti
@@ -225,7 +187,7 @@ export const GET = withApiTiming("appointments", async function GET(request: Nex
   const result = hidePhone
     ? appointments.map(a => ({
         ...a,
-        patient: a.patient ? { ...a.patient, phone: null } : a.patient,
+        patient: a.patient ? { ...a.patient, phone: null, tcNo: a.patient.tcNo ? "***" : a.patient.tcNo } : a.patient,
       }))
     : appointments;
 
@@ -248,20 +210,22 @@ export async function POST(request: NextRequest) {
   // hastaya da atayabilmeli. Tedavi alanı/ünite ve hasta çakışmaları ise fiziksel
   // olarak imkânsız olduğu için hâlâ kesin engellenir (bkz. kullanıcı kararı).
   const overrideDoctorConflict = body?.overrideConflict === true;
+  const activeBranch = requireActiveBranch(auth.user.branchContext);
+  if (!activeBranch.ok) return NextResponse.json({ message: activeBranch.message }, { status: 409 });
 
-  const eligibleDoctor = await isEligibleAppointmentDoctor(parsed.data.doctorId, auth.user.institutionId);
+  const eligibleDoctor = await isEligibleAppointmentDoctor(parsed.data.doctorId, auth.user.institutionId, activeBranch.branchId);
   if (!eligibleDoctor) {
     return NextResponse.json({ message: "Seçilen personel randevu doktoru olarak kullanılamaz." }, { status: 400 });
   }
 
-  const selectedUnit = await isEligibleClinicUnit(parsed.data.clinicUnitId, auth.user.institutionId);
+  const selectedUnit = await isEligibleClinicUnit(parsed.data.clinicUnitId, auth.user.institutionId, activeBranch.branchId);
   if (parsed.data.clinicUnitId && !selectedUnit) {
     return NextResponse.json({ message: "Seçilen tedavi alanı bulunamadı veya pasif durumda." }, { status: 400 });
   }
 
   if (auth.user.institutionId) {
     const patient = await prisma.patient.findFirst({
-      where: { id: parsed.data.patientId, institutionId: auth.user.institutionId, archivedAt: null },
+      where: { id: parsed.data.patientId, institutionId: auth.user.institutionId, homeBranchId: activeBranch.branchId, archivedAt: null },
       select: { id: true },
     });
     if (!patient) {
@@ -301,6 +265,7 @@ export async function POST(request: NextRequest) {
   const conflict = await prisma.appointment.findFirst({
     where: {
       doctorId: parsed.data.doctorId,
+      branchId: activeBranch.branchId,
       ...(auth.user.institutionId ? { doctor: { institutionId: auth.user.institutionId } } : {}),
       status: { notIn: ["IPTAL", "GELMEDI"] },
       AND: [
@@ -328,6 +293,7 @@ export async function POST(request: NextRequest) {
     const unitConflict = await prisma.appointment.findFirst({
       where: {
         clinicUnitId: selectedUnit.id,
+        branchId: activeBranch.branchId,
         status: { notIn: ["IPTAL", "GELMEDI"] },
         AND: [{ startAt: { lt: endAt } }, { endAt: { gt: startAt } }],
       },
@@ -344,7 +310,7 @@ export async function POST(request: NextRequest) {
   }
 
   // ── Doktor bloke saati kontrolü ─────────────────────────────────────────
-  const blockConflict = await findDoctorBlockConflict(parsed.data.doctorId, startAt, endAt);
+  const blockConflict = await findDoctorBlockConflict(parsed.data.doctorId, activeBranch.branchId, startAt, endAt);
   if (blockConflict) {
     return NextResponse.json({
       message: `Doktorun bu saat aralığı kapalıdır (${blockConflict.startTime}–${blockConflict.endTime}${blockConflict.reason ? `: ${blockConflict.reason}` : ""})`,
@@ -355,6 +321,7 @@ export async function POST(request: NextRequest) {
   const patientConflict = await prisma.appointment.findFirst({
     where: {
       patientId: parsed.data.patientId,
+      branchId: activeBranch.branchId,
       ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
       status: { notIn: ["IPTAL", "GELMEDI"] },
       AND: [
@@ -382,12 +349,13 @@ export async function POST(request: NextRequest) {
     // (bkz. denetim raporu — çift randevu yarış koşulu).
     const appointment = await prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT "id" FROM "User" WHERE "id" = ${parsed.data.doctorId} FOR UPDATE`;
-      const blockConflictRecheck = await findDoctorBlockConflict(parsed.data.doctorId, startAt, endAt, tx);
+      const blockConflictRecheck = await findDoctorBlockConflict(parsed.data.doctorId, activeBranch.branchId, startAt, endAt, tx);
       if (blockConflictRecheck) throw new Error("DOCTOR_BLOCK_RECHECK");
 
       const doctorConflictRecheck = overrideDoctorConflict ? null : await tx.appointment.findFirst({
         where: {
           doctorId: parsed.data.doctorId,
+          branchId: activeBranch.branchId,
           status: { notIn: ["IPTAL", "GELMEDI"] },
           AND: [{ startAt: { lt: endAt } }, { endAt: { gt: startAt } }],
         },
@@ -401,6 +369,7 @@ export async function POST(request: NextRequest) {
         const unitConflictRecheck = await tx.appointment.findFirst({
           where: {
             clinicUnitId: selectedUnit.id,
+            branchId: activeBranch.branchId,
             status: { notIn: ["IPTAL", "GELMEDI"] },
             AND: [{ startAt: { lt: endAt } }, { endAt: { gt: startAt } }],
           },
@@ -412,6 +381,7 @@ export async function POST(request: NextRequest) {
       const patientConflictRecheck = await tx.appointment.findFirst({
         where: {
           patientId: parsed.data.patientId,
+          branchId: activeBranch.branchId,
           status: { notIn: ["IPTAL", "GELMEDI"] },
           AND: [{ startAt: { lt: endAt } }, { endAt: { gt: startAt } }],
         },
@@ -420,8 +390,20 @@ export async function POST(request: NextRequest) {
       if (patientConflictRecheck) throw new Error("PATIENT_CONFLICT_RECHECK");
 
       const appt = await tx.appointment.create({
-        data: { ...parsed.data, clinicUnitId: selectedUnit?.id || null, startAt, endAt },
-        include: { patient: true, doctor: { select: { id: true, fullName: true } }, clinicUnit: { select: { id: true, name: true, code: true } } },
+        data: {
+          ...parsed.data,
+          institutionId: auth.user.institutionId!,
+          branchId: activeBranch.branchId,
+          clinicUnitId: selectedUnit?.id || null,
+          startAt,
+          endAt,
+        },
+        include: {
+          patient: true,
+          doctor: { select: { id: true, fullName: true } },
+          clinicUnit: { select: { id: true, name: true, code: true } },
+          branch: { select: { id: true, name: true, code: true, colorCode: true } },
+        },
       });
 
     // Reminder'ı transaction içinde oluştur - bir başarısızsa ikisi de rollback
@@ -430,6 +412,8 @@ export async function POST(request: NextRequest) {
 
       await tx.reminder.create({
         data: {
+          institutionId: appt.institutionId,
+          branchId: appt.branchId,
           patientId: appt.patientId,
           note: `[APPT_REMINDER]:${appt.id}`,
           reminderDate,

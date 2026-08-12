@@ -1,25 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
-import { testProviderBalance } from "@/lib/sms";
-
-function parseSmsCount(raw: string | undefined): number | null {
-  if (!raw) return null;
-  const cleaned = raw.replace(/[^\d.,]/g, "").trim();
-  if (!cleaned) return null;
-
-  // "12.345" -> 12345, "12345" -> 12345, "12345,67" -> 12345
-  if (/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(cleaned)) {
-    const normalized = cleaned.replace(/\./g, "").split(",")[0];
-    const parsed = Number(normalized);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  const normalized = cleaned.replace(/,/g, ".");
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed)) return null;
-  return Math.max(0, Math.floor(parsed));
-}
 
 export async function GET() {
   const auth = await requireAuth("superadmin");

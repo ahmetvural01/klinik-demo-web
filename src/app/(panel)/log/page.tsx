@@ -2,7 +2,7 @@
 
 /* eslint-disable react-hooks/exhaustive-deps */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
@@ -10,6 +10,7 @@ import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { ModuleIcon } from "@/components/ui/ModuleIcon";
 import { getAuditActionLabel, getAuditScopeLabel } from "@/lib/audit-labels";
 import { turkeyDateKey } from "@/lib/tz";
+import { isAbortError, useLatestRequest } from "@/lib/use-latest-request";
 
 type Log = {
   id: string;
@@ -87,13 +88,10 @@ export default function LogPage() {
   const [category, setCategory] = useState("");
   const [detailLog, setDetailLog] = useState<Log | null>(null);
   const [loadError, setLoadError] = useState(false);
+  const startLogsRequest = useLatestRequest();
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    if (fromDate && toDate) fetchLogs();
-  }, [page, pageSize, fromDate, toDate, category]);
-
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
+    const request = startLogsRequest();
     try {
       setLoading(true);
       const params = new URLSearchParams({
@@ -104,19 +102,25 @@ export default function LogPage() {
         q: search,
         category,
       });
-      const res = await fetch(`/api/logs?${params.toString()}`);
+      const res = await fetch(`/api/logs?${params.toString()}`, { signal: request.signal });
+      if (!request.isLatest()) return;
       if (!res.ok) { setLoadError(true); setLogs([]); setTotal(0); return; }
       const data = await res.json();
+      if (!request.isLatest()) return;
       setLoadError(false);
       setLogs(data.logs || []);
       setTotal(data.total || 0);
     } catch (e) {
-      console.error(e);
+      if (isAbortError(e) || !request.isLatest()) return;
       setLoadError(true);
     } finally {
-      setLoading(false);
+      if (request.isLatest()) setLoading(false);
     }
-  };
+  }, [category, fromDate, page, pageSize, search, startLogsRequest, toDate]);
+
+  useEffect(() => {
+    if (fromDate && toDate) void fetchLogs();
+  }, [fetchLogs, fromDate, toDate]);
 
   const totalPages = Math.ceil(total / pageSize);
 

@@ -2,89 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { PROFESSIONS } from "@/lib/professions";
+import { ensureDefaultCelebrationDays } from "@/lib/celebration-days";
 
 // Süperadmin'in yönettiği, tüm kliniklerin görebileceği sistem geneli
 // meslek/resmi gün kutlama kataloğu (bkz. prisma/schema.prisma CelebrationDay).
 // Klinikler her satırı kendi CelebrationDaySetting'i ile ayrı ayrı açar/kapatır
 // (bkz. /api/celebration-days).
-// code alanı gerçek bir DB @unique kısıtı (SmsTemplate'in aksine institutionId
-// yok, NULL-karşılaştırma sorunu burada söz konusu değil) — bu yüzden
-// createMany({ skipDuplicates: true }) burada güvenle kullanılabilir.
-const DEFAULT_CELEBRATION_DAYS = [
-  {
-    code: "TIP_BAYRAMI",
-    title: "Tıp Bayramı",
-    month: 3,
-    day: 14,
-    targetProfessions: ["Doktor"],
-    messageTemplate: "Sayın {{patientName}}, 14 Mart Tıp Bayramı'nızı candan kutlar, sağlıklı ve mutlu bir yıl dileriz. {{institutionName}} ailesi.",
-  },
-  {
-    code: "DIS_HEKIMLIGI_GUNU",
-    title: "Diş Hekimliği Günü",
-    month: 3,
-    day: 6,
-    targetProfessions: ["Diş Hekimi"],
-    messageTemplate: "Sayın {{patientName}}, Diş Hekimliği Günü'nüzü candan kutlarız. {{institutionName}} ailesi.",
-  },
-  {
-    code: "AVUKATLAR_GUNU",
-    title: "Avukatlar Günü",
-    month: 4,
-    day: 5,
-    targetProfessions: ["Avukat", "Hakim/Savcı"],
-    messageTemplate: "Sayın {{patientName}}, 5 Nisan Avukatlar Günü'nüzü candan kutlarız. {{institutionName}} ailesi.",
-  },
-  {
-    code: "HEMSIRELER_GUNU",
-    title: "Hemşireler Günü",
-    month: 5,
-    day: 12,
-    targetProfessions: ["Hemşire"],
-    messageTemplate: "Sayın {{patientName}}, 12 Mayıs Hemşireler Günü'nüzü candan kutlarız. {{institutionName}} ailesi.",
-  },
-  {
-    code: "OGRETMENLER_GUNU",
-    title: "Öğretmenler Günü",
-    month: 11,
-    day: 24,
-    targetProfessions: ["Öğretmen", "Akademisyen"],
-    messageTemplate: "Sayın {{patientName}}, 24 Kasım Öğretmenler Günü'nüzü candan kutlarız. {{institutionName}} ailesi.",
-  },
-  {
-    code: "MUHASEBECILER_GUNU",
-    title: "Muhasebeciler Günü",
-    month: 6,
-    day: 1,
-    targetProfessions: ["Mali Müşavir/Muhasebeci"],
-    messageTemplate: "Sayın {{patientName}}, 1 Haziran Muhasebeciler Günü'nüzü candan kutlarız. {{institutionName}} ailesi.",
-  },
-  {
-    code: "BASIN_BAYRAMI",
-    title: "Basın Bayramı",
-    month: 7,
-    day: 24,
-    targetProfessions: ["Gazeteci"],
-    messageTemplate: "Sayın {{patientName}}, 24 Temmuz Basın Bayramı'nızı candan kutlarız. {{institutionName}} ailesi.",
-  },
-  {
-    code: "YILBASI",
-    title: "Yılbaşı",
-    month: 1,
-    day: 1,
-    targetProfessions: [],
-    messageTemplate: "Sayın {{patientName}}, yeni yılınızı candan kutlar, sağlık ve mutluluk dolu bir yıl dileriz. {{institutionName}} ailesi.",
-  },
-  {
-    code: "CUMHURIYET_BAYRAMI",
-    title: "Cumhuriyet Bayramı",
-    month: 10,
-    day: 29,
-    targetProfessions: [],
-    messageTemplate: "Sayın {{patientName}}, 29 Ekim Cumhuriyet Bayramı'nızı kutlarız. {{institutionName}} ailesi.",
-  },
-] satisfies { code: string; title: string; month: number; day: number; targetProfessions: string[]; messageTemplate: string }[];
-
 export async function GET() {
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;
@@ -92,6 +15,7 @@ export async function GET() {
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
   }
 
+  await ensureDefaultCelebrationDays();
   const days = await prisma.celebrationDay.findMany({ orderBy: [{ month: "asc" }, { day: "asc" }] });
   return NextResponse.json(days);
 }
@@ -108,8 +32,16 @@ export async function POST(request: NextRequest) {
     title?: string;
     month?: number;
     day?: number;
+    category?: string;
+    recurrenceRule?: string;
+    weekOfMonth?: number | null;
+    weekday?: number | null;
+    dateOverrides?: string[];
     targetProfessions?: string[];
     messageTemplate?: string;
+    whatsappMessageTemplate?: string;
+    whatsappTemplateName?: string;
+    whatsappTemplateLanguage?: string;
     isActive?: boolean;
   };
 
@@ -137,10 +69,18 @@ export async function POST(request: NextRequest) {
     data: {
       code: body.code.trim(),
       title: body.title.trim(),
+      category: body.category?.trim() || "GENERAL",
       month: body.month!,
       day: body.day!,
+      recurrenceRule: body.recurrenceRule?.trim() || "FIXED",
+      weekOfMonth: body.weekOfMonth ?? null,
+      weekday: body.weekday ?? null,
+      dateOverrides: Array.isArray(body.dateOverrides) ? body.dateOverrides : [],
       targetProfessions,
       messageTemplate: body.messageTemplate.trim(),
+      whatsappMessageTemplate: body.whatsappMessageTemplate?.trim() || null,
+      whatsappTemplateName: body.whatsappTemplateName?.trim() || null,
+      whatsappTemplateLanguage: body.whatsappTemplateLanguage?.trim() || "tr",
       isActive: body.isActive ?? true,
     },
   });
@@ -162,8 +102,16 @@ export async function PUT(request: NextRequest) {
     title?: string;
     month?: number;
     day?: number;
+    category?: string;
+    recurrenceRule?: string;
+    weekOfMonth?: number | null;
+    weekday?: number | null;
+    dateOverrides?: string[];
     targetProfessions?: string[];
     messageTemplate?: string;
+    whatsappMessageTemplate?: string;
+    whatsappTemplateName?: string;
+    whatsappTemplateLanguage?: string;
     isActive?: boolean;
   };
 
@@ -193,10 +141,18 @@ export async function PUT(request: NextRequest) {
     where: { id: body.id },
     data: {
       ...(body.title !== undefined ? { title: body.title.trim() } : {}),
+      ...(body.category !== undefined ? { category: body.category.trim() || "GENERAL" } : {}),
       ...(body.month !== undefined ? { month: body.month } : {}),
       ...(body.day !== undefined ? { day: body.day } : {}),
+      ...(body.recurrenceRule !== undefined ? { recurrenceRule: body.recurrenceRule.trim() || "FIXED" } : {}),
+      ...(body.weekOfMonth !== undefined ? { weekOfMonth: body.weekOfMonth } : {}),
+      ...(body.weekday !== undefined ? { weekday: body.weekday } : {}),
+      ...(body.dateOverrides !== undefined ? { dateOverrides: body.dateOverrides } : {}),
       ...(body.targetProfessions !== undefined ? { targetProfessions: body.targetProfessions } : {}),
       ...(body.messageTemplate !== undefined ? { messageTemplate: body.messageTemplate.trim() } : {}),
+      ...(body.whatsappMessageTemplate !== undefined ? { whatsappMessageTemplate: body.whatsappMessageTemplate.trim() || null } : {}),
+      ...(body.whatsappTemplateName !== undefined ? { whatsappTemplateName: body.whatsappTemplateName.trim() || null } : {}),
+      ...(body.whatsappTemplateLanguage !== undefined ? { whatsappTemplateLanguage: body.whatsappTemplateLanguage.trim() || "tr" } : {}),
       ...(body.isActive !== undefined ? { isActive: body.isActive } : {}),
     },
   });

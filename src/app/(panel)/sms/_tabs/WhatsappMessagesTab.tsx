@@ -20,6 +20,7 @@ import { SearchSelect } from "@/components/ui/SearchSelect";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { showToastSafe } from "@/lib/toast-client";
+import { isAbortError, useLatestRequest } from "@/lib/use-latest-request";
 
 const WhatsappEmptyIcon = createSceneIllustration("whatsapp");
 
@@ -143,26 +144,36 @@ export default function WhatsappMessagesTab() {
   const [templateName, setTemplateName] = useState("");
   const [templateLanguage, setTemplateLanguage] = useState("tr");
   const threadEndRef = useRef<HTMLDivElement>(null);
+  const startConversationRequest = useLatestRequest();
+  const startThreadRequest = useLatestRequest();
+  const startPatientRequest = useLatestRequest();
 
   const loadConversations = useCallback(async (silent = false) => {
+    const request = startConversationRequest();
     if (!silent) setLoading(true);
     try {
       const params = new URLSearchParams({ mode: "conversations", take: "200" });
       if (query.trim()) params.set("q", query.trim());
-      const response = await fetch(`/api/whatsapp/messages?${params}`, { cache: "no-store" });
+      const response = await fetch(`/api/whatsapp/messages?${params}`, { cache: "no-store", signal: request.signal });
       const body = await response.json().catch(() => null);
+      if (!request.isLatest()) return;
       const next = response.ok && Array.isArray(body?.conversations) ? body.conversations : [];
       setConversations(next);
       setActivePhone((current) => {
         if (current && next.some((item: Conversation) => item.phone === current)) return current;
         return next[0]?.phone || "";
       });
+    } catch (error) {
+      if (!isAbortError(error) && request.isLatest() && !silent) {
+        showToastSafe({ title: "Görüşmeler yüklenemedi", message: "Lütfen yeniden deneyin.", type: "error" });
+      }
     } finally {
-      if (!silent) setLoading(false);
+      if (!silent && request.isLatest()) setLoading(false);
     }
-  }, [query]);
+  }, [query, startConversationRequest]);
 
   const loadThread = useCallback(async (phone: string, silent = false) => {
+    const request = startThreadRequest();
     if (!phone) {
       setMessages([]);
       setActivePatient(null);
@@ -171,8 +182,9 @@ export default function WhatsappMessagesTab() {
     if (!silent) setThreadLoading(true);
     try {
       const params = new URLSearchParams({ phone, take: "200" });
-      const response = await fetch(`/api/whatsapp/messages?${params}`, { cache: "no-store" });
+      const response = await fetch(`/api/whatsapp/messages?${params}`, { cache: "no-store", signal: request.signal });
       const body = await response.json().catch(() => null);
+      if (!request.isLatest()) return;
       if (response.ok) {
         setMessages(Array.isArray(body?.messages) ? body.messages : []);
         setActivePatient(body?.patient || null);
@@ -187,10 +199,14 @@ export default function WhatsappMessagesTab() {
           item.phone === phone ? { ...item, unreadCount: 0 } : item
         )));
       }
+    } catch (error) {
+      if (!isAbortError(error) && request.isLatest() && !silent) {
+        showToastSafe({ title: "Mesajlar yüklenemedi", message: "Lütfen yeniden deneyin.", type: "error" });
+      }
     } finally {
-      if (!silent) setThreadLoading(false);
+      if (!silent && request.isLatest()) setThreadLoading(false);
     }
-  }, []);
+  }, [startThreadRequest]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadConversations(), 250);
@@ -216,6 +232,7 @@ export default function WhatsappMessagesTab() {
 
   useEffect(() => {
     if (!composerOpen) return;
+    const request = startPatientRequest();
     const timer = window.setTimeout(async () => {
       const params = new URLSearchParams({
         q: patientQuery.trim(),
@@ -224,12 +241,12 @@ export default function WhatsappMessagesTab() {
         sortDir: "asc",
         summary: "false",
       });
-      const response = await fetch(`/api/patients?${params}`, { cache: "no-store" }).catch(() => null);
+      const response = await fetch(`/api/patients?${params}`, { cache: "no-store", signal: request.signal }).catch(() => null);
       const body = response?.ok ? await response.json().catch(() => null) : null;
-      setPatientOptions(Array.isArray(body) ? body : Array.isArray(body?.patients) ? body.patients : []);
+      if (request.isLatest()) setPatientOptions(Array.isArray(body) ? body : Array.isArray(body?.patients) ? body.patients : []);
     }, 250);
     return () => window.clearTimeout(timer);
-  }, [composerOpen, patientQuery]);
+  }, [composerOpen, patientQuery, startPatientRequest]);
 
   const activeConversation = useMemo(
     () => conversations.find((item) => item.phone === activePhone) || null,
@@ -249,6 +266,9 @@ export default function WhatsappMessagesTab() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          requestKey: typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`,
           patientId: patient.id,
           message: message.trim(),
           templateName: template?.name,
@@ -264,6 +284,9 @@ export default function WhatsappMessagesTab() {
       await loadConversations(true);
       await loadThread(activePhone || patient.phone, true);
       return String(body?.phone || activePhone || patient.phone);
+    } catch {
+      showToastSafe({ type: "error", message: "WhatsApp mesajı gönderilemedi. Bağlantınızı kontrol edip yeniden deneyin." });
+      return null;
     } finally {
       setSending(false);
     }

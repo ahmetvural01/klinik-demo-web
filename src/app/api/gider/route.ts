@@ -3,11 +3,14 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { findEligibleDoctor } from "@/lib/hakedis";
 import { isValidDateKey, turkeyDayRangeUtc, turkeyYearMonth } from "@/lib/tz";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export const GET = withApiTiming("gider", async function GET(req: NextRequest) {
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
     const { searchParams } = new URL(req.url);
     const categoryId = searchParams.get("categoryId");
     const from = searchParams.get("from");
@@ -24,6 +27,7 @@ export const GET = withApiTiming("gider", async function GET(req: NextRequest) {
     const where: Record<string, unknown> = {
       status: "AKTIF",
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      branchId: branch.branchId,
     };
     if (categoryId) where.categoryId = categoryId;
     if (from || to) {
@@ -64,6 +68,8 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
     institutionId = auth.user.institutionId;
     if (!institutionId) {
       return NextResponse.json({ error: "Gider kaydı için kurum bağlamı zorunlu" }, { status: 403 });
@@ -76,7 +82,7 @@ export async function POST(req: NextRequest) {
     if (requestKey) {
       const existingExpense = await (prisma as any).expense.findUnique({ where: { requestKey } });
       if (existingExpense) {
-        if (institutionId && existingExpense.institutionId !== institutionId) {
+        if (institutionId && (existingExpense.institutionId !== institutionId || existingExpense.branchId !== branch.branchId)) {
           return NextResponse.json({ error: "İşlem anahtarı başka bir kayıtta kullanılmış" }, { status: 409 });
         }
         return NextResponse.json({ ...existingExpense, duplicatePrevented: true }, { status: 200 });
@@ -129,7 +135,7 @@ export async function POST(req: NextRequest) {
       if (yontem !== "NAKIT" && yontem !== "HAVALE_EFT") {
         return NextResponse.json({ error: "Doktor hakedişi ödemeleri sadece nakit veya havale/EFT ile yapılabilir" }, { status: 400 });
       }
-      const doctor = await findEligibleDoctor({ doctorId, institutionId: auth.user.institutionId });
+      const doctor = await findEligibleDoctor({ doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId });
       if (!doctor) {
         return NextResponse.json({ error: "Doktor bu kurumda bulunamadı" }, { status: 404 });
       }
@@ -198,6 +204,7 @@ export async function POST(req: NextRequest) {
         requestKey,
         tarih: new Date(tarih),
         institutionId,
+        branchId: branch.branchId,
         categoryId: categoryId || null,
         category: category.trim(),
         description: description?.trim() || null,

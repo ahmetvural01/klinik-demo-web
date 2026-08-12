@@ -3,6 +3,8 @@ import bcrypt from "bcryptjs";
 import { cookies, headers } from "next/headers";
 import { prisma } from "@/lib/prisma";
 import { parseRolePreview } from "@/lib/role-preview";
+import { randomUUID } from "crypto";
+import { consumeOneTimeSecret, hasOneTimeSecret, putOneTimeSecret } from "@/lib/security-store";
 
 const TOKEN_NAME = "klinik_token";
 const ROLE_PREVIEW_COOKIE = "klinik_preview_role";
@@ -87,25 +89,42 @@ export function signToken(payload: AuthPayload, rememberMe: boolean = true) {
   return jwt.sign(payload, secret, { expiresIn: sessionExpiresIn(rememberMe) });
 }
 
-type PendingTwoFactorPayload = { userId: string; rememberMe: boolean; purpose: "2fa-pending" };
+type PendingTwoFactorPayload = {
+  userId: string;
+  rememberMe: boolean;
+  purpose: "2fa-pending";
+  challengeId: string;
+};
 
 /** Şifre doğrulandı ama 2FA kodu henüz girilmedi — kısa ömürlü, oturum açmaya yetmez. */
-export function signPendingTwoFactorToken(userId: string, rememberMe: boolean = true) {
+export async function signPendingTwoFactorToken(userId: string, rememberMe: boolean = true) {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error("JWT_SECRET tanımlı değil");
-  return jwt.sign({ userId, rememberMe, purpose: "2fa-pending" } satisfies PendingTwoFactorPayload, secret, { expiresIn: "5m" });
+  const challengeId = randomUUID();
+  await putOneTimeSecret(`2fa-challenge:${challengeId}`, userId, 5 * 60_000);
+  return jwt.sign(
+    { userId, rememberMe, purpose: "2fa-pending", challengeId } satisfies PendingTwoFactorPayload,
+    secret,
+    { expiresIn: "5m" },
+  );
 }
 
-export function verifyPendingTwoFactorToken(token: string): { userId: string; rememberMe: boolean } | null {
+export async function verifyPendingTwoFactorToken(token: string): Promise<{ userId: string; rememberMe: boolean; challengeId: string } | null> {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error("JWT_SECRET tanımlı değil");
   try {
     const payload = jwt.verify(token, secret) as PendingTwoFactorPayload;
-    if (payload.purpose !== "2fa-pending") return null;
-    return { userId: payload.userId, rememberMe: payload.rememberMe ?? true };
+    if (payload.purpose !== "2fa-pending" || !payload.challengeId) return null;
+    const active = await hasOneTimeSecret(`2fa-challenge:${payload.challengeId}`, payload.userId);
+    if (!active) return null;
+    return { userId: payload.userId, rememberMe: payload.rememberMe ?? true, challengeId: payload.challengeId };
   } catch {
     return null;
   }
+}
+
+export async function consumePendingTwoFactorChallenge(challengeId: string, userId: string) {
+  return consumeOneTimeSecret(`2fa-challenge:${challengeId}`, userId);
 }
 
 export function verifyToken(token: string) {

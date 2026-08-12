@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, withApiTiming } from "@/lib/api";
 import { computeDoctorMonthlyHakedis, computeDoctorMonthlyOdenen, findEligibleDoctor, monthRangeUtc } from "@/lib/hakedis";
 import { turkeyDateKey } from "@/lib/tz";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 // GET /api/hakedis?doctorId=X&months=12
 // Seçili doktor için son N ayın hakediş/ödenen/kalan dökümünü döner.
 export const GET = withApiTiming("hakedis", async function GET(req: NextRequest) {
   const auth = await requireAuth("earnings:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok || !auth.user.institutionId) return NextResponse.json({ message: branch.ok ? "Kurum bağlamı zorunlu" : branch.message }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
   const rawDoctorId = searchParams.get("doctorId");
@@ -23,7 +26,7 @@ export const GET = withApiTiming("hakedis", async function GET(req: NextRequest)
     return NextResponse.json({ message: "doctorId zorunlu" }, { status: 400 });
   }
 
-  const doctor = await findEligibleDoctor({ doctorId, institutionId: auth.user.institutionId });
+  const doctor = await findEligibleDoctor({ doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId });
   if (!doctor) {
     return NextResponse.json({ message: "Doktor bulunamadı" }, { status: 404 });
   }
@@ -45,8 +48,8 @@ export const GET = withApiTiming("hakedis", async function GET(req: NextRequest)
   const rangeEnd = monthRangeUtc(currentYear, currentMonth).end;
 
   const [hakedisRows, odenenMap] = await Promise.all([
-    computeDoctorMonthlyHakedis({ doctorId, rates, rangeStart, rangeEnd }),
-    computeDoctorMonthlyOdenen({ doctorId, institutionId: auth.user.institutionId, rangeStart, rangeEnd }),
+    computeDoctorMonthlyHakedis({ doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId, rates, rangeStart, rangeEnd }),
+    computeDoctorMonthlyOdenen({ doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId, rangeStart, rangeEnd }),
   ]);
 
   const hakedisByMonth = new Map(hakedisRows.map((r) => [`${r.year}-${r.month}`, r]));

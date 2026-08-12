@@ -8,7 +8,7 @@
 ## 2) Hizli Rollback
 1. Trafik bakim moduna alin veya load balancer ile yeni release'i kesin.
 2. Son stabil release'e donun.
-3. `pm2 restart ecosystem.config.cjs --only klinik-modern-web,klinik-modern-sms-worker`
+3. `pm2 restart ecosystem.config.cjs --only klinikcep-web,klinikcep-sms-worker`
 4. `npm run test:smoke`
 5. `npm run test:integration`
 

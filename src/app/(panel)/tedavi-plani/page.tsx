@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Plus } from "lucide-react";
 import { cachedGet } from "@/lib/client-cache";
@@ -13,6 +13,8 @@ import { SearchSelect } from "@/components/ui/SearchSelect";
 import { showToastSafe } from "@/lib/toast-client";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+import { usePermissions } from "@/components/auth/PermissionProvider";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 
 const TedaviEmptyIcon = createSceneIllustration("tedavi");
 
@@ -55,6 +57,7 @@ const EMPTY_STATUS_COUNTS: Record<PlanStatus, number> = { PLANLANDI: 0, DEVAM_ED
 export default function TedaviPlaniPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { can } = usePermissions();
   const [plans,    setPlans]    = useState<Plan[]>([]);
   const [loading,  setLoading]  = useState(true);
   const [filter,   setFilter]   = useState<"" | PlanStatus>("");
@@ -66,6 +69,8 @@ export default function TedaviPlaniPage() {
   const [page,       setPage]       = useState(1);
   const [pageCount,  setPageCount]  = useState(1);
   const [stats, setStats] = useState<{ total: number; byStatus: Record<PlanStatus, number> }>({ total: 0, byStatus: EMPTY_STATUS_COUNTS });
+  const [loadError, setLoadError] = useState("");
+  const loadSequenceRef = useRef(0);
 
   useEffect(() => {
     const timer = setTimeout(() => { setDebouncedSearch(search.trim()); setPage(1); }, 300);
@@ -81,16 +86,11 @@ export default function TedaviPlaniPage() {
   const [newSteps,  setNewSteps]  = useState([{ treatmentName: "", toothNo: "", amount: "" }]);
   const [saving,    setSaving]    = useState(false);
   const [patientQuery, setPatientQuery] = useState("");
-  // ASISTAN/BANKO/MUHASEBE'nin treatment:write izni yok — API bunu zaten
-  // reddediyor ama önceden buton herkese görünüyordu, kullanıcı tüm formu
-  // doldurup en sonda genel bir hata alıyordu (bkz. denetim raporu).
-  const [canCreatePlan, setCanCreatePlan] = useState(true);
-
-  useEffect(() => {
-    cachedGet<{ role?: string } | null>("/api/auth/me", 60_000)
-      .then((d) => setCanCreatePlan(!["ASISTAN", "BANKO", "MUHASEBE"].includes(d?.role || "")))
-      .catch(() => {});
-  }, []);
+  const [patientSearchLoading, setPatientSearchLoading] = useState(false);
+  const [patientSearchError, setPatientSearchError] = useState("");
+  const [doctorLoadError, setDoctorLoadError] = useState("");
+  const [doctorReloadKey, setDoctorReloadKey] = useState(0);
+  const canCreatePlan = can("treatment:write");
 
   // Hasta detayından "Yeni Tedavi Planı" ile gelindiğinde hasta ikinci kez
   // aranmasın diye form önceden dolu açılır (bkz. denetim raporu — randevu
@@ -98,7 +98,7 @@ export default function TedaviPlaniPage() {
   useEffect(() => {
     const qpPatientId = searchParams.get("patientId");
     const qpPatientName = searchParams.get("patientName");
-    if (qpPatientId) {
+    if (qpPatientId && canCreatePlan) {
       setNewPlan((p) => ({ ...p, patientId: qpPatientId }));
       setPatientQuery(qpPatientName || "");
       setShowNew(true);
@@ -108,22 +108,48 @@ export default function TedaviPlaniPage() {
       router.replace(`?${next.toString()}`, { scroll: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams]);
+  }, [searchParams, canCreatePlan]);
 
   useEffect(() => {
-    cachedGet<unknown>("/api/staff", 60_000).then(d => setDoctors((Array.isArray(d) ? d : []).filter((u: Doctor) => u.role === "DOKTOR" || (u.role === "YONETICI" && u.profile?.hideAsDoctor === false)))).catch(() => {});
-  }, []);
+    setDoctorLoadError("");
+    cachedGet<unknown>("/api/staff", 60_000, { throwOnError: true, force: doctorReloadKey > 0 })
+      .then((data) => {
+        if (!Array.isArray(data)) throw new Error("Doktor listesi beklenmeyen biçimde döndü.");
+        setDoctors(data.filter((user: Doctor) => user.role === "DOKTOR" || (user.role === "YONETICI" && user.profile?.hideAsDoctor === false)));
+      })
+      .catch((loadError) => {
+        setDoctors([]);
+        setDoctorLoadError(loadError instanceof Error ? loadError.message : "Doktor listesi yüklenemedi.");
+      });
+  }, [doctorReloadKey]);
 
   useEffect(() => {
     const q = patientQuery.trim();
+    const controller = new AbortController();
     const timer = setTimeout(() => {
+      setPatientSearchLoading(true);
+      setPatientSearchError("");
       const params = new URLSearchParams({ take: "20", summary: "false" });
       if (q) params.set("q", q);
-      fetch(`/api/patients?${params.toString()}`).then(r => r.json())
-        .then(d => setPatients(Array.isArray(d) ? d : (d.patients || [])))
-        .catch(() => {});
+      fetch(`/api/patients?${params.toString()}`, { signal: controller.signal })
+        .then(async (r) => {
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d?.message || "Hasta araması başarısız");
+          setPatients(Array.isArray(d) ? d : (d.patients || []));
+        })
+        .catch((searchError) => {
+          if (searchError instanceof DOMException && searchError.name === "AbortError") return;
+          setPatients([]);
+          setPatientSearchError(searchError instanceof Error ? searchError.message : "Hasta araması yapılamadı.");
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setPatientSearchLoading(false);
+        });
     }, 250);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [patientQuery]);
 
   useEffect(() => {
@@ -132,20 +158,34 @@ export default function TedaviPlaniPage() {
   }, [filter, doctorFilter, debouncedSearch, page]);
 
   function fetchPlans() {
+    const sequence = ++loadSequenceRef.current;
     setLoading(true);
+    setLoadError("");
     const params = new URLSearchParams({ page: String(page) });
     if (filter) params.set("status", filter);
     if (doctorFilter) params.set("doctorId", doctorFilter);
     if (debouncedSearch) params.set("q", debouncedSearch);
     fetch(`/api/treatment-plans?${params.toString()}`)
-      .then(r => r.json())
-      .then(d => {
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d?.message || d?.error || "Tedavi planları yüklenemedi");
+        if (sequence !== loadSequenceRef.current) return;
         setPlans(Array.isArray(d.items) ? d.items : []);
-        setPageCount(d.pageCount || 1);
+        const nextPageCount = Math.max(1, Number(d.pageCount) || 1);
+        setPageCount(nextPageCount);
+        if (page > nextPageCount) setPage(nextPageCount);
         if (d.stats) setStats(d.stats);
       })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (sequence !== loadSequenceRef.current) return;
+        const message = e instanceof Error ? e.message : "Tedavi planları yüklenemedi";
+        setLoadError(message);
+        showToastSafe({ message, type: "error" });
+        setPlans([]);
+      })
+      .finally(() => {
+        if (sequence === loadSequenceRef.current) setLoading(false);
+      });
   }
 
   const filtered = plans;
@@ -167,9 +207,13 @@ export default function TedaviPlaniPage() {
 
   async function submitNew() {
     if (!newPlan.patientId || !newPlan.doctorId || !newPlan.title) return;
+    const steps = newSteps.filter(s => s.treatmentName.trim()).map(s => ({ ...s, amount: Number(s.amount) || 0 }));
+    if (steps.length === 0) {
+      showToastSafe({ message: "Tedavi planına en az bir tedavi adımı ekleyin.", type: "error" });
+      return;
+    }
     setSaving(true);
     try {
-      const steps = newSteps.filter(s => s.treatmentName.trim()).map(s => ({ ...s, amount: Number(s.amount) || 0 }));
       const res = await fetch("/api/treatment-plans", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...newPlan, steps }) });
       if (!res.ok) {
         const data = await res.json().catch(() => null);
@@ -266,6 +310,8 @@ export default function TedaviPlaniPage() {
           {doctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
         </select>
       </div>
+      {doctorLoadError && <LoadErrorState compact message={doctorLoadError} onRetry={() => setDoctorReloadKey((value) => value + 1)} />}
+      {loadError && <LoadErrorState compact message={loadError} onRetry={fetchPlans} />}
 
       {/* Stats row */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -289,7 +335,7 @@ export default function TedaviPlaniPage() {
 
       {/* Plans Grid */}
       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" aria-busy={loading}>
-          {filtered.length === 0 && (
+          {!loading && !loadError && filtered.length === 0 && (
             <div className="col-span-full">
               <EmptyState
                 icon={TedaviEmptyIcon}
@@ -362,13 +408,13 @@ export default function TedaviPlaniPage() {
         {selected && (
           <div className="space-y-5">
             {/* Status control */}
-            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+            {canCreatePlan && <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
               {(["PLANLANDI","DEVAM_EDIYOR","TAMAMLANDI","IPTAL"] as PlanStatus[]).map(s => (
                 <button key={s} onClick={() => updateStatus(selected.id, s)} className={`rounded-lg px-3 py-2 text-sm font-bold transition ${selected.status === s ? "bg-primary text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
                   {STATUS_CFG[s].label}
                 </button>
               ))}
-            </div>
+            </div>}
             {/* Steps */}
             <div>
               <h3 className="mb-3 text-sm font-bold text-slate-800">Tedavi Adımları</h3>
@@ -384,21 +430,21 @@ export default function TedaviPlaniPage() {
                       </div>
                       <span className="shrink-0 text-xs font-bold text-slate-600">{CURRENCY.format(step.amount)}</span>
                       <Badge tone={sCfg.tone} size="sm">{sCfg.label}</Badge>
-                      <select value={step.status} onChange={e => updateStep(selected.id, step.id, e.target.value as StepStatus)}
+                      {canCreatePlan && <select value={step.status} onChange={e => updateStep(selected.id, step.id, e.target.value as StepStatus)}
                         disabled={selected.status === "TAMAMLANDI" || selected.status === "IPTAL"}
                         title={selected.status === "TAMAMLANDI" || selected.status === "IPTAL" ? "Tamamlanmış/iptal edilmiş planın adımları değiştirilemez — önce planı yeniden açın" : undefined}
                         className="shrink-0 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:outline-none disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-slate-100">
                         <option value="BEKLIYOR">Bekliyor</option>
                         <option value="YAPILDI">Yapıldı</option>
                         <option value="IPTAL">İptal</option>
-                      </select>
-                      <button
+                      </select>}
+                      {canCreatePlan && <button
                         onClick={() => deleteStep(selected.id, step.id)}
                         disabled={selected.status === "TAMAMLANDI" || selected.status === "IPTAL"}
                         className="shrink-0 rounded-lg border border-red-200 px-2.5 py-2 text-xs font-bold text-red-600 hover:bg-red-50 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         Sil
-                      </button>
+                      </button>}
                     </div>
                   );
                 })}
@@ -418,6 +464,8 @@ export default function TedaviPlaniPage() {
       {/* New Plan Modal */}
       <Modal open={showNew} onClose={() => void requestCloseNewPlan()} isDirty={newPlanDirty} title="Yeni Tedavi Planı" size="md">
         <div className="space-y-4">
+          {doctorLoadError && <LoadErrorState compact message={doctorLoadError} onRetry={() => setDoctorReloadKey((value) => value + 1)} />}
+          {patientSearchError && <LoadErrorState compact message={patientSearchError} />}
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta</label>
@@ -430,13 +478,13 @@ export default function TedaviPlaniPage() {
                 options={patients.map(p => ({ id: p.id, label: p.fullName, meta: p.tcNo }))}
                 onSelect={opt => { setNewPlan(p => ({ ...p, patientId: opt.id })); setPatientQuery(opt.label); }}
                 placeholder="Hasta adı yazın…"
-                emptyText="Hasta bulunamadı"
-                className={inp + " w-full"}
+                emptyText={patientSearchLoading ? "Hastalar aranıyor…" : "Hasta bulunamadı"}
+                className={`${inp} w-full`}
               />
             </div>
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor</label>
-              <select value={newPlan.doctorId} onChange={e => setNewPlan(p => ({ ...p, doctorId: e.target.value }))} className={inp + " w-full"}>
+              <select value={newPlan.doctorId} onChange={e => setNewPlan(p => ({ ...p, doctorId: e.target.value }))} className={`${inp} w-full`}>
                 <option value="">Seçiniz…</option>
                 {doctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
               </select>
@@ -444,7 +492,7 @@ export default function TedaviPlaniPage() {
           </div>
           <div>
             <label className="mb-1 block text-xs font-semibold text-slate-600">Plan Başlığı</label>
-            <input value={newPlan.title} onChange={e => setNewPlan(p => ({ ...p, title: e.target.value }))} placeholder="Örn: İmplant + Kuron Tedavisi" className={inp + " w-full"} />
+            <input value={newPlan.title} onChange={e => setNewPlan(p => ({ ...p, title: e.target.value }))} maxLength={200} placeholder="Örn: İmplant + Kuron Tedavisi" className={`${inp} w-full`} />
           </div>
           <div>
             <div className="mb-2 flex items-center justify-between">
@@ -455,9 +503,9 @@ export default function TedaviPlaniPage() {
               {newSteps.map((step, i) => (
                 <div key={i} className="grid gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[auto_minmax(0,1fr)_90px_110px_auto] sm:items-center">
                   <span className="shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-500">{i + 1}</span>
-                  <input value={step.treatmentName} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, treatmentName: e.target.value } : x))} placeholder="Tedavi adı" className={inp + " flex-1"} />
-                  <input value={step.toothNo} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, toothNo: e.target.value } : x))} placeholder="Diş no" className={inp + " w-full"} />
-                  <input type="number" value={step.amount} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} placeholder="Tutar" className={inp + " w-full"} />
+                  <input value={step.treatmentName} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, treatmentName: e.target.value } : x))} maxLength={200} placeholder="Tedavi adı" className={`${inp} flex-1`} />
+                  <input value={step.toothNo} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, toothNo: e.target.value } : x))} maxLength={50} placeholder="Diş no" className={`${inp} w-full`} />
+                  <input type="number" min="0" max="100000000" step="0.01" value={step.amount} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} placeholder="Tutar" className={`${inp} w-full`} />
                   {newSteps.length > 1 && <Button variant="danger" size="sm" onClick={() => setNewSteps(s => s.filter((_, j) => j !== i))}>Sil</Button>}
                 </div>
               ))}
@@ -465,7 +513,7 @@ export default function TedaviPlaniPage() {
           </div>
           <div>
             <label className="mb-1 block text-xs font-semibold text-slate-600">Notlar</label>
-            <textarea value={newPlan.notes} onChange={e => setNewPlan(p => ({ ...p, notes: e.target.value }))} rows={2} className={inp + " w-full resize-none"} placeholder="İsteğe bağlı not…" />
+            <textarea value={newPlan.notes} onChange={e => setNewPlan(p => ({ ...p, notes: e.target.value }))} maxLength={5000} rows={2} className={`${inp} w-full resize-none`} placeholder="İsteğe bağlı not…" />
           </div>
           <div className="flex gap-3 pt-2">
             <Button variant="secondary" onClick={() => void requestCloseNewPlan()} fullWidth>İptal</Button>

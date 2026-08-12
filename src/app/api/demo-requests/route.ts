@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
+import { randomBytes, randomUUID } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { writeAudit } from "@/lib/api";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
+import { applyStockMovement } from "@/lib/stock-ledger";
 
 const DEMO_DAYS = 14;
 
@@ -16,7 +18,7 @@ function makeIdentity(seed: string, offset: number) {
 }
 
 function makePassword() {
-  return `Kp${Math.random().toString(36).slice(2, 6).toUpperCase()}${Math.floor(100 + Math.random() * 900)}`;
+  return `Kp-${randomBytes(12).toString("base64url")}`;
 }
 
 function normalizeSlug(value: string) {
@@ -35,12 +37,26 @@ function normalizeSlug(value: string) {
 
 export async function POST(request: NextRequest) {
   const ip = getClientIpFromHeaders(request.headers);
-  const limit = checkRateLimit(`demo-request:${ip}`, 5, 60 * 60 * 1000);
+  const limit = await checkRateLimit(`demo-request:${ip}`, 5, 60 * 60 * 1000);
   if (!limit.ok) {
     return NextResponse.json({ message: "Kısa sürede çok fazla demo talebi alındı. Lütfen daha sonra tekrar deneyin." }, { status: 429 });
   }
 
-  const body = await request.json().catch(() => ({})) as {
+  const declaredLength = Number(request.headers.get("content-length") || 0);
+  if (declaredLength > 16_384) {
+    return NextResponse.json({ message: "İstek içeriği çok büyük." }, { status: 413 });
+  }
+  const rawBody = await request.text().catch(() => "");
+  if (Buffer.byteLength(rawBody, "utf8") > 16_384) {
+    return NextResponse.json({ message: "İstek içeriği çok büyük." }, { status: 413 });
+  }
+  const body = (() => {
+    try {
+      return JSON.parse(rawBody || "{}") as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  })() as {
     institutionName?: string;
     contactName?: string;
     email?: string;
@@ -64,7 +80,7 @@ export async function POST(request: NextRequest) {
   const now = new Date();
   const demoExpiresAt = new Date(now.getTime() + DEMO_DAYS * 24 * 60 * 60 * 1000);
   const seed = String(Date.now()).slice(-9);
-  const slug = `${normalizeSlug(institutionName)}-demo-${seed.slice(-4)}`;
+  const slug = `${normalizeSlug(institutionName)}-demo-${randomUUID().slice(0, 8)}`;
   const password = makePassword();
   const passwordHash = await bcrypt.hash(password, 10);
   const managerIdentityNo = makeIdentity(seed, 1);
@@ -98,6 +114,16 @@ export async function POST(request: NextRequest) {
         },
       });
 
+      const branch = await tx.clinicBranch.create({
+        data: {
+          institutionId: institution.id,
+          name: "Merkez Şube",
+          code: "MRK",
+          slug: "merkez",
+          isHeadquarters: true,
+        },
+      });
+
       const users = await Promise.all([
         tx.user.create({
           data: {
@@ -107,6 +133,7 @@ export async function POST(request: NextRequest) {
             email: `demo-yonetici-${seed}@klinik.local`,
             passwordHash,
             role: "YONETICI",
+            branchMemberships: { create: { branchId: branch.id, isPrimary: true, isBranchManager: true } },
           },
         }),
         tx.user.create({
@@ -117,6 +144,7 @@ export async function POST(request: NextRequest) {
             email: `demo-doktor-${seed}@klinik.local`,
             passwordHash,
             role: "DOKTOR",
+            branchMemberships: { create: { branchId: branch.id, isPrimary: true } },
           },
         }),
         tx.user.create({
@@ -127,6 +155,7 @@ export async function POST(request: NextRequest) {
             email: `demo-banko-${seed}@klinik.local`,
             passwordHash,
             role: "BANKO",
+            branchMemberships: { create: { branchId: branch.id, isPrimary: true } },
           },
         }),
       ]);
@@ -153,6 +182,7 @@ export async function POST(request: NextRequest) {
         tx.patient.create({
           data: {
             institutionId: institution.id,
+            homeBranchId: branch.id,
             tcNo: makeIdentity(seed, 11 + index),
             fullName: patient.fullName,
             phone: patient.phone,
@@ -174,23 +204,26 @@ export async function POST(request: NextRequest) {
 
       const stockItems = await Promise.all([
         tx.stockItem.create({
-          data: { institutionId: institution.id, name: "Nitril Eldiven M", category: "SARF", unit: "kutu", quantity: 12, minQuantity: 5, unitPrice: 350, supplier: "Medikal Sarf Deposu" },
+          data: { institutionId: institution.id, branchId: branch.id, name: "Nitril Eldiven M", category: "SARF", unit: "kutu", quantity: 0, minQuantity: 5, unitPrice: 350, supplier: "Medikal Sarf Deposu" },
         }),
         tx.stockItem.create({
-          data: { institutionId: institution.id, name: "Artikain Anestezi Ampul", category: "MEDIKAL", unit: "adet", quantity: 20, minQuantity: 8, unitPrice: 120, supplier: "Aydın Dental Tedarik" },
+          data: { institutionId: institution.id, branchId: branch.id, name: "Artikain Anestezi Ampul", category: "MEDIKAL", unit: "adet", quantity: 0, minQuantity: 8, unitPrice: 120, supplier: "Aydın Dental Tedarik" },
         }),
       ]);
 
-      await Promise.all(stockItems.map((item) =>
-        tx.stockMovement.create({
-          data: {
-            stockItemId: item.id,
-            institutionId: institution.id,
-            type: "GIRIS",
-            quantity: item.quantity,
-            note: "Açılış stok girişi",
-            userId: users[0].id,
-          },
+      await Promise.all(stockItems.map((item, index) =>
+        applyStockMovement({
+          tx,
+          stockItemId: item.id,
+          institutionId: institution.id,
+          branchId: branch.id,
+          userId: users[0].id,
+          type: "GIRIS",
+          quantity: index === 0 ? 12 : 20,
+          note: "Açılış stok girişi",
+          supplier: item.supplier,
+          unitPrice: Number(item.unitPrice),
+          requestKey: `demo-opening:${item.id}`,
         })
       ));
 
@@ -198,6 +231,8 @@ export async function POST(request: NextRequest) {
         const startAt = new Date(now.getTime() + (index + 1) * 24 * 60 * 60 * 1000 + (9 + index) * 60 * 60 * 1000);
         return tx.appointment.create({
           data: {
+            institutionId: institution.id,
+            branchId: branch.id,
             patientId: patient.id,
             doctorId: users[1].id,
             startAt,
@@ -210,12 +245,13 @@ export async function POST(request: NextRequest) {
       }));
 
       const pos = await tx.posDevice.create({
-        data: { institutionId: institution.id, name: "Klinik POS", isActive: true },
+        data: { institutionId: institution.id, branchId: branch.id, name: "Klinik POS", isActive: true },
       });
 
       await tx.payment.create({
         data: {
           institutionId: institution.id,
+          branchId: branch.id,
           patientId: patients[0].id,
           posId: pos.id,
           method: "KREDI_KARTI",
@@ -226,6 +262,8 @@ export async function POST(request: NextRequest) {
 
       const treatmentPlan = await tx.treatmentPlan.create({
         data: {
+          institutionId: institution.id,
+          branchId: branch.id,
           patientId: patients[0].id,
           doctorId: users[1].id,
           title: "Tedavi Planı",
@@ -237,14 +275,16 @@ export async function POST(request: NextRequest) {
 
       await tx.treatmentStep.createMany({
         data: [
-          { planId: treatmentPlan.id, order: 1, treatmentName: "İlk Muayene", amount: 750, status: "TAMAMLANDI", doneAt: now },
-          { planId: treatmentPlan.id, order: 2, treatmentName: "Kompozit Dolgu", toothNo: "16", amount: 2500, status: "BEKLIYOR" },
-          { planId: treatmentPlan.id, order: 3, treatmentName: "Kanal Tedavisi", toothNo: "26", amount: 4500, status: "BEKLIYOR" },
+          { institutionId: institution.id, branchId: branch.id, planId: treatmentPlan.id, order: 1, treatmentName: "İlk Muayene", amount: 750, status: "TAMAMLANDI", doneAt: now },
+          { institutionId: institution.id, branchId: branch.id, planId: treatmentPlan.id, order: 2, treatmentName: "Kompozit Dolgu", toothNo: "16", amount: 2500, status: "BEKLIYOR" },
+          { institutionId: institution.id, branchId: branch.id, planId: treatmentPlan.id, order: 3, treatmentName: "Kanal Tedavisi", toothNo: "26", amount: 4500, status: "BEKLIYOR" },
         ],
       });
 
       const taksitPlan = await tx.taksitPlan.create({
         data: {
+          institutionId: institution.id,
+          branchId: branch.id,
           patientId: patients[1].id,
           doctorId: users[1].id,
           baslik: "İmplant ödeme planı",
@@ -258,6 +298,8 @@ export async function POST(request: NextRequest) {
 
       await tx.taksit.createMany({
         data: [1, 2, 3].map((siraNo) => ({
+          institutionId: institution.id,
+          branchId: branch.id,
           planId: taksitPlan.id,
           siraNo,
           vadeDate: new Date(now.getTime() + (siraNo * 30 + 7) * 24 * 60 * 60 * 1000),
@@ -268,6 +310,8 @@ export async function POST(request: NextRequest) {
 
       const labOrder = await tx.labOrder.create({
         data: {
+          institutionId: institution.id,
+          branchId: branch.id,
           patientId: patients[2].id,
           doctorId: users[1].id,
           labName: "Marmara Dental Lab",
@@ -281,6 +325,8 @@ export async function POST(request: NextRequest) {
 
       await tx.labTrip.create({
         data: {
+          institutionId: institution.id,
+          branchId: branch.id,
           labOrderId: labOrder.id,
           order: 1,
           description: "Ölçü gönderildi",
@@ -291,6 +337,8 @@ export async function POST(request: NextRequest) {
 
       await tx.labOrderInvoice.create({
         data: {
+          institutionId: institution.id,
+          branchId: branch.id,
           labOrderId: labOrder.id,
           item: "Zirkonyum laboratuvar ücreti",
           amount: 4200,
@@ -301,6 +349,7 @@ export async function POST(request: NextRequest) {
       const firma = await tx.firma.create({
         data: {
           institutionId: institution.id,
+          branchId: branch.id,
           name: "Medikal Sarf Deposu",
           phone: "02120000000",
           kategori: "TEDARICI",
@@ -311,6 +360,8 @@ export async function POST(request: NextRequest) {
 
       await tx.firmaIslem.create({
         data: {
+          institutionId: institution.id,
+          branchId: branch.id,
           firmaId: firma.id,
           tarih: now,
           islemTipi: "ALIM",
@@ -325,6 +376,8 @@ export async function POST(request: NextRequest) {
 
       await tx.firmaKontakt.create({
         data: {
+          institutionId: institution.id,
+          branchId: branch.id,
           firmaId: firma.id,
           ad: "Merve Çetin",
           unvan: "Satış Temsilcisi",
@@ -337,6 +390,7 @@ export async function POST(request: NextRequest) {
       await tx.clinicTask.create({
         data: {
           institutionId: institution.id,
+          branchId: branch.id,
           patientId: patients[3].id,
           title: "Hasta geri arama",
           details: "Tedavi planı onayı için hastayı arayın.",

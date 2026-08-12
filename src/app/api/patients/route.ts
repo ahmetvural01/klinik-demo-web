@@ -6,6 +6,7 @@ import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 import { sendSmsConsentRequest } from "@/lib/sms-consent";
 import { listPatientIdsForDerivedBucket } from "@/lib/sms-consent-stats";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 const SMS_CONSENT_FILTERS = new Set(["ENABLED", "DISABLED", "PENDING", "EXPIRED", "SEND_FAILED"]);
 
@@ -21,8 +22,11 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
   try {
     const auth = await requireAuth("patients:read");
     if (auth.error) return auth.error;
+    const activeBranch = requireActiveBranch(auth.user.branchContext);
+    if (!activeBranch.ok) return NextResponse.json({ message: activeBranch.message }, { status: 403 });
 
     const q = (request.nextUrl.searchParams.get("q") ?? "").trim();
+    const patientId = (request.nextUrl.searchParams.get("id") ?? "").trim();
     const page = parsePositiveInt(request.nextUrl.searchParams.get("page"), 1, 100000);
     const take = parsePositiveInt(request.nextUrl.searchParams.get("take"), 25, 100);
     const skipParam = Number.parseInt(request.nextUrl.searchParams.get("skip") ?? "", 10);
@@ -38,8 +42,14 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
     const tenantWhere: Prisma.PatientWhereInput = {
       archivedAt: null,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      homeBranchId: activeBranch.branchId,
     };
     const filters: Prisma.PatientWhereInput[] = [];
+
+    if (patientId) {
+      if (patientId.length > 100) return NextResponse.json({ message: "Geçersiz hasta seçimi." }, { status: 400 });
+      filters.push({ id: patientId });
+    }
 
     if (q) {
       // Tek bir arama kutusu hem hasta bilgilerini hem de "kurum/sigorta" ve
@@ -124,6 +134,11 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
         : Promise.resolve(0),
     ]);
 
+    // patients:phone izni telefonu koruduğu gibi TC kimlik numarasını da
+    // korur — TC no doğrudan kimliklendirici bir alan olduğu için telefondan
+    // daha az hassas sayılıp maskesiz bırakılması tasarımın kendi iç
+    // tutarlılığına aykırıydı (bkz. denetim raporu): DOKTOR/ASISTAN rolleri
+    // telefonu göremezken TC no'yu görebiliyordu.
     const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
     // Liste ekranı, uzun anamnez metinlerini taşımaz. Satırda gerekli olan tek
     // bilgi medikal uyarının varlığıdır; detay metinleri hasta kartından açılır.
@@ -134,7 +149,7 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
         patient.hasHeart || patient.hasBloodIssue || surgeries || medications || otherDiseases,
       ),
     }));
-    const masked = hidePhone ? listed.map((p) => ({ ...p, phone: "***" })) : listed;
+    const masked = hidePhone ? listed.map((p) => ({ ...p, phone: "***", tcNo: p.tcNo ? "***" : p.tcNo })) : listed;
 
     return NextResponse.json({
       patients: masked,
@@ -159,6 +174,8 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("patients:write");
   if (auth.error) return auth.error;
+  const activeBranch = requireActiveBranch(auth.user.branchContext);
+  if (!activeBranch.ok) return NextResponse.json({ message: activeBranch.message }, { status: 409 });
   if (!auth.user.institutionId) {
     // institutionId nullable olduğu için bu kontrol olmadan SUPERADMIN'in
     // ghost olmayan (kurum bağlamsız) oturumu, hiçbir klinikten görünmeyen
@@ -178,6 +195,7 @@ export async function POST(request: NextRequest) {
       data: {
         ...patientData,
         institutionId: auth.user.institutionId,
+        homeBranchId: activeBranch.branchId,
         birthDate: parsed.data.birthDate ? new Date(parsed.data.birthDate) : null,
         whatsappOptInAt: whatsappConsent ? new Date() : null,
         whatsappOptOutAt: null,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 import { patientFollowUpUpdateSchema } from "@/lib/validators";
 
 type Params = { params: Promise<{ id: string }> };
@@ -9,6 +10,8 @@ export async function PUT(request: NextRequest, props: Params) {
   const params = await props.params;
   const auth = await requireAuth("hastatracking:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok || !auth.user.institutionId) return NextResponse.json({ message: branch.ok ? "Kurum bilgisi bulunamadı" : branch.message }, { status: 403 });
 
   const body = await request.json();
   const parsed = patientFollowUpUpdateSchema.safeParse(body);
@@ -19,7 +22,7 @@ export async function PUT(request: NextRequest, props: Params) {
   const existing = await prisma.patientFollowUp.findFirst({
     where: {
       id: params.id,
-      ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
+      patient: { institutionId: auth.user.institutionId, homeBranchId: branch.branchId },
     },
     include: { patient: { select: { fullName: true } } },
   });
@@ -31,7 +34,13 @@ export async function PUT(request: NextRequest, props: Params) {
   const shouldOpen = parsed.data.close === false || parsed.data.status === "ACIK";
 
   const updated = await prisma.patientFollowUp.update({
-    where: { id: params.id },
+    where: {
+      id_institutionId_branchId: {
+        id: existing.id,
+        institutionId: existing.institutionId,
+        branchId: existing.branchId,
+      },
+    },
     data: {
       type: parsed.data.type,
       priority: parsed.data.priority,
@@ -74,11 +83,13 @@ export async function DELETE(_: NextRequest, props: Params) {
   const params = await props.params;
   const auth = await requireAuth("hastatracking:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok || !auth.user.institutionId) return NextResponse.json({ message: branch.ok ? "Kurum bilgisi bulunamadı" : branch.message }, { status: 403 });
 
   const existing = await prisma.patientFollowUp.findFirst({
     where: {
       id: params.id,
-      ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
+      patient: { institutionId: auth.user.institutionId, homeBranchId: branch.branchId },
     },
     include: { patient: { select: { fullName: true } } },
   });
@@ -87,8 +98,17 @@ export async function DELETE(_: NextRequest, props: Params) {
     return NextResponse.json({ message: "Takip kaydı bulunamadı" }, { status: 404 });
   }
 
-  await prisma.patientFollowUp.delete({ where: { id: params.id } });
-  await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_DELETE", `${existing.patient.fullName} takip kaydı silindi`);
+  await prisma.patientFollowUp.update({
+    where: {
+      id_institutionId_branchId: {
+        id: existing.id,
+        institutionId: existing.institutionId,
+        branchId: existing.branchId,
+      },
+    },
+    data: { status: "KAPALI", closedAt: new Date(), resolutionNote: "Takip kaydı iptal edildi." },
+  });
+  await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_CANCEL", `${existing.patient.fullName} takip kaydı iptal edildi`);
 
   return NextResponse.json({ ok: true });
 }

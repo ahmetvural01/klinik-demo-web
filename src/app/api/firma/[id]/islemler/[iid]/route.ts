@@ -3,12 +3,16 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
 import { reverseFirmaIslemIntegration } from "@/lib/firma-integration";
 import { writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
+import { publicErrorResponse } from "@/lib/public-error";
 
 export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string; iid: string }> }) {
   const params = await props.params;
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
     const body = await req.json();
     if (body.status !== undefined && body.status !== "IPTAL") {
       return NextResponse.json({ error: "Bu uç noktada yalnızca işlem iptali yapılabilir" }, { status: 400 });
@@ -17,6 +21,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       where: {
         id: params.iid,
         firmaId: params.id,
+        branchId: branch.branchId,
         firma: {
           ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
         },
@@ -26,6 +31,14 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
 
     if (!existing) {
       return NextResponse.json({ error: "İşlem bulunamadı" }, { status: 404 });
+    }
+
+    if (body.status === "IPTAL" && existing.status === "IPTAL") {
+      return NextResponse.json({
+        islem: existing,
+        duplicateRequest: true,
+        message: "Bu işlem zaten iptal edilmiş",
+      });
     }
 
     const isCancelling = body.status === "IPTAL" && existing.status !== "IPTAL";
@@ -52,7 +65,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     const data: Record<string, unknown> = {};
     if (body.status !== undefined) data.status = body.status;
 
-    const islem = await (prisma as any).$transaction(async (tx: any) => {
+    const result = await (prisma as any).$transaction(async (tx: any) => {
       if (isCancelling) {
         // İki eşzamanlı iptal isteği, ikisi de transaction dışında okunan
         // `existing.status !== "IPTAL"` kontrolünü geçip stok/gider geri
@@ -62,34 +75,52 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         // birincisi commit olana kadar bekletir, sonra WHERE'i tekrar
         // değerlendirip 0 satır etkiler.
         const claim = await tx.firmaIslem.updateMany({
-          where: { id: params.iid, status: { not: "IPTAL" } },
+          where: { id: params.iid, branchId: branch.branchId, status: { not: "IPTAL" } },
           data,
         });
         if (claim.count === 0) {
-          throw new Error("ALREADY_CANCELLED");
+          return {
+            islem: await tx.firmaIslem.findUniqueOrThrow({ where: { id: params.iid } }),
+            duplicateRequest: true,
+          };
         }
         await reverseFirmaIslemIntegration(tx, auth.user.id, params.iid);
-        return tx.firmaIslem.findUniqueOrThrow({ where: { id: params.iid } });
+        return {
+          islem: await tx.firmaIslem.findUniqueOrThrow({ where: { id: params.iid } }),
+          duplicateRequest: false,
+        };
       }
 
-      return tx.firmaIslem.update({
-        where: { id: params.iid },
-        data
-      });
+      return {
+        islem: await tx.firmaIslem.update({ where: { id: params.iid }, data }),
+        duplicateRequest: false,
+      };
     });
 
-    if (isCancelling) {
-      await writeAudit(
-        auth.user.id,
-        "FIRMA_ISLEM_CANCEL",
-        `${existing.firma?.name || "Firma"} işlemi iptal edildi.\nOtomatik işlemler geri alındı.`
-      );
-    } else {
-      await writeAudit(auth.user.id, "FIRMA_ISLEM_UPDATE", `${existing.firma?.name || "Firma"} cari işlemi güncellendi`);
+    if (!result.duplicateRequest) {
+      if (isCancelling) {
+        await writeAudit(
+          auth.user.id,
+          "FIRMA_ISLEM_CANCEL",
+          `${existing.firma?.name || "Firma"} işlemi iptal edildi.\nOtomatik işlemler geri alındı.`
+        );
+      } else {
+        await writeAudit(auth.user.id, "FIRMA_ISLEM_UPDATE", `${existing.firma?.name || "Firma"} cari işlemi güncellendi`);
+      }
     }
 
-    return NextResponse.json({ islem, message: isCancelling ? "İşlem iptal edildi ve otomatik etkiler geri alındı" : "İşlem güncellendi" });
+    return NextResponse.json({
+      islem: result.islem,
+      duplicateRequest: result.duplicateRequest,
+      message: result.duplicateRequest
+        ? "Bu işlem zaten iptal edilmiş"
+        : isCancelling
+          ? "İşlem iptal edildi ve otomatik etkiler geri alındı"
+          : "İşlem güncellendi",
+    });
   } catch (e) {
-    return NextResponse.json({ error: "Islem guncellenemedi" }, { status: 503 });
+    console.error("[firma/:id/islemler/:iid PATCH]", e);
+    const publicError = publicErrorResponse(e, "İşlem güncellenemedi. Lütfen tekrar deneyin.");
+    return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }
 }

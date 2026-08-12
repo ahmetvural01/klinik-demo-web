@@ -2,22 +2,24 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
 import { isValidDateKey, turkeyDateKey, turkeyDayRangeUtc } from "@/lib/tz";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export async function GET(req: NextRequest) {
   try {
     const auth = await requireAuth("payments:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
     // Not: doctorId eşleşmesi kasıtlı olarak filtreye DAHİL EDİLMEDİ — Payment.doctorId
     // sadece kurumun doktora yaptığı hakediş ödemesini (bir çıkış/gider) işaretler,
     // gelir değildir. Önceden buraya dahil edildiği için doktor hakediş ödemesi
     // yapıldığında "Bugün Gelir" rakamı yanlışlıkla şişiyordu.
-    const institutionFilter = auth.user.institutionId
-      ? {
-          institutionId: auth.user.institutionId,
-          patientId: { not: null },
-        }
-      : {};
+    const institutionFilter = {
+      ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      branchId: branch.branchId,
+      patientId: { not: null },
+    };
 
     const { searchParams } = new URL(req.url);
     const dateRaw = searchParams.get("date"); // YYYY-MM-DD

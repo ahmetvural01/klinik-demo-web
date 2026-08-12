@@ -82,7 +82,7 @@ function run() {
     mkdirSync(backupDir, { recursive: true });
   }
 
-  const fileName = `klinik-modern-${nowStamp()}.dump`;
+  const fileName = `klinikcep-${nowStamp()}.dump`;
   const backupPath = join(backupDir, fileName);
 
   const args = [

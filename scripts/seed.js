@@ -36,6 +36,22 @@ async function main() {
     });
     console.log(`✓ Kurum oluşturuldu: ${inst.name}`);
 
+    // 1b. Merkez şube oluştur — her kurumun en az bir şubesi olmalı, aksi
+    // halde bu kurumdaki hiçbir personel aktif şube bağlamı çözemez ve
+    // /api/staff altındaki hiçbir uçta görünmez (bkz. denetim raporu).
+    const branch = await prisma.clinicBranch.create({
+      data: {
+        id: require("crypto").randomUUID(),
+        institutionId: inst.id,
+        name: "Merkez Şube",
+        code: "MRK",
+        slug: "merkez",
+        isHeadquarters: true,
+        isActive: true,
+      }
+    });
+    console.log(`✓ Merkez şube oluşturuldu: ${branch.name}`);
+
     // 2. Admin kullanıcı oluştur
     const hash = await bcrypt.hash(requireEnv("DEMO_ADMIN_PASSWORD"), 10);
     const user = await prisma.user.create({
@@ -47,6 +63,9 @@ async function main() {
         role: "YONETICI",
         passwordHash: hash,
         isActive: true,
+        branchMemberships: {
+          create: { institutionId: inst.id, branchId: branch.id, isPrimary: true, isBranchManager: true },
+        },
       }
     });
     console.log(`✓ Admin kullanıcı oluşturuldu: ${user.fullName}`);

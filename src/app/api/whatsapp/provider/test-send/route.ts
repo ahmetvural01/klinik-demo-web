@@ -3,20 +3,12 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { testWhatsappProviderSend } from "@/lib/whatsapp";
 
-const PROVIDER_CODE = "TWILIO";
-
-async function requireAnyAuth(primaryPermission: string, fallbackPermission: string | null = null) {
-  const primary = await requireAuth(primaryPermission);
-  if (!primary.error) return primary;
-  if (!fallbackPermission) return primary;
-  const fallback = await requireAuth(fallbackPermission);
-  return fallback.error ? primary : fallback;
-}
+const PROVIDER_CODE = "META_EMBEDDED";
 
 // Kliniğin kendi bağlantısını test etmesi — providerId istemciden alınmaz,
 // yalnızca kendi kurumunun kaydı sorgulanır (IDOR'a kapalı).
 export async function POST(request: NextRequest) {
-  const auth = await requireAnyAuth("whatsapp:write", "settings:write");
+  const auth = await requireAuth("whatsapp:write");
   if (auth.error) return auth.error;
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Yalnızca klinik kullanıcıları erişebilir." }, { status: 403 });
@@ -34,12 +26,18 @@ export async function POST(request: NextRequest) {
   if (!body.phone?.trim() || !body.message?.trim()) {
     return NextResponse.json({ message: "Telefon ve mesaj zorunlu." }, { status: 400 });
   }
+  if (body.phone.trim().length > 30 || body.message.trim().length > 4096) {
+    return NextResponse.json({ message: "Telefon veya mesaj izin verilen uzunluğu aşıyor." }, { status: 400 });
+  }
 
   const provider = await prisma.whatsappProviderConfig.findUnique({
     where: { institutionId_code: { institutionId: auth.user.institutionId, code: PROVIDER_CODE } },
   });
   if (!provider) {
-    return NextResponse.json({ message: "Önce WhatsApp bağlantınızı kaydedin." }, { status: 404 });
+    return NextResponse.json({ message: "Önce WhatsApp hesabınızı bağlayın." }, { status: 404 });
+  }
+  if (!provider.isActive || provider.connectionStatus !== "CONNECTED") {
+    return NextResponse.json({ message: "WhatsApp bağlantısı etkin değil. Yeniden bağlanın." }, { status: 409 });
   }
 
   const result = await testWhatsappProviderSend(provider.id, body.phone.trim(), body.message.trim());

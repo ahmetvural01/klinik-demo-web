@@ -8,6 +8,8 @@ import {
 } from "@/lib/lab-firma-integration";
 import { formatZodError, labInvoiceUpdateSchema } from "@/lib/validators";
 import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
+import { requireActiveBranch } from "@/lib/branch-context";
+import { BusinessRuleError, publicErrorResponse } from "@/lib/public-error";
 
 type RouteParams = { params: Promise<{ id: string; invoiceId: string }> };
 
@@ -20,12 +22,13 @@ function publicOrder(order: any) {
   };
 }
 
-async function loadInvoice(id: string, invoiceId: string, institutionId: string | null) {
+async function loadInvoice(id: string, invoiceId: string, institutionId: string, branchId: string) {
   return (prisma as any).labOrderInvoice.findFirst({
     where: {
       id: invoiceId,
       labOrderId: id,
-      ...(institutionId ? { labOrder: { patient: { institutionId } } } : {}),
+      status: "ACTIVE",
+      labOrder: { institutionId, branchId },
     },
     include: {
       labOrder: {
@@ -35,6 +38,8 @@ async function loadInvoice(id: string, invoiceId: string, institutionId: string 
           labName: true,
           labType: true,
           status: true,
+          institutionId: true,
+          branchId: true,
           patient: { select: { fullName: true } },
         },
       },
@@ -46,7 +51,7 @@ async function loadFreshOrder(tx: any, id: string) {
   const order = await tx.labOrder.findUnique({
     where: { id },
     include: {
-      invoices: { orderBy: { issuedAt: "asc" } },
+      invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
       patient: { select: { id: true, fullName: true, phone: true } },
       doctor: { select: { id: true, fullName: true } },
       trips: { orderBy: { order: "asc" } },
@@ -58,11 +63,11 @@ async function loadFreshOrder(tx: any, id: string) {
 async function updateOrderInvoiceSummary(tx: any, orderId: string) {
   const [total, latest] = await Promise.all([
     tx.labOrderInvoice.aggregate({
-      where: { labOrderId: orderId },
+      where: { labOrderId: orderId, status: "ACTIVE" },
       _sum: { amount: true },
     }),
     tx.labOrderInvoice.findFirst({
-      where: { labOrderId: orderId },
+      where: { labOrderId: orderId, status: "ACTIVE" },
       orderBy: [{ issuedAt: "desc" }, { createdAt: "desc" }],
       select: { invoiceNo: true },
     }),
@@ -83,6 +88,7 @@ async function assertDebtReductionAllowed(tx: any, invoice: any, nextAmount: num
   const source = await tx.firmaIslem.findFirst({
     where: {
       status: "AKTIF",
+      branchId: invoice.labOrder.branchId,
       aciklama: { contains: labSourceToken({ labInvoiceId: invoice.id }) },
     },
     select: { firmaId: true },
@@ -93,7 +99,7 @@ async function assertDebtReductionAllowed(tx: any, invoice: any, nextAmount: num
   await tx.$queryRaw`SELECT "id" FROM "Firma" WHERE "id" = ${firmaId} FOR UPDATE`;
   const rows = await tx.firmaIslem.groupBy({
     by: ["islemTipi"],
-    where: { firmaId, status: "AKTIF" },
+    where: { firmaId, branchId: invoice.labOrder.branchId, status: "AKTIF" },
     _sum: { tutar: true },
   });
   const balance = Math.round(rows.reduce((sum: number, row: any) => {
@@ -102,8 +108,9 @@ async function assertDebtReductionAllowed(tx: any, invoice: any, nextAmount: num
   }, 0) * 100) / 100;
 
   if (balance - reduction < 0) {
-    throw new Error(
+    throw new BusinessRuleError(
       "Bu düzeltme firma bakiyesini eksiye düşürür. Önce bu faturaya ilişkin firma ödemesini düzeltin veya iptal edin.",
+      409,
     );
   }
 }
@@ -112,8 +119,10 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
   const params = await props.params;
   const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok || !auth.user.institutionId) return NextResponse.json({ error: branch.ok ? "Kurum bağlamı zorunlu" : branch.message }, { status: 403 });
 
-  const invoice = await loadInvoice(params.id, params.invoiceId, auth.user.institutionId);
+  const invoice = await loadInvoice(params.id, params.invoiceId, auth.user.institutionId, branch.branchId);
   if (!invoice) return NextResponse.json({ error: "Laboratuvar faturası bulunamadı" }, { status: 404 });
 
   const parsed = labInvoiceUpdateSchema.safeParse(await req.json());
@@ -128,7 +137,7 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
     const fresh = await (prisma as any).$transaction(async (tx: any) => {
       await tx.$queryRaw`SELECT "id" FROM "LabOrder" WHERE "id" = ${params.id} FOR UPDATE`;
       const currentInvoice = await tx.labOrderInvoice.findFirst({
-        where: { id: params.invoiceId, labOrderId: params.id },
+        where: { id: params.invoiceId, labOrderId: params.id, status: "ACTIVE" },
         include: {
           labOrder: {
             select: {
@@ -137,6 +146,7 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
               labName: true,
               labType: true,
               status: true,
+              branchId: true,
               patient: { select: { fullName: true } },
             },
           },
@@ -155,7 +165,7 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
           debtAllocations: { select: { paymentIslemId: true } },
         },
       });
-      await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, { labInvoiceId: currentInvoice.id });
+      await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, { labInvoiceId: currentInvoice.id, branchId: branch.branchId });
 
       const updated = await tx.labOrderInvoice.update({
         where: { id: currentInvoice.id },
@@ -171,7 +181,8 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
       const integration = await applyLabInvoiceFirmaIntegration({
         tx,
         userId: auth.user.id,
-        institutionId: auth.user.institutionId || null,
+        institutionId: auth.user.institutionId!,
+        branchId: branch.branchId,
         labName: currentInvoice.labOrder.labName,
         labType: currentInvoice.labOrder.labType,
         patientName: currentInvoice.labOrder.patient?.fullName || null,
@@ -191,7 +202,7 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
         });
       }
       if (integration && oldDebt?.debtAllocations.length) {
-        await rebuildFirmaPaymentAllocations(tx, integration.firmaId, {
+        await rebuildFirmaPaymentAllocations(tx, integration.firmaId, branch.branchId, {
           preferredDebtByPayment: new Map(
             oldDebt.debtAllocations.map(
               (allocation: { paymentIslemId: string }) => [
@@ -218,10 +229,8 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
       return NextResponse.json({ error: "İptal edilmiş siparişin faturası değiştirilemez." }, { status: 409 });
     }
     console.error("[lab invoice PATCH]", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Laboratuvar faturası güncellenemedi" },
-      { status: 400 },
-    );
+    const publicError = publicErrorResponse(error, "Laboratuvar faturası güncellenemedi. Lütfen tekrar deneyin.");
+    return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }
 }
 
@@ -229,15 +238,17 @@ export async function DELETE(_req: NextRequest, props: RouteParams) {
   const params = await props.params;
   const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok || !auth.user.institutionId) return NextResponse.json({ error: branch.ok ? "Kurum bağlamı zorunlu" : branch.message }, { status: 403 });
 
-  const invoice = await loadInvoice(params.id, params.invoiceId, auth.user.institutionId);
+  const invoice = await loadInvoice(params.id, params.invoiceId, auth.user.institutionId, branch.branchId);
   if (!invoice) return NextResponse.json({ error: "Laboratuvar faturası bulunamadı" }, { status: 404 });
 
   try {
     const fresh = await (prisma as any).$transaction(async (tx: any) => {
       await tx.$queryRaw`SELECT "id" FROM "LabOrder" WHERE "id" = ${params.id} FOR UPDATE`;
       const currentInvoice = await tx.labOrderInvoice.findFirst({
-        where: { id: params.invoiceId, labOrderId: params.id },
+        where: { id: params.invoiceId, labOrderId: params.id, status: "ACTIVE" },
         include: {
           labOrder: {
             select: {
@@ -245,6 +256,7 @@ export async function DELETE(_req: NextRequest, props: RouteParams) {
               labName: true,
               labType: true,
               status: true,
+              branchId: true,
               patient: { select: { fullName: true } },
             },
           },
@@ -252,8 +264,16 @@ export async function DELETE(_req: NextRequest, props: RouteParams) {
       });
       if (!currentInvoice) throw new Error("LAB_INVOICE_CHANGED");
       await assertDebtReductionAllowed(tx, currentInvoice, 0);
-      await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, { labInvoiceId: currentInvoice.id });
-      await tx.labOrderInvoice.delete({ where: { id: currentInvoice.id } });
+      await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, { labInvoiceId: currentInvoice.id, branchId: branch.branchId });
+      await tx.labOrderInvoice.update({
+        where: { id: currentInvoice.id },
+        data: {
+          status: "VOID",
+          voidedAt: new Date(),
+          voidedById: auth.user.id,
+          voidReason: "Laboratuvar faturası iptal edildi.",
+        },
+      });
       await updateOrderInvoiceSummary(tx, params.id);
       return loadFreshOrder(tx, params.id);
     });
@@ -266,9 +286,7 @@ export async function DELETE(_req: NextRequest, props: RouteParams) {
       return NextResponse.json({ error: "Fatura başka bir işlemde değiştirildi. Listeyi yenileyip tekrar deneyin." }, { status: 409 });
     }
     console.error("[lab invoice DELETE]", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Laboratuvar faturası iptal edilemedi" },
-      { status: 400 },
-    );
+    const publicError = publicErrorResponse(error, "Laboratuvar faturası iptal edilemedi. Lütfen tekrar deneyin.");
+    return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }
 }

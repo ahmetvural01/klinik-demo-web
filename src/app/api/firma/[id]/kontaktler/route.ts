@@ -1,23 +1,27 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok || !auth.user.institutionId) return NextResponse.json({ error: branch.ok ? "Kurum bulunamadı" : branch.message }, { status: 403 });
     const firma = await (prisma as any).firma.findFirst({
       where: {
         id: params.id,
-        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        institutionId: auth.user.institutionId,
+        branchId: branch.branchId,
       },
       select: { id: true },
     });
     if (!firma) return NextResponse.json({ error: "Bulunamadi" }, { status: 404 });
 
     const kontaktler = await (prisma as any).firmaKontakt.findMany({
-      where: { firmaId: params.id, isActive: true },
+      where: { institutionId: auth.user.institutionId, branchId: branch.branchId, firmaId: params.id, isActive: true },
       orderBy: { isPrimary: "desc" }
     });
     
@@ -33,12 +37,15 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok || !auth.user.institutionId) return NextResponse.json({ error: branch.ok ? "Kurum bulunamadı" : branch.message }, { status: 403 });
     const firma = await (prisma as any).firma.findFirst({
       where: {
         id: params.id,
-        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        institutionId: auth.user.institutionId,
+        branchId: branch.branchId,
       },
-      select: { id: true },
+      select: { id: true, institutionId: true, branchId: true },
     });
     if (!firma) return NextResponse.json({ error: "Bulunamadi" }, { status: 404 });
 
@@ -48,13 +55,15 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     // Eğer bu primary olarak işaretlenirse, diğer primary'leri false'a çevir
     if (isPrimary) {
       await (prisma as any).firmaKontakt.updateMany({
-        where: { firmaId: params.id },
+        where: { institutionId: firma.institutionId, branchId: firma.branchId, firmaId: params.id },
         data: { isPrimary: false }
       });
     }
 
     const kontakt = await (prisma as any).firmaKontakt.create({
       data: {
+        institutionId: firma.institutionId,
+        branchId: firma.branchId,
         firmaId: params.id,
         ad,
         unvan: unvan || null,

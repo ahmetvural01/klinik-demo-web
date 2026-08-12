@@ -9,8 +9,8 @@ export type PanelAlertCounts = { taksit: number; stok: number; lab: number; task
 const EMPTY_ALERTS: PanelAlertCounts = { taksit: 0, stok: 0, lab: 0, tasks: 0, waiting: 0, waitingList: [] };
 const CACHE_TTL_MS = 15_000;
 
-let memoryCache: Record<string, { at: number; data: PanelAlertCounts }> = {};
-let inFlight: Record<string, Promise<PanelAlertCounts> | undefined> = {};
+const memoryCache: Record<string, { at: number; data: PanelAlertCounts }> = {};
+const inFlight: Record<string, Promise<PanelAlertCounts> | undefined> = {};
 
 export function getAlertPermissions(role: string, permissions?: readonly string[]) {
   if (permissions) {
@@ -143,7 +143,7 @@ async function loadAlerts(role: string, permissions: readonly string[] | undefin
   return inFlight[accessKey]!;
 }
 
-export function usePanelAlerts(role: string, permissions?: readonly string[]) {
+export function usePanelAlerts(role: string, permissions: readonly string[] | undefined, scopeKey: string) {
   // Başlangıç değeri her zaman sabit (EMPTY_ALERTS) olmalı: sunucu tarafında
   // localStorage yok, istemci tarafında ise varsa önbellek farklı bir değer
   // dönebilir. Bu, ilk render'da sunucu/istemci HTML'inin uyuşmamasına
@@ -152,7 +152,7 @@ export function usePanelAlerts(role: string, permissions?: readonly string[]) {
   // içinde (hydration tamamlandıktan sonra) uygulanıyor.
   const [alerts, setAlerts] = useState<PanelAlertCounts>(EMPTY_ALERTS);
   const permissionKey = permissions ? [...permissions].sort().join(",") : "";
-  const accessKey = `${role}:${permissionKey}`;
+  const accessKey = `${scopeKey}:${role}:${permissionKey}`;
 
   useEffect(() => {
     if (!role) return;

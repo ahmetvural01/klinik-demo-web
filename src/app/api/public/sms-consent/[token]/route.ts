@@ -13,7 +13,7 @@ const STATUS_MESSAGES: Record<"NOT_FOUND" | "USED" | "EXPIRED" | "SUPERSEDED", s
 export async function GET(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const ip = getClientIpFromHeaders(request.headers);
-  const rate = checkRateLimit(`sms-consent-view:${ip}`, 30, 15 * 60_000);
+  const rate = await checkRateLimit(`sms-consent-view:${ip}`, 30, 15 * 60_000);
   if (!rate.ok) {
     return NextResponse.json({ message: "Çok fazla istek gönderildi. Lütfen kısa bir süre sonra tekrar deneyin." }, { status: 429 });
   }
@@ -30,7 +30,7 @@ const decisionSchema = z.object({ decision: z.enum(["ENABLED", "DISABLED"]) });
 export async function POST(request: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
   const ip = getClientIpFromHeaders(request.headers);
-  const rate = checkRateLimit(`sms-consent-submit:${ip}`, 10, 15 * 60_000);
+  const rate = await checkRateLimit(`sms-consent-submit:${ip}`, 10, 15 * 60_000);
   if (!rate.ok) {
     return NextResponse.json({ message: "Çok fazla istek gönderildi. Lütfen kısa bir süre sonra tekrar deneyin." }, { status: 429 });
   }

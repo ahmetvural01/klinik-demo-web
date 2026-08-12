@@ -82,7 +82,10 @@ export function Modal({
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") requestCloseRef.current();
+      if (e.key !== "Escape") return;
+      const dialogs = document.querySelectorAll<HTMLElement>(".ui-modal-panel");
+      if (dialogs[dialogs.length - 1] !== dialogRef.current) return;
+      requestCloseRef.current();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -121,6 +124,8 @@ export function Modal({
       if (event.key !== "Tab") return;
       const dialog = dialogRef.current;
       if (!dialog) return;
+      const dialogs = document.querySelectorAll<HTMLElement>(".ui-modal-panel");
+      if (dialogs[dialogs.length - 1] !== dialog) return;
       const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
         'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
       )).filter((element) => !element.hasAttribute("hidden") && element.getClientRects().length > 0);
@@ -178,6 +183,7 @@ export function Modal({
           const target = event.target;
           if (!(target instanceof HTMLInputElement || target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement)) return;
           if (target.disabled || ("readOnly" in target && target.readOnly)) return;
+          if (target.closest("[data-dirty-ignore]")) return;
           setAutoDirty(true);
         }}
         className={`ui-modal-panel flex max-h-[calc(100dvh-20px)] w-full flex-col rounded-t-xl border border-slate-200 bg-[rgb(var(--app-surface))] shadow-[var(--shadow-floating)] outline-none sm:max-h-[calc(100dvh-32px)] sm:rounded-xl ${SIZE_CLASS[size]} ${attention ? "ui-modal-panel-attention" : ""}`}

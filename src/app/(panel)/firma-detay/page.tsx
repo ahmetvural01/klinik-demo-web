@@ -11,6 +11,7 @@ import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
 import { ModuleIcon } from "@/components/ui/ModuleIcon";
 import { FormField } from "@/components/ui/FormField";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 import {
   usePurchaseModals, fmt, fmtDate, formInput,
   type StockItem, type Purchase,
@@ -38,8 +39,6 @@ type Islem = {
 
 type Ekstre = { islemler: Islem[]; topBorc: number; topOdeme: number; netBakiye: number };
 
-const STOCK_CACHE_KEY = "stock:list:v1";
-
 const FIRMA_KATEGORILERI: Record<string, string> = {
   TEDARICI: "Tedarikçi", HIZMET_SAGLAYICI: "Hizmet Sağlayıcı", LAB: "Laboratuvar",
   KONTRAKTOR: "Yüklenici", BANK: "Banka", DIGER: "Diğer"
@@ -52,24 +51,25 @@ const TIPI_TONE: Record<string, "critical" | "warning" | "success"> = {
 function FirmaDetayContent() {
   const searchParams = useSearchParams();
   const id = searchParams.get("id") || "";
+  const { can } = usePermissions();
+  const canWriteFinance = can("finance:write");
+  const canWriteLab = can("lab:write");
 
   const [firma, setFirma] = useState<Firma | null>(null);
   const [ekstre, setEkstre] = useState<Ekstre | null>(null);
   const [kontaktler, setKontaktler] = useState<FirmaKontakt[]>([]);
-  const [stockItems, setStockItems] = useState<StockItem[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = sessionStorage.getItem(STOCK_CACHE_KEY);
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch { return []; }
-  });
+  const [stockItems, setStockItems] = useState<StockItem[]>([]);
   const [firmaPurchases, setFirmaPurchases] = useState<Purchase[]>([]);
   const [ekstreTipi, setEkstreTipi] = useState("");
   const [ekstreFrom, setEkstreFrom] = useState("");
   const [ekstreTo, setEkstreTo] = useState("");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const firmaLoadRef = useRef(0);
+  const ekstreLoadRef = useRef(0);
+  const kontaktLoadRef = useRef(0);
+  const stockLoadRef = useRef(0);
+  const purchaseLoadRef = useRef(0);
 
   const showToast = useCallback((type: "success" | "error" | "info", text: string) => {
     showToastSafe({ message: text, type });
@@ -77,61 +77,72 @@ function FirmaDetayContent() {
 
   const loadFirma = useCallback(async () => {
     if (!id) { setLoading(false); return; }
+    const sequence = ++firmaLoadRef.current;
+    setLoadError(null);
     try {
       const r = await fetch("/api/firma", { cache: "no-store" });
       const d = await r.json();
+      if (!r.ok) throw new Error();
+      if (sequence !== firmaLoadRef.current) return;
       const rows: Firma[] = Array.isArray(d) ? d : [];
       const found = rows.find(f => f.id === id) || null;
       setFirma(found);
       if (!found) setLoadError("Firma bulunamadı");
     } catch {
-      setLoadError("Firma yüklenemedi");
+      if (sequence === firmaLoadRef.current) setLoadError("Firma yüklenemedi");
     } finally {
-      setLoading(false);
+      if (sequence === firmaLoadRef.current) setLoading(false);
     }
   }, [id]);
 
   const loadEkstre = useCallback(async () => {
     if (!id) return;
+    const sequence = ++ekstreLoadRef.current;
     try {
       const r = await fetch(`/api/firma/${id}/islemler`, { cache: "no-store" });
       const d = await r.json();
       if (!r.ok) throw new Error(d?.message);
+      if (sequence !== ekstreLoadRef.current) return;
       setEkstre(d);
     } catch {
-      showToast("error", "Firma ekstresi güncellenemedi; son başarılı kayıtlar korunuyor.");
+      if (sequence === ekstreLoadRef.current) showToast("error", "Firma ekstresi güncellenemedi; son başarılı kayıtlar korunuyor.");
     }
   }, [id, showToast]);
 
   const loadKontaktler = useCallback(async () => {
     if (!id) return;
+    const sequence = ++kontaktLoadRef.current;
     try {
       const r = await fetch(`/api/firma/${id}/kontaktler`, { cache: "no-store" });
       const d = await r.json().catch(() => null);
       if (!r.ok) throw new Error();
+      if (sequence !== kontaktLoadRef.current) return;
       setKontaktler(Array.isArray(d) ? d : []);
-    } catch { showToast("error", "Firma iletişim bilgileri güncellenemedi."); }
+    } catch { if (sequence === kontaktLoadRef.current) showToast("error", "Firma iletişim bilgileri güncellenemedi."); }
   }, [id, showToast]);
 
   const loadStockItems = useCallback(async () => {
+    const sequence = ++stockLoadRef.current;
     try {
       const r = await fetch("/api/stock", { cache: "no-store" });
       const d = await r.json().catch(() => null);
       if (!r.ok) throw new Error();
+      if (sequence !== stockLoadRef.current) return;
       const rows = Array.isArray(d) ? d : [];
       setStockItems(rows);
-      sessionStorage.setItem(STOCK_CACHE_KEY, JSON.stringify(rows));
-    } catch { showToast("error", "Stok seçenekleri güncellenemedi."); }
+    } catch { if (sequence === stockLoadRef.current) showToast("error", "Stok seçenekleri güncellenemedi."); }
   }, [showToast]);
 
   const loadFirmaPurchases = useCallback(async () => {
     if (!id) return;
+    const sequence = ++purchaseLoadRef.current;
     try {
       const r = await fetch(`/api/purchases?firmaId=${id}`, { cache: "no-store" });
       const d = await r.json().catch(() => null);
       if (!r.ok) throw new Error();
+      if (sequence !== purchaseLoadRef.current) return;
       setFirmaPurchases(Array.isArray(d) ? d : []);
-    } catch { showToast("error", "Satın alma geçmişi güncellenemedi."); }
+    } catch { if (sequence === purchaseLoadRef.current) showToast("error", "Satın alma geçmişi güncellenemedi."); }
   }, [id, showToast]);
 
   const refreshAll = useCallback(() => {
@@ -155,6 +166,7 @@ function FirmaDetayContent() {
     showToast,
     currentFirmaId: firma?.id,
     onChanged: async () => { await refreshAll(); },
+    canWrite: canWriteFinance,
   });
 
   // ── Firma Düzenle modal ───────────────────────────────────────────────────
@@ -208,7 +220,7 @@ function FirmaDetayContent() {
   };
 
   const cancelIslem = async (iid: string) => {
-    if (!firma) return;
+    if (!firma || !canWriteFinance) return;
     if (!(await confirmDialog({ message: "Bu işlemi iptal etmek istediğinizden emin misiniz?", danger: true, confirmText: "İptal Et" }))) return;
     try {
       const r = await fetch(`/api/firma/${firma.id}/islemler/${iid}`, {
@@ -346,7 +358,9 @@ function FirmaDetayContent() {
             </div>
           );
         }
-        return <Button size="sm" variant="danger" onClick={() => cancelIslem(row.original.id)}>İptal</Button>;
+        return canWriteFinance
+          ? <Button size="sm" variant="danger" onClick={() => cancelIslem(row.original.id)}>İptal</Button>
+          : null;
       },
     },
   ];
@@ -396,15 +410,15 @@ function FirmaDetayContent() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="secondary" href="/firma">Tedarikçi Listesi</Button>
-            <Button variant="secondary" onClick={openEditFirma}>Düzenle</Button>
-            <Button variant={firma.isActive ? "secondary" : "primary"} onClick={() => void toggleFirmaActive()}>
+            {canWriteFinance && <Button variant="secondary" onClick={openEditFirma}>Düzenle</Button>}
+            {canWriteFinance && <Button variant={firma.isActive ? "secondary" : "primary"} onClick={() => void toggleFirmaActive()}>
               {firma.isActive ? "Pasife Al" : "Aktif Et"}
-            </Button>
-            {isLabFirma ? (
+            </Button>}
+            {isLabFirma && canWriteLab ? (
               <Button variant="primary" href={`/lab?new=1&labName=${encodeURIComponent(firma.name)}`}>Laboratuvar İşi Oluştur</Button>
-            ) : (
+            ) : !isLabFirma && canWriteFinance ? (
               <Button variant="danger" onClick={() => purchaseManager.openAddPurchase(firma.id)}>Malzeme Alımı</Button>
-            )}
+            ) : null}
           </div>
         </div>
 
@@ -452,14 +466,14 @@ function FirmaDetayContent() {
                     Bu firma laboratuvar olarak çalışır. Malzeme siparişi açılmaz; lab işi ve faturası Laboratuvar ekranından kaydedilir, tutarlar aşağıdaki hesap ekstresine hizmet borcu olarak düşer.
                   </p>
                 </div>
-                <Button size="sm" variant="primary" href={`/lab?new=1&labName=${encodeURIComponent(firma.name)}`}>Laboratuvar İşi Oluştur</Button>
+                {canWriteLab && <Button size="sm" variant="primary" href={`/lab?new=1&labName=${encodeURIComponent(firma.name)}`}>Laboratuvar İşi Oluştur</Button>}
               </div>
             </div>
           ) : (
             <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between gap-2">
                 <h3 className="text-sm font-black text-slate-900">Satın Alımlar</h3>
-                <Button size="sm" variant="danger" onClick={() => purchaseManager.openAddPurchase(firma.id)}>Yeni Satın Alma</Button>
+                {canWriteFinance && <Button size="sm" variant="danger" onClick={() => purchaseManager.openAddPurchase(firma.id)}>Yeni Satın Alma</Button>}
               </div>
               {firmaPurchases.length === 0 ? (
                 <p className="py-6 text-center text-sm text-slate-400">Henüz satın alma kaydı yok</p>
@@ -499,7 +513,7 @@ function FirmaDetayContent() {
         <div className="rounded-2xl border border-slate-200 bg-white p-4">
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-black text-slate-900">Kontaklar</h3>
-            <Button size="sm" onClick={() => setShowAddKontakt(true)}>Kontakt Ekle</Button>
+            {canWriteFinance && <Button size="sm" onClick={() => setShowAddKontakt(true)}>Kontakt Ekle</Button>}
           </div>
           {kontaktler.length === 0 ? (
             <div className="py-10 text-center text-sm text-slate-500">Henüz kontakt eklenmemiş</div>
@@ -513,10 +527,10 @@ function FirmaDetayContent() {
                       {k.isPrimary && <Badge tone="info">Ana Kontakt</Badge>}
                       {k.unvan && <span className="text-sm text-slate-500">{k.unvan}</span>}
                     </div>
-                    <div className="flex items-center gap-1">
+                    {canWriteFinance && <div className="flex items-center gap-1">
                       <button onClick={() => openEditKontakt(k)} className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50">Düzenle</button>
                       <button onClick={() => void handleDeleteKontakt(k)} className="rounded-lg border border-red-200 px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50">Sil</button>
-                    </div>
+                    </div>}
                   </div>
                   <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
                     {k.telefon && <span>Tel: {k.telefon}</span>}

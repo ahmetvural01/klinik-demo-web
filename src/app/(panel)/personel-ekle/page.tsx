@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/Button";
 import { FormField, FormSection, FormErrorBanner, inputErrorClass } from "@/components/ui/FormField";
 import { Spinner } from "@/components/ui/Spinner";
 import { ModuleIcon } from "@/components/ui/ModuleIcon";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 
 const isEffectiveDoctorRole = (role: string, showAsDoctor: boolean) => role === "DOKTOR" || (role === "YONETICI" && showAsDoctor);
 
@@ -38,14 +39,42 @@ function PersonelEkleContent() {
   const [saving, setSaving] = useState(false);
   const [loadingEdit, setLoadingEdit] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [activeBranchName, setActiveBranchName] = useState<string | null>(null);
+  const [activeBranchError, setActiveBranchError] = useState<string | null>(null);
+  const [branchReloadKey, setBranchReloadKey] = useState(0);
+  const [staffReloadKey, setStaffReloadKey] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isEdit) return;
+    const controller = new AbortController();
+    setActiveBranchError(null);
+    fetch("/api/branches", { signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.message || "Aktif şube bilgisi yüklenemedi.");
+        if (!data?.activeBranch?.name) throw new Error("Personelin ekleneceği aktif şube belirlenemedi.");
+        return data;
+      })
+      .then((data) => setActiveBranchName(data.activeBranch.name))
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setActiveBranchError(error instanceof Error ? error.message : "Aktif şube bilgisi yüklenemedi.");
+      });
+    return () => controller.abort();
+  }, [branchReloadKey, isEdit]);
 
   useEffect(() => {
     if (!editId) return;
     setLoadingEdit(true);
+    setLoadError(null);
     fetch("/api/staff/" + editId)
-      .then(r => r.json())
-      .then(d => {
+      .then(async (r) => {
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          throw new Error(d?.message || "Personel bilgileri yüklenemedi");
+        }
         setForm({
           identityNo: d.identityNo || "",
           fullName: d.fullName || "",
@@ -62,14 +91,23 @@ function PersonelEkleContent() {
         });
         setLoadingEdit(false);
       })
-      .catch(() => setLoadingEdit(false));
-  }, [editId]);
+      .catch((e) => {
+        setLoadError(e instanceof Error ? e.message : "Personel bilgileri yüklenemedi");
+        setLoadingEdit(false);
+      });
+  }, [editId, staffReloadKey]);
 
   const showDoctorRates = isEffectiveDoctorRole(form.role, form.showAsDoctor);
 
   const save = async () => {
     setSaving(true);
     setError(null);
+
+    if (form.password && (form.password.length < 8 || form.password.length > 72)) {
+      setError("Yeni şifre 8-72 karakter olmalıdır.");
+      setSaving(false);
+      return;
+    }
 
     const body: Record<string, unknown> = {
       identityNo: form.identityNo,
@@ -91,28 +129,11 @@ function PersonelEkleContent() {
     }
 
     try {
-      let res = await fetch(isEdit ? "/api/staff/" + editId : "/api/staff", {
+      const res = await fetch(isEdit ? "/api/staff/" + editId : "/api/staff", {
         method: isEdit ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body)
       });
-
-      if (res.status === 409) {
-        const b = await res.json().catch(() => ({}));
-        if (b.requiresForce) {
-          const proceed = await confirmDialog({
-            message: `${b.message}\n\nYine de pasife almak istiyor musunuz? (Randevu/plan/takipler devredilmeden kalır.)`,
-            danger: true,
-            confirmText: "Yine de Pasife Al",
-          });
-          if (!proceed) return;
-          res = await fetch(isEdit ? "/api/staff/" + editId : "/api/staff", {
-            method: isEdit ? "PUT" : "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...body, force: true }),
-          });
-        }
-      }
 
       if (!res.ok) {
         const b = await res.json().catch(() => ({ message: "Kayıt başarısız" }));
@@ -134,6 +155,16 @@ function PersonelEkleContent() {
     <div className="h-10 animate-pulse rounded-lg bg-slate-50" />
     <div className="h-10 animate-pulse rounded-lg bg-slate-50" />
   </div>;
+
+  if (loadError) return (
+    <section className="space-y-4">
+      <Link href="/personel" className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-500 hover:text-primary">
+        <ArrowLeft className="h-4 w-4" />
+        Personellere Dön
+      </Link>
+      <LoadErrorState message={loadError} onRetry={() => setStaffReloadKey((value) => value + 1)} />
+    </section>
+  );
 
   const inputCls = (hasError = false) => `h-10 w-full rounded-lg border px-3 text-sm outline-none transition focus:ring-2 ${inputErrorClass(hasError)}`;
 
@@ -160,7 +191,13 @@ function PersonelEkleContent() {
           <ModuleIcon module="person" size="lg" />
           <div>
             <h1 className="font-display text-xl font-black tracking-tight text-slate-900">{isEdit ? "Personel Düzenle" : "Yeni Personel Ekle"}</h1>
-            <p className="text-xs font-medium text-slate-500">{isEdit ? "Personel bilgilerini, mesai saatlerini ve durumunu buradan yönetin" : "Yeni personel bilgilerini girin"}</p>
+            <p className="text-xs font-medium text-slate-500">
+              {isEdit
+                ? "Personel bilgilerini, mesai saatlerini ve durumunu buradan yönetin"
+                : activeBranchName
+                  ? <>Yeni personel bilgilerini girin — <b>{activeBranchName}</b> şubesine eklenecek</>
+                  : "Yeni personel bilgilerini girin"}
+            </p>
           </div>
         </div>
         {isEdit && (
@@ -169,6 +206,10 @@ function PersonelEkleContent() {
           </Button>
         )}
       </div>
+
+      {activeBranchError && !isEdit && (
+        <LoadErrorState compact message={activeBranchError} onRetry={() => setBranchReloadKey((value) => value + 1)} />
+      )}
 
       {isEdit && !form.isActive && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
@@ -205,8 +246,8 @@ function PersonelEkleContent() {
             </select>
           </FormField>
           {isEdit ? (
-            <FormField label="Yeni Şifre (boş bırakılabilir)">
-              <input className={inputCls()} placeholder="Değiştirmek için yazın" type="password" value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
+            <FormField label="Yeni Şifre (boş bırakılabilir)" hint="Girildiğinde hemen geçerli olur ve personelin eski oturumları kapatılır." error={form.password && form.password.length < 8 ? "Şifre en az 8 karakter olmalıdır." : undefined}>
+              <input className={inputCls(Boolean(form.password && form.password.length < 8))} placeholder="Değiştirmek için yazın" type="password" minLength={8} maxLength={72} autoComplete="new-password" value={form.password} onChange={(e) => setForm((p) => ({ ...p, password: e.target.value }))} />
             </FormField>
           ) : (
             <div className="flex items-end">

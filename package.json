@@ -1,5 +1,5 @@
 {
-  "name": "klinik-modern",
+  "name": "klinikcep",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -31,21 +31,33 @@
     "test:stock-idempotency": "tsx scripts/stock-idempotency-test.ts",
     "test:role-permissions": "tsx scripts/role-permission-enforcement-test.ts",
     "test:tenant-isolation": "tsx scripts/tenant-isolation-api-test.ts",
+    "test:architecture-invariants": "tsx scripts/architecture-invariants.ts",
+    "test:branch-isolation": "tsx scripts/branch-isolation-regression-test.ts",
     "test:role-visibility": "tsx scripts/role-visibility-test.ts",
+    "test:routes": "tsx scripts/route-runtime-smoke.ts",
+    "test:whatsapp-saas": "tsx scripts/whatsapp-saas-regression-test.ts",
+    "test:unified-communication": "tsx scripts/unified-communication-regression-test.ts",
+    "test:whatsapp-entitlement": "tsx scripts/whatsapp-entitlement-visibility-test.ts",
+    "test:whatsapp-connection": "tsx scripts/whatsapp-connection-management-test.ts",
     "backfill:fine-grained-permissions": "tsx scripts/backfill-fine-grained-permissions.ts",
     "test:firma-islem-cancel-race": "tsx scripts/firma-islem-cancel-race-test.ts",
+    "test:purchase-lifecycle": "tsx scripts/purchase-lifecycle-regression-test.ts",
     "test:taksit-quick-pay-ledger": "tsx scripts/taksit-quick-pay-ledger-test.ts",
     "test:working-hours": "tsx scripts/working-hours-rules-test.ts",
     "test:visual": "node scripts/visual-audit.mjs",
     "test:layout-sidebar-header": "tsx scripts/layout-sidebar-header-test.ts",
     "test:modal-dirty-state": "tsx scripts/modal-dirty-state-test.ts",
     "test:task-listbox": "tsx scripts/task-listbox-test.ts",
+    "test:staff-credentials": "tsx scripts/staff-credential-update-test.ts",
+    "test:auth-security": "tsx scripts/auth-security-regression-test.ts",
+    "test:ui-network-failures": "tsx scripts/ui-network-failure-regression-test.ts",
     "test:ensure-postgres": "node scripts/ensure-postgres-test.mjs",
     "preflight:prod": "tsx scripts/preflight-prod.ts",
     "pilot:smoke": "node scripts/pilot-smoke.mjs",
     "backup:db": "node scripts/backup-postgres.mjs",
     "encrypt:legacy-data": "tsx scripts/encrypt-existing-sensitive-data.ts",
-    "security:secrets": "node scripts/security-scan-secrets.mjs"
+    "security:secrets": "node scripts/security-scan-secrets.mjs",
+    "security:field-encryption": "tsx scripts/field-encryption-audit.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
@@ -82,7 +94,10 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@eslint/eslintrc": "^3.3.6",
+    "@lhci/cli": "^0.15.1",
+    "@playwright/test": "^1.62.1",
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.7",
     "@types/node": "20.16.5",
@@ -100,6 +115,8 @@
     "typescript": "5.5.4"
   },
   "overrides": {
+    "brace-expansion@<=1.1.17": "1.1.18",
+    "esbuild@>=0.27.3 <0.28.1": "0.28.1",
     "exceljs": {
       "archiver": "8.0.0",
       "unzipper": "0.12.5",

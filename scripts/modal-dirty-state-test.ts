@@ -18,7 +18,7 @@ import bcrypt from "bcryptjs";
 import { chromium } from "playwright-core";
 
 const prisma = new PrismaClient();
-const BASE = process.env.LAYOUT_TEST_BASE_URL || "http://127.0.0.1:3001";
+const BASE = process.env.LAYOUT_TEST_BASE_URL || "http://localhost:3000";
 const CHROME_PATH = process.env.CHROME_PATH || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const PASSWORD = process.env.MODAL_TEST_PASSWORD || "changeme";
 
@@ -28,6 +28,11 @@ function assert(condition: unknown, message: string): asserts condition {
 
 async function main() {
   const hash = await bcrypt.hash(PASSWORD, 10);
+  const branch = await prisma.clinicBranch.findFirstOrThrow({
+    where: { institutionId: "inst-default", isActive: true },
+    orderBy: [{ isHeadquarters: "desc" }, { createdAt: "asc" }],
+    select: { id: true },
+  });
   const user = await prisma.user.create({
     data: {
       identityNo: `9${String(Date.now()).slice(-10)}`.slice(0, 11),
@@ -36,6 +41,7 @@ async function main() {
       role: "YONETICI",
       institutionId: "inst-default",
       isActive: true,
+      branchMemberships: { create: { branchId: branch.id, isPrimary: true } },
     },
     select: { id: true, identityNo: true },
   });

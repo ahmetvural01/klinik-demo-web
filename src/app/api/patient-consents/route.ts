@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +20,8 @@ const CONSENT_CATEGORIES = new Set([
 export async function GET(req: NextRequest) {
   const auth = await requireAuth("documents:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
   if (!auth.user.institutionId) {
     return NextResponse.json({ error: "Klinik bağlamı olmadan hasta onamlarına erişilemez." }, { status: 403 });
   }
@@ -31,6 +34,7 @@ export async function GET(req: NextRequest) {
       where: {
         id: patientId,
         institutionId: auth.user.institutionId,
+        homeBranchId: branch.branchId,
       },
       select: { id: true },
     });
@@ -54,6 +58,8 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const auth = await requireAuth("documents:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
   if (!auth.user.institutionId) {
     return NextResponse.json({ error: "Klinik bağlamı olmadan hasta onamı oluşturulamaz." }, { status: 403 });
   }
@@ -87,6 +93,7 @@ export async function POST(req: NextRequest) {
         id: patientId,
         archivedAt: null,
         institutionId: auth.user.institutionId,
+        homeBranchId: branch.branchId,
       },
       select: { id: true, fullName: true },
     });

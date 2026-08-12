@@ -8,11 +8,10 @@ import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { ModuleIcon } from "@/components/ui/ModuleIcon";
 import { confirmDialog } from "@/lib/confirm-client";
 import { usePermissions } from "@/components/auth/PermissionProvider";
+import { activePriceListStorageKey, readStoredActivePriceList } from "@/lib/dental-treatment-catalog";
 
 type Price = { id: string; code: string; treatment: string; amount: number; isCustom: boolean; isTemplate?: boolean; catalogYear?: number };
 type PriceMeta = { activeCatalogYear: number; latestPublishedYear: number; updateAvailable: boolean; officialPdfUrl: string };
-
-const ACTIVE_PRICE_LIST_STORAGE_KEY = "klinikmodern-active-price-list";
 
 function PriceTable({ title, prices, isCustom, favorites, toggleFav, onEdit, onDelete, onAdd, loading }: {
 	title: string;
@@ -46,7 +45,7 @@ function PriceTable({ title, prices, isCustom, favorites, toggleFav, onEdit, onD
 			header: "Favori",
 			align: "center" as const,
 			render: (p: Price) => (
-				<button onClick={() => toggleFav && toggleFav(p.id)} aria-label="Favori fiyat" className={"text-lg " + (favorites.has(p.id) ? "text-yellow-500" : "text-gray-300") + " hover:text-yellow-400"}>&#9733;</button>
+				<button onClick={() => toggleFav && toggleFav(p.id)} aria-label="Favori fiyat" className={`text-lg ${favorites.has(p.id) ? "text-yellow-500" : "text-gray-300"} hover:text-yellow-400`}>&#9733;</button>
 			),
 		}] : []),
 		{ key: "code", header: "Kod", render: (p) => <span className="font-mono text-xs text-slate-500">{p.code}</span> },
@@ -128,7 +127,7 @@ async function readJsonArray(response: Response) {
 }
 
 function FiyatManagement() {
-	const { can } = usePermissions();
+	const { can, scopeKey } = usePermissions();
 	const canWritePrices = can("prices:write");
 	const [standardPrices, setStandardPrices] = useState<Price[]>([]);
 	const [customPrices, setCustomPrices] = useState<Price[]>([]);
@@ -147,7 +146,7 @@ function FiyatManagement() {
 	// Fiyat listesi ve kurum kapsamındaki etkin kaynak ilk açılışta bir kez yüklenir.
 	// eslint-disable-next-line react-hooks/exhaustive-deps
 	useEffect(() => {
-		const stored = window.localStorage.getItem(ACTIVE_PRICE_LIST_STORAGE_KEY);
+		const stored = readStoredActivePriceList(window.localStorage, scopeKey);
 		if (stored === "standard" || stored === "custom") setActiveList(stored);
 		void loadSettings();
 		void loadAll();
@@ -162,7 +161,7 @@ function FiyatManagement() {
 			if (!res.ok) throw new Error(settings?.message || "Fiyat listesi ayarı yüklenemedi.");
 			if (settings?.activePriceList === "standard" || settings?.activePriceList === "custom") {
 				setActiveList(settings.activePriceList);
-				window.localStorage.setItem(ACTIVE_PRICE_LIST_STORAGE_KEY, settings.activePriceList);
+				window.localStorage.setItem(activePriceListStorageKey(scopeKey), settings.activePriceList);
 			}
 		} catch (error) {
 			showToast("error", error instanceof Error ? error.message : "Fiyat listesi ayarı yüklenemedi.");
@@ -171,7 +170,7 @@ function FiyatManagement() {
 
 	const changeActiveList = async (next: "standard" | "custom") => {
 		setActiveList(next);
-		window.localStorage.setItem(ACTIVE_PRICE_LIST_STORAGE_KEY, next);
+		window.localStorage.setItem(activePriceListStorageKey(scopeKey), next);
 		if (!canWritePrices) return;
 		try {
 			const res = await fetch("/api/prices/active-list", {
@@ -227,7 +226,7 @@ function FiyatManagement() {
 		});
 		if (!confirmed) return;
 		try {
-			const res = await fetch("/api/prices/" + id, { method: "DELETE" });
+			const res = await fetch(`/api/prices/${id}`, { method: "DELETE" });
 			const data = await res.json().catch(() => null);
 			if (!res.ok) throw new Error(data?.message || "Fiyat silinemedi.");
 			showToast("success", "Fiyat silindi");
@@ -247,7 +246,7 @@ function FiyatManagement() {
 						headers: { "Content-Type": "application/json" },
 						body: JSON.stringify({ code: editItem.code, treatment: editItem.treatment, amount: parseFloat(editAmount), isCustom: true }),
 					})
-				: await fetch("/api/prices/" + editItem.id, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount: parseFloat(editAmount) }) });
+				: await fetch(`/api/prices/${editItem.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ amount: parseFloat(editAmount) }) });
 			if (res.ok) {
 				setEditItem(null);
 				setEditAmount("");
@@ -263,7 +262,8 @@ function FiyatManagement() {
 
 	const toggleFav = (id: string) => setFavorites((prev) => {
 		const next = new Set(prev);
-		next.has(id) ? next.delete(id) : next.add(id);
+		if (next.has(id)) next.delete(id);
+		else next.add(id);
 		return next;
 	});
 

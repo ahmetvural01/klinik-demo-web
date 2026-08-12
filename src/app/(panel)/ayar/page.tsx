@@ -8,6 +8,10 @@ import { FormField } from "@/components/ui/FormField";
 import { PageHeader } from "@/components/ui/PageHeader";
 import FiyatPage from "../fiyat/page";
 import UnitelerTab from "./_tabs/UnitelerTab";
+import SubelerTab from "./_tabs/SubelerTab";
+import { usePermissions } from "@/components/auth/PermissionProvider";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
+import PanelLoading from "@/components/ui/PanelLoading";
 
 type PosDevice = { id: string; name: string; isActive: boolean; createdAt: string };
 type TreatmentType = { id: string; value: string; label: string; color: string; order: number; isActive: boolean };
@@ -24,6 +28,7 @@ type DaySchedule = {
 const DAYS = ["Pazartesi","Salı","Çarşamba","Perşembe","Cuma","Cumartesi","Pazar"];
 const TABS = [
   { id: "genel", label: "Genel Ayarlar" },
+  { id: "subeler", label: "Şubeler" },
   { id: "calisma", label: "Çalışma Saatleri" },
   { id: "fiyat", label: "Fiyat Listesi" },
   { id: "pos", label: "POS Cihazları" },
@@ -43,10 +48,18 @@ const DEFAULT_SCHEDULES: DaySchedule[] = DAYS.map(day => ({
 }));
 
 export default function AyarPage() {
+  const { can } = usePermissions();
+  const canWriteSettings = can("settings:write");
+  const visibleTabs = TABS.filter((tab) =>
+    (tab.id !== "subeler" || can("branches:assign"))
+    && (tab.id !== "fiyat" || can("prices:read"))
+    && (tab.id !== "pos" || canWriteSettings)
+    && (tab.id !== "uniteler" || can("appointments:read"))
+  );
   const [activeTab, setActiveTab] = useState<SettingsTab>("genel");
   const [settings, setSettings] = useState({
-    institutionName: "Adana White Dental Clinic",
-    institutionAddress: "Çukurova/Adana",
+    institutionName: "",
+    institutionAddress: "",
     institutionPhone: "",
     openingTime: "08:30",
     closingTime: "23:59",
@@ -56,17 +69,10 @@ export default function AyarPage() {
     lunchStart: "",
     lunchEnd: "",
     dailySchedules: DEFAULT_SCHEDULES as DaySchedule[],
-    smsEnabled: true,
-    smsDefaultInfo: true,
-    smsDefaultReminder: false,
-    smsDefaultSurvey: false,
-    paymentReminderSmsEnabled: false,
-    paymentReminderWindowDays: 3,
-    reviewLink: "",
-    birthdaySmsEnabled: false
   });
   const [institutionSlug, setInstitutionSlug] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [settingsLoadError, setSettingsLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const showToast = (type: "success" | "error", text: string) => {
     showToastSafe({ message: text, type });
@@ -93,9 +99,14 @@ export default function AyarPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     const requestedTab = new URLSearchParams(window.location.search).get("tab");
-    if (TABS.some((tab) => tab.id === requestedTab)) setActiveTab(requestedTab as SettingsTab);
+    if (visibleTabs.some((tab) => tab.id === requestedTab)) setActiveTab(requestedTab as SettingsTab);
+    else if (requestedTab) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("tab");
+      window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    }
     void fetchSettings();
-    void fetchPos();
+    if (canWriteSettings) void fetchPos();
     void fetchTreatmentTypes();
   // İlk yüklemede yalnızca bir kez çalışması gereken başlangıç fonksiyonları.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -111,17 +122,18 @@ export default function AyarPage() {
 
   const fetchSettings = async () => {
     setLoading(true);
+    setSettingsLoadError(null);
     try {
       const res = await fetch("/api/settings");
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        showToast("error", data?.message || "Ayarlar yüklenemedi.");
+        setSettingsLoadError(data?.message || "Ayarlar yüklenemedi.");
         return;
       }
       if (data) {
       setInstitutionSlug(data.institutionSlug || "");
       setSettings({
-          institutionName:      data.institutionName      || "Adana White Dental Clinic",
+          institutionName:      data.institutionName      || "",
           institutionAddress:   data.institutionAddress   || "",
           institutionPhone:     data.institutionPhone     || "",
           openingTime:          data.openingTime          || "08:30",
@@ -141,17 +153,12 @@ export default function AyarPage() {
               }
               return parsed.length > 0 ? parsed : DEFAULT_SCHEDULES;
             })(),
-          smsEnabled:         data.smsEnabled         !== undefined ? data.smsEnabled         : true,
-          smsDefaultInfo:     data.smsDefaultInfo     !== undefined ? data.smsDefaultInfo     : true,
-          smsDefaultReminder: data.smsDefaultReminder !== undefined ? data.smsDefaultReminder : false,
-          smsDefaultSurvey:   data.smsDefaultSurvey   !== undefined ? data.smsDefaultSurvey   : false,
-          paymentReminderSmsEnabled: data.paymentReminderSmsEnabled !== undefined ? data.paymentReminderSmsEnabled : false,
-          paymentReminderWindowDays: data.paymentReminderWindowDays || 3,
-          reviewLink: data.reviewLink || "",
-          birthdaySmsEnabled: data.birthdaySmsEnabled !== undefined ? data.birthdaySmsEnabled : false,
         });
       }
-    } catch (e) { console.error(e); showToast("error", "Ayarlar yüklenemedi. Bağlantınızı kontrol edin."); }
+    } catch (e) {
+      console.error(e);
+      setSettingsLoadError("Ayarlar yüklenemedi. Bağlantınızı kontrol edin.");
+    }
     finally { setLoading(false); }
   };
 
@@ -207,52 +214,66 @@ export default function AyarPage() {
   const addPos = async () => {
     if (!newPosName.trim()) return;
     setAddingPos(true);
-    const res = await fetch("/api/pos-devices", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: newPosName.trim() }),
-    });
-    setAddingPos(false);
-    if (res.ok) {
-      setNewPosName("");
-      showToast("success", "POS cihazı eklendi.");
-      void fetchPos();
-    } else {
-      const result = await res.json().catch(() => ({ message: "POS cihazı eklenemedi." }));
-      showToast("error", result.message || "POS cihazı eklenemedi.");
+    try {
+      const res = await fetch("/api/pos-devices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: newPosName.trim() }),
+      });
+      if (res.ok) {
+        setNewPosName("");
+        showToast("success", "POS cihazı eklendi.");
+        void fetchPos();
+      } else {
+        const result = await res.json().catch(() => ({ message: "POS cihazı eklenemedi." }));
+        showToast("error", result.message || "POS cihazı eklenemedi.");
+      }
+    } catch {
+      showToast("error", "POS cihazı eklenemedi. Bağlantınızı kontrol edin.");
+    } finally {
+      setAddingPos(false);
     }
   };
 
   const togglePos = async (id: string, isActive: boolean) => {
-    const res = await fetch(`/api/pos-devices/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isActive }),
-    });
-    if (!res.ok) {
-      const result = await res.json().catch(() => ({ message: "POS durumu güncellenemedi." }));
-      showToast("error", result.message || "POS durumu güncellenemedi.");
-      return;
+    try {
+      const res = await fetch(`/api/pos-devices/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive }),
+      });
+      if (!res.ok) {
+        const result = await res.json().catch(() => ({ message: "POS durumu güncellenemedi." }));
+        showToast("error", result.message || "POS durumu güncellenemedi.");
+        return;
+      }
+      void fetchPos();
+    } catch {
+      showToast("error", "POS durumu güncellenemedi. Bağlantınızı kontrol edin.");
     }
-    void fetchPos();
   };
 
   const savePosName = async () => {
     if (!editingPos?.name.trim()) return;
     setSavingPos(true);
-    const res = await fetch(`/api/pos-devices/${editingPos.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: editingPos.name.trim() }),
-    });
-    setSavingPos(false);
-    if (res.ok) {
-      setEditingPos(null);
-      showToast("success", "POS cihazı güncellendi");
-      void fetchPos();
-    } else {
-      const result = await res.json().catch(() => ({ message: "POS cihazı güncellenemedi." }));
-      showToast("error", result.message || "POS cihazı güncellenemedi.");
+    try {
+      const res = await fetch(`/api/pos-devices/${editingPos.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: editingPos.name.trim() }),
+      });
+      if (res.ok) {
+        setEditingPos(null);
+        showToast("success", "POS cihazı güncellendi");
+        void fetchPos();
+      } else {
+        const result = await res.json().catch(() => ({ message: "POS cihazı güncellenemedi." }));
+        showToast("error", result.message || "POS cihazı güncellenemedi.");
+      }
+    } catch {
+      showToast("error", "POS cihazı güncellenemedi. Bağlantınızı kontrol edin.");
+    } finally {
+      setSavingPos(false);
     }
   };
 
@@ -263,14 +284,18 @@ export default function AyarPage() {
       danger: true,
       confirmText: "Sil",
     }))) return;
-    const res = await fetch(`/api/pos-devices/${id}`, { method: "DELETE" });
-    if (!res.ok) {
-      const result = await res.json().catch(() => ({ message: "POS cihazı silinemedi." }));
-      showToast("error", result.message || "POS cihazı silinemedi.");
-      return;
+    try {
+      const res = await fetch(`/api/pos-devices/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const result = await res.json().catch(() => ({ message: "POS cihazı silinemedi." }));
+        showToast("error", result.message || "POS cihazı silinemedi.");
+        return;
+      }
+      showToast("success", "POS cihazı silindi.");
+      void fetchPos();
+    } catch {
+      showToast("error", "POS cihazı silinemedi. Bağlantınızı kontrol edin.");
     }
-    showToast("success", "POS cihazı silindi.");
-    void fetchPos();
   };
 
   const fetchTreatmentTypes = async () => {
@@ -287,54 +312,68 @@ export default function AyarPage() {
   const addTreatmentType = async () => {
     if (!newTreatmentLabel.trim()) return;
     setAddingTreatment(true);
-    const res = await fetch("/api/treatment-types", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ label: newTreatmentLabel.trim(), color: newTreatmentColor }),
-    });
-    setAddingTreatment(false);
-    if (res.ok) {
-      setNewTreatmentLabel("");
-      setNewTreatmentColor("#2563eb");
-      void fetchTreatmentTypes();
-      showToast("success", "Tedavi türü eklendi");
-    } else {
-      const data = await res.json().catch(() => null);
-      showToast("error", data?.message || "Tedavi türü eklenemedi");
+    try {
+      const res = await fetch("/api/treatment-types", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: newTreatmentLabel.trim(), color: newTreatmentColor }),
+      });
+      if (res.ok) {
+        setNewTreatmentLabel("");
+        setNewTreatmentColor("#2563eb");
+        void fetchTreatmentTypes();
+        showToast("success", "Tedavi türü eklendi");
+      } else {
+        const data = await res.json().catch(() => null);
+        showToast("error", data?.message || "Tedavi türü eklenemedi");
+      }
+    } catch {
+      showToast("error", "Tedavi türü eklenemedi. Bağlantınızı kontrol edin.");
+    } finally {
+      setAddingTreatment(false);
     }
   };
 
   const saveTreatmentType = async () => {
     if (!editingTreatment?.label.trim()) return;
     setSavingTreatment(true);
-    const res = await fetch(`/api/treatment-types/${editingTreatment.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ label: editingTreatment.label.trim(), color: editingTreatment.color }),
-    });
-    setSavingTreatment(false);
-    if (res.ok) {
-      setEditingTreatment(null);
-      showToast("success", "Tedavi türü güncellendi");
-      void fetchTreatmentTypes();
-    } else {
-      const data = await res.json().catch(() => null);
-      showToast("error", data?.message || "Tedavi türü güncellenemedi");
+    try {
+      const res = await fetch(`/api/treatment-types/${editingTreatment.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ label: editingTreatment.label.trim(), color: editingTreatment.color }),
+      });
+      if (res.ok) {
+        setEditingTreatment(null);
+        showToast("success", "Tedavi türü güncellendi");
+        void fetchTreatmentTypes();
+      } else {
+        const data = await res.json().catch(() => null);
+        showToast("error", data?.message || "Tedavi türü güncellenemedi");
+      }
+    } catch {
+      showToast("error", "Tedavi türü güncellenemedi. Bağlantınızı kontrol edin.");
+    } finally {
+      setSavingTreatment(false);
     }
   };
 
   const toggleTreatmentType = async (id: string, isActive: boolean) => {
-    const res = await fetch(`/api/treatment-types/${id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isActive }),
-    });
-    if (!res.ok) {
-      const result = await res.json().catch(() => ({ message: "Tedavi türü durumu güncellenemedi." }));
-      showToast("error", result.message || "Tedavi türü durumu güncellenemedi.");
-      return;
+    try {
+      const res = await fetch(`/api/treatment-types/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive }),
+      });
+      if (!res.ok) {
+        const result = await res.json().catch(() => ({ message: "Tedavi türü durumu güncellenemedi." }));
+        showToast("error", result.message || "Tedavi türü durumu güncellenemedi.");
+        return;
+      }
+      void fetchTreatmentTypes();
+    } catch {
+      showToast("error", "Tedavi türü durumu güncellenemedi. Bağlantınızı kontrol edin.");
     }
-    void fetchTreatmentTypes();
   };
 
   const deleteTreatmentType = async (id: string, label: string) => {
@@ -344,14 +383,18 @@ export default function AyarPage() {
       danger: true,
       confirmText: "Sil",
     }))) return;
-    const res = await fetch(`/api/treatment-types/${id}`, { method: "DELETE" });
-    if (!res.ok) {
-      const result = await res.json().catch(() => ({ message: "Tedavi türü silinemedi." }));
-      showToast("error", result.message || "Tedavi türü silinemedi.");
-      return;
+    try {
+      const res = await fetch(`/api/treatment-types/${id}`, { method: "DELETE" });
+      if (!res.ok) {
+        const result = await res.json().catch(() => ({ message: "Tedavi türü silinemedi." }));
+        showToast("error", result.message || "Tedavi türü silinemedi.");
+        return;
+      }
+      showToast("success", "Tedavi türü silindi.");
+      void fetchTreatmentTypes();
+    } catch {
+      showToast("error", "Tedavi türü silinemedi. Bağlantınızı kontrol edin.");
     }
-    showToast("success", "Tedavi türü silindi.");
-    void fetchTreatmentTypes();
   };
 
   return (
@@ -364,9 +407,14 @@ export default function AyarPage() {
       />
 
       <div className="rounded-2xl border border-slate-100 bg-white p-2 shadow-sm">
-        <div className="flex gap-1 overflow-x-auto">
-          {TABS.map(t => (
-            <button key={t.id} onClick={() => changeTab(t.id)}
+        <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="Klinik ayarları">
+          {visibleTabs.map(t => (
+            <button
+              key={t.id}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === t.id}
+              onClick={() => changeTab(t.id)}
               className={`shrink-0 rounded-xl px-4 py-2.5 text-sm font-bold transition ${activeTab === t.id ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>
               {t.label}
             </button>
@@ -374,8 +422,13 @@ export default function AyarPage() {
         </div>
       </div>
 
+      {(activeTab === "genel" || activeTab === "calisma") && loading && <PanelLoading />}
+      {(activeTab === "genel" || activeTab === "calisma") && !loading && settingsLoadError && (
+        <LoadErrorState message={settingsLoadError} onRetry={() => void fetchSettings()} />
+      )}
+
       {/* ── GENEL AYARLAR ──────────────────────────────────────────────── */}
-      {activeTab === "genel" && (
+      {activeTab === "genel" && !loading && !settingsLoadError && (
         <div className="rounded-xl border border-slate-100 bg-white p-6 shadow-sm space-y-6">
           <div>
             <h3 className="mb-1 text-base font-black text-slate-900">Klinik Bilgileri</h3>
@@ -388,9 +441,10 @@ export default function AyarPage() {
                 { label: "Web Sitesi",     key: "institutionWebsite" as const, placeholder: "https://..." },
               ].map(f => (
                 <FormField key={f.key} label={f.label}>
-                  <input value={(settings as any)[f.key]} placeholder={f.placeholder}
+                  <input value={settings[f.key]} placeholder={f.placeholder}
+                    disabled={!canWriteSettings}
                     onChange={e => setSettings({ ...settings, [f.key]: e.target.value })}
-                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 disabled:bg-slate-50 disabled:text-slate-600" />
                 </FormField>
               ))}
             </div>
@@ -409,18 +463,19 @@ export default function AyarPage() {
                 )}
               </div>
               <div className="min-w-0 flex-1 space-y-2">
-                <input
-                  value={settings.logoUrl}
+                  <input
+                    value={settings.logoUrl}
+                    disabled={!canWriteSettings}
                   onChange={(e) => setSettings({ ...settings, logoUrl: e.target.value })}
                   placeholder="https://... veya dosya seçin"
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
                 />
                 <div className="flex flex-wrap gap-2">
-                  <label className="inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50">
+                  {canWriteSettings && <label className="inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition hover:bg-slate-50">
                     Dosya Seç
                     <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" className="sr-only" onChange={(e) => selectLogoFile(e.target.files?.[0])} />
-                  </label>
-                  {settings.logoUrl && <Button variant="ghost" size="sm" onClick={() => setSettings({ ...settings, logoUrl: "" })}>Logoyu Kaldır</Button>}
+                  </label>}
+                  {canWriteSettings && settings.logoUrl && <Button variant="ghost" size="sm" onClick={() => setSettings({ ...settings, logoUrl: "" })}>Logoyu Kaldır</Button>}
                 </div>
                 <p className="text-xs text-slate-500">PNG, JPG, WEBP veya GIF; en fazla 400 KB. Şeffaf PNG önerilir.</p>
               </div>
@@ -453,25 +508,26 @@ export default function AyarPage() {
             <div className="grid gap-3 sm:grid-cols-1 max-w-xs">
               <FormField label="Randevu Süresi (dakika)">
                 <input type="number" min={5} max={240} step={5} value={settings.appointmentDuration}
+                  disabled={!canWriteSettings}
                   onChange={e => setSettings({ ...settings, appointmentDuration: parseInt(e.target.value) })}
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
               </FormField>
             </div>
           </div>
 
-          <div className="flex gap-2 pt-2 border-t border-slate-100">
+          {canWriteSettings && <div className="flex gap-2 pt-2 border-t border-slate-100">
             <Button variant="primary" onClick={() => void saveSettings()} loading={saving}>
               Ayarları Kaydet
             </Button>
             <Button variant="ghost" onClick={() => void fetchSettings()}>
               Değişiklikleri Geri Al
             </Button>
-          </div>
+          </div>}
         </div>
       )}
 
       {/* ── ÇALIŞMA SAATLERİ ───────────────────────────────────────────── */}
-      {activeTab === "calisma" && (
+      {activeTab === "calisma" && !loading && !settingsLoadError && (
         <div className="rounded-xl border border-slate-100 bg-white p-6 shadow-sm space-y-6">
           {/* Genel öğle arası */}
           <div>
@@ -479,12 +535,12 @@ export default function AyarPage() {
             <p className="mb-3 text-xs text-slate-500">Gün bazlı ayar yapılmamışsa bu saatler öğle arası olarak uygulanır. Boş bırakılırsa öğle arası uygulanmaz.</p>
             <div className="flex gap-4 flex-wrap">
               <FormField label="Öğle Başlangıcı">
-                <input type="time" value={settings.lunchStart}
+                <input type="time" value={settings.lunchStart} disabled={!canWriteSettings}
                   onChange={e => setSettings({ ...settings, lunchStart: e.target.value })}
                   className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
               </FormField>
               <FormField label="Öğle Bitişi">
-                <input type="time" value={settings.lunchEnd}
+                <input type="time" value={settings.lunchEnd} disabled={!canWriteSettings}
                   onChange={e => setSettings({ ...settings, lunchEnd: e.target.value })}
                   className="rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
               </FormField>
@@ -502,6 +558,7 @@ export default function AyarPage() {
                     <p className="font-bold text-slate-900">{ds.day}</p>
                     <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
                       <input type="checkbox" className="h-4 w-4 accent-red-500"
+                        disabled={!canWriteSettings}
                         checked={ds.isHoliday}
                         onChange={e => {
                           const updated = [...settings.dailySchedules];
@@ -520,7 +577,7 @@ export default function AyarPage() {
                     ].map((field) => (
                       <label key={field.key} className="text-xs font-semibold text-slate-600">
                         {field.label}
-                        <input type="time" value={ds[field.key]} disabled={ds.isHoliday}
+                        <input type="time" value={ds[field.key]} disabled={ds.isHoliday || !canWriteSettings}
                           onChange={e => {
                             const updated = [...settings.dailySchedules];
                             updated[idx] = { ...ds, [field.key]: e.target.value };
@@ -551,6 +608,7 @@ export default function AyarPage() {
                       <td className="p-2 pl-3 font-semibold text-slate-700">{ds.day}</td>
                       <td className="p-2">
                         <input type="checkbox" className="h-4 w-4 accent-red-500"
+                          disabled={!canWriteSettings}
                           checked={ds.isHoliday}
                           onChange={e => {
                             const updated = [...settings.dailySchedules];
@@ -559,7 +617,7 @@ export default function AyarPage() {
                           }} />
                       </td>
                       <td className="p-2">
-                        <input type="time" value={ds.open} disabled={ds.isHoliday}
+                        <input type="time" value={ds.open} disabled={ds.isHoliday || !canWriteSettings}
                           onChange={e => {
                             const updated = [...settings.dailySchedules];
                             updated[idx] = { ...ds, open: e.target.value };
@@ -568,7 +626,7 @@ export default function AyarPage() {
                           className="rounded border border-slate-200 px-2 py-1 text-xs focus:border-primary focus:outline-none disabled:opacity-40 disabled:bg-slate-100" />
                       </td>
                       <td className="p-2">
-                        <input type="time" value={ds.close} disabled={ds.isHoliday}
+                        <input type="time" value={ds.close} disabled={ds.isHoliday || !canWriteSettings}
                           onChange={e => {
                             const updated = [...settings.dailySchedules];
                             updated[idx] = { ...ds, close: e.target.value };
@@ -577,7 +635,7 @@ export default function AyarPage() {
                           className="rounded border border-slate-200 px-2 py-1 text-xs focus:border-primary focus:outline-none disabled:opacity-40 disabled:bg-slate-100" />
                       </td>
                       <td className="p-2">
-                        <input type="time" value={ds.lunchStart} disabled={ds.isHoliday}
+                        <input type="time" value={ds.lunchStart} disabled={ds.isHoliday || !canWriteSettings}
                           onChange={e => {
                             const updated = [...settings.dailySchedules];
                             updated[idx] = { ...ds, lunchStart: e.target.value };
@@ -586,7 +644,7 @@ export default function AyarPage() {
                           className="rounded border border-slate-200 px-2 py-1 text-xs focus:border-primary focus:outline-none disabled:opacity-40 disabled:bg-slate-100" />
                       </td>
                       <td className="p-2">
-                        <input type="time" value={ds.lunchEnd} disabled={ds.isHoliday}
+                        <input type="time" value={ds.lunchEnd} disabled={ds.isHoliday || !canWriteSettings}
                           onChange={e => {
                             const updated = [...settings.dailySchedules];
                             updated[idx] = { ...ds, lunchEnd: e.target.value };
@@ -601,21 +659,19 @@ export default function AyarPage() {
             </div>
           </div>
 
-          <div className="flex gap-2 pt-2 border-t border-slate-100">
+          {canWriteSettings && <div className="flex gap-2 pt-2 border-t border-slate-100">
             <Button variant="primary" onClick={() => void saveSettings()} loading={saving}>
               Çalışma Saatlerini Kaydet
             </Button>
             <Button variant="ghost" onClick={() => void fetchSettings()}>
               Değişiklikleri Geri Al
             </Button>
-          </div>
+          </div>}
         </div>
       )}
 
       {activeTab === "fiyat" && (
-        <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
-          <FiyatPage />
-        </div>
+        <FiyatPage />
       )}
 
       {activeTab === "uniteler" && (
@@ -624,10 +680,16 @@ export default function AyarPage() {
         </div>
       )}
 
+      {activeTab === "subeler" && can("branches:assign") && (
+        <div className="rounded-xl border border-slate-100 bg-white p-4 shadow-sm">
+          <SubelerTab />
+        </div>
+      )}
+
       {/* ── POS CİHAZLARI ──────────────────────────────────────────────── */}
       {activeTab === "pos" && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
+          {canWriteSettings && <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
             <h3 className="mb-1 text-base font-black text-slate-900">Yeni POS Cihazı Ekle</h3>
             <p className="mb-4 text-xs text-slate-500">Kliniğinizde kullandığınız POS cihazlarını tanımlayın. Bu cihazlar ödeme ve taksit kayıtlarında seçilebilir.</p>
             <div className="flex gap-2">
@@ -639,14 +701,16 @@ export default function AyarPage() {
                 POS Ekle
               </Button>
             </div>
-          </div>
+          </div>}
 
           <div className="rounded-xl border border-slate-100 bg-white shadow-sm overflow-hidden">
             <div className="border-b border-slate-100 px-5 py-3 flex items-center justify-between">
               <h3 className="text-sm font-bold text-slate-800">Kayıtlı POS Cihazları</h3>
               <span className="text-xs text-slate-500">{posDevices.length} cihaz</span>
             </div>
-            {posDevices.length === 0 ? (
+            {posLoading ? (
+              <p className="py-10 text-center text-sm text-slate-400">Yükleniyor…</p>
+            ) : posDevices.length === 0 ? (
               <p className="py-10 text-center text-sm text-slate-400">Henüz POS cihazı eklenmedi</p>
             ) : (
               <div className="divide-y divide-slate-50">
@@ -654,7 +718,7 @@ export default function AyarPage() {
                   <div key={dev.id} className="flex items-center gap-3 px-5 py-3.5">
                     <div className={`h-2.5 w-2.5 rounded-full shrink-0 ${dev.isActive ? "bg-emerald-500" : "bg-slate-300"}`} />
                     <div className="min-w-0 flex-1">
-                      {editingPos?.id === dev.id ? (
+                      {canWriteSettings && editingPos?.id === dev.id ? (
                         <input
                           value={editingPos.name}
                           onChange={(e) => setEditingPos({ id: dev.id, name: e.target.value })}
@@ -670,7 +734,7 @@ export default function AyarPage() {
                       )}
                       <p className="text-[11px] text-slate-400">{dev.isActive ? "Aktif" : "Pasif"}</p>
                     </div>
-                    {editingPos?.id === dev.id ? (
+                    {canWriteSettings && editingPos?.id === dev.id ? (
                       <>
                         <Button variant="primary" size="sm" onClick={() => void savePosName()} disabled={!editingPos.name.trim()} loading={savingPos}>
                           Kaydet
@@ -679,17 +743,17 @@ export default function AyarPage() {
                           Vazgeç
                         </Button>
                       </>
-                    ) : (
+                    ) : canWriteSettings ? (
                       <Button variant="secondary" size="sm" onClick={() => setEditingPos({ id: dev.id, name: dev.name })}>
                         Düzenle
                       </Button>
-                    )}
-                    <Button variant="secondary" size="sm" onClick={() => togglePos(dev.id, !dev.isActive)}>
+                    ) : null}
+                    {canWriteSettings && <Button variant="secondary" size="sm" onClick={() => togglePos(dev.id, !dev.isActive)}>
                       {dev.isActive ? "Pasif Yap" : "Aktif Yap"}
-                    </Button>
-                    <Button variant="danger" size="sm" onClick={() => deletePos(dev.id, dev.name)}>
+                    </Button>}
+                    {canWriteSettings && <Button variant="danger" size="sm" onClick={() => deletePos(dev.id, dev.name)}>
                       Sil
-                    </Button>
+                    </Button>}
                   </div>
                 ))}
               </div>
@@ -701,7 +765,7 @@ export default function AyarPage() {
       {/* ── TEDAVİ TÜRLERİ ─────────────────────────────────────────────── */}
       {activeTab === "tedavi" && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
+          {canWriteSettings && <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
             <h3 className="mb-1 text-base font-black text-slate-900">Yeni Tedavi Türü Ekle</h3>
             <p className="mb-4 text-xs text-slate-500">Randevu ekleme ekranında seçilebilecek tedavi türlerini ve takvimde görünecek renklerini burada yönetin.</p>
             <div className="flex flex-wrap gap-2">
@@ -716,7 +780,7 @@ export default function AyarPage() {
                 Tedavi Ekle
               </Button>
             </div>
-          </div>
+          </div>}
 
           <div className="rounded-xl border border-slate-100 bg-white shadow-sm overflow-hidden">
             <div className="border-b border-slate-100 px-5 py-3 flex items-center justify-between">
@@ -731,7 +795,7 @@ export default function AyarPage() {
               <div className="divide-y divide-slate-50">
                 {treatmentTypes.map(t => (
                   <div key={t.id} className="flex items-center gap-3 px-5 py-3.5">
-                    {editingTreatment?.id === t.id ? (
+                    {canWriteSettings && editingTreatment?.id === t.id ? (
                       <input type="color" value={editingTreatment.color}
                         onChange={e => setEditingTreatment({ ...editingTreatment, color: e.target.value })}
                         className="h-8 w-8 shrink-0 cursor-pointer rounded-full border border-slate-200 p-0" />
@@ -739,7 +803,7 @@ export default function AyarPage() {
                       <span className="h-4 w-4 shrink-0 rounded-full border border-black/10" style={{ backgroundColor: t.color }} />
                     )}
                     <div className="min-w-0 flex-1">
-                      {editingTreatment?.id === t.id ? (
+                      {canWriteSettings && editingTreatment?.id === t.id ? (
                         <input
                           value={editingTreatment.label}
                           onChange={(e) => setEditingTreatment({ ...editingTreatment, label: e.target.value })}
@@ -755,7 +819,7 @@ export default function AyarPage() {
                       )}
                       <p className="text-[11px] text-slate-400">{t.isActive ? "Aktif" : "Pasif"}</p>
                     </div>
-                    {editingTreatment?.id === t.id ? (
+                    {canWriteSettings && editingTreatment?.id === t.id ? (
                       <>
                         <Button variant="primary" size="sm" onClick={() => void saveTreatmentType()} disabled={!editingTreatment.label.trim()} loading={savingTreatment}>
                           Kaydet
@@ -764,17 +828,17 @@ export default function AyarPage() {
                           Vazgeç
                         </Button>
                       </>
-                    ) : (
+                    ) : canWriteSettings ? (
                       <Button variant="secondary" size="sm" onClick={() => setEditingTreatment({ id: t.id, label: t.label, color: t.color })}>
                         Düzenle
                       </Button>
-                    )}
-                    <Button variant="secondary" size="sm" onClick={() => toggleTreatmentType(t.id, !t.isActive)}>
+                    ) : null}
+                    {canWriteSettings && <Button variant="secondary" size="sm" onClick={() => toggleTreatmentType(t.id, !t.isActive)}>
                       {t.isActive ? "Pasif Yap" : "Aktif Yap"}
-                    </Button>
-                    <Button variant="danger" size="sm" onClick={() => deleteTreatmentType(t.id, t.label)}>
+                    </Button>}
+                    {canWriteSettings && <Button variant="danger" size="sm" onClick={() => deleteTreatmentType(t.id, t.label)}>
                       Sil
-                    </Button>
+                    </Button>}
                   </div>
                 ))}
               </div>

@@ -1,0 +1,5 @@
+@echo off
+chcp 65001 >nul
+cd /d "%~dp0"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0.ai-factory\scripts\v3-doctor.ps1"
+pause

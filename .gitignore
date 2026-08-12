@@ -73,3 +73,12 @@ Thumbs.db
 
 # Local codebase-indexing tool cache
 /.codebase-memory/
+
+# KlinikModern AI Factory safety
+.env.*
+!.env.example
+!.env.production.example
+.next/
+.ai-factory/
+playwright-report/
+coverage/

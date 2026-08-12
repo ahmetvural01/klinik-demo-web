@@ -1,6 +1,6 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import net from "node:net";
 import { PrismaClient } from "@prisma/client";
@@ -15,7 +15,6 @@ const ROOT = process.cwd();
 // takılması demek (bkz. kullanıcı geri bildirimi: "sonsuz bekleme kabul
 // edilemez").
 const OVERALL_TIMEOUT_MS = Number(process.env.ENSURE_POSTGRES_TIMEOUT_MS || 60_000);
-const SPAWN_TIMEOUT_MS = Number(process.env.ENSURE_POSTGRES_SPAWN_TIMEOUT_MS || 15_000);
 
 const POSTGRES_EXE_CANDIDATES = [
   process.env.POSTGRES_EXE,
@@ -158,42 +157,37 @@ async function main() {
   } else {
     log(`PostgreSQL baslatiliyor: ${dataDir}`);
 
-    if (process.platform === "win32") {
-      const script = [
-        "$ErrorActionPreference = 'Stop'",
-        `$exe = ${JSON.stringify(exe)}`,
-        `$data = ${JSON.stringify(dataDir)}`,
-        "Start-Process -FilePath $exe -ArgumentList @('-D', $data) -WorkingDirectory (Split-Path -Parent $exe) -WindowStyle Hidden -NoNewWindow:$false",
-      ].join("; ");
-
-      const result = spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script], {
-        cwd: ROOT,
-        stdio: ["ignore", "ignore", "pipe"],
-        windowsHide: true,
-        encoding: "utf8",
-        timeout: SPAWN_TIMEOUT_MS,
-      });
-
-      if (result.error?.code === "ETIMEDOUT" || result.signal === "SIGTERM") {
-        throw new Error(`PostgreSQL baslatma komutu ${SPAWN_TIMEOUT_MS}ms icinde donmedi (askida kaldi) — iptal edildi.`);
-      }
-      if (result.status !== 0) {
-        throw new Error(`PostgreSQL gizli baslatilamadi: ${result.stderr || `code=${result.status}`}`);
-      }
-    } else {
-      const child = spawn(exe, ["-D", dataDir], {
-        cwd: dirname(exe),
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-      });
-
-      child.unref();
+    // Windows'ta postgres.exe'yi doğrudan başlatmak her fork edilen backend
+    // için görünür bir konsol penceresi oluşturabiliyor. pg_ctl, postmaster'ı
+    // Windows'a uygun biçimde arka plana alır ve stdout/stderr'i log dosyasına
+    // yönlendirir; kullanıcı masaüstünde tekrarlayan terminal görmez.
+    const pgCtlExe = resolve(dirname(exe), process.platform === "win32" ? "pg_ctl.exe" : "pg_ctl");
+    if (!existsSync(pgCtlExe)) {
+      throw new Error(`pg_ctl bulunamadi: ${pgCtlExe}`);
+    }
+    // Keep the startup log outside PGDATA. On Windows, recovery may touch every
+    // file in PGDATA while pg_ctl still owns the log handle, causing a sharing
+    // violation that leaves the server permanently in "starting" state.
+    const serverLog = resolve(dirname(dataDir), `${basename(dataDir)}-server.log`);
+    const launch = spawnSync(pgCtlExe, ["start", "-D", dataDir, "-l", serverLog, "-w", "-t", "15"], {
+      cwd: dirname(exe),
+      // PostgreSQL child processes can keep inherited pipes alive on Windows,
+      // making spawnSync time out even after the server is ready. The server
+      // output is already persisted with -l, so no pipe should be inherited.
+      stdio: "ignore",
+      windowsHide: true,
+      timeout: 20_000,
+    });
+    if (launch.error) {
+      throw new Error(`PostgreSQL baslatilamadi: ${launch.error.message}`);
+    }
+    if (launch.status !== 0) {
+      throw new Error(`PostgreSQL baslatilamadi. Ayrinti: ${serverLog}`);
     }
   }
 
   if (!(await waitForPostgres(15_000))) {
-    throw new Error("PostgreSQL 15sn icinde baglanti kabul etmedi. Ayrintili cikis stdout/stderr uzerinden gorunur.");
+    throw new Error("PostgreSQL 15sn icinde baglanti kabul etmedi.");
   }
 
   if (!(await waitForDatabaseReady(20_000))) {

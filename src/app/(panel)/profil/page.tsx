@@ -10,6 +10,7 @@ import { ModuleIcon } from "@/components/ui/ModuleIcon";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 
 const roleLabel: Record<string, string> = {
   YONETICI: "Yönetici", DOKTOR: "Diş Hekimi", ASISTAN: "Asistan",
@@ -22,6 +23,8 @@ export default function ProfilPage() {
   const [profile, setProfile] = useState({ fullName: "", role: "", workStart: "08:00", workEnd: "17:00", showAsDoctor: false, photoUrl: "" });
   const [password, setPassword] = useState({ old: "", new: "", confirm: "" });
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [saving, setSaving] = useState(false);
   const [photoSaving, setPhotoSaving] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
@@ -39,10 +42,16 @@ export default function ProfilPage() {
   };
 
   useEffect(() => {
-    fetch("/api/profile")
-      .then(r => r.ok ? r.json() : null)
+    const controller = new AbortController();
+    setLoading(true);
+    setLoadError(null);
+    fetch("/api/profile", { signal: controller.signal })
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.message || "Profil bilgileri yüklenemedi.");
+        return data;
+      })
       .then(d => {
-        if (!d) return;
         setProfile(p => ({
           ...p,
           fullName: d.fullName || "",
@@ -54,9 +63,15 @@ export default function ProfilPage() {
         }));
         setTwoFactorEnabled(Boolean(d.twoFactorEnabled));
       })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setLoadError(error instanceof Error ? error.message : "Profil bilgileri yüklenemedi.");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [reloadKey]);
 
   const startTwoFactorSetup = async () => {
     setTwoFactorSaving(true);
@@ -65,6 +80,8 @@ export default function ProfilPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { showToast("error", data?.error || "Kurulum başlatılamadı"); return; }
       setTwoFactorSetup(data);
+    } catch {
+      showToast("error", "İki faktörlü doğrulama kurulumu başlatılamadı. Bağlantınızı kontrol edin.");
     } finally {
       setTwoFactorSaving(false);
     }
@@ -86,6 +103,8 @@ export default function ProfilPage() {
       setTwoFactorCode("");
       setBackupCodes(data.backupCodes || []);
       showToast("success", "İki faktörlü doğrulama etkinleştirildi");
+    } catch {
+      showToast("error", "Doğrulama tamamlanamadı. Bağlantınızı kontrol edip tekrar deneyin.");
     } finally {
       setTwoFactorSaving(false);
     }
@@ -107,6 +126,8 @@ export default function ProfilPage() {
       setShowDisableForm(false);
       setDisablePassword("");
       showToast("success", "İki faktörlü doğrulama devre dışı bırakıldı");
+    } catch {
+      showToast("error", "İki faktörlü doğrulama kapatılamadı. Bağlantınızı kontrol edin.");
     } finally {
       setTwoFactorSaving(false);
     }
@@ -220,6 +241,13 @@ export default function ProfilPage() {
         </div>
       </div>
     </div>
+  );
+
+  if (loadError) return (
+    <LoadErrorState
+      message={loadError}
+      onRetry={() => setReloadKey((value) => value + 1)}
+    />
   );
 
   return (

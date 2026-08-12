@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState, useRef } from "react";
-import { Download, List as ListIcon, Pencil, Plus, ShieldAlert } from "lucide-react";
+import { Download, List as ListIcon, Pencil, Plus, Printer, ShieldAlert } from "lucide-react";
 import { OdontogramSelector, ToothStatus as TSType, TOOTH_STATUS_LABELS } from "@/components/ToothChart";
 import { PatientConsentPanel } from "@/components/PatientConsentPanel";
-import { SearchSelect } from "@/components/ui/SearchSelect";
+// SearchSelect imported but never used
 import { SearchableListbox, type SearchableListboxOption } from "@/components/ui/SearchableListbox";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
@@ -19,7 +19,7 @@ import {
   type SharedLabTrip,
 } from "@/components/lab/LabOrderDetailPanel";
 import { MEDICATION_TEMPLATES } from "@/lib/medications";
-import { ACTIVE_PRICE_LIST_STORAGE_KEY, TDB_2026_CORE_PRICE_CATALOG } from "@/lib/dental-treatment-catalog";
+import { activePriceListStorageKey, readStoredActivePriceList, TDB_2026_CORE_PRICE_CATALOG } from "@/lib/dental-treatment-catalog";
 import { confirmDialog } from "@/lib/confirm-client";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { addPdfSection, createPdfDoc, pdfSafeText } from "@/lib/pdf-export";
@@ -34,6 +34,7 @@ import { getDisplayAppointmentStatus } from "@/lib/appointment-status";
 import { parseAppointmentNote } from "@/lib/appointment-follow-up";
 import { turkeyDateKey, turkeyDateTimeLocalValue, turkeyLocalDateTimeToUtc } from "@/lib/tz";
 import { addInstallmentPeriod } from "@/lib/installment-schedule";
+import { isAbortError, useLatestRequest } from "@/lib/use-latest-request";
 
 const TaskEmptyIcon = createModuleEmptyIcon("clipboard");
 const RxEmptyIcon = createModuleEmptyIcon("finance");
@@ -156,7 +157,7 @@ type Appt = {
 };
 type Exam = { id: string; treatmentName: string; toothNo?: string | null; amount: string | number; status: string; diagnosedAt: string; doctorId: string; doctor?: { id: string; fullName: string } };
 type Pay = { id: string; amount: string | number; method: string; description?: string | null; createdAt: string; doctorId?: string | null; doctor?: { id: string; fullName: string } | null; posId?: string | null };
-type Rx = { id: string; drugs: string; note?: string | null; createdAt: string };
+type Rx = { id: string; drugs: string; note?: string | null; status?: string; createdAt: string };
 type StaffLite = { id: string; fullName: string; role: string; profile?: { hideAsDoctor?: boolean | null } | null };
 type ClinicTask = {
   id: string;
@@ -567,13 +568,14 @@ function LabDentalChart({ selected, onChange }: { selected: number[]; onChange: 
 }
 
 export default function HastaDetayContent() {
-  const { can, canAny, permissions } = usePermissions();
+  const { can, canAny, permissions, scopeKey } = usePermissions();
   const hidePatientPhone = !can("patients:phone");
   const router = useRouter();
   const search = useSearchParams();
   const id = search.get("id") || "";
   const [data, setData] = useState<PatientDetailData | null>(null);
   const [loading, setLoading] = useState(false);
+  const beginPatientLoad = useLatestRequest();
   const [loadError, setLoadError] = useState("");
   const [tab, setTab] = useState<Tab>("bilgi");
   const [payMethod, setPayMethod] = useState("NAKIT");
@@ -692,8 +694,6 @@ export default function HastaDetayContent() {
 
   // Dis semasi
   const [toothMap, setToothMap] = useState<Record<string, ToothStatus>>({});
-  const [selectedTool, setSelectedTool] = useState<ToothStatus>("cukur");
-  const [toothSaving, setToothSaving] = useState(false);
 
   // Reçete formu
   const [selectedMedicationId, setSelectedMedicationId] = useState("");
@@ -701,9 +701,6 @@ export default function HastaDetayContent() {
   const [currentRecipeDrugs, setCurrentRecipeDrugs] = useState<{ name: string; dose: string; usage: string; duration: string; note: string }[]>([]);
 
   // Tedavi ekleme
-  const [newTreatmentName, setNewTreatmentName] = useState("");
-  const [newTreatmentTooth, setNewTreatmentTooth] = useState("");
-  const [newTreatmentAmount, setNewTreatmentAmount] = useState("");
   const [newTreatmentNote, setNewTreatmentNote] = useState("");
   const [treatmentSaving, setTreatmentSaving] = useState(false);
   // Yazdırma modalleri
@@ -990,19 +987,22 @@ export default function HastaDetayContent() {
 
   const load = async (silent = false) => {
     if (!id) return;
+    const request = beginPatientLoad();
     if (!silent) setLoading(true);
     setLoadError("");
     try {
       const [res, taskRes, planRes] = await Promise.all([
         fetch("/api/patients/" + id, {
           cache: "no-store",
+          signal: request.signal,
           headers: patientAccessRecordedRef.current ? { "x-silent-refresh": "1" } : undefined,
         }),
-        can("clinictasks:read") ? fetch(`/api/clinic-tasks?patientId=${id}&take=200`, { cache: "no-store" }).catch(() => null) : Promise.resolve(null),
+        can("clinictasks:read") ? fetch(`/api/clinic-tasks?patientId=${id}&take=200`, { cache: "no-store", signal: request.signal }).catch(() => null) : Promise.resolve(null),
         // Hasta detayında tedavi planları hiç görünmüyordu — hasta-detay ile
         // tedavi-plani arasındaki zincir kopuktu (bkz. denetim raporu Tema 6/7).
-        can("treatment:read") ? fetch(`/api/treatment-plans?patientId=${id}&take=50`, { cache: "no-store" }).catch(() => null) : Promise.resolve(null),
+        can("treatment:read") ? fetch(`/api/treatment-plans?patientId=${id}&take=50`, { cache: "no-store", signal: request.signal }).catch(() => null) : Promise.resolve(null),
       ]);
+      if (!request.isLatest()) return;
       if (!res.ok) {
         if (res.status === 404) setData(null);
         setLoadError(res.status === 404 ? "Hasta bulunamadı" : "Hasta kartı yenilenemedi; mevcut bilgiler korundu");
@@ -1014,6 +1014,7 @@ export default function HastaDetayContent() {
       const d = await res.json();
       const taskJson = taskRes?.ok ? await taskRes.json().catch(() => null) : null;
       const planJson = planRes?.ok ? await planRes.json().catch(() => null) : null;
+      if (!request.isLatest()) return;
       const normalizedData: PatientDetailData = {
         ...d,
         appointments: Array.isArray(d?.appointments) ? d.appointments : [],
@@ -1033,11 +1034,12 @@ export default function HastaDetayContent() {
       } else {
         setToothMap({});
       }
-    } catch {
+    } catch (error) {
+      if (isAbortError(error)) return;
       setLoadError("Hasta kartı yenilenemedi; mevcut bilgiler korundu");
       showToast("error", "Hasta kartı yenilenemedi; bağlantıyı kontrol edip tekrar deneyin");
     } finally {
-      setLoading(false);
+      if (request.isLatest()) setLoading(false);
     }
   };
 
@@ -1631,26 +1633,30 @@ export default function HastaDetayContent() {
   }, [installmentModalOpen]);
 
   useEffect(() => {
-    const storedPriceList = window.localStorage.getItem(ACTIVE_PRICE_LIST_STORAGE_KEY);
+    const storedPriceList = readStoredActivePriceList(window.localStorage, scopeKey);
     if (storedPriceList === "standard" || storedPriceList === "custom") setActivePriceList(storedPriceList);
 
     fetch("/api/pos-devices")
-      .then(r => r.ok ? r.json() : [])
+      .then(async (response) => {
+        const data = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(data?.message || "POS cihazları yüklenemedi.");
+        return data;
+      })
       .then((devs: { id: string; name: string; isActive: boolean }[]) => setPosDevices(devs.filter(d => d.isActive)))
-      .catch(() => {});
+      .catch((loadError) => showToast("error", loadError instanceof Error ? loadError.message : "POS cihazları yüklenemedi."));
 
-    cachedGet<{ id?: string } | null>("/api/auth/me", 60_000)
+    cachedGet<{ id?: string } | null>("/api/auth/me", 60_000, { throwOnError: true })
       .then(d => {
         setCurrentUserId(d?.id || "");
         if (d?.id) setTreatDoctorId(d.id);
       })
-      .catch(() => {});
+      .catch((loadError) => showToast("error", loadError instanceof Error ? loadError.message : "Kullanıcı bilgileri yüklenemedi."));
 
-    cachedGet<StaffLite[]>("/api/staff", 60_000)
+    cachedGet<StaffLite[]>("/api/staff", 60_000, { throwOnError: true })
       .then((list) => setDoctorOptions((list || []).filter(isEffectiveDoctor)))
-      .catch(() => {});
+      .catch((loadError) => showToast("error", loadError instanceof Error ? loadError.message : "Doktor listesi yüklenemedi."));
 
-    cachedGet<{ name?: string; kategori?: string; isActive?: boolean }[]>("/api/firma", 60_000)
+    cachedGet<{ name?: string; kategori?: string; isActive?: boolean }[]>("/api/firma", 60_000, { throwOnError: true })
       .then((rows) => {
         const names = (Array.isArray(rows) ? rows : [])
           .filter((firma) => firma.kategori === "LAB" && firma.name)
@@ -1658,26 +1664,26 @@ export default function HastaDetayContent() {
           .filter(Boolean);
         setGlobalLabNames(Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, "tr")));
       })
-      .catch(() => {});
+      .catch((loadError) => showToast("error", loadError instanceof Error ? loadError.message : "Laboratuvar listesi yüklenemedi."));
 
-    cachedGet<any>("/api/settings", 60_000)
+    cachedGet<{ institutionName?: string; activePriceList?: string } | null>("/api/settings", 60_000, { throwOnError: true })
       .then(s => {
         if (s?.institutionName) setClinicName(s.institutionName);
         if (s?.activePriceList === "standard" || s?.activePriceList === "custom") {
           setActivePriceList(s.activePriceList);
-          window.localStorage.setItem(ACTIVE_PRICE_LIST_STORAGE_KEY, s.activePriceList);
+          window.localStorage.setItem(activePriceListStorageKey(scopeKey), s.activePriceList);
         }
       })
-      .catch(() => {})
+      .catch((loadError) => showToast("error", loadError instanceof Error ? loadError.message : "Klinik ayarları yüklenemedi."))
       .finally(() => setPriceListSourceReady(true));
-  }, []);
+  }, [scopeKey]);
 
   useEffect(() => {
     if (!priceListSourceReady) return;
 
     let cancelled = false;
 
-    fetch("/api/prices?type=" + activePriceList)
+    fetch(`/api/prices?type=${activePriceList}`)
       .then(r => r.ok ? r.json() : [])
       .then((list: {id:string;treatment:string;amount:number}[]) => {
         if (cancelled) return;
@@ -1688,14 +1694,15 @@ export default function HastaDetayContent() {
         setPriceList([]);
       });
 
-    return () => {
+    return (): void => {
       cancelled = true;
+      return;
     };
   }, [activePriceList, priceListSourceReady]);
 
   const saveActivePriceList = async (next: "standard" | "custom") => {
     setActivePriceList(next);
-    window.localStorage.setItem(ACTIVE_PRICE_LIST_STORAGE_KEY, next);
+    window.localStorage.setItem(activePriceListStorageKey(scopeKey), next);
     try {
       const res = await fetch("/api/settings", {
         method: "PUT",
@@ -1781,41 +1788,6 @@ export default function HastaDetayContent() {
     } finally {
       setTreatmentSaving(false);
     }
-  };
-
-  const addTreatment = async () => {
-    if (!newTreatmentName.trim()) return showToast("error", "Tedavi adı girin");
-    if (!newTreatmentAmount || Number(newTreatmentAmount) <= 0) return showToast("error", "Geçerli tedavi tutarı girin");
-    if (!currentUserId) return showToast("error", "Kullanıcı doğrulanamadı");
-
-    setTreatmentSaving(true);
-    const res = await fetch("/api/examinations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        patientId: id,
-        doctorId: currentUserId,
-        treatmentName: newTreatmentName,
-        toothNo: newTreatmentTooth || undefined,
-        amount: Number(newTreatmentAmount),
-        status: "Tedavi (Ücretli)",
-        diagnosedAt: new Date().toISOString(),
-        note: newTreatmentNote || undefined
-      })
-    });
-
-    if (res.ok) {
-      showToast("success", "Tedavi eklendi");
-      setNewTreatmentName("");
-      setNewTreatmentTooth("");
-      setNewTreatmentAmount("");
-      setNewTreatmentNote("");
-      void load();
-    } else {
-      const err = await res.json().catch(() => ({}));
-      showToast("error", err.message || "Tedavi eklenemedi");
-    }
-    setTreatmentSaving(false);
   };
 
   const generateInstallmentPreview = () => {
@@ -1936,7 +1908,7 @@ export default function HastaDetayContent() {
       <span>T.C.: <strong>${data.tcNo}</strong></span>
       ${data.birthDate ? `<span>Doğum: <strong>${new Date(data.birthDate).toLocaleDateString("tr-TR")}${age ? ` (${age} yaş)` : ""}</strong></span>` : ""}
       <span>Tel: <strong>${phoneText}</strong></span>
-      ${(data as any).bloodType ? `<span>Kan: <strong>${(data as any).bloodType}</strong></span>` : ""}
+      ${data.bloodType ? `<span>Kan: <strong>${data.bloodType}</strong></span>` : ""}
     </div>`;
   };
 
@@ -1947,10 +1919,11 @@ export default function HastaDetayContent() {
     </div>`;
   };
 
-  const openTreatmentPrint = () => {
+  const openTreatmentPrint = (): void => {
     const list = (data?.examinations || []).filter(e => isChargeableTreatment(e.status));
     setSelectedTreatForPrint(list.map(t => t.id));
     setTreatmentPrintOpen(true);
+    return;
   };
 
   const doPrintTreatments = () => {
@@ -1978,10 +1951,11 @@ export default function HastaDetayContent() {
     `);
   };
 
-  const openPaymentPrint = () => {
+  const openPaymentPrint = (): void => {
     const payments = data?.payments || [];
     setSelectedPayForPrint(payments.map(p => p.id));
     setPaymentPrintOpen(true);
+    return;
   };
 
   const convertExamDirect = async (exam: Exam) => {
@@ -2274,12 +2248,24 @@ export default function HastaDetayContent() {
   const saveNote = async () => {
     if (!noteText.trim()) return;
     setNoteSaving(true);
-    const userName = doctorOptions.find(d => d.id === currentUserId)?.fullName || "Sistem";
-    const timestamp = new Date().toLocaleString("tr-TR");
-    const newNote = (data?.notes ? data.notes + "\n" : "") + `[${timestamp} - ${userName}] ${noteText.trim()}`;
-    const res = await updatePatient({ notes: newNote });
-    if (res.ok) { setNoteText(""); showToast("success", "Not kaydedildi"); void load(); } else showToast("error", "Not kaydedilemedi");
-    setNoteSaving(false);
+    try {
+      const userName = doctorOptions.find(d => d.id === currentUserId)?.fullName || "Sistem";
+      const timestamp = new Date().toLocaleString("tr-TR");
+      const newNote = `${data?.notes ? data.notes + "\n" : ""}[${timestamp} - ${userName}] ${noteText.trim()}`;
+      const res = await updatePatient({ notes: newNote });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        showToast("error", body?.message || "Not kaydedilemedi");
+        return;
+      }
+      setNoteText("");
+      showToast("success", "Not kaydedildi");
+      void load();
+    } catch {
+      showToast("error", "Not kaydedilemedi. Bağlantınızı kontrol edin.");
+    } finally {
+      setNoteSaving(false);
+    }
   };
 
   const createClinicTask = async () => {
@@ -2429,13 +2415,13 @@ export default function HastaDetayContent() {
   };
 
   const deleteRecete = async (rxId: string) => {
-    if (!(await confirmDialog({ message: "Reçete silinsin mi?", danger: true, confirmText: "Sil" }))) return;
+    if (!(await confirmDialog({ message: "Reçete iptal edilsin mi? Kayıt geçmişte korunacaktır.", danger: true, confirmText: "İptal Et" }))) return;
     const res = await fetch("/api/prescriptions/" + rxId, { method: "DELETE" });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      return showToast("error", err.message || "Reçete silinemedi");
+      return showToast("error", err.message || "Reçete iptal edilemedi");
     }
-    showToast("success", "Reçete silindi");
+    showToast("success", "Reçete iptal edildi");
     void load();
   };
 
@@ -2600,25 +2586,6 @@ export default function HastaDetayContent() {
     return () => window.removeEventListener("ks:realtime-sync", onRealtime);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, id]);
-
-  const saveToothChart = async () => {
-    setToothSaving(true);
-    const res = await updatePatient({ toothChart: JSON.stringify(toothMap) });
-    setToothSaving(false);
-    if (!res.ok) return showToast("error", "Diş şeması kaydedilemedi");
-    showToast("success", "Diş şeması kaydedildi");
-    void load();
-  };
-
-  const toggleTooth = (tooth: string) => {
-    setToothMap(prev => {
-      const cur = prev[tooth] || "saglikli";
-      if (cur === selectedTool) {
-        const next = { ...prev }; delete next[tooth]; return next;
-      }
-      return { ...prev, [tooth]: selectedTool };
-    });
-  };
 
   if (loading) return (
     <section className="space-y-4 rounded-xl border border-slate-100 bg-white p-6 shadow-sm">
@@ -3660,10 +3627,6 @@ export default function HastaDetayContent() {
       )}
 
       {tab === "tedavi" && (() => {
-        const UPPER = ["18","17","16","15","14","13","12","11","21","22","23","24","25","26","27","28"];
-        const LOWER = ["48","47","46","45","44","43","42","41","31","32","33","34","35","36","37","38"];
-        const UPPER_C = ["55","54","53","52","51","61","62","63","64","65"];
-        const LOWER_C = ["85","84","83","82","81","71","72","73","74","75"];
         const fallbackTreatmentPool = TDB_2026_CORE_PRICE_CATALOG;
         // Katalog + DB listesini birleştir: DB'de eksik kayıt olsa bile tüm tedaviler görünür.
         const treatmentMap = new Map<string, { id: string; code?: string; treatment: string; amount: number; isTemplate?: boolean }>();
@@ -3690,6 +3653,11 @@ export default function HastaDetayContent() {
         const treatmentPlanHref = `/tedavi-plani?patientId=${id}&patientName=${encodeURIComponent(data?.fullName || "")}`;
         return (
         <div className="ui-tab-panel-in space-y-4">
+          <div className="flex justify-end">
+            <Button variant="secondary" onClick={openTreatmentPrint} disabled={tedaviler.length === 0} title="Tedavi raporunu yazdır">
+              <Printer className="h-4 w-4" aria-hidden="true" /> Tedavi Raporu
+            </Button>
+          </div>
           {treatmentPlans.length === 0 && can("treatment:write") && (
             <div className="rounded-xl border border-primary/20 bg-primary/10 p-4">
               <div className="flex items-center justify-between">
@@ -3894,6 +3862,17 @@ export default function HastaDetayContent() {
                 Dişe tıklarsanız diş bazlı, çene butonuna tıklarsanız tek çene kaydı Muayene Listesi tablosuna eklenir.
               </div>
             </div>
+            <label className="mb-2 block">
+              <span className="mb-1 block text-xs font-semibold text-slate-600">Klinik notu (isteğe bağlı)</span>
+              <textarea
+                value={newTreatmentNote}
+                onChange={(event) => setNewTreatmentNote(event.target.value)}
+                rows={2}
+                maxLength={1000}
+                placeholder="Ön teşhis, planlama veya uygulama notu"
+                className="w-full resize-y rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-primary/50 focus:ring-2 focus:ring-primary/20"
+              />
+            </label>
           </div>
           )}
 
@@ -4201,6 +4180,9 @@ export default function HastaDetayContent() {
           </div>
 
           <div className="flex justify-end gap-2">
+            <Button variant="secondary" onClick={openPaymentPrint} disabled={data.payments.length === 0} title="Ödeme dökümünü yazdır">
+              <Printer className="h-4 w-4" aria-hidden="true" /> Ödeme Dökümü
+            </Button>
             <button onClick={openNewPaymentModal} className="rounded bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700">Ödeme Al</button>
           </div>
 
@@ -4427,7 +4409,7 @@ export default function HastaDetayContent() {
                         <div className="flex items-center gap-2">
                           {overdue > 0 && <span className="text-xs font-bold text-red-600">{overdue} gecikmiş!</span>}
                           <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusCls[plan.status] || "bg-gray-100 text-gray-600"}`}>{TAKSIT_PLAN_STATUS_LABELS[plan.status] || plan.status}</span>
-                          <button onClick={() => printInstallmentPlan(plan)} className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">🖨 Yazdır</button>
+                          <button onClick={() => printInstallmentPlan(plan)} className="inline-flex items-center gap-1 rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"><Printer className="h-3.5 w-3.5" /> Yazdır</button>
                           <button
                             onClick={async () => {
                               if (!(await confirmDialog({ message: "Bu taksit planı ve tüm taksitleri silinsin mi?", danger: true, confirmText: "Sil" }))) return;
@@ -4602,6 +4584,7 @@ export default function HastaDetayContent() {
                   <div key={rx.id} style={{ ["--row-delay" as string]: `${Math.min(rxIdx, 10) * 20}ms` }} className="ui-row-in flex items-center justify-between rounded-lg border border-slate-100 bg-white p-4 hover:shadow-sm transition">
                     <div>
                       <p className="text-xs text-slate-500">{new Date(rx.createdAt).toLocaleDateString("tr-TR")}</p>
+                      {rx.status === "VOID" && <p className="mt-1 text-xs font-semibold text-red-600">İptal edildi</p>}
                     </div>
                     <div className="flex gap-2">
                       <Link
@@ -4610,12 +4593,12 @@ export default function HastaDetayContent() {
                       >
                         Görüntüle
                       </Link>
-                      <button
+                      {rx.status !== "VOID" && <button
                         onClick={() => deleteRecete(rx.id)}
                         className="rounded-lg bg-red-100 px-3 py-1 text-xs font-semibold text-red-600 hover:bg-red-200 transition"
                       >
-                        Sil
-                      </button>
+                        İptal Et
+                      </button>}
                     </div>
                   </div>
                 ))}
@@ -5621,7 +5604,7 @@ export default function HastaDetayContent() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setTreatmentPrintOpen(false)}>Kapat</Button>
-            <Button onClick={() => { doPrintTreatments(); setTreatmentPrintOpen(false); }} disabled={selectedTreatForPrint.length === 0}>🖨 Yazdır ({selectedTreatForPrint.length})</Button>
+            <Button onClick={() => { doPrintTreatments(); setTreatmentPrintOpen(false); }} disabled={selectedTreatForPrint.length === 0}><Printer className="h-4 w-4" /> Yazdır ({selectedTreatForPrint.length})</Button>
           </>
         }
       >
@@ -5677,7 +5660,7 @@ export default function HastaDetayContent() {
         footer={
           <>
             <Button variant="secondary" onClick={() => setPaymentPrintOpen(false)}>Kapat</Button>
-            <Button onClick={() => { doPrintPayments(); setPaymentPrintOpen(false); }} disabled={selectedPayForPrint.length === 0}>🖨 Yazdır ({selectedPayForPrint.length})</Button>
+            <Button onClick={() => { doPrintPayments(); setPaymentPrintOpen(false); }} disabled={selectedPayForPrint.length === 0}><Printer className="h-4 w-4" /> Yazdır ({selectedPayForPrint.length})</Button>
           </>
         }
       >
@@ -5712,7 +5695,7 @@ export default function HastaDetayContent() {
               {(data?.payments||[]).length === 0 && <p className="text-center text-sm text-slate-400 p-4">Ödeme kaydı yok</p>}
             </div>
       </Modal>
-      {/* ===== KlinikSistem tarzı yazdırma alanı — sadece @media print'de görünür ===== */}
+      {/* Kurumsal yazdırma alanı yalnızca @media print altında görünür. */}
       <div id="ks-print-area" />
       <style jsx global>{`
         @media print {

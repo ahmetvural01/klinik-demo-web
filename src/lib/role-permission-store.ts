@@ -17,14 +17,11 @@ type RolePermissionState = {
   map: Record<Role, string[]>;
 };
 
-// Önceden data/role-permissions.json dosyasına yazılıyordu — Render'ın
-// ephemeral dosya sisteminde her redeploy'da özel yetki değişiklikleri
-// kayboluyordu. Artık RolePermissionConfig (id=1 tek satır) tablosunda,
-// kısa süreli in-process cache ile tutuluyor (rbac.can() her istekte
-// çağrıldığı için her seferinde DB'ye gitmemek gerekiyor).
-let cache: RolePermissionState | null = null;
-let cacheAt = 0;
-const CACHE_TTL_MS = 3000;
+export class RolePermissionVersionConflictError extends Error {
+  constructor() {
+    super("ROLE_PERMISSION_VERSION_CONFLICT");
+  }
+}
 
 function toState(row: { version: number; updatedAt: Date; updatedBy: string; map: unknown }): RolePermissionState {
   return {
@@ -36,8 +33,6 @@ function toState(row: { version: number; updatedAt: Date; updatedBy: string; map
 }
 
 async function readState(): Promise<RolePermissionState> {
-  if (cache && Date.now() - cacheAt < CACHE_TTL_MS) return cache;
-
   try {
     let row = await prisma.rolePermissionConfig.findUnique({ where: { id: 1 } });
     if (!row) {
@@ -45,10 +40,7 @@ async function readState(): Promise<RolePermissionState> {
         data: { id: 1, version: 1, updatedBy: "system", map: DEFAULT_ROLE_PERMISSIONS },
       });
     }
-    const state = toState(row);
-    cache = state;
-    cacheAt = Date.now();
-    return state;
+    return toState(row);
   } catch {
     // DB erişilemezse (örn. build/migrate sırasında) varsayılana düş —
     // cache'e yazılmaz ki DB tekrar erişilebilir olunca güncel veri alınsın.
@@ -64,31 +56,29 @@ export async function getPermissionMap(): Promise<Record<Role, string[]>> {
   return (await readState()).map;
 }
 
-export async function saveRolePermissionMap(map: unknown, updatedBy: string) {
-  const current = await readState();
+export async function saveRolePermissionMap(map: unknown, updatedBy: string, expectedVersion: number) {
   const normalized = normalizeRolePermissionMap(map);
-  const row = await prisma.rolePermissionConfig.upsert({
-    where: { id: 1 },
-    update: { version: current.version + 1, updatedBy, map: normalized },
-    create: { id: 1, version: current.version + 1, updatedBy, map: normalized },
+  const row = await prisma.$transaction(async (tx) => {
+    const updated = await tx.rolePermissionConfig.updateMany({
+      where: { id: 1, version: expectedVersion },
+      data: { version: { increment: 1 }, updatedBy, map: normalized },
+    });
+    if (updated.count !== 1) throw new RolePermissionVersionConflictError();
+    return tx.rolePermissionConfig.findUniqueOrThrow({ where: { id: 1 } });
   });
-  const next = toState(row);
-  cache = next;
-  cacheAt = Date.now();
-  return next;
+  return toState(row);
 }
 
-export async function resetRolePermissionMap(updatedBy: string) {
-  const current = await readState();
-  const row = await prisma.rolePermissionConfig.upsert({
-    where: { id: 1 },
-    update: { version: current.version + 1, updatedBy, map: DEFAULT_ROLE_PERMISSIONS },
-    create: { id: 1, version: current.version + 1, updatedBy, map: DEFAULT_ROLE_PERMISSIONS },
+export async function resetRolePermissionMap(updatedBy: string, expectedVersion: number) {
+  const row = await prisma.$transaction(async (tx) => {
+    const updated = await tx.rolePermissionConfig.updateMany({
+      where: { id: 1, version: expectedVersion },
+      data: { version: { increment: 1 }, updatedBy, map: DEFAULT_ROLE_PERMISSIONS },
+    });
+    if (updated.count !== 1) throw new RolePermissionVersionConflictError();
+    return tx.rolePermissionConfig.findUniqueOrThrow({ where: { id: 1 } });
   });
-  const next = toState(row);
-  cache = next;
-  cacheAt = Date.now();
-  return next;
+  return toState(row);
 }
 
 export async function getPermissionPanelPayload() {

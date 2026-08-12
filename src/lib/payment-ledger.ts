@@ -4,6 +4,7 @@ import { applyTaksitIntegration, reverseTaksitIntegrationForPayment } from "@/li
 type CreatePaymentInput = {
   tx: Prisma.TransactionClient;
   institutionId: string;
+  branchId: string;
   requestKey?: string | null;
   patientId?: string | null;
   doctorId?: string | null;
@@ -12,6 +13,7 @@ type CreatePaymentInput = {
   description?: string | null;
   posId?: string | null;
   createdAt?: string | Date | null;
+  integrateInstallments?: boolean;
 };
 
 function paymentSnapshot(payment: {
@@ -46,6 +48,7 @@ export function toPublicPayment<T extends { requestKey?: string | null }>(paymen
 export async function createIntegratedPayment({
   tx,
   institutionId,
+  branchId,
   requestKey,
   patientId,
   doctorId,
@@ -54,6 +57,7 @@ export async function createIntegratedPayment({
   description,
   posId,
   createdAt,
+  integrateInstallments = true,
 }: CreatePaymentInput) {
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error("Ödeme tutarı pozitif olmalı");
@@ -62,6 +66,7 @@ export async function createIntegratedPayment({
   const payment = await tx.payment.create({
     data: {
       institutionId,
+      branchId,
       requestKey: requestKey || null,
       patientId: patientId || null,
       doctorId: doctorId || null,
@@ -74,8 +79,8 @@ export async function createIntegratedPayment({
     include: { patient: { select: { id: true, fullName: true } } },
   });
 
-  const taksitInfo = patientId
-    ? await applyTaksitIntegration(tx, patientId, amount, method, posId || null, payment.createdAt, payment.id, doctorId || null)
+  const taksitInfo = patientId && integrateInstallments
+    ? await applyTaksitIntegration(tx, patientId, amount, method, posId || null, payment.createdAt, payment.id, doctorId || null, branchId)
     : null;
 
   return { payment, taksitInfo };
@@ -101,6 +106,8 @@ export async function deleteIntegratedPayment(
   });
   await tx.paymentRevision.create({
     data: {
+      institutionId: existing.institutionId,
+      branchId: existing.branchId,
       paymentId,
       actorId: actorId || null,
       action: "VOID",
@@ -175,6 +182,8 @@ export async function updateIntegratedPayment({
 
   await tx.paymentRevision.create({
     data: {
+      institutionId: existing.institutionId,
+      branchId: existing.branchId,
       paymentId,
       actorId: actorId || null,
       action: "UPDATE",
@@ -185,7 +194,7 @@ export async function updateIntegratedPayment({
   });
 
   if (shouldReapply && existing.patientId) {
-    taksitInfo = await applyTaksitIntegration(tx, existing.patientId, nextAmount, nextMethod, nextPosId || null, nextCreatedAt, payment.id, nextDoctorId);
+    taksitInfo = await applyTaksitIntegration(tx, existing.patientId, nextAmount, nextMethod, nextPosId || null, nextCreatedAt, payment.id, nextDoctorId, existing.branchId);
   }
 
   return { payment, taksitReverseInfo, taksitInfo };

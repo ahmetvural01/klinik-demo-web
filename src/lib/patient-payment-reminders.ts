@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/prisma";
-import { resolveSmsTemplate } from "@/lib/sms-templates";
+import { renderCommunicationTemplate, resolveSmsTemplate } from "@/lib/sms-templates";
 import { dispatchPatientMessage } from "@/lib/notification-dispatch";
+import { isoLocalDate } from "@/lib/celebration-days";
+import { operationalInstitutionWhere } from "@/lib/operational-state";
 
 // Hastanın taksit/ödeme vadesi yaklaştığında veya geciktiğinde SMS hatırlatması
 // — süperadmin'in kurumlara gönderdiği fatura hatırlatmasından (billing-reminders.ts)
@@ -16,8 +18,8 @@ function fmtDate(d: Date) {
   return d.toLocaleDateString("tr-TR");
 }
 
-function renderTemplate(template: string, vars: Record<string, string>) {
-  return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
+function startOfLocalDay(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
 export async function runPatientPaymentReminderSweep(): Promise<{
@@ -32,8 +34,17 @@ export async function runPatientPaymentReminderSweep(): Promise<{
   const cutoff = new Date(now.getTime() - MIN_HOURS_BETWEEN_REMINDERS * 60 * 60 * 1000);
 
   const settings = await prisma.setting.findMany({
-    where: { paymentReminderSmsEnabled: true, smsEnabled: true },
-    select: { institutionId: true, institutionName: true, institutionPhone: true, paymentReminderWindowDays: true },
+    where: { paymentReminderSmsEnabled: true, institution: operationalInstitutionWhere(now) },
+    select: {
+      institutionId: true,
+      institutionName: true,
+      institutionPhone: true,
+      paymentReminderWindowDays: true,
+      paymentReminderDaysBefore: true,
+      paymentReminderOnDueDate: true,
+      paymentReminderOverdueEnabled: true,
+      paymentReminderOverdueEveryDays: true,
+    },
   });
 
   let checked = 0;
@@ -53,15 +64,21 @@ export async function runPatientPaymentReminderSweep(): Promise<{
     });
     if (!institution) continue;
 
-    // Pencere kurum bazlı: klinik Ayarlar'dan vadeye kaç gün kala hatırlatılacağını seçer.
-    const windowDays = setting.paymentReminderWindowDays ?? DEFAULT_APPROACHING_WINDOW_DAYS;
+    const daysBefore = setting.paymentReminderDaysBefore.length > 0
+      ? setting.paymentReminderDaysBefore
+      : [setting.paymentReminderWindowDays ?? DEFAULT_APPROACHING_WINDOW_DAYS];
+    const windowDays = Math.max(...daysBefore, 0);
     const windowEnd = new Date(now.getTime() + windowDays * DAY_MS);
 
     const taksitler = await prisma.taksit.findMany({
       where: {
         status: { in: ["BEKLIYOR", "GECIKTI"] },
         vadeDate: { lte: windowEnd },
-        plan: { patient: { institutionId: institution.id } },
+        branch: { isActive: true },
+        plan: {
+          status: "AKTIF",
+          patient: { institutionId: institution.id, archivedAt: null, homeBranch: { isActive: true } },
+        },
       },
       include: {
         plan: { include: { patient: { select: { id: true, fullName: true, phone: true } } } },
@@ -70,9 +87,20 @@ export async function runPatientPaymentReminderSweep(): Promise<{
     });
 
     for (const taksit of taksitler) {
-      checked += 1;
       const patient = taksit.plan.patient;
       if (!patient.phone) { failed += 1; continue; }
+
+      const daysUntilDue = Math.round(
+        (startOfLocalDay(taksit.vadeDate).getTime() - startOfLocalDay(now).getTime()) / DAY_MS,
+      );
+      const overdueInterval = Math.max(1, setting.paymentReminderOverdueEveryDays || 1);
+      const scheduled = daysUntilDue > 0
+        ? daysBefore.includes(daysUntilDue)
+        : daysUntilDue === 0
+          ? setting.paymentReminderOnDueDate
+          : setting.paymentReminderOverdueEnabled && Math.abs(daysUntilDue) % overdueInterval === 0;
+      if (!scheduled) continue;
+      checked += 1;
 
       if (remindedPatientIdsThisRun.has(patient.id)) {
         skippedRecent += 1;
@@ -89,50 +117,54 @@ export async function runPatientPaymentReminderSweep(): Promise<{
         continue;
       }
 
-      const isOverdue = taksit.status === "GECIKTI" || taksit.vadeDate < now;
+      const isOverdue = daysUntilDue < 0;
+      const isDueToday = daysUntilDue === 0;
       const institutionName = setting.institutionName || institution.name;
       const institutionPhone = setting.institutionPhone || institution.phone || "";
       const dueDateText = fmtDate(taksit.vadeDate);
       const amountText = Number(taksit.kalan).toLocaleString("tr-TR");
-      const daysLeftText = String(Math.max(0, Math.ceil((taksit.vadeDate.getTime() - now.getTime()) / DAY_MS)));
-      const daysLateText = String(Math.max(0, Math.ceil((now.getTime() - taksit.vadeDate.getTime()) / DAY_MS)));
+      const daysLeftText = String(Math.max(0, daysUntilDue));
+      const daysLateText = String(Math.max(0, Math.abs(daysUntilDue)));
 
-      const smsTemplate = await resolveSmsTemplate(institution.id, isOverdue ? "ODEME_GECIKTI" : "ODEME_YAKLASIYOR");
+      const templateCode = isOverdue ? "ODEME_GECIKTI" : isDueToday ? "ODEME_VADE_GUNU" : "ODEME_YAKLASIYOR";
+      const smsTemplate = await resolveSmsTemplate(institution.id, templateCode);
       const fallbackMessage = isOverdue
         ? `Sayın ${patient.fullName}, ${institutionName} nezdindeki ${amountText} TL tutarındaki ödemenizin vadesi ${daysLateText} gün geçmiştir. En kısa sürede tamamlamanızı rica ederiz.`
-        : `Sayın ${patient.fullName}, ${institutionName} nezdindeki ${amountText} TL tutarındaki ödemenizin son ${daysLeftText} gün içinde tamamlanmasını rica ederiz.`;
-      const message = smsTemplate
-        ? renderTemplate(smsTemplate.content, {
-            institutionName,
-            institutionPhone,
-            patientName: patient.fullName,
-            dueDate: dueDateText,
-            amount: amountText,
-            daysLeft: daysLeftText,
-            daysLate: daysLateText,
-          })
-        : fallbackMessage;
+        : isDueToday
+          ? `Sayın ${patient.fullName}, ${institutionName} nezdindeki ${amountText} TL tutarındaki ödemenizin vadesi bugündür. Bilginize sunarız.`
+          : `Sayın ${patient.fullName}, ${institutionName} nezdindeki ${amountText} TL tutarındaki ödemenizin son ${daysLeftText} gün içinde tamamlanmasını rica ederiz.`;
+      const rendered = renderCommunicationTemplate(smsTemplate, {
+        institutionName,
+        institutionPhone,
+        patientName: patient.fullName,
+        dueDate: dueDateText,
+        amount: amountText,
+        daysLeft: daysLeftText,
+        daysLate: daysLateText,
+      }, fallbackMessage);
 
       const result = await dispatchPatientMessage({
         institutionId: institution.id,
         patientId: patient.id,
         eventType: "PAYMENT_REMINDER",
         purpose: "SERVICE",
-        templateCode: isOverdue ? "ODEME_GECIKTI" : "ODEME_YAKLASIYOR",
-        message,
-        idempotencyKey: `payment-reminder:${taksit.id}:${now.toISOString().slice(0, 10)}`,
+        templateCode,
+        message: rendered.smsMessage,
+        whatsappMessage: rendered.whatsappMessage,
+        whatsappTemplate: rendered.whatsappTemplate,
+        idempotencyKey: `payment-reminder:${taksit.id}:${isoLocalDate(now)}`,
       });
 
       if (result.success) {
         sent += 1;
         remindedPatientIdsThisRun.add(patient.id);
-        await prisma.taksitReminderLog.create({ data: { taksitId: taksit.id, sentTo: patient.phone, status: "SENT" } });
+        await prisma.taksitReminderLog.create({ data: { institutionId: taksit.institutionId, branchId: taksit.branchId, taksitId: taksit.id, sentTo: patient.phone, status: "SENT" } });
       } else if (result.suppressed) {
         skippedNoBalance += 1;
-        await prisma.taksitReminderLog.create({ data: { taksitId: taksit.id, sentTo: patient.phone, status: "FAILED", errorDetail: result.reason } });
+        await prisma.taksitReminderLog.create({ data: { institutionId: taksit.institutionId, branchId: taksit.branchId, taksitId: taksit.id, sentTo: patient.phone, status: "FAILED", errorDetail: result.reason } });
       } else {
         failed += 1;
-        await prisma.taksitReminderLog.create({ data: { taksitId: taksit.id, sentTo: patient.phone, status: "FAILED", errorDetail: result.error } });
+        await prisma.taksitReminderLog.create({ data: { institutionId: taksit.institutionId, branchId: taksit.branchId, taksitId: taksit.id, sentTo: patient.phone, status: "FAILED", errorDetail: result.error } });
       }
     }
   }

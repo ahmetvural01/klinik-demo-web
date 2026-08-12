@@ -5,7 +5,33 @@ export type CatalogPriceItem = {
   amount: number;
 };
 
-export const ACTIVE_PRICE_LIST_STORAGE_KEY = "klinikmodern-active-price-list";
+export const ACTIVE_PRICE_LIST_STORAGE_KEY = "klinikcep-active-price-list";
+export const LEGACY_ACTIVE_PRICE_LIST_STORAGE_KEY = "klinikmodern-active-price-list";
+
+export function activePriceListStorageKey(scopeKey: string) {
+  if (!scopeKey.trim()) throw new Error("Fiyat listesi için oturum kapsamı bulunamadı.");
+  return `${ACTIVE_PRICE_LIST_STORAGE_KEY}:${scopeKey}`;
+}
+
+export function readStoredActivePriceList(storage: Pick<Storage, "getItem" | "setItem" | "removeItem">, scopeKey: string) {
+  const scopedKey = activePriceListStorageKey(scopeKey);
+  const current = storage.getItem(scopedKey);
+  if (current === "standard" || current === "custom") return current;
+
+  const unscopedCurrent = storage.getItem(ACTIVE_PRICE_LIST_STORAGE_KEY);
+  if (unscopedCurrent === "standard" || unscopedCurrent === "custom") {
+    storage.setItem(scopedKey, unscopedCurrent);
+    storage.removeItem(ACTIVE_PRICE_LIST_STORAGE_KEY);
+    return unscopedCurrent;
+  }
+  const legacy = storage.getItem(LEGACY_ACTIVE_PRICE_LIST_STORAGE_KEY);
+  if (legacy === "standard" || legacy === "custom") {
+    storage.setItem(scopedKey, legacy);
+    storage.removeItem(LEGACY_ACTIVE_PRICE_LIST_STORAGE_KEY);
+    return legacy;
+  }
+  return null;
+}
 
 export const TDB_ACTIVE_CATALOG_YEAR = 2026;
 

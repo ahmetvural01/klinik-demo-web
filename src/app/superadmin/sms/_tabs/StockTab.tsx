@@ -27,16 +27,21 @@ export default function StockTab() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ quantity: "", unitCost: "", provider: "", note: "" });
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
-    fetch("/api/superadmin/sms-wallet")
-      .then((r) => r.json())
-      .then((d) => setData(d))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
+    try {
+      const response = await fetch("/api/superadmin/sms-wallet", { cache: "no-store" });
+      const nextData = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(nextData?.message || "SMS bakiyesi yüklenemedi.");
+      setData(nextData);
+    } catch (error) {
+      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "SMS bakiyesi yüklenemedi.", type: "error" });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
 
   const addStock = async () => {
     setSaving(true);

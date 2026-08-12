@@ -4,13 +4,21 @@ import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { showToastSafe } from "@/lib/toast-client";
+import { BriefcaseBusiness, CalendarDays, Globe2, MessageCircle } from "lucide-react";
 
 type CelebrationDayRow = {
   code: string;
   title: string;
   month: number;
   day: number;
+  category: string;
+  recurrenceRule: string;
+  weekOfMonth: number | null;
+  weekday: number | null;
+  dateOverrides: string[];
   targetProfessions: string[];
+  messageTemplate: string;
+  whatsappMessageTemplate: string | null;
   enabled: boolean;
 };
 
@@ -18,18 +26,31 @@ function formatDate(month: number, day: number) {
   return `${String(day).padStart(2, "0")}.${String(month).padStart(2, "0")}`;
 }
 
-export default function CelebrationDaysTab() {
+function formatRule(row: CelebrationDayRow) {
+  if (row.recurrenceRule === "DATE_OVERRIDES") return row.dateOverrides.find((date) => date.startsWith(`${new Date().getFullYear()}-`))?.split("-").reverse().join(".") || "Takvime göre";
+  if (row.recurrenceRule === "NTH_WEEKDAY") return `${row.month}. ayın ${row.weekOfMonth}. haftası`;
+  return formatDate(row.month, row.day);
+}
+
+export default function CelebrationDaysTab({ readOnly = false }: { readOnly?: boolean }) {
   const [days, setDays] = useState<CelebrationDayRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
   const [savingCode, setSavingCode] = useState<string | null>(null);
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
-    fetch("/api/celebration-days")
-      .then((r) => r.json())
-      .then((d) => setDays(Array.isArray(d?.days) ? d.days : []))
-      .catch(() => setDays([]))
-      .finally(() => setLoading(false));
+    setLoadError("");
+    try {
+      const response = await fetch("/api/celebration-days", { cache: "no-store" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.message || "Özel günler yüklenemedi.");
+      setDays(Array.isArray(data?.days) ? data.days : []);
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : "Özel günler yüklenemedi.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { load(); }, []);
@@ -58,48 +79,50 @@ export default function CelebrationDaysTab() {
 
   return (
     <section className="space-y-4">
-      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <h1 className="text-lg font-black text-slate-900">Kutlama Günleri</h1>
+      <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex items-center gap-3"><span className="flex h-10 w-10 items-center justify-center rounded-md bg-rose-50 text-rose-600"><CalendarDays className="h-5 w-5" /></span><div><h1 className="text-lg font-black text-slate-900">Özel Gün Otomasyonları</h1>
         <p className="mt-1 text-sm text-slate-500">
-          Süperadmin&apos;in tanımladığı meslek günü/resmi bayram kutlamalarından hangilerinin hastalarınıza otomatik
-          gönderileceğine burada karar verirsiniz. Meslek bazlı olanlar yalnızca meslek alanı eşleşen hastalara, &quot;Tüm
-          hastalar&quot; etiketli olanlar (resmi bayram gibi) tüm hastalarınıza gider. Varsayılan olarak hepsi kapalıdır.
+          Açılan günler uygun hastalara otomatik gider. Kapalı günler Toplu Gönderim kataloğunda manuel kullanıma devam eder.
         </p>
+        </div></div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+      <div>
         {loading ? (
-          <div className="divide-y divide-slate-100">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="h-16 animate-pulse bg-slate-50" style={{ animationDelay: `${i * 40}ms` }} />
             ))}
           </div>
+        ) : loadError ? (
+          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
+            <span>{loadError}</span>
+            <Button variant="secondary" size="sm" onClick={() => void load()}>Yeniden Dene</Button>
+          </div>
         ) : days.length === 0 ? (
-          <div className="px-6 py-14 text-center text-sm text-slate-400">Henüz kutlama günü tanımlanmamış</div>
+          <div className="rounded-lg border border-slate-200 bg-white px-6 py-14 text-center text-sm text-slate-400">Henüz kutlama günü tanımlanmamış</div>
         ) : (
-          <div className="divide-y divide-slate-100">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {days.map((d) => (
-              <div key={d.code} className="flex items-center justify-between gap-3 p-4">
+              <article key={d.code} className={`flex min-h-[210px] flex-col rounded-lg border bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${d.enabled ? "border-primary/35 ring-1 ring-primary/10" : "border-slate-200"}`}>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-bold text-slate-600">{formatDate(d.month, d.day)}</span>
-                    <span className="font-bold text-slate-900">{d.title}</span>
-                    {d.targetProfessions.length === 0 ? (
-                      <Badge tone="info">Tüm hastalar</Badge>
-                    ) : (
-                      d.targetProfessions.map((p) => <Badge key={p} tone="success">{p}</Badge>)
-                    )}
+                    <span className="rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-xs font-bold text-slate-600">{formatRule(d)}</span>
+                    <Badge tone={d.enabled ? "success" : "neutral"} size="sm">{d.enabled ? "Otomatik" : "Manuel"}</Badge>
                   </div>
+                  <h2 className="mt-3 font-black text-slate-900">{d.title}</h2>
+                  <p className="mt-2 line-clamp-2 text-xs leading-5 text-slate-500">{d.messageTemplate.replaceAll("{{patientName}}", "Hasta").replaceAll("{{institutionName}}", "Kliniğiniz")}</p>
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">{d.targetProfessions.length === 0 ? <><Globe2 className="h-3.5 w-3.5" />Tüm hastalar</> : <><BriefcaseBusiness className="h-3.5 w-3.5" />{d.targetProfessions.join(", ")}</>}{d.whatsappMessageTemplate && <Badge tone="success" size="sm"><MessageCircle className="mr-1 inline h-3 w-3" />WhatsApp</Badge>}</div>
                 </div>
-                <Button
+                {!readOnly && <Button className="mt-4"
                   variant={d.enabled ? "primary" : "secondary"}
                   size="sm"
                   loading={savingCode === d.code}
                   onClick={() => void toggle(d)}
                 >
                   {d.enabled ? "Açık" : "Kapalı"}
-                </Button>
-              </div>
+                </Button>}
+              </article>
             ))}
           </div>
         )}

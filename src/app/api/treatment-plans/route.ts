@@ -3,12 +3,16 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { parsePagination } from "@/lib/pagination";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { requireActiveBranch } from "@/lib/branch-context";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 const PLAN_STATUSES = ["PLANLANDI", "DEVAM_EDIYOR", "TAMAMLANDI", "IPTAL"] as const;
 
 export const GET = withApiTiming("treatment-plans", async function GET(req: NextRequest) {
   const auth = await requireAuth("treatment:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
   const user = auth.user;
   if (user.role !== "SUPERADMIN" && !user.institutionId) {
     return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
@@ -28,7 +32,8 @@ export const GET = withApiTiming("treatment-plans", async function GET(req: Next
     ...(patientId ? { patientId } : {}),
     ...(status    ? { status }    : {}),
     ...(doctorId  ? { doctorId }  : {}),
-    ...(user.role !== "SUPERADMIN" ? { patient: { institutionId: user.institutionId } } : {}),
+    institutionId: user.institutionId,
+    branchId: branch.branchId,
   };
   const searchWhere = q
     ? {
@@ -47,7 +52,7 @@ export const GET = withApiTiming("treatment-plans", async function GET(req: Next
       include: {
         patient: { select: { id: true, fullName: true, tcNo: true, phone: true } },
         doctor:  { select: { id: true, fullName: true } },
-        steps:   { orderBy: { order: "asc" } },
+        steps:   { where: { archivedAt: null }, orderBy: { order: "asc" } },
       },
       orderBy: { createdAt: "desc" },
       skip,
@@ -55,7 +60,7 @@ export const GET = withApiTiming("treatment-plans", async function GET(req: Next
     }),
     (prisma as any).treatmentPlan.groupBy({
       by: ["status"],
-      where: { ...(patientId ? { patientId } : {}), ...(user.role !== "SUPERADMIN" ? { patient: { institutionId: user.institutionId } } : {}) },
+      where: { institutionId: user.institutionId, branchId: branch.branchId, ...(patientId ? { patientId } : {}) },
       _count: { _all: true },
     }),
   ]);
@@ -68,7 +73,7 @@ export const GET = withApiTiming("treatment-plans", async function GET(req: Next
   const items = hidePhone
     ? plans.map((p: any) => ({
         ...p,
-        patient: p.patient ? { ...p.patient, phone: "***" } : p.patient,
+        patient: p.patient ? { ...p.patient, phone: "***", tcNo: p.patient.tcNo ? "***" : p.patient.tcNo } : p.patient,
       }))
     : plans;
 
@@ -85,6 +90,8 @@ export async function POST(req: NextRequest) {
   const auth = await requireAuth("treatment:write");
   if (auth.error) return auth.error;
   const user = auth.user;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok || !user.institutionId) return NextResponse.json({ error: branch.ok ? "Kurum bilgisi bulunamadı" : branch.message }, { status: 403 });
   if (user.role !== "SUPERADMIN" && !user.institutionId) {
     return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
   }
@@ -102,15 +109,22 @@ export async function POST(req: NextRequest) {
     steps?: unknown;
   };
 
-  if (typeof patientId !== "string" || !patientId.trim() || typeof doctorId !== "string" || !doctorId.trim() || typeof title !== "string" || !title.trim()) {
+  if (
+    typeof patientId !== "string" || !patientId.trim() || patientId.trim().length > 80
+    || typeof doctorId !== "string" || !doctorId.trim() || doctorId.trim().length > 80
+    || typeof title !== "string" || !title.trim()
+  ) {
     return NextResponse.json({ error: "patientId, doctorId ve title zorunlu" }, { status: 400 });
   }
 
-  if (title.trim().length > 200 || (notes !== undefined && notes !== null && typeof notes !== "string")) {
+  if (
+    title.trim().length > 200
+    || (notes !== undefined && notes !== null && (typeof notes !== "string" || notes.length > 5000))
+  ) {
     return NextResponse.json({ error: "Plan başlığı veya notu geçersiz" }, { status: 400 });
   }
 
-  if (!Array.isArray(steps) || steps.length > 100) {
+  if (!Array.isArray(steps) || steps.length === 0 || steps.length > 100) {
     return NextResponse.json({ error: "Tedavi adımları geçersiz veya çok fazla" }, { status: 400 });
   }
 
@@ -128,10 +142,10 @@ export async function POST(req: NextRequest) {
     if (!Number.isFinite(amount) || amount < 0 || amount > 100_000_000) {
       return NextResponse.json({ error: `${index + 1}. tedavi adımının tutarı geçersiz` }, { status: 400 });
     }
-    if (step.toothNo !== undefined && step.toothNo !== null && typeof step.toothNo !== "string") {
+    if (step.toothNo !== undefined && step.toothNo !== null && (typeof step.toothNo !== "string" || step.toothNo.length > 50)) {
       return NextResponse.json({ error: `${index + 1}. tedavi adımının diş numarası geçersiz` }, { status: 400 });
     }
-    if (step.note !== undefined && step.note !== null && typeof step.note !== "string") {
+    if (step.note !== undefined && step.note !== null && (typeof step.note !== "string" || step.note.length > 2000)) {
       return NextResponse.json({ error: `${index + 1}. tedavi adımının notu geçersiz` }, { status: 400 });
     }
     normalizedSteps.push({
@@ -147,20 +161,13 @@ export async function POST(req: NextRequest) {
       where: {
         id: patientId,
         archivedAt: null,
-        ...(user.role !== "SUPERADMIN" ? { institutionId: user.institutionId } : {}),
+        institutionId: user.institutionId,
+        homeBranchId: branch.branchId,
       },
       select: { id: true },
     }),
     (prisma as any).user.findFirst({
-      where: {
-        id: doctorId,
-        isActive: true,
-        ...(user.role !== "SUPERADMIN" ? { institutionId: user.institutionId } : {}),
-        OR: [
-          { role: { in: ["DOKTOR", "ADMIN", "SUPERADMIN"] } },
-          { role: "YONETICI", profile: { hideAsDoctor: false } },
-        ],
-      },
+      where: { id: doctorId, ...effectiveDoctorWhere(user.institutionId, branch.branchId) },
       select: { id: true },
     }),
   ]);
@@ -173,6 +180,8 @@ export async function POST(req: NextRequest) {
     data: {
       patientId,
       doctorId,
+      institutionId: user.institutionId,
+      branchId: branch.branchId,
       title: title.trim(),
       notes: typeof notes === "string" ? notes.trim() || null : null,
       totalCost,
@@ -189,7 +198,7 @@ export async function POST(req: NextRequest) {
     include: {
       patient: { select: { id: true, fullName: true } },
       doctor:  { select: { id: true, fullName: true } },
-      steps:   { orderBy: { order: "asc" } },
+      steps:   { where: { archivedAt: null }, orderBy: { order: "asc" } },
     },
   });
 

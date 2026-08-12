@@ -29,7 +29,7 @@ export async function POST(request: NextRequest) {
   // çerezi (şifre olmadan) sınırsız deneme ile gerçek şifreyi kaba kuvvetle
   // bulmaya çalışabilirdi. Diğer şifre doğrulama uçlarıyla (login, 2FA) aynı
   // desen uygulanıyor.
-  const rate = checkRateLimit(`impersonate:${getClientIpFromHeaders(request.headers)}:${currentUser.id}`, 5, 15 * 60_000);
+  const rate = await checkRateLimit(`impersonate:${getClientIpFromHeaders(request.headers)}:${currentUser.id}`, 5, 15 * 60_000);
   if (!rate.ok) {
     return NextResponse.json({ message: "Çok fazla hatalı deneme yapıldı. Lütfen daha sonra tekrar deneyin." }, { status: 429 });
   }

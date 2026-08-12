@@ -53,6 +53,7 @@ type Appointment = {
   patient?: { id: string; fullName: string; hasContagiousDisease?: boolean; contagiousDiseaseNote?: string | null };
   doctor?: { id: string; fullName: string };
   clinicUnit?: { id: string; name: string; code?: string | null } | null;
+  branch?: { id: string; name: string; code?: string | null; colorCode?: string } | null;
 };
 
 type AppointmentLayout = {
@@ -64,15 +65,6 @@ type AppointmentLayout = {
 type Staff = { id: string; fullName: string; role: string; profile?: { workStart?: string | null; workEnd?: string | null; hideAsDoctor?: boolean } | null };
 type Patient = { id: string; fullName: string; tcNo?: string; phone?: string };
 type ClinicUnit = { id: string; name: string; code?: string | null; isActive: boolean };
-type UpcomingAppointment = {
-  id: string;
-  startAt: string;
-  endAt: string;
-  status: string;
-  patient?: { id: string; fullName: string; phone?: string | null; tcNo?: string | null };
-  doctor?: { id: string; fullName: string };
-};
-
 const STATUS_COLORS: Record<string, string> = {
   PLANLANDI: "bg-sky-50 border-l-4 border-sky-400",
   BEKLIYOR: "bg-yellow-50 border-l-4 border-yellow-400",
@@ -102,7 +94,7 @@ const STATUS_ICON: Record<string, string> = {
 
 function toLocalInput(date: Date) {
   const z = (n: number) => String(n).padStart(2, "0");
-  return date.getFullYear() + "-" + z(date.getMonth() + 1) + "-" + z(date.getDate()) + "T" + z(date.getHours()) + ":" + z(date.getMinutes());
+  return `${date.getFullYear()}-${z(date.getMonth() + 1)}-${z(date.getDate())}T${z(date.getHours())}:${z(date.getMinutes())}`;
 }
 
 function toLocalDateKey(date: Date) {
@@ -165,7 +157,7 @@ function parseTimeToMinutes(value: string, fallback: number): number {
 function toSlotLabel(totalMinutes: number): string {
   const h = Math.floor(totalMinutes / 60);
   const m = totalMinutes % 60;
-  return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 type CalendarSettings = {
@@ -201,40 +193,6 @@ type WaitlistEntry = {
   createdAt: string;
 };
 
-type RandevuCache = {
-  appointments?: Appointment[];
-  doctorBlocks?: DoctorBlock[];
-  staff?: Staff[];
-  role?: string;
-  canCreate?: boolean;
-  settings?: CalendarSettings;
-};
-
-function getRandevuCacheKey(rangeFrom: Date, rangeTo: Date, doctorId: string, roleKey: string) {
-  return `randevu:data:${roleKey || "anon"}:${rangeFrom.toISOString()}:${rangeTo.toISOString()}:${doctorId || "all"}`;
-}
-
-function readRandevuCache(cacheKey: string) {
-  if (typeof window === "undefined") {
-    return null;
-  }
-  const raw = sessionStorage.getItem(cacheKey);
-  if (!raw) return null;
-  try {
-    const cached = JSON.parse(raw) as RandevuCache;
-    return {
-      appointments: Array.isArray(cached.appointments) ? cached.appointments : [],
-      doctorBlocks: Array.isArray(cached.doctorBlocks) ? cached.doctorBlocks : [],
-      staff: Array.isArray(cached.staff) ? cached.staff : [],
-      role: cached.role || "",
-      canCreate: typeof cached.canCreate === "boolean" ? cached.canCreate : false,
-      settings: cached.settings || null,
-    };
-  } catch {
-    return null;
-  }
-}
-
 export default function RandevuPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -252,7 +210,6 @@ export default function RandevuPage() {
   const [treatmentOptions, setTreatmentOptions] = useState<TreatmentOption[]>(APPOINTMENT_TREATMENT_OPTIONS);
   const getTreatmentMeta = useCallback((key: AppointmentTreatmentKey) => getTreatmentMetaBase(key, treatmentOptions), [treatmentOptions]);
   const parseAppointmentNote = useCallback((note?: string | null) => parseAppointmentNoteBase(note, treatmentOptions), [treatmentOptions]);
-  const [currentUserRole, setCurrentUserRole] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -283,15 +240,13 @@ export default function RandevuPage() {
   const [followUpNote, setFollowUpNote] = useState("");
   const [detailSaving, setDetailSaving] = useState(false);
   const [agendaStatusFilter, setAgendaStatusFilter] = useState<"ALL" | "BEKLIYOR" | "GELDI" | "TAMAMLANDI" | "GELMEDI" | "IPTAL">("ALL");
-  const [upcomingSearch, setUpcomingSearch] = useState("");
-  const [upcomingLoading, setUpcomingLoading] = useState(false);
-  const [upcomingResults, setUpcomingResults] = useState<UpcomingAppointment[]>([]);
   const [doctorQuery, setDoctorQuery] = useState("");
   const [doctorDropdownOpen, setDoctorDropdownOpen] = useState(false);
   const [treatmentDropdownOpen, setTreatmentDropdownOpen] = useState(false);
   // Edit modal state
   const [editMode, setEditMode] = useState(false);
   const editSnapshotRef = useRef("");
+  const loadSequenceRef = useRef(0);
   const [editPatientId, setEditPatientId] = useState("");
   const [editPatientSearch, setEditPatientSearch] = useState("");
   const [editPatientResults, setEditPatientResults] = useState<Patient[]>([]);
@@ -378,7 +333,7 @@ export default function RandevuPage() {
     if (wlPatientSearch.trim().length < 2) { setWlPatientResults([]); return; }
     const t = setTimeout(async () => {
       try {
-        const res = await fetch("/api/patients?q=" + encodeURIComponent(wlPatientSearch.trim()) + "&take=10&summary=false");
+        const res = await fetch(`/api/patients?q=${encodeURIComponent(wlPatientSearch.trim())}&take=10&summary=false`);
         const data = await res.json();
         setWlPatientResults(Array.isArray(data.patients) ? data.patients : (Array.isArray(data) ? data : []));
       } catch { setWlPatientResults([]); }
@@ -597,8 +552,6 @@ export default function RandevuPage() {
     return { from, to };
   }, [date, view]);
 
-  const initialRandevuCache = useMemo(() => readRandevuCache(getRandevuCacheKey(currentRange.from, currentRange.to, doctorId, currentUserRole)), [currentRange.from, currentRange.to, doctorId, currentUserRole]);
-
   const isBookableDoctor = useCallback((person: Staff & { profile?: { hideAsDoctor?: boolean } | null; isActive?: boolean }) => {
     if (person.isActive === false) return false;
     if (person.role === "DOKTOR") return true;
@@ -751,11 +704,6 @@ export default function RandevuPage() {
     return included?.value || treatmentOptions[0]?.value || "DIGER";
   }, [treatmentOptions]);
 
-  const getEffectiveRole = useCallback(() => {
-    if (typeof window === "undefined") return "";
-    return sessionStorage.getItem("dev-preview-role") || "";
-  }, []);
-
   useEffect(() => {
     const qpView = searchParams.get("view");
     if ((qpView === "GUN" || qpView === "HAFTA" || qpView === "AY" || qpView === "AJANDA") && qpView !== view) {
@@ -801,95 +749,72 @@ export default function RandevuPage() {
     }
   }, [showForm, staff, newDoctorId]);
 
-  useEffect(() => {
-    if (initialRandevuCache) {
-      setAppointments(initialRandevuCache.appointments);
-      setDoctorBlocks(initialRandevuCache.doctorBlocks);
-      setStaff(initialRandevuCache.staff);
-      if (initialRandevuCache.settings) {
-        setCalendarSettings(initialRandevuCache.settings);
-      }
-      setLoading(false);
-    }
-  }, [initialRandevuCache]);
-
   // Hasta arama debounce
   useEffect(() => {
-    if (patientSearch.trim().length < 2) { setPatientResults([]); return; }
+    if (patientSearch.trim().length < 2) {
+      setPatientResults([]);
+      setPatientSearchLoading(false);
+      return;
+    }
+    const controller = new AbortController();
     const t = setTimeout(async () => {
       setPatientSearchLoading(true);
       try {
-        const res = await fetch("/api/patients?q=" + encodeURIComponent(patientSearch.trim()) + "&take=10&summary=false");
-        const data = await res.json();
-        setPatientResults(Array.isArray(data.patients) ? data.patients : []);
-      } finally { setPatientSearchLoading(false); }
+        const res = await fetch(`/api/patients?q=${encodeURIComponent(patientSearch.trim())}&take=10&summary=false`, {
+          signal: controller.signal,
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(data?.message || "Hasta araması yapılamadı.");
+        if (!controller.signal.aborted) setPatientResults(Array.isArray(data?.patients) ? data.patients : []);
+      } catch (searchError) {
+        if (!controller.signal.aborted) {
+          setPatientResults([]);
+          setError(searchError instanceof Error ? searchError.message : "Hasta araması yapılamadı.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setPatientSearchLoading(false);
+      }
     }, 280);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      controller.abort();
+    };
   }, [patientSearch]);
 
   useEffect(() => {
-    if (upcomingSearch.trim().length < 2) {
-      setUpcomingResults([]);
+    if (editPatientSearch.trim().length < 2) {
+      setEditPatientResults([]);
+      setEditPatientLoading(false);
       return;
     }
-
-    const timer = setTimeout(async () => {
-      setUpcomingLoading(true);
-      try {
-        const res = await fetch("/api/appointments/upcoming?q=" + encodeURIComponent(upcomingSearch.trim()) + "&take=20", { cache: "no-store" });
-        const json = await res.json();
-        setUpcomingResults(Array.isArray(json?.appointments) ? json.appointments : []);
-      } catch {
-        setUpcomingResults([]);
-      } finally {
-        setUpcomingLoading(false);
-      }
-    }, 260);
-
-    return () => clearTimeout(timer);
-  }, [upcomingSearch]);
-
-  useEffect(() => {
-    if (editPatientSearch.trim().length < 2) { setEditPatientResults([]); return; }
+    const controller = new AbortController();
     const t = setTimeout(async () => {
       setEditPatientLoading(true);
       try {
-        const res = await fetch("/api/patients?q=" + encodeURIComponent(editPatientSearch.trim()) + "&take=10&summary=false");
-        const data = await res.json();
-        setEditPatientResults(Array.isArray(data.patients) ? data.patients : []);
-      } finally { setEditPatientLoading(false); }
+        const res = await fetch(`/api/patients?q=${encodeURIComponent(editPatientSearch.trim())}&take=10&summary=false`, {
+          signal: controller.signal,
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok) throw new Error(data?.message || "Hasta araması yapılamadı.");
+        if (!controller.signal.aborted) setEditPatientResults(Array.isArray(data?.patients) ? data.patients : []);
+      } catch (searchError) {
+        if (!controller.signal.aborted) {
+          setEditPatientResults([]);
+          setError(searchError instanceof Error ? searchError.message : "Hasta araması yapılamadı.");
+        }
+      } finally {
+        if (!controller.signal.aborted) setEditPatientLoading(false);
+      }
     }, 280);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      controller.abort();
+    };
   }, [editPatientSearch]);
 
   const load = useCallback(async () => {
-    const cacheKey = getRandevuCacheKey(currentRange.from, currentRange.to, doctorId, currentUserRole);
-    let hadCached = false;
-    if (typeof window !== "undefined") {
-      const raw = sessionStorage.getItem(cacheKey);
-      if (raw) {
-        try {
-          const cached = JSON.parse(raw) as {
-            appointments?: Appointment[];
-            doctorBlocks?: DoctorBlock[];
-            staff?: Staff[];
-            role?: string;
-            canCreate?: boolean;
-            settings?: CalendarSettings;
-          };
-          if (Array.isArray(cached.appointments)) {
-            setAppointments(cached.appointments);
-            hadCached = true;
-          }
-          if (Array.isArray(cached.doctorBlocks)) setDoctorBlocks(cached.doctorBlocks);
-          if (Array.isArray(cached.staff) && cached.staff.length > 0) setStaff(cached.staff);
-          if (cached.role) setCurrentUserRole(cached.role);
-          if (cached.settings) setCalendarSettings(cached.settings);
-        } catch {}
-      }
-    }
-
-    setLoading(!hadCached); setError(null);
+    const requestId = ++loadSequenceRef.current;
+    setLoading(true); setError(null);
     try {
       const params = new URLSearchParams({ from: currentRange.from.toISOString(), to: currentRange.to.toISOString() });
       if (doctorId) params.set("doctorId", doctorId);
@@ -897,32 +822,30 @@ export default function RandevuPage() {
       const fromDate = toLocalDateKey(currentRange.from);
       const toDate = toLocalDateKey(currentRange.to);
 
-      // /api/auth/me burada kasıtlı olarak önbelleklenmiyor: canCreateAppointments
-      // randevu oluşturma butonunu gösterip gizleyen bir yetki kontrolü — 60sn'lik
-      // önbellek, yetkisi az önce alınan bir kullanıcıya bir dakikaya kadar
-      // "randevu oluştur" butonunu yanlışlıkla göstermeye devam edebilirdi.
-      const [appointmentsRes, meRes] = await Promise.all([
-        fetch("/api/appointments?" + params.toString(), { cache: "no-store" }),
-        fetch("/api/auth/me", { cache: "no-store" }),
-      ]);
-
-      const [aJson, meJson] = await Promise.all([appointmentsRes.json(), meRes.json()]);
+      const appointmentsRes = await fetch("/api/appointments?" + params.toString(), { cache: "no-store" });
+      const aJson = await appointmentsRes.json().catch(() => null);
+      if (requestId !== loadSequenceRef.current) return;
+      if (!appointmentsRes.ok) throw new Error(aJson?.message || "Randevular yüklenemedi.");
       const resolvedAppointments = Array.isArray(aJson) ? aJson : [];
       setAppointments(resolvedAppointments);
 
-      const role = getEffectiveRole() || meJson?.role || "";
-      setCurrentUserRole(role);
-
       void Promise.allSettled([
-        cachedGet<any>("/api/staff", 60_000)
+        cachedGet<any>("/api/staff", 60_000, { throwOnError: true })
           .then((sJson) => {
+            if (requestId !== loadSequenceRef.current) return;
             const staffList = Array.isArray(sJson) ? sJson : (sJson?.staff || []);
+            if (!Array.isArray(staffList)) throw new Error("Diş hekimi listesi beklenmeyen biçimde döndü.");
             const filteredStaff = staffList.filter((x: Staff & { profile?: { hideAsDoctor?: boolean } | null; isActive?: boolean }) => isBookableDoctor(x));
             setStaff(filteredStaff);
           })
-          .catch(() => {}),
-        cachedGet<any>("/api/settings", 60_000)
+          .catch(() => {
+            if (requestId !== loadSequenceRef.current) return;
+            setStaff([]);
+            setError((current) => current || "Diş hekimi listesi yüklenemedi. Yeni randevu için sayfayı yenileyin.");
+          }),
+        cachedGet<any>("/api/settings", 60_000, { throwOnError: true })
           .then((settingsJson) => {
+            if (requestId !== loadSequenceRef.current) return;
             const parsedHolidayDays = (() => {
               const raw = settingsJson?.holidayDays;
               if (Array.isArray(raw)) return raw;
@@ -962,9 +885,13 @@ export default function RandevuPage() {
             };
             setCalendarSettings(resolvedSettings);
           })
-          .catch(() => {}),
+          .catch(() => {
+            if (requestId !== loadSequenceRef.current) return;
+            setError((current) => current || "Çalışma saatleri yüklenemedi. Takvim kuralları için sayfayı yenileyin.");
+          }),
         fetch(`/api/doctor-blocks?from=${fromDate}&to=${toDate}`, { cache: "no-store" })
           .then(async (r) => {
+            if (requestId !== loadSequenceRef.current) return;
             if (!r.ok) {
               // Kapalı zaman listesi yüklenemezse çakışma kontrolü eksik kalır.
               // bir saate randevu yazılmasına yol açabilir, o yüzden görünür şekilde uyar.
@@ -973,15 +900,24 @@ export default function RandevuPage() {
               return;
             }
             const blocksJson = await r.json();
-            setDoctorBlocks(Array.isArray(blocksJson) ? blocksJson : []);
+            if (requestId === loadSequenceRef.current) {
+              setDoctorBlocks(Array.isArray(blocksJson) ? blocksJson : []);
+            }
           })
           .catch(() => {
+            if (requestId !== loadSequenceRef.current) return;
             setError("Doktorun kapalı zamanları yüklenemedi. Çakışma kontrolü için sayfayı yenileyin.");
             setDoctorBlocks([]);
           }),
         fetch("/api/treatment-types", { cache: "no-store" })
-          .then((r) => r.json())
+          .then(async (r) => {
+            if (requestId !== loadSequenceRef.current) return null;
+            const data = await r.json().catch(() => null);
+            if (!r.ok) throw new Error(data?.message || "Tedavi türleri yüklenemedi.");
+            return data;
+          })
           .then((typesJson) => {
+            if (requestId !== loadSequenceRef.current) return;
             const list = Array.isArray(typesJson) ? typesJson : [];
             const active = list.filter((t: { isActive?: boolean }) => t.isActive !== false);
             if (active.length > 0) {
@@ -993,32 +929,41 @@ export default function RandevuPage() {
               })));
             }
           })
-          .catch(() => {}),
-        cachedGet<ClinicUnit[]>("/api/clinic-units", 60_000)
+          .catch(() => {
+            if (requestId !== loadSequenceRef.current) return;
+            setError((current) => current || "Tedavi türleri yüklenemedi. Sayfayı yenileyin.");
+          }),
+        cachedGet<ClinicUnit[]>("/api/clinic-units", 60_000, { throwOnError: true })
           // Pasife alınmış bir ünite eski randevudan sessizce düşmemeli. Yeni
           // randevularda yalnızca aktif üniteler gösterilir; düzenlemede mevcut
           // atama korunarak geçmiş takibi kesintisiz kalır.
-          .then((items) => setClinicUnits(Array.isArray(items) ? items : []))
-          .catch(() => setClinicUnits([])),
+          .then((items) => {
+            if (requestId === loadSequenceRef.current) setClinicUnits(Array.isArray(items) ? items : []);
+          })
+          .catch(() => {
+            if (requestId !== loadSequenceRef.current) return;
+            setClinicUnits([]);
+            setError((current) => current || "Tedavi alanları yüklenemedi. Oda çakışmalarını güvenle kontrol etmek için sayfayı yenileyin.");
+          }),
       ]);
 
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Bilinmeyen hata");
-    } finally { setLoading(false); }
-  }, [currentUserRole, doctorId, isBookableDoctor, currentRange.from, currentRange.to]);
+      if (requestId === loadSequenceRef.current) setError(e instanceof Error ? e.message : "Bilinmeyen hata");
+    } finally {
+      if (requestId === loadSequenceRef.current) setLoading(false);
+    }
+  }, [doctorId, isBookableDoctor, currentRange.from, currentRange.to]);
 
   useEffect(() => { void load(); }, [load]);
 
   useEffect(() => {
     const syncPreviewRole = () => {
-      const activeRole = getEffectiveRole();
-      if (activeRole) setCurrentUserRole(activeRole);
       void load();
     };
 
     window.addEventListener("preview-role-change", syncPreviewRole);
     return () => window.removeEventListener("preview-role-change", syncPreviewRole);
-  }, [getEffectiveRole, load]);
+  }, [load]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -1125,10 +1070,6 @@ export default function RandevuPage() {
     startAt: editStartAt,
     durationMinutes: editDurationMinutes,
   }) !== editSnapshotRef.current;
-
-  function requestCloseAppointmentModal() {
-    closeAppointmentModal();
-  }
 
   function requestCancelEdit() {
     setEditMode(false);
@@ -1473,7 +1414,7 @@ export default function RandevuPage() {
       if (docId && a.doctor?.id !== docId) return false;
       const d = new Date(a.startAt);
       if (forDate && (d.getFullYear() !== forDate.getFullYear() || d.getMonth() !== forDate.getMonth() || d.getDate() !== forDate.getDate())) return false;
-      return (String(d.getHours()).padStart(2,"0") + ":" + String(d.getMinutes()).padStart(2,"0")) === slotTime;
+      return `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}` === slotTime;
     });
   };
 
@@ -1568,8 +1509,8 @@ export default function RandevuPage() {
   });
 
   const navLabel = () => {
-    if (view === "GUN") return date.getDate() + " " + TR_MONTHS[date.getMonth()] + " " + date.getFullYear();
-    if (view === "HAFTA") { const e = new Date(currentRange.from); e.setDate(e.getDate() + 6); return currentRange.from.getDate() + " " + TR_MONTHS[currentRange.from.getMonth()] + " - " + e.getDate() + " " + TR_MONTHS[e.getMonth()] + " " + date.getFullYear(); }
+    if (view === "GUN") return `${date.getDate()} ${TR_MONTHS[date.getMonth()]} ${date.getFullYear()}`;
+    if (view === "HAFTA") { const e = new Date(currentRange.from); e.setDate(e.getDate() + 6); return `${currentRange.from.getDate()} ${TR_MONTHS[currentRange.from.getMonth()]} - ${e.getDate()} ${TR_MONTHS[e.getMonth()]} ${date.getFullYear()}`; }
     return TR_MONTHS[date.getMonth()] + " " + date.getFullYear();
   };
 
@@ -2978,9 +2919,12 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                 .join("")
                 .toLocaleUpperCase("tr-TR");
               return (
-            <div key={a.id} onClick={() => setSelectedAppt(a)}
+            <div key={a.id} role="button" tabIndex={0}
+              onClick={() => setSelectedAppt(a)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedAppt(a); } }}
+              aria-label={`${a.patient?.fullName || "Randevu"} detayını aç`}
               style={{ ["--row-delay" as string]: `${Math.min(agendaIdx, 10) * 28}ms` }}
-              className={"ui-tone-card-interactive ui-pressable ui-row-in flex items-center gap-3 rounded-lg border bg-white p-3 cursor-pointer " + (STATUS_COLORS[displayStatus] || "") + (stale ? " ring-1 ring-orange-400" : "")}>
+              className={"ui-tone-card-interactive ui-pressable ui-row-in flex items-center gap-3 rounded-lg border bg-white p-3 cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-primary/40 " + (STATUS_COLORS[displayStatus] || "") + (stale ? " ring-1 ring-orange-400" : "")}>
               <div className="flex flex-col items-center min-w-16 text-center">
                 <span className="text-xs font-medium text-slate-500">{new Date(a.startAt).toLocaleDateString("tr-TR",{day:"2-digit",month:"short"})}</span>
                 <span className="text-sm font-bold text-primary tabular-nums">{new Date(a.startAt).toLocaleTimeString("tr-TR",{hour:"2-digit",minute:"2-digit"})}</span>
@@ -2990,7 +2934,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
               </div>
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-slate-800 truncate">{a.patient?.fullName}</p>
-                <p className="text-xs text-slate-500 truncate">{a.doctor?.fullName}</p>
+                <p className="text-xs text-slate-500 truncate">{a.doctor?.fullName}{a.branch?.name ? ` · ${a.branch.name}` : ""}</p>
                 <div className="mt-1 flex flex-wrap items-center gap-1">
                   <span className="inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold text-white" style={{ backgroundColor: treatmentMeta.color }}>{treatmentMeta.label}</span>
                   {parsed.followUp !== "YOK" && <span className={"inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold " + meta.badge}>{meta.label}</span>}
@@ -3366,6 +3310,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                     )}
                   </span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Doktor:</span><span>{selectedAppt.doctor?.fullName}</span></div>
+                  {selectedAppt.branch?.name && <div className="flex justify-between"><span className="text-gray-500">Şube:</span><span>{selectedAppt.branch.name}</span></div>}
                   {selectedAppt.clinicUnit && <div className="flex justify-between"><span className="text-gray-500">Tedavi alanı:</span><span>{selectedAppt.clinicUnit.name}{selectedAppt.clinicUnit.code ? ` · ${selectedAppt.clinicUnit.code}` : ""}</span></div>}
                   <div className="flex justify-between"><span className="text-gray-500">Başlangıç:</span><span>{new Date(selectedAppt.startAt).toLocaleString("tr-TR")}</span></div>
                   <div className="flex justify-between"><span className="text-gray-500">Bitiş:</span><span>{new Date(selectedAppt.endAt).toLocaleString("tr-TR")}</span></div>

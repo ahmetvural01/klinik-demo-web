@@ -1,6 +1,6 @@
 # Görsel/Motion Varlık Envanteri
 
-Bu belge, KlinikModern arayüzünde kullanılan üçüncü taraf görsel/motion varlıklarının kaynağını, lisansını ve
+Bu belge, KlinikCep arayüzünde kullanılan üçüncü taraf görsel/motion varlıklarının kaynağını, lisansını ve
 uygulandığı ekranları kayıt altına alır. Gerçek secret veya kullanıcı verisi içermez.
 
 ## Kullanımda olan varlıklar

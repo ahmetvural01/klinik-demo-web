@@ -12,6 +12,7 @@ type IntegrationInput = {
   firma: { id: string; name: string; institutionId?: string | null };
   islem: {
     id: string;
+    branchId: string;
     tarih: Date;
     islemTipi: "ALIM" | "HIZMET" | "ODEME";
     urunHizmet?: string | null;
@@ -63,6 +64,7 @@ export async function applyFirmaIslemIntegration({
       tx,
       stockItemId,
       institutionId: firma.institutionId,
+      branchId: islem.branchId,
       userId,
       type: "GIRIS",
       quantity: Number(stockQuantity),
@@ -86,6 +88,7 @@ export async function applyFirmaIslemIntegration({
     await tx.expense.create({
       data: {
         institutionId: firma.institutionId || null,
+        branchId: islem.branchId,
         tarih: islem.tarih,
         categoryId: category.id,
         category: category.name,
@@ -111,12 +114,14 @@ export async function reverseFirmaIslemIntegration(tx: TxClient, userId: string,
   const tag = buildSourceTag(islemId);
   const sourceIslem = await tx.firmaIslem.findUnique({
     where: { id: islemId },
-    select: { firmaId: true },
+    select: { firmaId: true, branchId: true, institutionId: true },
   });
 
   const stockMovements = await tx.stockMovement.findMany({
     where: {
       type: "GIRIS",
+      branchId: sourceIslem?.branchId,
+      institutionId: sourceIslem?.institutionId,
       note: { contains: tag },
     },
     include: { stockItem: true },
@@ -127,6 +132,7 @@ export async function reverseFirmaIslemIntegration(tx: TxClient, userId: string,
       tx,
       stockItemId: movement.stockItemId,
       institutionId: movement.stockItem.institutionId,
+      branchId: movement.branchId,
       userId,
       type: "CIKIS",
       quantity: Number(movement.quantity),
@@ -137,6 +143,7 @@ export async function reverseFirmaIslemIntegration(tx: TxClient, userId: string,
   await tx.expense.updateMany({
     where: {
       status: "AKTIF",
+      branchId: sourceIslem?.branchId,
       OR: [
         { sourceType: "FIRMA_ISLEM", sourceId: islemId },
         { description: { contains: tag } },
@@ -145,8 +152,8 @@ export async function reverseFirmaIslemIntegration(tx: TxClient, userId: string,
     data: { status: "IPTAL" },
   });
 
-  if (sourceIslem?.firmaId) {
-    await rebuildFirmaPaymentAllocations(tx, sourceIslem.firmaId);
+  if (sourceIslem?.firmaId && sourceIslem.branchId) {
+    await rebuildFirmaPaymentAllocations(tx, sourceIslem.firmaId, sourceIslem.branchId);
   }
 }
 

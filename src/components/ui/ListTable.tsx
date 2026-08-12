@@ -98,12 +98,19 @@ export function ListTable<T>({
                   aria-label={onRowClick ? getRowAriaLabel?.(row) : undefined}
                   onClick={onRowClick ? (event) => {
                     const target = event.target as HTMLElement;
-                    if (target.closest("button, a, input, select, textarea, [role='button']")) return;
+                    // Satırın kendisi de role="button" taşıdığı için closest() buraya
+                    // her zaman ulaşırdı — currentTarget (satırın kendisi) hariç
+                    // tutulmazsa hiçbir tıklama satırı asla açamazdı (bkz. denetim
+                    // raporu: "personel detay açılmıyor" ve aynı bileşeni kullanan
+                    // TÜM listelerdeki satır tıklamaları bu yüzden çalışmıyordu).
+                    const interactive = target.closest("button, a, input, select, textarea, [role='button']");
+                    if (interactive && interactive !== event.currentTarget) return;
                     onRowClick(row);
                   } : undefined}
                   onKeyDown={onRowClick ? (event) => {
                     const target = event.target as HTMLElement;
-                    if (target.closest("button, a, input, select, textarea, [role='button']")) return;
+                    const interactive = target.closest("button, a, input, select, textarea, [role='button']");
+                    if (interactive && interactive !== event.currentTarget) return;
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
                       onRowClick(row);

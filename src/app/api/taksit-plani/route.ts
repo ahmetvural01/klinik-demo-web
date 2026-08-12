@@ -6,6 +6,7 @@ import { isValidDateKey, turkeyTodayStartUtc } from "@/lib/tz";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { addInstallmentPeriod, INSTALLMENT_PERIODS } from "@/lib/installment-schedule";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 const AGING4_KEYS = ["current", "d0_30", "d31_60", "d60p"] as const;
 
@@ -43,6 +44,8 @@ export const GET = withApiTiming("taksit-plani", async function GET(req: NextReq
   try {
     const auth = await requireAuth("installments:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
     const user = auth.user;
     if (user.role !== "SUPERADMIN" && !user.institutionId) {
       return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
@@ -54,9 +57,8 @@ export const GET = withApiTiming("taksit-plani", async function GET(req: NextReq
     const q = (searchParams.get("q") || "").trim();
     const { page, take, skip, pageCount } = parsePagination(searchParams, { defaultTake: 25, maxTake: 100 });
 
-    const baseWhere: Record<string, unknown> = {};
+    const baseWhere: Record<string, unknown> = { institutionId: user.institutionId, branchId: branch.branchId };
     if (patientId) baseWhere.patientId = patientId;
-    if (user.role !== "SUPERADMIN") baseWhere.patient = { institutionId: user.institutionId };
 
     const planStatuses = new Set(["AKTIF", "DEVAM_EDIYOR", "TAMAMLANDI", "IPTAL"]);
     const taksitStatuses = new Set(["BEKLIYOR", "ODENDI", "GECIKTI", "IPTAL"]);
@@ -185,6 +187,8 @@ export async function POST(req: NextRequest) {
     const auth = await requireAuth("installments:write");
     if (auth.error) return auth.error;
     const user = auth.user;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
     if (!user.institutionId) {
       return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
     }
@@ -247,11 +251,11 @@ export async function POST(req: NextRequest) {
 
     const [patient, doctor] = await Promise.all([
       (prisma as any).patient.findFirst({
-        where: { id: patientId, institutionId: user.institutionId, archivedAt: null },
+        where: { id: patientId, institutionId: user.institutionId, homeBranchId: branch.branchId, archivedAt: null },
         select: { id: true },
       }),
       (prisma as any).user.findFirst({
-        where: { id: doctorId, ...effectiveDoctorWhere(user.institutionId) },
+        where: { id: doctorId, ...effectiveDoctorWhere(user.institutionId, branch.branchId) },
         select: { id: true },
       }),
     ]);
@@ -328,6 +332,8 @@ export async function POST(req: NextRequest) {
 
     const plan = await (prisma as any).taksitPlan.create({
       data: {
+        institutionId: user.institutionId,
+        branchId: branch.branchId,
         patientId, doctorId, baslik: baslik?.trim() || null,
         toplamBorc: Number(toplamBorc),
         pesnat: Number(pesnat),

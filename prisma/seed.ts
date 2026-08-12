@@ -1,3 +1,4 @@
+/* eslint-disable no-console -- Seed progress belongs in terminal output. */
 import bcrypt from "bcryptjs";
 import { PrismaClient, Role } from "@prisma/client";
 
@@ -53,6 +54,12 @@ async function main() {
         },
       });
 
+  const branch = await prisma.clinicBranch.upsert({
+    where: { institutionId_slug: { institutionId: institution.id, slug: "merkez" } },
+    update: { isActive: true, isHeadquarters: true },
+    create: { institutionId: institution.id, name: "Merkez Şube", code: "MRK", slug: "merkez", isHeadquarters: true },
+  });
+
   const admin = await prisma.user.upsert({
     where: {
       institutionId_identityNo: {
@@ -75,6 +82,12 @@ async function main() {
         }
       }
     }
+  });
+
+  await prisma.userBranch.upsert({
+    where: { userId_branchId: { userId: admin.id, branchId: branch.id } },
+    update: { isActive: true, isPrimary: true },
+    create: { institutionId: institution.id, userId: admin.id, branchId: branch.id, isPrimary: true },
   });
 
   await prisma.setting.upsert({
@@ -335,3 +348,4 @@ main()
   .finally(async () => {
     await prisma.$disconnect();
   });
+/* eslint-disable no-console -- Seed progress belongs in terminal output. */

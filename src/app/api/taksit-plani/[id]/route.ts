@@ -3,11 +3,13 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 import { turkeyTodayStartUtc } from "@/lib/tz";
+import { requireActiveBranch } from "@/lib/branch-context";
 
-function taksitPlanTenantWhere(id: string, institutionId: string | null | undefined) {
+function taksitPlanTenantWhere(id: string, institutionId: string | null | undefined, branchId: string) {
   return {
     id,
-    ...(institutionId ? { patient: { institutionId } } : {}),
+    institutionId: institutionId || "__no_institution__",
+    branchId,
   };
 }
 
@@ -16,19 +18,21 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   try {
     const auth = await requireAuth("installments:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
     const user = auth.user;
     if (user.role !== "SUPERADMIN" && !user.institutionId) {
       return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
     }
 
     const plan = await (prisma as any).taksitPlan.findFirst({
-      where: taksitPlanTenantWhere(params.id, user.institutionId),
+      where: taksitPlanTenantWhere(params.id, user.institutionId, branch.branchId),
       include: {
         patient: { select: { id: true, fullName: true, phone: true } },
         doctor: { select: { id: true, fullName: true } },
         taksitler: {
           orderBy: { siraNo: "asc" },
-          include: { odemeler: { orderBy: { tarih: "asc" } } }
+          include: { odemeler: { where: { status: "ACTIVE" }, orderBy: { tarih: "asc" } } }
         },
         reminders: { orderBy: { reminderDate: "asc" } }
       }
@@ -56,7 +60,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
         }
       : planWithLiveStatus;
     return NextResponse.json(result);
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
   }
 }
@@ -66,6 +70,8 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   try {
     const auth = await requireAuth("installments:write");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
     const user = auth.user;
     if (user.role !== "SUPERADMIN" && !user.institutionId) {
       return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
@@ -87,36 +93,37 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     }
 
     const existing = await (prisma as any).taksitPlan.findFirst({
-      where: taksitPlanTenantWhere(params.id, user.institutionId),
+      where: taksitPlanTenantWhere(params.id, user.institutionId, branch.branchId),
       select: { id: true, status: true },
     });
     if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
     const plan = status === "IPTAL"
       ? await prisma.$transaction(async (tx) => {
-          await tx.$queryRaw`SELECT id FROM "TaksitPlan" WHERE id = ${params.id} FOR UPDATE`;
-          await tx.$queryRaw`SELECT id FROM "Taksit" WHERE "planId" = ${params.id} FOR UPDATE`;
+          await tx.$queryRaw`SELECT id FROM "TaksitPlan" WHERE id = ${params.id} AND "institutionId" = ${user.institutionId} AND "branchId" = ${branch.branchId} FOR UPDATE`;
+          await tx.$queryRaw`SELECT id FROM "Taksit" WHERE "planId" = ${params.id} AND "institutionId" = ${user.institutionId} AND "branchId" = ${branch.branchId} FOR UPDATE`;
           if (existing.status !== "IPTAL") {
             await (tx as any).taksit.updateMany({
-              where: { planId: params.id, status: { in: ["BEKLIYOR", "GECIKTI"] } },
+              where: { planId: params.id, institutionId: user.institutionId, branchId: branch.branchId, status: { in: ["BEKLIYOR", "GECIKTI"] } },
               data: { status: "IPTAL" },
             });
-            await (tx as any).reminder.deleteMany({
-              where: { planId: params.id, status: { not: "TAMAMLANDI" } },
+            await (tx as any).reminder.updateMany({
+              where: { planId: params.id, institutionId: user.institutionId, branchId: branch.branchId, status: { not: "TAMAMLANDI" } },
+              data: { status: "TAMAMLANDI", lastError: "Taksit planı iptal edildi." },
             });
           }
           return (tx as any).taksitPlan.update({
-            where: { id: params.id },
+            where: { id_institutionId_branchId: { id: params.id, institutionId: user.institutionId, branchId: branch.branchId } },
             data: { status: "IPTAL", ...(notes !== undefined && { notes: notes?.trim() || null }) },
           });
         }, { isolationLevel: "Serializable" })
       : await (prisma as any).taksitPlan.update({
-          where: { id: params.id },
+          where: { id_institutionId_branchId: { id: params.id, institutionId: user.institutionId, branchId: branch.branchId } },
           data: { notes: notes?.trim() || null },
         });
     await writeAudit(auth.user.id, "TAKSIT_PLAN_UPDATE", `Taksit planı güncellendi (${params.id})`);
     return NextResponse.json(plan);
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
   }
 }
@@ -126,41 +133,45 @@ export async function DELETE(_: NextRequest, props: { params: Promise<{ id: stri
   try {
     const auth = await requireAuth("installments:delete");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
     if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
       return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
     }
 
     const existing = await (prisma as any).taksitPlan.findFirst({
-      where: taksitPlanTenantWhere(params.id, auth.user.institutionId),
+      where: taksitPlanTenantWhere(params.id, auth.user.institutionId, branch.branchId),
       select: { id: true },
     });
     if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
-    // Plana ait gerçek tahsilat (TaksitOdeme) varsa, planı silmek Taksit/
-    // TaksitOdeme kayıtlarını cascade ile yok eder ama alttaki Payment kaydı
-    // (ve tahsil edilmiş para) kasada kalır — hangi taksitlerin ödendiğine
-    // dair tüm iz ve yaşlandırma geçmişi sessizce kaybolur (bkz. denetim
-    // raporu). Ödemesi olan bir plan silinemez; önce ilgili ödemeler kendi
-    // ekranından (payments:refund yetkisiyle) geri alınmalı.
-    const paidCount = await (prisma as any).taksitOdeme.count({
-      where: { taksit: { planId: params.id } },
-    });
-    if (paidCount > 0) {
-      return NextResponse.json(
-        { error: "Bu plana ait tahsilat kayıtları var — plan silinemez. Önce ilgili ödemeleri geri alın." },
-        { status: 400 },
-      );
-    }
-
-    // Hatırlatıcıları sil, sonra plan (Taksit + TaksitOdeme cascade ile silinir)
+    // Finansal geçmiş fiziksel olarak silinmez. DELETE istemci sözleşmesi
+    // geriye dönük korunur, sunucuda atomik bir iptal işlemine çevrilir.
     await prisma.$transaction(async (tx) => {
-      await (tx as any).reminder.deleteMany({ where: { planId: params.id } });
-      await (tx as any).taksitPlan.delete({ where: { id: params.id } });
+      await tx.$queryRaw`SELECT id FROM "TaksitPlan" WHERE id = ${params.id} FOR UPDATE`;
+      await (tx as any).taksit.updateMany({
+        where: { planId: params.id, status: { in: ["BEKLIYOR", "GECIKTI"] } },
+        data: { status: "IPTAL" },
+      });
+      await (tx as any).reminder.updateMany({
+        where: { planId: params.id, status: { not: "TAMAMLANDI" } },
+        data: { status: "TAMAMLANDI", lastError: "Taksit planı iptal edildi." },
+      });
+      await (tx as any).taksitPlan.update({
+        where: {
+          id_institutionId_branchId: {
+            id: params.id,
+            institutionId: auth.user.institutionId,
+            branchId: branch.branchId,
+          },
+        },
+        data: { status: "IPTAL" },
+      });
     });
 
-    await writeAudit(auth.user.id, "TAKSIT_PLAN_DELETE", `Taksit planı silindi (${params.id})`);
-    return NextResponse.json({ ok: true });
-  } catch (e) {
+    await writeAudit(auth.user.id, "TAKSIT_PLAN_CANCEL", `Taksit planı iptal edildi; geçmiş korundu (${params.id})`);
+    return NextResponse.json({ ok: true, status: "IPTAL" });
+  } catch {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
   }
 }

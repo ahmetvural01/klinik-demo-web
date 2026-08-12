@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 /**
  * GET /api/muhasebe/trend
@@ -10,6 +11,8 @@ export async function GET() {
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
     const institutionId = auth.user.institutionId;
     const months: { label: string; gelir: number; gider: number }[] = [];
@@ -33,6 +36,7 @@ export async function GET() {
           where: institutionId
               ? {
                 institutionId,
+                branchId: branch.branchId,
                 status: "ACTIVE",
                 createdAt: { gte: start, lte: end },
                 patientId: { not: null },
@@ -45,6 +49,7 @@ export async function GET() {
             tarih: { gte: start, lte: end },
             status: { not: "IPTAL" },
             ...(institutionId ? { institutionId } : {}),
+            branchId: branch.branchId,
           },
         }),
       ]);

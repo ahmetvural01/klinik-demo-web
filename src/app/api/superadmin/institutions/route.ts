@@ -113,6 +113,16 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    const branch = await tx.clinicBranch.create({
+      data: {
+        institutionId: institution.id,
+        name: "Merkez Şube",
+        code: "MRK",
+        slug: "merkez",
+        isHeadquarters: true,
+      },
+    });
+
     const owner = await tx.user.create({
       data: {
         fullName: ownerName,
@@ -121,6 +131,9 @@ export async function POST(request: NextRequest) {
         institutionId: institution.id,
         passwordHash,
         isActive: true,
+        branchMemberships: {
+          create: { branchId: branch.id, isPrimary: true },
+        },
       },
     });
 

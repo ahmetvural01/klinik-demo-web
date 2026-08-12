@@ -6,9 +6,12 @@ import { checkRateLimit } from "@/lib/rate-limit";
 export const GET = withApiTiming("support", async function GET() {
   const auth = await requireAuth("support:read");
   if (auth.error) return auth.error;
+  if (!auth.user.institutionId) {
+    return NextResponse.json({ message: "Kurum bilgisi bulunamadı" }, { status: 403 });
+  }
 
   const tickets = await prisma.supportTicket.findMany({
-    where: auth.user.role !== "SUPERADMIN" ? { institutionId: auth.user.institutionId } : {},
+    where: { institutionId: auth.user.institutionId },
     orderBy: { createdAt: "desc" },
     include: { user: { select: { id: true, fullName: true, role: true, institutionId: true } } },
     take: 500,
@@ -20,11 +23,14 @@ export const GET = withApiTiming("support", async function GET() {
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("support:write");
   if (auth.error) return auth.error;
+  if (!auth.user.institutionId) {
+    return NextResponse.json({ message: "Kurum bilgisi bulunamadı" }, { status: 403 });
+  }
 
   // Önceden hiçbir sınır yoktu — herhangi bir kullanıcı sınırsız destek
   // talebi açıp süperadmin konsolunu spam/gürültüyle doldurabilirdi (bkz.
   // denetim raporu).
-  const rate = checkRateLimit(`support-create:${auth.user.id}`, 5, 10 * 60_000);
+  const rate = await checkRateLimit(`support-create:${auth.user.id}`, 5, 10 * 60_000);
   if (!rate.ok) {
     return NextResponse.json({ message: "Çok fazla destek talebi oluşturdunuz. Lütfen biraz sonra tekrar deneyin." }, { status: 429 });
   }

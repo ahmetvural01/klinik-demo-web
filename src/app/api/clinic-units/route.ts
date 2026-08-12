@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 function getInstitutionId(auth: { user: { institutionId?: string | null } }) {
   return auth.user.institutionId || null;
@@ -20,10 +21,12 @@ export const GET = withApiTiming("clinic-units", async () => {
   if (auth.error) return auth.error;
   const institutionId = getInstitutionId(auth);
   if (!institutionId) return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 403 });
+  const activeBranch = requireActiveBranch(auth.user.branchContext);
+  if (!activeBranch.ok) return NextResponse.json({ message: activeBranch.message }, { status: 403 });
 
   const items = await prisma.clinicUnit.findMany({
-    where: { institutionId },
-    select: { id: true, name: true, code: true, isActive: true, createdAt: true, _count: { select: { appointments: true } } },
+    where: { institutionId, branchId: activeBranch.branchId },
+    select: { id: true, branchId: true, name: true, code: true, isActive: true, createdAt: true, branch: { select: { name: true } }, _count: { select: { appointments: true } } },
     orderBy: [{ isActive: "desc" }, { name: "asc" }],
   });
   return NextResponse.json(items);
@@ -34,6 +37,8 @@ export const POST = withApiTiming("clinic-units", async (request: NextRequest) =
   if (auth.error) return auth.error;
   const institutionId = getInstitutionId(auth);
   if (!institutionId) return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 400 });
+  const activeBranch = requireActiveBranch(auth.user.branchContext);
+  if (!activeBranch.ok) return NextResponse.json({ message: activeBranch.message }, { status: 409 });
 
   const body = await request.json().catch(() => null);
   const name = normalizeName(body?.name);
@@ -46,7 +51,7 @@ export const POST = withApiTiming("clinic-units", async (request: NextRequest) =
   }
 
   try {
-    const item = await prisma.clinicUnit.create({ data: { institutionId, name, code } });
+    const item = await prisma.clinicUnit.create({ data: { institutionId, branchId: activeBranch.branchId, name, code } });
     await writeAudit(auth.user.id, "CLINIC_UNIT_CREATE", `Tedavi alanı eklendi: ${item.name}${item.code ? ` (${item.code})` : ""}`);
     return NextResponse.json(item, { status: 201 });
   } catch (error) {
@@ -61,11 +66,13 @@ export const PATCH = withApiTiming("clinic-units", async (request: NextRequest) 
   if (auth.error) return auth.error;
   const institutionId = getInstitutionId(auth);
   if (!institutionId) return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 400 });
+  const activeBranch = requireActiveBranch(auth.user.branchContext);
+  if (!activeBranch.ok) return NextResponse.json({ message: activeBranch.message }, { status: 409 });
 
   const body = await request.json().catch(() => null);
   const id = typeof body?.id === "string" ? body.id : "";
   if (!id) return NextResponse.json({ message: "Tedavi alanı seçilmedi." }, { status: 400 });
-  const current = await prisma.clinicUnit.findFirst({ where: { id, institutionId } });
+  const current = await prisma.clinicUnit.findFirst({ where: { id, institutionId, branchId: activeBranch.branchId } });
   if (!current) return NextResponse.json({ message: "Tedavi alanı bulunamadı." }, { status: 404 });
 
   const name = body?.name === undefined ? current.name : normalizeName(body.name);

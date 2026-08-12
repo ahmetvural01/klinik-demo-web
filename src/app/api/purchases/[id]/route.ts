@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAllAuth, requireAuth, writeAudit } from "@/lib/api";
 import { purchaseUpdateSchema, formatZodError } from "@/lib/validators";
 import { applyStockMovement, reversePurchaseItemStock } from "@/lib/stock-ledger";
 import { resolveOrCreateStockItem } from "@/lib/purchase-helpers";
 import { findPurchasePayments, firmaIslemToken, purchasePaymentToken, sumPurchasePayments } from "@/lib/purchase-payment-links";
 import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
+import { requireActiveBranch } from "@/lib/branch-context";
+import { BusinessRuleError, publicErrorResponse } from "@/lib/public-error";
 
 function toPublicPurchase(purchase: any) {
   if (!purchase) return purchase;
@@ -17,11 +19,11 @@ function toPublicPurchase(purchase: any) {
   return publicPurchase;
 }
 
-async function loadPurchase(id: string, institutionId: string | null) {
+async function loadPurchase(id: string, institutionId: string | null, branchId: string) {
   return (prisma as any).purchase.findFirst({
-    where: { id, ...(institutionId ? { institutionId } : {}) },
+    where: { id, branchId, ...(institutionId ? { institutionId } : {}) },
     include: {
-      items: true,
+      items: { where: { archivedAt: null } },
       firma: { select: { id: true, name: true, institutionId: true, paymentTerms: true, customPaymentDays: true } },
       firmaIslem: true,
     },
@@ -34,8 +36,10 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
-    const purchase = await loadPurchase(params.id, auth.user.institutionId);
+    const purchase = await loadPurchase(params.id, auth.user.institutionId, branch.branchId);
     if (!purchase) return NextResponse.json({ error: "Satın alma bulunamadı" }, { status: 404 });
 
     const payments = await findPurchasePayments(
@@ -79,10 +83,12 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
 export async function PATCH(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
-    const auth = await requireAuth("finance:write");
+    const auth = await requireAllAuth(["finance:write", "stock:write"]);
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
-    const purchase = await loadPurchase(params.id, auth.user.institutionId);
+    const purchase = await loadPurchase(params.id, auth.user.institutionId, branch.branchId);
     if (!purchase) return NextResponse.json({ error: "Satın alma bulunamadı" }, { status: 404 });
     if (purchase.status !== "AKTIF") {
       return NextResponse.json({ error: "İptal edilmiş bir satın alma düzenlenemez" }, { status: 400 });
@@ -94,20 +100,34 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     }
     const { tarih, faturaNo, aciklama, kdvOrani, items } = parsed.data;
     const institutionId = auth.user.institutionId;
-    const firma = purchase.firma;
-    const isReceived = purchase.receiptStatus === "TESLIM_ALINDI";
-    const purchaseItemIds = new Set(purchase.items.map((item: any) => item.id));
     const incomingIds = items.filter((item) => item.id).map((item) => item.id as string);
-    if (new Set(incomingIds).size !== incomingIds.length || incomingIds.some((id) => !purchaseItemIds.has(id))) {
+    if (new Set(incomingIds).size !== incomingIds.length) {
       return NextResponse.json({ error: "Satın alma satırlarından biri bu siparişe ait değil veya tekrar edilmiş" }, { status: 400 });
     }
 
     const updated = await (prisma as any).$transaction(async (tx: any) => {
-      const existingById = new Map<string, any>(purchase.items.map((i: any) => [i.id, i]));
+      await tx.$queryRaw`SELECT "id" FROM "Purchase" WHERE "id" = ${params.id} FOR UPDATE`;
+      const current = await tx.purchase.findFirst({
+        where: { id: params.id, institutionId, branchId: branch.branchId },
+        include: {
+          items: { where: { archivedAt: null } },
+          firma: { select: { id: true, name: true, institutionId: true, paymentTerms: true, customPaymentDays: true } },
+        },
+      });
+      if (!current) throw new BusinessRuleError("Satın alma bulunamadı", 404);
+      if (current.status !== "AKTIF") throw new BusinessRuleError("İptal edilmiş bir satın alma düzenlenemez", 409);
+
+      const purchaseItemIds = new Set(current.items.map((item: any) => item.id));
+      if (incomingIds.some((id) => !purchaseItemIds.has(id))) {
+        throw new BusinessRuleError("Satın alma satırlarından biri bu siparişe ait değil", 409);
+      }
+      const firma = current.firma;
+      const isReceived = current.receiptStatus === "TESLIM_ALINDI";
+      const existingById = new Map<string, any>(current.items.map((i: any) => [i.id, i]));
       const incomingIdSet = new Set(incomingIds);
 
-      // Silinen satırlar: stoğu geri al, kaydı sil.
-      for (const existing of purchase.items) {
+      // Silinen satırlar stoktan geri alınır ve geçmiş için arşivlenir.
+      for (const existing of current.items) {
         if (incomingIdSet.has(existing.id)) continue;
         if (isReceived) {
           await reversePurchaseItemStock({
@@ -115,11 +135,19 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
             purchaseItemId: existing.id,
             stockItemId: existing.stockItemId,
             institutionId,
+            branchId: branch.branchId,
             userId: auth.user.id,
             note: `Satın alma düzeltmesi: satır silindi (${existing.productName})`,
           });
         }
-        await tx.purchaseItem.delete({ where: { id: existing.id } });
+        await tx.purchaseItem.update({
+          where: { id: existing.id },
+          data: {
+            archivedAt: new Date(),
+            archivedById: auth.user.id,
+            archiveReason: "Satın alma düzenlemesinde satır kaldırıldı",
+          },
+        });
       }
 
       let runningTotal = 0;
@@ -129,11 +157,13 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
 
         if (!existing) {
           // Yeni satır eklendi.
-          const resolved = await resolveOrCreateStockItem(tx, institutionId, firma.name, incoming);
+          const resolved = await resolveOrCreateStockItem(tx, institutionId, branch.branchId, firma.name, incoming);
           const lineTotal = Math.round(incoming.quantity * incoming.unitPrice * 100) / 100;
           const createdItem = await tx.purchaseItem.create({
             data: {
-              purchaseId: purchase.id,
+              institutionId,
+              branchId: branch.branchId,
+              purchaseId: current.id,
               stockItemId: resolved.id,
               productName: resolved.name,
               quantity: incoming.quantity,
@@ -149,6 +179,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
                 tx,
                 stockItemId: resolved.id,
                 institutionId,
+                branchId: branch.branchId,
                 userId: auth.user.id,
                 type: "GIRIS",
                 quantity: incoming.quantity,
@@ -157,7 +188,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
                 unitPrice: incoming.unitPrice,
                 purchaseItemId: createdItem.id,
                 lotNo: incoming.lotNo,
-                receivedAt: purchase.receivedAt || purchase.tarih,
+                receivedAt: current.receivedAt || current.tarih,
                 expiresAt: incoming.expiresAt,
               })
             : null;
@@ -175,7 +206,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         // çözümlenir; aynı karta denk geliyorsa gereksiz çıkış/giriş yapılmaz.
         const resolvedIncoming = incoming.stockItemId
           ? null
-          : await resolveOrCreateStockItem(tx, institutionId, firma.name, incoming);
+          : await resolveOrCreateStockItem(tx, institutionId, branch.branchId, firma.name, incoming);
         const incomingStockItemId = incoming.stockItemId || resolvedIncoming?.id || null;
         const productChanged = Boolean(incomingStockItemId && incomingStockItemId !== existing.stockItemId);
 
@@ -186,11 +217,12 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
               purchaseItemId: existing.id,
               stockItemId: existing.stockItemId,
               institutionId,
+              branchId: branch.branchId,
               userId: auth.user.id,
               note: `Satın alma düzeltmesi: ürün değiştirildi (${existing.productName} çıkarıldı)`,
             });
           }
-          const resolved = resolvedIncoming || (await resolveOrCreateStockItem(tx, institutionId, firma.name, incoming));
+          const resolved = resolvedIncoming || (await resolveOrCreateStockItem(tx, institutionId, branch.branchId, firma.name, incoming));
           const lineTotal = Math.round(incoming.quantity * incoming.unitPrice * 100) / 100;
           await tx.purchaseItem.update({
             where: { id: existing.id },
@@ -211,6 +243,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
                 tx,
                 stockItemId: resolved.id,
                 institutionId,
+                branchId: branch.branchId,
                 userId: auth.user.id,
                 type: "GIRIS",
                 quantity: incoming.quantity,
@@ -219,7 +252,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
                 unitPrice: incoming.unitPrice,
                 purchaseItemId: existing.id,
                 lotNo: incoming.lotNo,
-                receivedAt: purchase.receivedAt || purchase.tarih,
+                receivedAt: current.receivedAt || current.tarih,
                 expiresAt: incoming.expiresAt,
               })
             : null;
@@ -248,6 +281,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
             purchaseItemId: existing.id,
             stockItemId: existing.stockItemId,
             institutionId,
+            branchId: branch.branchId,
             userId: auth.user.id,
             note: `Satın alma düzeltmesi: parti yeniden oluşturuldu (${existing.productName})`,
           });
@@ -269,6 +303,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
             tx,
             stockItemId: existing.stockItemId,
             institutionId,
+            branchId: branch.branchId,
             userId: auth.user.id,
             type: "GIRIS",
             quantity: incoming.quantity,
@@ -277,7 +312,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
             unitPrice: incoming.unitPrice,
             purchaseItemId: existing.id,
             lotNo: incoming.lotNo,
-            receivedAt: purchase.receivedAt || purchase.tarih,
+            receivedAt: current.receivedAt || current.tarih,
             expiresAt: incoming.expiresAt,
           });
           await tx.purchaseItem.update({
@@ -289,33 +324,34 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       }
 
       const total = Math.round(runningTotal * 100) / 100;
-      const newTarih = tarih ? new Date(tarih) : purchase.tarih;
-      const newFaturaNo = faturaNo !== undefined ? faturaNo : purchase.faturaNo;
-      const newAciklama = aciklama !== undefined ? aciklama : purchase.aciklama;
-      const newKdvOrani = kdvOrani !== undefined ? kdvOrani : purchase.kdvOrani;
+      const newTarih = tarih ? new Date(tarih) : current.tarih;
+      const newFaturaNo = faturaNo !== undefined ? faturaNo : current.faturaNo;
+      const newAciklama = aciklama !== undefined ? aciklama : current.aciklama;
+      const newKdvOrani = kdvOrani !== undefined ? kdvOrani : current.kdvOrani;
 
       const allocatedPayments = await findPurchasePayments(
         tx,
-        purchase.id,
-        purchase.firmaId,
-        purchase.firmaIslemId,
+        current.id,
+        current.firmaId,
+        current.firmaIslemId,
       );
-      const systemLinkedPayments = await findPurchasePayments(tx, purchase.id, purchase.firmaId);
+      const systemLinkedPayments = await findPurchasePayments(tx, current.id, current.firmaId);
       const paidTotal = sumPurchasePayments(allocatedPayments);
       if (paidTotal > total) {
-        throw new Error(
+        throw new BusinessRuleError(
           `Bağlı ödeme toplamı (${paidTotal.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} TL) satın alma toplamını aşamaz. Önce ödeme kaydını düzeltin veya iptal edin.`,
+          409,
         );
       }
 
       await tx.purchase.update({
-        where: { id: purchase.id },
+        where: { id: current.id },
         data: { tarih: newTarih, faturaNo: newFaturaNo, aciklama: newAciklama, kdvOrani: newKdvOrani },
       });
 
-      if (purchase.firmaIslemId) {
+      if (current.firmaIslemId) {
         await tx.firmaIslem.update({
-          where: { id: purchase.firmaIslemId },
+          where: { id: current.firmaIslemId },
           data: {
             tutar: total,
             tarih: newTarih,
@@ -332,11 +368,12 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
           data: {
             faturaNo: newFaturaNo,
             kdvOrani: newKdvOrani,
-            aciklama: `${newFaturaNo ? `Fatura ${newFaturaNo} ` : ""}satın alma ödemesi ${purchasePaymentToken(purchase.id)}`.trim(),
+            aciklama: `${newFaturaNo ? `Fatura ${newFaturaNo} ` : ""}satın alma ödemesi ${purchasePaymentToken(current.id)}`.trim(),
           },
         });
         await tx.expense.updateMany({
           where: {
+            branchId: branch.branchId,
             status: "AKTIF",
             OR: [
               { sourceType: "FIRMA_ISLEM", sourceId: payment.id },
@@ -349,17 +386,20 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
           },
         });
       }
-      await rebuildFirmaPaymentAllocations(tx, purchase.firmaId);
+      await rebuildFirmaPaymentAllocations(tx, current.firmaId, branch.branchId);
 
-      return tx.purchase.findUnique({ where: { id: purchase.id }, include: { items: true } });
-    });
+      return tx.purchase.findUnique({
+        where: { id: current.id },
+        include: { items: { where: { archivedAt: null } } },
+      });
+    }, { isolationLevel: "Serializable" });
 
-    await writeAudit(auth.user.id, "PURCHASE_UPDATE", `${firma.name} satın alması düzeltildi (${params.id})`);
+    await writeAudit(auth.user.id, "PURCHASE_UPDATE", `${purchase.firma.name} satın alması düzeltildi (${params.id})`);
 
     return NextResponse.json(toPublicPurchase(updated));
   } catch (e) {
     console.error("[purchases/:id PATCH]", e);
-    const message = e instanceof Error ? e.message : "Satın alma düzeltilemedi";
-    return NextResponse.json({ error: message }, { status: 400 });
+    const publicError = publicErrorResponse(e, "Satın alma düzeltilemedi. Lütfen tekrar deneyin.");
+    return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }
 }

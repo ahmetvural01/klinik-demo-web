@@ -2,10 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import type { PaymentMethod } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
-import { can } from "@/lib/rbac";
 import { deleteIntegratedPayment, toPublicPayment, updateIntegratedPayment } from "@/lib/payment-ledger";
 import { effectiveDoctorWhere, isDoctorPeriodSettled } from "@/lib/hakedis";
 import { turkeyYearMonth } from "@/lib/tz";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -22,44 +22,32 @@ function fmt(v: unknown): string {
   return String(v);
 }
 
-async function findAccessiblePayment(id: string, auth: { user: { role: string; institutionId: string | null } }) {
+async function findAccessiblePayment(id: string, institutionId: string | null, branchId: string) {
   const include = {
     patient: { select: { id: true, fullName: true } },
     doctor: { select: { id: true, fullName: true } },
   } as const;
-  if (auth.user.institutionId) {
-    return prisma.payment.findFirst({
-      where: { id, institutionId: auth.user.institutionId, status: "ACTIVE" },
-      include,
-    });
-  }
-  if (auth.user.role !== "SUPERADMIN") return null;
-  return prisma.payment.findFirst({ where: { id, status: "ACTIVE" }, include });
+  if (!institutionId) return null;
+  return prisma.payment.findFirst({ where: { id, institutionId, branchId, status: "ACTIVE" }, include });
 }
 
 export async function DELETE(_: NextRequest, props: Params) {
   const params = await props.params;
-  const auth = await requireAuth("payments:write");
+  const auth = await requireAuth("payments:refund");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
-  // "payments:refund" ayrı, yüksek riskli bir izin olarak UI'da gösteriliyor
-  // ama daha önce hiçbir yerde kontrol edilmiyordu — bu yetkiyi kapatan bir
-  // yönetici, silme/iade işleminin hâlâ payments:write ile mümkün kaldığını
-  // fark etmezdi (bkz. denetim raporu).
-  if (!auth.user.ghost && auth.user.role !== "SUPERADMIN" && !(await can(auth.user.role as import("@prisma/client").Role, "payments:refund"))) {
-    return NextResponse.json({ message: "Bu işlem için tahsilat iptal yetkisi gerekli." }, { status: 403 });
-  }
-
-  const existing = await findAccessiblePayment(params.id, auth);
+  const existing = await findAccessiblePayment(params.id, auth.user.institutionId, branch.branchId);
   if (!existing) return NextResponse.json({ message: "Ödeme bulunamadı" }, { status: 404 });
 
   let periodLockOverridden = false;
   if (existing.doctorId) {
     const d = new Date(existing.createdAt);
     const { year, month } = turkeyYearMonth(d);
-    const settled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId, year, month);
+    const settled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId, branch.branchId, year, month);
     if (settled) {
-      if (auth.user.role !== "SUPERADMIN") {
+      if (!auth.user.ghost && auth.user.role !== "SUPERADMIN") {
         return NextResponse.json(
           { message: "Bu ödemenin ait olduğu dönem için doktora zaten hakediş ödemesi yapılmış; tahsilat iptal edilemez." },
           { status: 400 },
@@ -110,12 +98,14 @@ export async function PATCH(request: NextRequest, props: Params) {
   const params = await props.params;
   const auth = await requireAuth("payments:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return NextResponse.json({ message: "Geçersiz istek gövdesi" }, { status: 400 });
   }
-  const existing = await findAccessiblePayment(params.id, auth);
+  const existing = await findAccessiblePayment(params.id, auth.user.institutionId, branch.branchId);
   if (!existing) {
     return NextResponse.json({ message: "Ödeme bulunamadı" }, { status: 404 });
   }
@@ -144,9 +134,9 @@ export async function PATCH(request: NextRequest, props: Params) {
     if (touchesSettledFields) {
       const d = new Date(existing.createdAt);
       const { year, month } = turkeyYearMonth(d);
-      const settled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId, year, month);
+      const settled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId, branch.branchId, year, month);
       if (settled) {
-        if (auth.user.role !== "SUPERADMIN") {
+        if (!auth.user.ghost && auth.user.role !== "SUPERADMIN") {
           return NextResponse.json(
             { message: "Bu ödemenin ait olduğu dönem için doktora zaten hakediş ödemesi yapılmış — tutar, tarih veya doktor değiştirilemez." },
             { status: 400 },
@@ -175,7 +165,7 @@ export async function PATCH(request: NextRequest, props: Params) {
   const nextDoctorId = body.doctorId !== undefined ? (body.doctorId || null) : undefined;
   if (nextDoctorId && auth.user.institutionId) {
     const doctor = await prisma.user.findFirst({
-      where: { id: nextDoctorId, ...effectiveDoctorWhere(auth.user.institutionId) },
+      where: { id: nextDoctorId, ...effectiveDoctorWhere(auth.user.institutionId, branch.branchId) },
       select: { id: true, fullName: true },
     });
     if (!doctor) {
@@ -203,10 +193,10 @@ export async function PATCH(request: NextRequest, props: Params) {
       || targetPeriod.year !== sourcePeriod.year
       || targetPeriod.month !== sourcePeriod.month;
     const newDoctorSettled = targetChanged
-      ? await isDoctorPeriodSettled(finalDoctorId, auth.user.institutionId, targetPeriod.year, targetPeriod.month)
+      ? await isDoctorPeriodSettled(finalDoctorId, auth.user.institutionId, branch.branchId, targetPeriod.year, targetPeriod.month)
       : false;
     if (newDoctorSettled) {
-      if (auth.user.role !== "SUPERADMIN") {
+      if (!auth.user.ghost && auth.user.role !== "SUPERADMIN") {
         return NextResponse.json(
           { message: "Ödemenin taşınmak istendiği doktor/dönem için hakediş ödemesi yapılmış; kayıt bu döneme taşınamaz." },
           { status: 400 },
@@ -227,6 +217,7 @@ export async function PATCH(request: NextRequest, props: Params) {
         id: finalPosId,
         isActive: true,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
       },
       select: { id: true },
     });

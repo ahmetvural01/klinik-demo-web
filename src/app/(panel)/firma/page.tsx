@@ -13,6 +13,8 @@ import { Badge } from "@/components/ui/Badge";
 import { FormField, inputErrorClass } from "@/components/ui/FormField";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+import { usePermissions } from "@/components/auth/PermissionProvider";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import {
   usePurchaseModals, fmt,
   type StockItem,
@@ -30,9 +32,6 @@ type Firma = {
   primaryKontakt?: FirmaKontakt | null; toplamKontakt: number;
 };
 
-const FIRMA_CACHE_KEY = "firma:list:v1";
-const STOCK_CACHE_KEY = "stock:list:v1";
-
 const FIRMA_KATEGORILERI: Record<string, string> = {
   TEDARICI: "Tedarikçi",
   HIZMET_SAGLAYICI: "Hizmet Sağlayıcı",
@@ -44,27 +43,15 @@ const FIRMA_KATEGORILERI: Record<string, string> = {
 
 export default function FirmaPage() {
   const router = useRouter();
-  const [firmas, setFirmas] = useState<Firma[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = sessionStorage.getItem(FIRMA_CACHE_KEY);
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
-  const [stockItems, setStockItems] = useState<StockItem[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = sessionStorage.getItem(STOCK_CACHE_KEY);
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
+  const { can } = usePermissions();
+  const canWriteFinance = can("finance:write");
+  const canWriteLab = can("lab:write");
+  const [firmas, setFirmas] = useState<Firma[]>([]);
+  const [stockItems, setStockItems] = useState<StockItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const firmaLoadSequenceRef = useRef(0);
+  const stockLoadSequenceRef = useRef(0);
   const [isSubmittingFirma, setIsSubmittingFirma] = useState(false);
 
   const showToast = useCallback((type: "success" | "error" | "info", text: string) => {
@@ -82,29 +69,36 @@ export default function FirmaPage() {
   });
 
   const loadFirmas = useCallback(async () => {
+    const sequence = ++firmaLoadSequenceRef.current;
     setLoading(true);
+    setLoadError("");
     try {
       const r = await fetch("/api/firma", { cache: "no-store" });
       const d = await r.json().catch(() => null);
       if (!r.ok) throw new Error(d?.message || "Tedarikçi verileri yüklenemedi.");
       const rows = Array.isArray(d) ? d : [];
+      if (sequence !== firmaLoadSequenceRef.current) return;
       setFirmas(rows);
-      sessionStorage.setItem(FIRMA_CACHE_KEY, JSON.stringify(rows));
     } catch (error) {
-      showToast("error", error instanceof Error ? error.message : "Tedarikçi verileri yüklenemedi.");
+      if (sequence !== firmaLoadSequenceRef.current) return;
+      const message = error instanceof Error ? error.message : "Tedarikçi verileri yüklenemedi.";
+      setFirmas([]);
+      setLoadError(message);
+      showToast("error", message);
     } finally {
-      setLoading(false);
+      if (sequence === firmaLoadSequenceRef.current) setLoading(false);
     }
   }, [showToast]);
 
   const loadStockItems = useCallback(async () => {
+    const sequence = ++stockLoadSequenceRef.current;
     try {
       const r = await fetch("/api/stock", { cache: "no-store" });
       const d = await r.json().catch(() => null);
       if (!r.ok) throw new Error(d?.message || "Stok verileri yüklenemedi.");
       const rows = Array.isArray(d) ? d : [];
+      if (sequence !== stockLoadSequenceRef.current) return;
       setStockItems(rows);
-      sessionStorage.setItem(STOCK_CACHE_KEY, JSON.stringify(rows));
     } catch (error) {
       showToast("error", error instanceof Error ? error.message : "Stok verileri yüklenemedi.");
     }
@@ -150,6 +144,7 @@ export default function FirmaPage() {
   const purchaseManager = usePurchaseModals({
     stockItems, firmas: materialPurchaseFirmas, showToast,
     onChanged: async () => { await Promise.all([loadFirmas(), loadStockItems()]); },
+    canWrite: canWriteFinance,
   });
 
   // KPI
@@ -257,11 +252,11 @@ export default function FirmaPage() {
       align: "right",
       render: (f) => (
         <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
-          {f.kategori === "LAB" ? (
+          {f.kategori === "LAB" && canWriteLab ? (
             <Button variant="secondary" size="sm" href={`/lab?new=1&labName=${encodeURIComponent(f.name)}`}>Laboratuvar İşi Oluştur</Button>
-          ) : (
+          ) : f.kategori !== "LAB" && canWriteFinance ? (
             <Button variant="danger" size="sm" onClick={() => purchaseManager.openAddPurchase(f.id)}>Alım</Button>
-          )}
+          ) : null}
         </div>
       ),
     },
@@ -273,20 +268,20 @@ export default function FirmaPage() {
         icon="firma"
         title="Satın Alma"
         description="Tedarikçi firmalarınızı ve alım/ödeme hareketlerini yönetin."
-        actions={
+        actions={canWriteFinance ? (
           <Button variant="secondary" onClick={() => purchaseManager.openAddPurchase()}>
             Satın Alma Kaydet
           </Button>
-        }
+        ) : undefined}
       />
 
       <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           <input ref={searchInputRef} value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Firma, telefon, IBAN veya kontakt ara ( / )" className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
-          <Button icon={Plus} onClick={() => setShowAddFirma(true)}>
+          {canWriteFinance && <Button icon={Plus} onClick={() => setShowAddFirma(true)}>
             Yeni Firma
-          </Button>
+          </Button>}
           <Button variant="secondary" icon={Download} onClick={exportFirmasCsv} disabled={filteredFirmas.length === 0}>
             CSV
           </Button>
@@ -298,6 +293,8 @@ export default function FirmaPage() {
           <span className={topBakiye > 0 ? "text-red-700" : "text-emerald-700"}>Kalan {fmt(topBakiye)}</span>
         </div>
       </div>
+
+      {loadError && <LoadErrorState compact message={loadError} onRetry={() => void loadFirmas()} />}
 
       <ListTable<Firma>
         columns={firmaColumns}

@@ -10,7 +10,7 @@ type ConnMetric = {
   errors: number;
 };
 
-const BASE_URL = process.env.LOADTEST_BASE_URL || "http://localhost:3001";
+const BASE_URL = process.env.LOADTEST_BASE_URL || "http://localhost:3000";
 const USERS = Number(process.env.LOADTEST_USERS || "240");
 const DURATION_SEC = Number(process.env.LOADTEST_DURATION_SEC || "45");
 const LOADTEST_PASSWORD = process.env.LOADTEST_PASSWORD || process.env.DEMO_ADMIN_PASSWORD;

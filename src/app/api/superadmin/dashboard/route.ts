@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { getMetricsSnapshot } from "@/lib/metrics";
 
 export const dynamic = "force-dynamic";
 
@@ -28,6 +29,11 @@ export async function GET() {
     planDistribution,
     lowSmsInstitutions,
     recentInstitutions,
+    totalAppointments,
+    totalExaminations,
+    totalPatients,
+    totalStaff,
+    latestLogs,
   ] = await Promise.all([
     prisma.institution.count(),
     prisma.institution.count({ where: { isActive: true } }),
@@ -54,6 +60,16 @@ export async function GET() {
       take: 5,
       orderBy: { createdAt: "desc" },
       select: { id: true, name: true, subscriptionPlan: true, createdAt: true },
+    }),
+    prisma.appointment.count(),
+    prisma.examination.count(),
+    prisma.patient.count({ where: { archivedAt: null } }),
+    prisma.user.count({ where: { isActive: true, role: { not: "SUPERADMIN" } } }),
+    prisma.auditLog.findMany({
+      where: { user: { role: { not: "SUPERADMIN" } } },
+      take: 10,
+      orderBy: { createdAt: "desc" },
+      include: { user: { select: { id: true, fullName: true, role: true } } },
     }),
   ]);
 
@@ -83,5 +99,13 @@ export async function GET() {
       amount: Number(t.totalPrice),
       createdAt: t.createdAt.toISOString(),
     })),
+    systemStats: {
+      totalAppointments,
+      totalExaminations,
+      totalPatients,
+      totalStaff,
+      latestLogs,
+    },
+    systemMetrics: getMetricsSnapshot(),
   });
 }

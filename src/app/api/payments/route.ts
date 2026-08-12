@@ -5,6 +5,7 @@ import { createIntegratedPayment, toPublicPayment } from "@/lib/payment-ledger";
 import { formatZodError, paymentSchema } from "@/lib/validators";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { turkeyDateKey, turkeyDayRangeUtc } from "@/lib/tz";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 const METHOD_LABELS: Record<string, string> = {
   NAKIT: "Nakit",
@@ -17,16 +18,24 @@ const METHOD_LABELS: Record<string, string> = {
 export async function POST(request: NextRequest) {
   const requestKey = request.headers.get("idempotency-key")?.trim() || null;
   let institutionId: string | null | undefined;
+  let activeBranchId: string | null = null;
   try {
     const auth = await requireAuth("payments:write");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
+    activeBranchId = branch.branchId;
     institutionId = auth.user.institutionId;
     if (!institutionId) {
       return NextResponse.json({ message: "Tahsilat için kurum bağlamı zorunlu." }, { status: 403 });
     }
     const currentInstitutionId = institutionId;
 
-    const parsed = paymentSchema.safeParse(await request.json());
+    const requestBody = await request.json().catch(() => null);
+    if (!requestBody) {
+      return NextResponse.json({ message: "Geçersiz istek gövdesi" }, { status: 400 });
+    }
+    const parsed = paymentSchema.safeParse(requestBody);
 
     if (!parsed.success) {
       return NextResponse.json({ message: "Ödeme bilgileri geçersiz", errors: formatZodError(parsed.error) }, { status: 400 });
@@ -56,7 +65,7 @@ export async function POST(request: NextRequest) {
 
     const institutionDoctors = auth.user.institutionId
       ? await prisma.user.findMany({
-          where: effectiveDoctorWhere(auth.user.institutionId),
+          where: effectiveDoctorWhere(auth.user.institutionId, branch.branchId),
           select: { id: true },
         })
       : [];
@@ -72,6 +81,7 @@ export async function POST(request: NextRequest) {
         where: {
           id: patientId,
           institutionId: auth.user.institutionId,
+          homeBranchId: branch.branchId,
           archivedAt: null,
         },
         select: { id: true, fullName: true },
@@ -90,6 +100,7 @@ export async function POST(request: NextRequest) {
               id: posId,
               isActive: true,
               ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+              branchId: branch.branchId,
             },
             select: { name: true },
           })
@@ -101,11 +112,11 @@ export async function POST(request: NextRequest) {
 
     if (requestKey) {
       const existingPayment = await prisma.payment.findUnique({
-        where: { requestKey },
+        where: { branchId_requestKey: { branchId: branch.branchId, requestKey } },
         include: { patient: { select: { institutionId: true } } },
       });
       if (existingPayment) {
-        if (existingPayment.institutionId !== currentInstitutionId) {
+        if (existingPayment.institutionId !== currentInstitutionId || existingPayment.branchId !== branch.branchId) {
           return NextResponse.json({ message: "İşlem anahtarı başka bir kayıtta kullanılmış" }, { status: 409 });
         }
         return NextResponse.json({ ...toPublicPayment(existingPayment), duplicatePrevented: true }, { status: 200 });
@@ -117,6 +128,7 @@ export async function POST(request: NextRequest) {
         createIntegratedPayment({
           tx,
           institutionId: currentInstitutionId,
+          branchId: branch.branchId,
           requestKey,
           patientId,
           doctorId,
@@ -142,6 +154,8 @@ export async function POST(request: NextRequest) {
           where: {
             patientId,
             doctorId,
+            institutionId: currentInstitutionId,
+            branchId: branch.branchId,
             startAt: { gte: start, lte: end },
             status: { in: ["BEKLIYOR", "GELDI"] },
           },
@@ -189,16 +203,17 @@ export async function POST(request: NextRequest) {
       "code" in e &&
       (e as { code?: string }).code === "P2002"
     ) {
-      if (requestKey) {
+      if (requestKey && activeBranchId) {
         const existingPayment = await prisma.payment.findUnique({
-          where: { requestKey },
+          where: { branchId_requestKey: { branchId: activeBranchId, requestKey } },
           include: {
             patient: { select: { institutionId: true } },
           },
         });
         if (
           existingPayment &&
-          existingPayment.institutionId === institutionId
+          existingPayment.institutionId === institutionId &&
+          existingPayment.branchId === activeBranchId
         ) {
           return NextResponse.json({ ...toPublicPayment(existingPayment), duplicatePrevented: true }, { status: 200 });
         }
@@ -222,6 +237,8 @@ export const GET = withApiTiming("payments", async function GET(request: NextReq
   try {
     const auth = await requireAuth("payments:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
     const { searchParams } = new URL(request.url);
     const patientId = searchParams.get("patientId");
@@ -234,6 +251,7 @@ export const GET = withApiTiming("payments", async function GET(request: NextReq
         ...(patientId ? { patientId } : {}),
         status: "ACTIVE",
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
       },
       include: {
         patient: { select: { id: true, fullName: true } },

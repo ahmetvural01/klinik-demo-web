@@ -4,6 +4,8 @@ import { bumpRealtimeInstitution, requireAuth, writeAudit, withApiTiming } from 
 import { applyLabInvoiceFirmaIntegration } from "@/lib/lab-firma-integration";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 import { formatZodError, labInvoiceCreateSchema } from "@/lib/validators";
+import { requireActiveBranch } from "@/lib/branch-context";
+import { effectiveDoctorWhere } from "@/lib/hakedis";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +26,8 @@ function toPublicOrder(order: any) {
 export const GET = withApiTiming("lab-orders", async function GET(req: NextRequest) {
   const auth = await requireAuth("lab:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
   const user = auth.user;
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status");
@@ -38,6 +42,7 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
     const rows = await prisma.firma.findMany({
       where: {
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
         isActive: true,
         kategori: "LAB",
       },
@@ -54,7 +59,8 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
   try {
     orders = await (prisma as any).labOrder.findMany({
       where: {
-        ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
         ...(status === "BEKLIYOR"
           ? {
               status: { notIn: ["HASTAYA_TAKILDI", "IPTAL"] },
@@ -64,7 +70,7 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
         ...(status && status !== "BEKLIYOR" ? { status } : {}),
       },
       include: {
-        invoices: { orderBy: { issuedAt: "asc" } },
+        invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
         patient: { select: { id: true, fullName: true, phone: true } },
         doctor:  { select: { id: true, fullName: true } },
         trips:   { orderBy: { order: "asc" } },
@@ -93,9 +99,12 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
 export async function POST(req: NextRequest) {
   const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
   if (!auth.user.institutionId) {
     return NextResponse.json({ error: "Laboratuvar işlemi için klinik bağlamı zorunlu." }, { status: 403 });
   }
+  const institutionId = auth.user.institutionId;
   const rawRequestKey = req.headers.get("Idempotency-Key")?.trim() || null;
   if (rawRequestKey && (rawRequestKey.length < 8 || rawRequestKey.length > 180)) {
     return NextResponse.json({ error: "İşlem anahtarı geçersiz." }, { status: 400 });
@@ -152,6 +161,7 @@ export async function POST(req: NextRequest) {
   const labFirma = await prisma.firma.findFirst({
     where: {
       institutionId: auth.user.institutionId,
+      branchId: branch.branchId,
       isActive: true,
       kategori: "LAB",
       name: { equals: String(labName).trim(), mode: "insensitive" },
@@ -170,10 +180,11 @@ export async function POST(req: NextRequest) {
     const existingOrder = await (prisma as any).labOrder.findFirst({
       where: {
         requestKey,
-        ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
+        institutionId: auth.user.institutionId,
+        branchId: branch.branchId,
       },
       include: {
-        invoices: { orderBy: { issuedAt: "asc" } },
+        invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
         patient: { select: { id: true, fullName: true, phone: true } },
         doctor: { select: { id: true, fullName: true } },
         trips: { orderBy: { order: "asc" } },
@@ -187,16 +198,15 @@ export async function POST(req: NextRequest) {
   {
     const [patient, doctor] = await Promise.all([
       prisma.patient.findFirst({
-        where: { id: patientId, institutionId: auth.user.institutionId, archivedAt: null },
+        where: { id: patientId, institutionId: auth.user.institutionId, homeBranchId: branch.branchId, archivedAt: null },
         select: { id: true },
       }),
       prisma.user.findFirst({
-        where: { id: doctorId, institutionId: auth.user.institutionId, isActive: true },
-        select: { id: true, role: true, profile: { select: { hideAsDoctor: true } } },
+        where: { id: doctorId, ...effectiveDoctorWhere(auth.user.institutionId, branch.branchId) },
+        select: { id: true },
       }),
     ]);
-    const eligibleDoctor = doctor && (doctor.role === "DOKTOR" || (doctor.role === "YONETICI" && doctor.profile?.hideAsDoctor === false));
-    if (!patient || !eligibleDoctor) {
+    if (!patient || !doctor) {
       return NextResponse.json({ error: "Hasta veya doktor bu kuruma bağlı değil." }, { status: 403 });
     }
   }
@@ -207,6 +217,8 @@ export async function POST(req: NextRequest) {
     const result = await (prisma as any).$transaction(async (tx: any) => {
       const createdOrder = await tx.labOrder.create({
         data: {
+          institutionId: auth.user.institutionId!,
+          branchId: branch.branchId,
           requestKey,
           patientId,
           doctorId,
@@ -246,7 +258,7 @@ export async function POST(req: NextRequest) {
           } : undefined,
         },
         include: {
-          invoices: { orderBy: { issuedAt: "asc" } },
+          invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
           patient: { select: { id: true, fullName: true, phone: true } },
           doctor:  { select: { id: true, fullName: true } },
           trips:   { orderBy: { order: "asc" } },
@@ -259,7 +271,8 @@ export async function POST(req: NextRequest) {
         const linked = await applyLabInvoiceFirmaIntegration({
           tx,
           userId: auth.user.id,
-          institutionId: auth.user.institutionId || null,
+          institutionId,
+          branchId: branch.branchId,
           labName: normalizedLabName,
           labType: normalizedLabType,
           patientName: createdOrder.patient?.fullName || null,
@@ -290,10 +303,11 @@ export async function POST(req: NextRequest) {
       const existingOrder = await (prisma as any).labOrder.findFirst({
         where: {
           requestKey,
-          ...(auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
+          institutionId: auth.user.institutionId,
+          branchId: branch.branchId,
         },
         include: {
-          invoices: { orderBy: { issuedAt: "asc" } },
+          invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
           patient: { select: { id: true, fullName: true, phone: true } },
           doctor: { select: { id: true, fullName: true } },
           trips: { orderBy: { order: "asc" } },

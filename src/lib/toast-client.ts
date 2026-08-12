@@ -9,7 +9,7 @@ export function showToastSafe({ title, message, type = 'info', duration = 3000, 
   try {
     if (typeof window === 'undefined') return;
     window.dispatchEvent(new CustomEvent('klinik-show-toast', { detail: { title, message, type, duration, icon } }));
-  } catch (e) {
+  } catch {
     // noop
   }
 }

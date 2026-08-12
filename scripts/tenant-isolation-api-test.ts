@@ -3,7 +3,7 @@ import { PrismaClient } from "@prisma/client";
 import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
-const BASE_URL = process.env.TENANT_TEST_BASE_URL || "http://127.0.0.1:3000";
+const BASE_URL = process.env.TENANT_TEST_BASE_URL || "http://localhost:3000";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
@@ -40,6 +40,7 @@ async function main() {
   const passwordHash = await bcrypt.hash(password, 10);
   const identityNo = `TNT${suffix}`.slice(0, 20);
   const institutionIds: string[] = [];
+  const branchIds: string[] = [];
   const userIds: string[] = [];
   const patientIds: string[] = [];
   const appointmentIds: string[] = [];
@@ -54,42 +55,110 @@ async function main() {
     ]);
     institutionIds.push(institutionA.id, institutionB.id);
 
+    const [branchA, branchB] = await Promise.all([
+      prisma.clinicBranch.create({ data: { institutionId: institutionA.id, name: "Merkez Şube", slug: "merkez", isHeadquarters: true } }),
+      prisma.clinicBranch.create({ data: { institutionId: institutionB.id, name: "Merkez Şube", slug: "merkez", isHeadquarters: true } }),
+    ]);
+    branchIds.push(branchA.id, branchB.id);
+    const branchARestricted = await prisma.clinicBranch.create({
+      data: { institutionId: institutionA.id, name: "Erişimsiz Şube", slug: "erisimsiz-sube" },
+    });
+    branchIds.push(branchARestricted.id);
+
     const [userA, userB] = await Promise.all([
-      prisma.user.create({ data: { institutionId: institutionA.id, identityNo, fullName: `Tenant A Yönetici ${suffix}`, passwordHash, role: "YONETICI" } }),
-      prisma.user.create({ data: { institutionId: institutionB.id, identityNo, fullName: `Tenant B Yönetici ${suffix}`, passwordHash, role: "YONETICI" } }),
+      prisma.user.create({
+        data: {
+          institutionId: institutionA.id,
+          identityNo,
+          fullName: `Tenant A Yönetici ${suffix}`,
+          passwordHash,
+          role: "YONETICI",
+          branchMemberships: { create: { branchId: branchA.id, isPrimary: true, isBranchManager: true } },
+        },
+      }),
+      prisma.user.create({
+        data: {
+          institutionId: institutionB.id,
+          identityNo,
+          fullName: `Tenant B Yönetici ${suffix}`,
+          passwordHash,
+          role: "YONETICI",
+          branchMemberships: { create: { branchId: branchB.id, isPrimary: true } },
+        },
+      }),
     ]);
     userIds.push(userA.id, userB.id);
 
     const [patientA, patientB] = await Promise.all([
-      prisma.patient.create({ data: { institutionId: institutionA.id, fullName: `TENANT_A_PATIENT_${suffix}`, phone: "5551112233", gender: "ERKEK" } }),
-      prisma.patient.create({ data: { institutionId: institutionB.id, fullName: `TENANT_B_PATIENT_${suffix}`, phone: "5559998877", gender: "KADIN" } }),
+      prisma.patient.create({ data: { institutionId: institutionA.id, homeBranchId: branchA.id, fullName: `TENANT_A_PATIENT_${suffix}`, phone: "5551112233", gender: "ERKEK" } }),
+      prisma.patient.create({ data: { institutionId: institutionB.id, homeBranchId: branchB.id, fullName: `TENANT_B_PATIENT_${suffix}`, phone: "5559998877", gender: "KADIN" } }),
     ]);
     patientIds.push(patientA.id, patientB.id);
+    const restrictedBranchPatient = await prisma.patient.create({
+      data: {
+        institutionId: institutionA.id,
+        homeBranchId: branchARestricted.id,
+        fullName: `TENANT_A_RESTRICTED_PATIENT_${suffix}`,
+        phone: "5551112244",
+        gender: "ERKEK",
+      },
+    });
+    patientIds.push(restrictedBranchPatient.id);
 
     const startAt = new Date(Date.now() + 14 * 86400000);
     startAt.setUTCHours(9, 0, 0, 0);
     const endAt = new Date(startAt.getTime() + 30 * 60000);
     const [appointmentA, appointmentB] = await Promise.all([
-      prisma.appointment.create({ data: { patientId: patientA.id, doctorId: userA.id, startAt, endAt, note: `TENANT_A_APPOINTMENT_${suffix}` } }),
-      prisma.appointment.create({ data: { patientId: patientB.id, doctorId: userB.id, startAt, endAt, note: `TENANT_B_APPOINTMENT_${suffix}` } }),
+      prisma.appointment.create({ data: { institutionId: institutionA.id, branchId: branchA.id, patientId: patientA.id, doctorId: userA.id, startAt, endAt, note: `TENANT_A_APPOINTMENT_${suffix}` } }),
+      prisma.appointment.create({ data: { institutionId: institutionB.id, branchId: branchB.id, patientId: patientB.id, doctorId: userB.id, startAt, endAt, note: `TENANT_B_APPOINTMENT_${suffix}` } }),
     ]);
     appointmentIds.push(appointmentA.id, appointmentB.id);
+    let databaseRejectedCrossBranchPatient = false;
+    try {
+      await prisma.appointment.create({
+        data: {
+          institutionId: institutionA.id,
+          branchId: branchARestricted.id,
+          patientId: patientA.id,
+          doctorId: userA.id,
+          startAt: new Date(startAt.getTime() + 60 * 60000),
+          endAt: new Date(endAt.getTime() + 60 * 60000),
+          note: `DB_SCOPE_INJECTION_${suffix}`,
+        },
+      });
+    } catch (error) {
+      databaseRejectedCrossBranchPatient = Boolean(error && typeof error === "object" && "code" in error && error.code === "P2003");
+    }
+    assert(databaseRejectedCrossBranchPatient, "Veritabanı başka şubeye ait patientId bağlantısını reddetmedi.");
+
+    const restrictedBranchAppointment = await prisma.appointment.create({
+      data: {
+        institutionId: institutionA.id,
+        branchId: branchARestricted.id,
+        patientId: restrictedBranchPatient.id,
+        doctorId: userA.id,
+        startAt: new Date(startAt.getTime() + 2 * 60000 * 60),
+        endAt: new Date(endAt.getTime() + 2 * 60000 * 60),
+        note: `SAME_TENANT_RESTRICTED_BRANCH_${suffix}`,
+      },
+    });
+    appointmentIds.push(restrictedBranchAppointment.id);
 
     const [taskA, taskB] = await Promise.all([
-      prisma.clinicTask.create({ data: { institutionId: institutionA.id, title: `TENANT_A_TASK_${suffix}`, createdById: userA.id, assignedToId: userA.id } }),
-      prisma.clinicTask.create({ data: { institutionId: institutionB.id, title: `TENANT_B_TASK_${suffix}`, createdById: userB.id, assignedToId: userB.id } }),
+      prisma.clinicTask.create({ data: { institutionId: institutionA.id, branchId: branchA.id, title: `TENANT_A_TASK_${suffix}`, createdById: userA.id, assignedToId: userA.id } }),
+      prisma.clinicTask.create({ data: { institutionId: institutionB.id, branchId: branchB.id, title: `TENANT_B_TASK_${suffix}`, createdById: userB.id, assignedToId: userB.id } }),
     ]);
     taskIds.push(taskA.id, taskB.id);
 
     const [paymentA, paymentB] = await Promise.all([
-      prisma.payment.create({ data: { institutionId: institutionA.id, patientId: patientA.id, doctorId: userA.id, amount: 101, description: `TENANT_A_PAYMENT_${suffix}` } }),
-      prisma.payment.create({ data: { institutionId: institutionB.id, patientId: patientB.id, doctorId: userB.id, amount: 202, description: `TENANT_B_PAYMENT_${suffix}` } }),
+      prisma.payment.create({ data: { institutionId: institutionA.id, branchId: branchA.id, patientId: patientA.id, doctorId: userA.id, amount: 101, description: `TENANT_A_PAYMENT_${suffix}` } }),
+      prisma.payment.create({ data: { institutionId: institutionB.id, branchId: branchB.id, patientId: patientB.id, doctorId: userB.id, amount: 202, description: `TENANT_B_PAYMENT_${suffix}` } }),
     ]);
     paymentIds.push(paymentA.id, paymentB.id);
 
     const [stockA, stockB] = await Promise.all([
-      prisma.stockItem.create({ data: { institutionId: institutionA.id, name: `TENANT_A_STOCK_${suffix}`, quantity: 11 } }),
-      prisma.stockItem.create({ data: { institutionId: institutionB.id, name: `TENANT_B_STOCK_${suffix}`, quantity: 22 } }),
+      prisma.stockItem.create({ data: { institutionId: institutionA.id, branchId: branchA.id, name: `TENANT_A_STOCK_${suffix}`, quantity: 11 } }),
+      prisma.stockItem.create({ data: { institutionId: institutionB.id, branchId: branchB.id, name: `TENANT_B_STOCK_${suffix}`, quantity: 22 } }),
     ]);
     stockIds.push(stockA.id, stockB.id);
 
@@ -116,6 +185,15 @@ async function main() {
       assert(!text.includes(forbiddenId), `${label}: B kurumunun kaydı A kurumuna sızdı.`);
     }
 
+    const branchScopedList = await api(cookie, `/api/appointments?from=${encodeURIComponent(new Date(startAt.getTime() - 86400000).toISOString())}&to=${encodeURIComponent(new Date(endAt.getTime() + 86400000).toISOString())}`);
+    assert(branchScopedList.ok, `Şube kapsamlı randevu listesi yüklenemedi: ${branchScopedList.status}`);
+    assert(!(await branchScopedList.text()).includes(restrictedBranchAppointment.id), "Aynı kurum içindeki erişimsiz şube randevusu listeye sızdı.");
+    await expectNotFound(cookie, "Erişimsiz şube randevusu okuma", `/api/appointments/${restrictedBranchAppointment.id}`);
+    await expectRejected(cookie, "Atanmamış şubeyi aktif etme", "/api/branches/active", {
+      method: "POST",
+      body: JSON.stringify({ branchId: branchARestricted.id }),
+    });
+
     await expectRejected(cookie, "Başka kurum hastasıyla randevu oluşturma", "/api/appointments", {
       method: "POST",
       body: JSON.stringify({
@@ -123,6 +201,19 @@ async function main() {
         doctorId: userA.id,
         startAt: new Date(startAt.getTime() + 86400000).toISOString(),
         endAt: new Date(endAt.getTime() + 86400000).toISOString(),
+        note: injectionMarker,
+      }),
+    });
+    await expectRejected(cookie, "Kendi randevusuna başka kurum hastası bağlama", `/api/appointments/${appointmentA.id}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        patientId: patientB.id,
+        doctorId: userA.id,
+        startAt: startAt.toISOString(),
+        endAt: endAt.toISOString(),
+        type: "STANDART",
+        status: "BEKLIYOR",
+        colorCode: "#2a9d8f",
         note: injectionMarker,
       }),
     });
@@ -163,20 +254,39 @@ async function main() {
     });
     await expectNotFound(cookie, "Stok silme", `/api/stock/${stockB.id}`, { method: "DELETE" });
 
-    const [patientBAfter, appointmentBAfter, taskBAfter, paymentBAfter, stockBAfter] = await Promise.all([
+    const [patientBAfter, appointmentAAfter, appointmentBAfter, taskBAfter, paymentBAfter, stockBAfter] = await Promise.all([
       prisma.patient.findUniqueOrThrow({ where: { id: patientB.id } }),
+      prisma.appointment.findUniqueOrThrow({ where: { id: appointmentA.id } }),
       prisma.appointment.findUniqueOrThrow({ where: { id: appointmentB.id } }),
       prisma.clinicTask.findUniqueOrThrow({ where: { id: taskB.id } }),
       prisma.payment.findUniqueOrThrow({ where: { id: paymentB.id } }),
       prisma.stockItem.findUniqueOrThrow({ where: { id: stockB.id } }),
     ]);
     assert(patientBAfter.fullName === patientB.fullName && !patientBAfter.archivedAt, "B kurumu hastası değiştirildi.");
+    assert(appointmentAAfter.patientId === patientA.id, "A kurumu randevusuna başka kurum hastası bağlandı.");
     assert(appointmentBAfter.note === appointmentB.note && appointmentBAfter.status === appointmentB.status, "B kurumu randevusu değiştirildi.");
     assert(taskBAfter.title === taskB.title && taskBAfter.status === taskB.status, "B kurumu görevi değiştirildi.");
     assert(Number(paymentBAfter.amount) === 202 && paymentBAfter.status === "ACTIVE", "B kurumu ödemesi değiştirildi.");
     assert(stockBAfter.name === stockB.name && stockBAfter.isActive, "B kurumu stok kaydı değiştirildi.");
 
-    console.log("✓ Liste, okuma, güncelleme ve silme denemelerinde iki kurum tamamen izole kaldı.");
+    const createBranchResponse = await api(cookie, "/api/branches", {
+      method: "POST",
+      body: JSON.stringify({ name: `API Test Şubesi ${suffix}`, code: `T${suffix.slice(-5)}`, city: "Ankara", colorCode: "#2563eb" }),
+    });
+    assert(createBranchResponse.status === 403, `Klinik kullanıcısının şube oluşturması 403 dönmeliydi, gerçek: ${createBranchResponse.status}.`);
+
+    const assignmentResponse = await api(cookie, `/api/staff/${userA.id}/branches`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled: true, permissionCodes: ["appointments:read"] }),
+    });
+    assert(assignmentResponse.ok, `Şube yöneticisinin mevcut şube yetkisi güncellenemedi: ${assignmentResponse.status} ${await assignmentResponse.text()}`);
+
+    await expectRejected(cookie, "Başka kurum personeline şube atama", `/api/staff/${userB.id}/branches`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled: true, permissionCodes: ["appointments:read"] }),
+    });
+
+    console.log("✓ Kurumlar ve şubeler izole kaldı; şube oluşturma kontrol düzleminde, yerel personel yetkisi şube yöneticisinde kaldı.");
   } finally {
     await prisma.appointment.deleteMany({ where: { note: injectionMarker } });
     await prisma.clinicTask.deleteMany({ where: { title: injectionMarker } });

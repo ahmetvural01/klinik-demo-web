@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui/Modal";
 import { FormField, inputErrorClass } from "@/components/ui/FormField";
 import { showToastSafe } from "@/lib/toast-client";
 import { confirmDialog } from "@/lib/confirm-client";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 
 type Institution = { id: string; name: string; isActive?: boolean; isDemo?: boolean };
 type Announcement = {
@@ -24,6 +25,7 @@ export default function AnnouncementsPage() {
   const [items, setItems] = useState<Announcement[]>([]);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [text, setText] = useState("");
   const [targetMode, setTargetMode] = useState<"all" | "selected">("all");
@@ -40,15 +42,25 @@ export default function AnnouncementsPage() {
 
   const load = async () => {
     setLoading(true);
-    const [annRes, instRes] = await Promise.all([
-      fetch("/api/superadmin/announcements").catch(() => null),
-      fetch("/api/superadmin/institutions").catch(() => null),
-    ]);
-    const annData = await annRes?.json().catch(() => ({}));
-    const instData = await instRes?.json().catch(() => []);
-    setItems(Array.isArray(annData) ? annData : annData.announcements ?? []);
-    setInstitutions(Array.isArray(instData) ? instData : []);
-    setLoading(false);
+    setLoadError(null);
+    try {
+      const [annRes, instRes] = await Promise.all([
+        fetch("/api/superadmin/announcements", { cache: "no-store" }),
+        fetch("/api/superadmin/institutions", { cache: "no-store" }),
+      ]);
+      const annData = await annRes.json().catch(() => null);
+      const instData = await instRes.json().catch(() => null);
+      if (!annRes.ok) throw new Error(annData?.message || "Duyurular yüklenemedi.");
+      if (!instRes.ok) throw new Error(instData?.message || "Kurum listesi yüklenemedi.");
+      const nextItems = Array.isArray(annData) ? annData : annData?.announcements;
+      if (!Array.isArray(nextItems) || !Array.isArray(instData)) throw new Error("Sunucudan beklenmeyen veri alındı.");
+      setItems(nextItems);
+      setInstitutions(instData);
+    } catch (loadFailure) {
+      setLoadError(loadFailure instanceof Error ? loadFailure.message : "Duyurular yüklenemedi.");
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => { void load(); }, []);
@@ -83,29 +95,30 @@ export default function AnnouncementsPage() {
     }
 
     setSaving(true);
-    const res = await fetch("/api/superadmin/announcements", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text,
-        allInstitutions: targetMode === "all",
-        institutionIds: targetMode === "selected" ? selectedIds : [],
-        startsAt: startsAt || null,
-        endsAt: endsAt || null,
-      }),
-    });
-    setSaving(false);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}));
-      const msg = body.message || "Duyuru yayınlanamadı.";
-      setError(msg);
-      showToastSafe({ title: "Hata", message: msg, type: "error" });
-      return;
+    try {
+      const res = await fetch("/api/superadmin/announcements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text,
+          allInstitutions: targetMode === "all",
+          institutionIds: targetMode === "selected" ? selectedIds : [],
+          startsAt: startsAt || null,
+          endsAt: endsAt || null,
+        }),
+      });
+      const responseBody = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(responseBody.message || "Duyuru yayınlanamadı.");
+      showToastSafe({ title: "Yayınlandı", message: "Duyuru başarıyla yayınlandı", type: "success", icon: "log" });
+      closeForm();
+      await load();
+    } catch (saveFailure) {
+      const message = saveFailure instanceof Error ? saveFailure.message : "Duyuru yayınlanamadı.";
+      setError(message);
+      showToastSafe({ title: "Hata", message, type: "error" });
+    } finally {
+      setSaving(false);
     }
-
-    showToastSafe({ title: "Yayınlandı", message: "Duyuru başarıyla yayınlandı", type: "success", icon: "log" });
-    closeForm();
-    await load();
   };
 
   const deactivate = async (id: string) => {
@@ -146,7 +159,9 @@ export default function AnnouncementsPage() {
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-        {loading ? (
+        {loadError ? (
+          <div className="p-4"><LoadErrorState message={loadError} onRetry={() => void load()} /></div>
+        ) : loading ? (
           <div className="divide-y divide-slate-100">
             {Array.from({ length: 4 }).map((_, i) => (
               <div key={i} className="h-20 animate-pulse bg-slate-50" style={{ animationDelay: `${i * 40}ms` }} />

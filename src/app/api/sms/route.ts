@@ -4,17 +4,14 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { dispatchPatientMessage, type NotificationEventType } from "@/lib/notification-dispatch";
 import { metricIncrement, metricObserve } from "@/lib/metrics";
 import { enqueueSmsDispatchJob } from "@/lib/sms-jobs";
-import { resolveSmsTemplate } from "@/lib/sms-templates";
+import { renderCommunicationTemplate, resolveSmsTemplate } from "@/lib/sms-templates";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 const EVENT_TYPE_BY_SMS_TYPE: Record<string, NotificationEventType> = {
   BILGI: "APPOINTMENT_INFO",
   HATIRLATMA: "APPOINTMENT_REMINDER",
   ANKET: "TREATMENT_SURVEY",
 };
-
-function renderTemplate(template: string, vars: Record<string, string>) {
-  return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
-}
 
 // GET - Randevuları SMS durumuyla birlikte getir + istatistikler
 export async function GET(request: NextRequest) {
@@ -24,6 +21,8 @@ export async function GET(request: NextRequest) {
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Yalnızca klinik kullanıcıları SMS yönetimini kullanabilir." }, { status: 403 });
   }
+  const activeBranch = requireActiveBranch(auth.user.branchContext);
+  if (!activeBranch.ok) return NextResponse.json({ message: activeBranch.message }, { status: 403 });
 
   const type = request.nextUrl.searchParams.get("type") || "upcoming";
   const now = new Date();
@@ -39,7 +38,7 @@ export async function GET(request: NextRequest) {
     prisma.appointment.findMany({
       where: {
         ...whereFilter,
-        doctor: { institutionId: auth.user.institutionId },
+        branchId: activeBranch.branchId,
       },
       include: {
         patient: { select: { fullName: true, phone: true } },
@@ -52,6 +51,7 @@ export async function GET(request: NextRequest) {
     prisma.auditLog.count({
       where: {
         user: { institutionId: auth.user.institutionId },
+        branchId: activeBranch.branchId,
         action: { startsWith: "SMS_" },
         NOT: { action: { startsWith: "SMS_TEMPLATE_" } },
       },
@@ -82,14 +82,41 @@ export async function POST(request: NextRequest) {
     metricIncrement("api_errors_total");
     return NextResponse.json({ message: "Yalnızca klinik kullanıcıları SMS gönderebilir." }, { status: 403 });
   }
+  const activeBranch = requireActiveBranch(auth.user.branchContext);
+  if (!activeBranch.ok) {
+    metricIncrement("api_errors_total");
+    return NextResponse.json({ message: activeBranch.message }, { status: 403 });
+  }
 
-  const body = await request.json() as { appointmentIds?: string[]; smsType?: string };
-  const { appointmentIds = [], smsType = "BILGI" } = body;
+  const body = await request.json().catch(() => null) as { appointmentIds?: unknown; smsType?: unknown; requestId?: unknown } | null;
+  if (!body || typeof body !== "object") {
+    metricIncrement("api_errors_total");
+    return NextResponse.json({ message: "Geçersiz istek gövdesi." }, { status: 400 });
+  }
+  if (!Array.isArray(body.appointmentIds) || body.appointmentIds.length > 200
+    || body.appointmentIds.some((id) => typeof id !== "string" || !id.trim() || id.length > 100)) {
+    metricIncrement("api_errors_total");
+    return NextResponse.json({ message: "Geçersiz randevu seçimi." }, { status: 400 });
+  }
+  const appointmentIds = Array.from(new Set(body.appointmentIds));
+  const smsType = typeof body.smsType === "string" ? body.smsType : "BILGI";
+  const requestId = typeof body.requestId === "string" ? body.requestId.trim() : "";
   const dispatchMode = request.nextUrl.searchParams.get("mode") || "sync";
 
   if (!appointmentIds.length) {
     metricIncrement("api_errors_total");
     return NextResponse.json({ message: "En az bir randevu secin" }, { status: 400 });
+  }
+  if (!Object.hasOwn(EVENT_TYPE_BY_SMS_TYPE, smsType)) {
+    metricIncrement("api_errors_total");
+    return NextResponse.json({ message: "Geçersiz SMS türü." }, { status: 400 });
+  }
+  if (!/^[A-Za-z0-9:_-]{16,100}$/.test(requestId)) {
+    return NextResponse.json({ message: "Geçerli bir gönderim işlem anahtarı zorunludur." }, { status: 400 });
+  }
+  if (dispatchMode !== "sync" && dispatchMode !== "queue") {
+    metricIncrement("api_errors_total");
+    return NextResponse.json({ message: "Geçersiz gönderim modu." }, { status: 400 });
   }
 
   const [settings, institution] = await Promise.all([
@@ -105,7 +132,7 @@ export async function POST(request: NextRequest) {
   const appointments = await prisma.appointment.findMany({
     where: {
       id: { in: appointmentIds },
-      doctor: { institutionId: auth.user.institutionId },
+      branchId: activeBranch.branchId,
     },
     include: {
       patient: { select: { id: true, fullName: true, phone: true, phoneCountryCode: true } },
@@ -124,9 +151,11 @@ export async function POST(request: NextRequest) {
     // alınır; yetersiz bakiye kadarı SUPPRESSED olarak raporlanır.
     const queued = await enqueueSmsDispatchJob({
       institutionId: auth.user.institutionId,
+      branchId: activeBranch.branchId,
       userId: auth.user.id,
       appointmentIds,
       smsType: (smsType as "BILGI" | "HATIRLATMA" | "ANKET"),
+      requestId,
       queuedAt: new Date().toISOString(),
     });
 
@@ -151,11 +180,6 @@ export async function POST(request: NextRequest) {
   else if (smsType === "ANKET") updateData.smsSurvey = true;
 
   const smsTemplate = await resolveSmsTemplate(auth.user.institutionId, smsType);
-  // Bu isteğe özgü — aynı personel aynı randevu için "gönder"e tekrar basarsa
-  // (ör. ilk seferinde gitmediğini düşündüğü için) bu gerçek bir yeni gönderim
-  // sayılmalı, kalıcı olarak tekilleştirilmemeli.
-  const requestBatchId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
   let sent = 0;
   const failedRecipients: { appointmentId: string; phone: string; reason: string }[] = [];
 
@@ -172,16 +196,14 @@ export async function POST(request: NextRequest) {
           ? `${institutionName}: Sayın ${appt.patient.fullName}, randevu hatırlatması. Tarih: ${dateText}, Doktor: ${appt.doctor.fullName}.`
           : `${institutionName}: Randevunuz tamamlandi. Degerlendirmeniz bizim icin cok degerli.`;
 
-      const message = smsTemplate
-        ? renderTemplate(smsTemplate.content, {
-            institutionName,
-            institutionPhone,
-            patientName: appt.patient.fullName,
-            doctorName: appt.doctor.fullName,
-            dateTime: dateText,
-            surveyLink: settings?.reviewLink || "",
-          })
-        : fallbackMessage;
+      const rendered = renderCommunicationTemplate(smsTemplate, {
+        institutionName,
+        institutionPhone,
+        patientName: appt.patient.fullName,
+        doctorName: appt.doctor.fullName,
+        dateTime: dateText,
+        surveyLink: settings?.reviewLink || "",
+      }, fallbackMessage);
 
       const result = await dispatchPatientMessage({
         institutionId: auth.user.institutionId!,
@@ -189,12 +211,11 @@ export async function POST(request: NextRequest) {
         eventType: EVENT_TYPE_BY_SMS_TYPE[smsType] || "MANUAL_SMS",
         purpose: "SERVICE",
         templateCode: smsType,
-        message,
-        idempotencyKey: `manual-sms:${smsType}:${appt.id}:${requestBatchId}`,
+        message: rendered.smsMessage,
+        whatsappMessage: rendered.whatsappMessage,
+        idempotencyKey: `manual-sms:${smsType}:${appt.id}:${requestId}`,
         actorId: auth.user.id,
-        whatsappTemplate: {
-          bodyParameters: [appt.patient.fullName, dateText, appt.doctor.fullName],
-        },
+        whatsappTemplate: rendered.whatsappTemplate,
       });
       return { appt, result };
     }));
@@ -202,7 +223,16 @@ export async function POST(request: NextRequest) {
     for (const { appt, result } of chunkResults) {
       if (result.success) {
         sent += 1;
-        await prisma.appointment.update({ where: { id: appt.id }, data: updateData });
+        await prisma.appointment.update({
+          where: {
+            id_institutionId_branchId: {
+              id: appt.id,
+              institutionId: auth.user.institutionId!,
+              branchId: activeBranch.branchId,
+            },
+          },
+          data: updateData,
+        });
         await writeAudit(
           auth.user.id,
           `${result.channel}_${smsType}`,

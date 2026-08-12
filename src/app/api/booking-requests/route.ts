@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
 import type { BookingRequestStatus } from "@prisma/client";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export async function GET(req: NextRequest) {
   const auth = await requireAuth("appointments:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status");
@@ -18,6 +21,7 @@ export async function GET(req: NextRequest) {
     const requests = await prisma.bookingRequest.findMany({
       where: {
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
         ...(status ? { status: status as BookingRequestStatus } : { status: "BEKLIYOR" as BookingRequestStatus }),
       },
       orderBy: { createdAt: "desc" },

@@ -2,10 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth("appointments:read");
   if (auth.error) return auth.error;
+  const activeBranch = requireActiveBranch(auth.user.branchContext);
+  if (!activeBranch.ok || !auth.user.institutionId) {
+    return NextResponse.json({ message: activeBranch.ok ? "Kurum bilgisi bulunamadı." : activeBranch.message }, { status: 403 });
+  }
 
   const q = (request.nextUrl.searchParams.get("q") || "").trim();
   const take = Math.min(Math.max(Number(request.nextUrl.searchParams.get("take") || 20), 1), 50);
@@ -20,8 +25,10 @@ export async function GET(request: NextRequest) {
     where: {
       startAt: { gte: now },
       status: { not: "IPTAL" },
+      branchId: activeBranch.branchId,
       patient: {
-        ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        institutionId: auth.user.institutionId,
+        homeBranchId: activeBranch.branchId,
         OR: [
           { fullName: { contains: q, mode: "insensitive" } },
           { tcNo: { contains: q, mode: "insensitive" } },
@@ -45,7 +52,7 @@ export async function GET(request: NextRequest) {
   const result = hidePhone
     ? appointments.map((a) => ({
         ...a,
-        patient: a.patient ? { ...a.patient, phone: null } : a.patient,
+        patient: a.patient ? { ...a.patient, phone: null, tcNo: a.patient.tcNo ? "***" : a.patient.tcNo } : a.patient,
       }))
     : appointments;
 

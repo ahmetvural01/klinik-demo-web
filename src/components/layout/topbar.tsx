@@ -23,6 +23,7 @@ import type { ComponentType } from "react";
 import { getAlertPermissions, usePanelAlerts } from "@/components/layout/use-panel-alerts";
 import { cachedGet } from "@/lib/client-cache";
 import { useOutsideClickGroup } from "@/lib/use-outside-click";
+import { scopedStorageKey } from "@/lib/scoped-client-storage";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -32,6 +33,7 @@ import { PatientFormModal } from "@/components/patient/PatientFormModal";
 import { ModuleIcon, type ModuleKey } from "@/components/ui/ModuleIcon";
 import { Spinner } from "@/components/ui/Spinner";
 import { usePermissions } from "@/components/auth/PermissionProvider";
+import { BranchSwitcher } from "@/components/layout/BranchSwitcher";
 
 type Props = { user: { fullName: string; role: string; photoUrl?: string | null } };
 
@@ -41,7 +43,7 @@ const roleLabel: Record<string, string> = {
   ASISTAN:    "Asistan",
   BANKO:      "Banko Görevlisi",
   MUHASEBE:   "Muhasebe",
-  SUPERADMIN: "Süper Admin",
+  SUPERADMIN: "Yönetici",
 };
 
 const PAGE_TITLES: Record<string, string> = {
@@ -68,7 +70,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/personel":      "Personeller",
   "/personel-ekle": "Yeni Personel",
   "/fiyat":         "Fiyat Listesi",
-  "/sms":           "SMS Yönetimi",
+  "/sms":           "İletişim Merkezi",
   "/sistem-izleme": "Sistem İzleme",
   "/ayar":          "Sistem Ayarları",
   "/log":           "İşlem Kayıtları",
@@ -209,13 +211,15 @@ function Clock() {
 }
 
 export function Topbar({ user }: Props) {
-  const { permissions, can } = usePermissions();
+  const { permissions, can, scopeKey } = usePermissions();
   const router = useRouter();
   const pathname = usePathname();
   const baseTitleRef = useRef<string>("Klinik Yönetim Paneli");
   const [q, setQ] = useState("");
   const [showQuickPatientCreate, setShowQuickPatientCreate] = useState(false);
   const [searchResults, setSearchResults] = useState<{id: string; fullName: string; tcNo: string; phone: string}[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState(false);
   const [showSearchDropdown, setShowSearchDropdown] = useState(false);
   const getEffectiveRole = useCallback(() => sessionStorage.getItem("dev-preview-role") || user.role, [user.role]);
   const [effectiveRole, setEffectiveRole] = useState(user.role);
@@ -232,7 +236,9 @@ export function Topbar({ user }: Props) {
     };
   }, [getEffectiveRole]);
   const hidePhone = !can("patients:phone");
-  const alerts = usePanelAlerts(effectiveRole, permissions);
+  const alerts = usePanelAlerts(effectiveRole, permissions, scopeKey);
+  const unreadStorageKey = scopedStorageKey("clinic-unread-messages", scopeKey);
+  const lastSeenStorageKey = scopedStorageKey("clinic-messages-last-seen", scopeKey);
   const { canSeeTaksit, canSeeStok, canSeeLab, canSeeWaiting, canSeeTasks } = getAlertPermissions(effectiveRole, permissions);
   const { canCreatePatient, canCreateAppointment } = getQuickActionPermissions(can);
 
@@ -298,7 +304,7 @@ export function Topbar({ user }: Props) {
 
   useEffect(() => {
     const syncUnread = () => {
-      const raw = localStorage.getItem("clinic-unread-messages") || "0";
+      const raw = localStorage.getItem(unreadStorageKey) || "0";
       const val = Number(raw);
       setMessageUnread(Number.isFinite(val) ? val : 0);
     };
@@ -310,7 +316,7 @@ export function Topbar({ user }: Props) {
       window.removeEventListener("clinic-unread-messages-change", syncUnread);
       window.removeEventListener("storage", syncUnread);
     };
-  }, []);
+  }, [unreadStorageKey]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
@@ -323,7 +329,7 @@ export function Topbar({ user }: Props) {
         const res = await fetch("/api/messages");
         if (!res.ok) return;
         const list = (await res.json()) as MessageLite[];
-        const lastSeenRaw = localStorage.getItem("clinic-messages-last-seen") || "";
+        const lastSeenRaw = localStorage.getItem(lastSeenStorageKey) || "";
         const lastSeen = lastSeenRaw ? new Date(lastSeenRaw).getTime() : 0;
 
         const unread = Array.isArray(list)
@@ -331,7 +337,7 @@ export function Topbar({ user }: Props) {
           : 0;
 
         setMessageUnread(unread);
-        localStorage.setItem("clinic-unread-messages", String(unread));
+        localStorage.setItem(unreadStorageKey, String(unread));
         window.dispatchEvent(new Event("clinic-unread-messages-change"));
       } catch {}
     };
@@ -341,7 +347,7 @@ export function Topbar({ user }: Props) {
     return () => {
       if (timer) clearInterval(timer);
     };
-  }, [currentUserId, pathname]);
+  }, [currentUserId, lastSeenStorageKey, pathname, unreadStorageKey]);
 
   useEffect(() => {
     if (typeof document === "undefined") return;
@@ -410,23 +416,40 @@ export function Topbar({ user }: Props) {
 
   // Debounced search
   useEffect(() => {
-    if (q.length < 2) {
+    const normalizedQuery = q.trim();
+    if (normalizedQuery.length < 2) {
       setSearchResults([]);
+      setSearchLoading(false);
+      setSearchError(false);
       return;
     }
     // Her aramada güncel rolü oku
     setEffectiveRole(getEffectiveRole());
+    const controller = new AbortController();
+    setSearchLoading(true);
+    setSearchError(false);
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/patients?q=${encodeURIComponent(q)}&take=8&summary=false`);
-        if (res.ok) {
-          const json = await res.json();
-          const patients = Array.isArray(json) ? json : (json?.patients ?? []);
-          setSearchResults(patients.slice(0, 8));
+        const res = await fetch(`/api/patients?q=${encodeURIComponent(normalizedQuery)}&take=8&summary=false`, {
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error("PATIENT_SEARCH_FAILED");
+        const json = await res.json();
+        const patients = Array.isArray(json) ? json : (json?.patients ?? []);
+        setSearchResults(patients.slice(0, 8));
+      } catch {
+        if (!controller.signal.aborted) {
+          setSearchResults([]);
+          setSearchError(true);
         }
-      } catch {}
+      } finally {
+        if (!controller.signal.aborted) setSearchLoading(false);
+      }
     }, 300);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [q]);
 
   const [selectedResultIdx, setSelectedResultIdx] = useState(-1);
@@ -474,6 +497,7 @@ export function Topbar({ user }: Props) {
       {/* Sol: Sayfa başlığı veya arama */}
       <div className={`flex min-w-0 flex-1 items-center ${pageConfig.compact ? "gap-2" : "gap-4"}`}>
         <button
+          type="button"
           onClick={() => window.dispatchEvent(new Event("toggle-mobile-sidebar"))}
           aria-label="Menüyü aç"
           className="mr-2 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-[var(--shadow-rest)] hover:border-slate-300 hover:bg-slate-50 md:hidden"
@@ -486,6 +510,7 @@ export function Topbar({ user }: Props) {
             <span className="font-display text-[15px] font-bold text-slate-900">{pageTitle}</span>
           </span>
         )}
+        <BranchSwitcher />
         {pageConfig.showSearch && can("patients:read") && <div className="relative flex min-w-0 max-w-sm flex-1">
           <form onSubmit={search} className="min-w-0 w-full">
             <div ref={searchRef} className="relative flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 shadow-[var(--shadow-rest)] transition focus-within:border-primary/35 focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/12">
@@ -501,25 +526,28 @@ export function Topbar({ user }: Props) {
                 aria-label="Hasta ara - ad, TC no veya telefon ile"
                 aria-expanded={showSearchDropdown}
                 aria-autocomplete="list"
+                aria-activedescendant={selectedResultIdx >= 0 ? `search-result-${selectedResultIdx}` : undefined}
                 className="flex-1 border-none bg-transparent text-sm font-semibold text-slate-700 outline-none placeholder-slate-400"
               />
               {q && (
                 <button
                   type="button"
                   onClick={() => { setQ(""); setSearchResults([]); setShowSearchDropdown(false); }}
+                  aria-label="Aramayı temizle"
                   className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
               )}
                 {searchResults.length > 0 && showSearchDropdown && (
-                <div id="search-results" className="ui-popover absolute left-0 right-0 top-full z-[220] mt-2 overflow-hidden">
+                <div id="search-results" role="listbox" className="ui-popover absolute left-0 right-0 top-full z-[220] mt-2 overflow-hidden">
                   <div className="flex items-center justify-between border-b border-slate-100/80 px-4 py-2 text-xs font-bold text-slate-500">
                     <span>{searchResults.length} sonuç</span>
                   </div>
                   {searchResults.map((p, idx) => (
                     <button
                       key={p.id}
+                      id={`search-result-${idx}`}
                       type="button"
                       role="option"
                       aria-selected={selectedResultIdx === idx}
@@ -547,12 +575,18 @@ export function Topbar({ user }: Props) {
                   ))}
                 </div>
               )}
-              {showSearchDropdown && q.length >= 2 && searchResults.length === 0 && (
+              {showSearchDropdown && q.trim().length >= 2 && searchResults.length === 0 && (
                 <div className="ui-popover absolute left-0 right-0 top-full z-[220] mt-2 px-4 py-3 text-center text-sm text-slate-500">
-                  <div className="inline-flex items-center gap-2">
-                    <Spinner className="h-3.5 w-3.5 text-primary" />
-                    Hastalar aranıyor…
-                  </div>
+                  {searchLoading ? (
+                    <div role="status" className="inline-flex items-center gap-2">
+                      <Spinner className="h-3.5 w-3.5 text-primary" />
+                      Hastalar aranıyor...
+                    </div>
+                  ) : searchError ? (
+                    <p role="alert" className="text-red-600">Arama şu anda yapılamıyor. Lütfen tekrar deneyin.</p>
+                  ) : (
+                    <p>Bu aramayla eşleşen hasta bulunamadı.</p>
+                  )}
                 </div>
               )}
             </div>

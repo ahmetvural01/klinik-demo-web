@@ -73,28 +73,16 @@ function getPriorityTone(priority: number): BadgeTone {
   return "info";
 }
 
-function readCachedTasks(scope: string, status: string) {
-  if (typeof window === "undefined") return [] as StaffTask[];
-  const cacheKey = `clinic-tasks:list:${scope}:${status}`;
-  const raw = sessionStorage.getItem(cacheKey);
-  if (!raw) return [] as StaffTask[];
-  try {
-    const cached = JSON.parse(raw) as { tasks?: StaffTask[] };
-    return Array.isArray(cached?.tasks) ? cached.tasks : [];
-  } catch {
-    return [] as StaffTask[];
-  }
-}
-
 export default function GorevlerPage() {
   const { can } = usePermissions();
   const [scope, setScope] = useState<"mine" | "all">("mine");
   const [status, setStatus] = useState<"ACIK" | "BEKLEMEDE" | "TAMAMLANDI" | "IPTAL" | "TUMU">("TUMU");
-  const [tasks, setTasks] = useState<StaffTask[]>(() => readCachedTasks("mine", "TUMU"));
+  const [tasks, setTasks] = useState<StaffTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [busyId, setBusyId] = useState("");
   const busyTaskRef = useRef("");
+  const loadSequenceRef = useRef(0);
 
   // Yeni görev oluşturma
   const [showCreate, setShowCreate] = useState(false);
@@ -117,8 +105,11 @@ export default function GorevlerPage() {
   useEffect(() => {
     if (!showCreate || staffLoaded || staffLoading) return;
     setStaffLoading(true);
-    cachedGet<unknown>("/api/staff", 60_000)
-      .then((d) => setStaff(Array.isArray(d) ? (d as Staff[]).filter((member) => member.isActive) : []))
+    cachedGet<unknown>("/api/staff", 60_000, { throwOnError: true })
+      .then((d) => {
+        if (!Array.isArray(d)) throw new Error("Personel listesi beklenmeyen biçimde döndü.");
+        setStaff((d as Staff[]).filter((member) => member.isActive));
+      })
       .catch(() => showToastSafe({ title: "Personel yüklenemedi", message: "Atanacak personel listesi alınamadı. Mevcut seçimler korundu.", type: "error" }))
       .finally(() => { setStaffLoaded(true); setStaffLoading(false); });
   }, [showCreate, staffLoaded, staffLoading]);
@@ -229,6 +220,7 @@ export default function GorevlerPage() {
 
   const canSeeAll = can("clinictasks:read-all");
   const canWriteTasks = can("clinictasks:write");
+  const canCancelTasks = can("clinictasks:delete");
   const staffOptions = useMemo<SearchableListboxOption[]>(() => staff.map((member) => ({
     id: member.id,
     label: member.fullName,
@@ -237,22 +229,8 @@ export default function GorevlerPage() {
   })), [staff]);
 
   const load = async () => {
-    const cacheKey = `clinic-tasks:list:${scope}:${status}`;
-    let hadCached = false;
-    if (typeof window !== "undefined") {
-      const raw = sessionStorage.getItem(cacheKey);
-      if (raw) {
-        try {
-          const cached = JSON.parse(raw) as { tasks?: StaffTask[] };
-          if (Array.isArray(cached?.tasks)) {
-            setTasks(cached.tasks);
-            hadCached = true;
-          }
-        } catch {}
-      }
-    }
-
-    setLoading(!hadCached);
+    const sequence = ++loadSequenceRef.current;
+    setLoading(true);
     setError("");
     try {
       const taskRes = await fetch(`/api/clinic-tasks?take=500&scope=${scope}${status !== "TUMU" ? `&status=${status}` : ""}`, { cache: "no-store" });
@@ -264,20 +242,21 @@ export default function GorevlerPage() {
       if (!Array.isArray(rows)) {
         throw new Error("Görev listesi beklenmeyen biçimde döndü.");
       }
-      const nextTasks = rows as StaffTask[];
-      setTasks(nextTasks);
-      if (typeof window !== "undefined") {
-        sessionStorage.setItem(cacheKey, JSON.stringify({ tasks: nextTasks }));
-      }
+      if (sequence !== loadSequenceRef.current) return;
+      setTasks(rows as StaffTask[]);
     } catch (loadError) {
+      if (sequence !== loadSequenceRef.current) return;
       const msg = loadError instanceof Error ? loadError.message : "Görevler yüklenemedi.";
       setError(msg);
       try { showToastSafe({ title: 'Hata', message: msg, type: 'error' }); } catch {}
-      if (!hadCached) setTasks([]);
     } finally {
-      setLoading(false);
+      if (sequence === loadSequenceRef.current) setLoading(false);
     }
   };
+
+  useEffect(() => {
+    if (!canSeeAll && scope === "all") setScope("mine");
+  }, [canSeeAll, scope]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
@@ -317,10 +296,13 @@ export default function GorevlerPage() {
 
   const updateStatus = async (taskId: string, next: StaffTask["status"]) => {
     if (busyTaskRef.current) return;
+    if (next === "IPTAL" && !canCancelTasks) return;
     const previous = tasks.find((t) => t.id === taskId);
     if (!previous) return;
 
     // Optimistic: sunucu yanıtını beklemeden anında güncelle, hata olursa geri al.
+    loadSequenceRef.current += 1;
+    setLoading(false);
     setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: next } : t)));
     busyTaskRef.current = taskId;
     setBusyId(taskId);
@@ -426,7 +408,7 @@ export default function GorevlerPage() {
           {canWriteTasks && task.status !== "TAMAMLANDI" && task.status !== "IPTAL" && (
             <Button size="sm" variant="primary" disabled={busyId === task.id} onClick={() => void updateStatus(task.id, "TAMAMLANDI")}>Tamamla</Button>
           )}
-          {canWriteTasks && task.status !== "TAMAMLANDI" && task.status !== "IPTAL" && (
+          {canCancelTasks && task.status !== "TAMAMLANDI" && task.status !== "IPTAL" && (
             <IconButton icon={XCircle} title="Görevi iptal et" tone="danger" disabled={busyId === task.id} onClick={() => void updateStatus(task.id, "IPTAL")} />
           )}
         </div>

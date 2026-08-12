@@ -6,19 +6,29 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Spinner } from "@/components/ui/Spinner";
 import { showToastSafe } from "@/lib/toast-client";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 
 export default function TemaTab() {
   const [activeTheme, setActiveTheme] = useState<string>("klasik");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [applying, setApplying] = useState<string | null>(null);
 
   useEffect(() => {
+    setLoading(true);
+    setLoadError(null);
     fetch("/api/superadmin/theme")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (d?.activeTheme) setActiveTheme(d.activeTheme); })
-      .catch(() => {})
+      .then(async (response) => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data?.message || "Tema bilgisi yüklenemedi.");
+        if (!data?.activeTheme) throw new Error("Tema bilgisi beklenmeyen biçimde döndü.");
+        return data;
+      })
+      .then((data) => setActiveTheme(data.activeTheme))
+      .catch((error) => setLoadError(error instanceof Error ? error.message : "Tema bilgisi yüklenemedi."))
       .finally(() => setLoading(false));
-  }, []);
+  }, [reloadKey]);
 
   const activate = async (pkg: ThemePackage) => {
     if (pkg.id === activeTheme || applying) return;
@@ -46,7 +56,9 @@ export default function TemaTab() {
     <section className="space-y-4">
       <p className="text-xs text-slate-500">Tüm klinikler ve tüm kullanıcılar için tek, sistem geneli renk ve yazı tipi kimliği. Seçilen tema sayfa yenilendiğinde herkeste görünür.</p>
 
-      {loading ? (
+      {loadError ? (
+        <LoadErrorState message={loadError} onRetry={() => setReloadKey((value) => value + 1)} />
+      ) : loading ? (
         <div className="flex items-center justify-center py-16">
           <Spinner className="h-8 w-8 text-primary" />
         </div>

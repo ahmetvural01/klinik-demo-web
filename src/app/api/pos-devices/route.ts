@@ -1,15 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAnyAuth, requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export async function GET() {
   try {
     const auth = await requireAnyAuth(["settings:read", "payments:read"]);
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
     const devices = await (prisma as any).posDevice.findMany({
       where: {
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
       },
       orderBy: { createdAt: "asc" },
     });
@@ -24,6 +28,8 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("settings:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
   if (!auth.user.institutionId) return NextResponse.json({ message: "Kurum bilgisi bulunamadı" }, { status: 403 });
 
   const body = await request.json().catch(() => null);
@@ -33,7 +39,7 @@ export async function POST(request: NextRequest) {
   let device;
   try {
     device = await (prisma as any).posDevice.create({
-      data: { name, institutionId: auth.user.institutionId, isActive: true },
+      data: { name, institutionId: auth.user.institutionId, branchId: branch.branchId, isActive: true },
     });
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {

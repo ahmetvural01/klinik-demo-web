@@ -1,0 +1,43 @@
+{
+  "policy": {
+    "freeFirst": true,
+    "defaultConcurrency": 6,
+    "cooldownSecondsOnQuota": 900,
+    "paidEscalationDefault": false,
+    "maxPaidUsdPerDay": 1.0
+  },
+  "tiers": [
+    {
+      "priority": 1,
+      "id": "openrouter-free",
+      "condition": "OPENROUTER_API_KEY",
+      "mode": "openrouter/free",
+      "cost": "free",
+      "fallback": "gemini-free"
+    },
+    {
+      "priority": 2,
+      "id": "gemini-free",
+      "condition": "GEMINI_API_KEY",
+      "mode": "Gemini free-tier compatible model",
+      "cost": "free-tier",
+      "fallback": "ollama-local"
+    },
+    {
+      "priority": 3,
+      "id": "ollama-local",
+      "condition": "localhost:11434 available",
+      "mode": "local coding model",
+      "cost": "zero API cost",
+      "fallback": "paid-escalation"
+    },
+    {
+      "priority": 4,
+      "id": "paid-escalation",
+      "condition": "AI_ALLOW_PAID=1 and budget remains",
+      "mode": "strong configured model",
+      "cost": "capped paid",
+      "fallback": null
+    }
+  ]
+}

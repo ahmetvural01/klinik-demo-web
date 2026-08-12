@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
+import { LoaderCircle, TriangleAlert } from "lucide-react";
 
 type SearchOption = {
   id: string;
@@ -16,6 +17,8 @@ export function SearchSelect({
   placeholder,
   className,
   emptyText,
+  loading = false,
+  error,
 }: {
   query: string;
   onQueryChange: (value: string) => void;
@@ -24,6 +27,8 @@ export function SearchSelect({
   placeholder?: string;
   className?: string;
   emptyText?: string;
+  loading?: boolean;
+  error?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -38,6 +43,7 @@ export function SearchSelect({
   return (
     <div className="relative">
       <input
+        data-dirty-ignore
         value={query}
         onChange={(event) => {
           onQueryChange(event.target.value);
@@ -48,6 +54,7 @@ export function SearchSelect({
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
+            event.stopPropagation();
             setOpen(false);
             setActiveIndex(-1);
           } else if (event.key === "ArrowDown") {
@@ -68,11 +75,23 @@ export function SearchSelect({
         aria-expanded={open}
         aria-controls={listboxId}
         aria-activedescendant={activeIndex >= 0 ? `${listboxId}-${activeIndex}` : undefined}
+        aria-busy={loading}
+        aria-invalid={Boolean(error)}
         className={className}
       />
       {open && (
         <div id={listboxId} role="listbox" className="ui-popover absolute left-0 right-0 top-full z-40 mt-1 max-h-56 overflow-y-auto py-1">
-          {options.length === 0 ? (
+          {loading ? (
+            <p role="status" className="flex items-center gap-2 px-3 py-2 text-xs text-slate-500">
+              <LoaderCircle className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+              Aranıyor...
+            </p>
+          ) : error ? (
+            <p role="alert" className="flex items-start gap-2 px-3 py-2 text-xs text-red-600">
+              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              {error}
+            </p>
+          ) : options.length === 0 ? (
             <p className="px-3 py-2 text-xs text-slate-400">{emptyText || "Sonuç bulunamadı"}</p>
           ) : (
             options.map((option, index) => (

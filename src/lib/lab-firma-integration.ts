@@ -11,7 +11,8 @@ export const LAB_SOURCE_PREFIX = "[SISTEM:LAB_FATURA:";
 type LabFirmaInput = {
   tx: TxClient;
   userId: string;
-  institutionId?: string | null;
+  institutionId: string;
+  branchId: string;
   labName: string;
   labType?: string | null;
   patientName?: string | null;
@@ -49,9 +50,9 @@ export function labSourceToken(input: {
   return `${LAB_SOURCE_PREFIX}${key}]`;
 }
 
-const LAB_FIRMA_SELECT = { id: true, name: true, institutionId: true, paymentTerms: true, customPaymentDays: true } as const;
+const LAB_FIRMA_SELECT = { id: true, name: true, institutionId: true, branchId: true, paymentTerms: true, customPaymentDays: true } as const;
 
-async function findOrCreateLabFirma(tx: TxClient, labName: string, institutionId?: string | null, firmaId?: string | null) {
+async function findOrCreateLabFirma(tx: TxClient, labName: string, institutionId: string, branchId: string, firmaId?: string | null) {
   // firmaId zaten biliniyorsa (LabOrder.firmaId) doğrudan onu kullan — isimle
   // yeniden arama yapmaya, dolayısıyla yanlış eşleşme/çakışma riskine gerek yok.
   if (firmaId) {
@@ -60,7 +61,8 @@ async function findOrCreateLabFirma(tx: TxClient, labName: string, institutionId
         id: firmaId,
         isActive: true,
         kategori: "LAB",
-        ...(institutionId ? { institutionId } : {}),
+        institutionId,
+        branchId,
       },
       select: LAB_FIRMA_SELECT,
     });
@@ -71,7 +73,7 @@ async function findOrCreateLabFirma(tx: TxClient, labName: string, institutionId
   }
 
   const name = labName.trim();
-  const scope = institutionId ? { institutionId } : {};
+  const scope = { institutionId, branchId };
 
   const exact = await tx.firma.findFirst({
     where: {
@@ -114,7 +116,8 @@ async function findOrCreateLabFirma(tx: TxClient, labName: string, institutionId
 
   const created = await tx.firma.create({
     data: {
-      institutionId: institutionId || null,
+      institutionId,
+      branchId,
       name,
       kategori: "LAB",
       paymentTerms: "NET_30",
@@ -132,13 +135,14 @@ export async function applyLabInvoiceFirmaIntegration(input: LabFirmaInput): Pro
   if (!labName || !input.item?.trim() || !Number.isFinite(amount) || amount <= 0) return null;
 
   const transactionDate = input.issuedAt ? new Date(input.issuedAt) : new Date();
-  const { firma, created } = await findOrCreateLabFirma(input.tx, labName, input.institutionId, input.firmaId);
+  const { firma, created } = await findOrCreateLabFirma(input.tx, labName, input.institutionId, input.branchId, input.firmaId);
   const patientPart = input.patientName ? ` - ${input.patientName}` : "";
   const sourceToken = labSourceToken(input);
 
   const existing = await input.tx.firmaIslem.findFirst({
     where: {
       status: "AKTIF",
+      branchId: input.branchId,
       OR: [
         { sourceType: "LAB_INVOICE", sourceId: input.labInvoiceId || sourceToken },
         { aciklama: { contains: sourceToken } },
@@ -166,6 +170,8 @@ export async function applyLabInvoiceFirmaIntegration(input: LabFirmaInput): Pro
 
   const islem = await input.tx.firmaIslem.create({
     data: {
+      institutionId: input.institutionId,
+      branchId: input.branchId,
       firmaId: firma.id,
       tarih: transactionDate,
       islemTipi: "HIZMET",
@@ -191,7 +197,7 @@ export async function applyLabInvoiceFirmaIntegration(input: LabFirmaInput): Pro
       kdvOrani: Number(islem.kdvOrani),
     },
   });
-  await rebuildFirmaPaymentAllocations(input.tx, firma.id);
+  await rebuildFirmaPaymentAllocations(input.tx, firma.id, input.branchId);
 
   return {
     firmaId: firma.id,
@@ -211,12 +217,14 @@ export async function reverseLabInvoiceFirmaIntegration(
     invoiceNo?: string | null;
     item?: string | null;
     amount?: number | null;
+    branchId: string;
   },
 ) {
   const sourceToken = labSourceToken(input);
   const islemler = await tx.firmaIslem.findMany({
     where: {
       status: "AKTIF",
+      branchId: input.branchId,
       OR: [
         {
           sourceType: "LAB_INVOICE",

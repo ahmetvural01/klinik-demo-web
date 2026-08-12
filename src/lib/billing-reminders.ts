@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { sendEmail, buildInvoiceReminderHtml, buildInvoiceReminderSms } from "@/lib/email";
+import { sendEmail, buildInvoiceReminderHtml, buildInvoiceReminderSms, getSmtpTransporter } from "@/lib/email";
 import { sendSms } from "@/lib/sms";
 
 export type ReminderChannel = "EMAIL" | "SMS";
@@ -25,7 +25,7 @@ export async function sendInvoiceReminder(invoiceId: string, channels: ReminderC
       const email = invoice.institution.email;
       if (!email) {
         results.push({ channel: "EMAIL", success: false, error: "Kurumun e-posta adresi yok" });
-        await prisma.invoiceReminder.create({ data: { invoiceId, channel: "EMAIL", sentTo: "", status: "FAILED", errorDetail: "E-posta adresi yok" } });
+        await prisma.invoiceReminder.create({ data: { institutionId: invoice.institutionId, invoiceId, channel: "EMAIL", sentTo: "", status: "FAILED", errorDetail: "E-posta adresi yok" } });
         continue;
       }
 
@@ -42,7 +42,7 @@ export async function sendInvoiceReminder(invoiceId: string, channels: ReminderC
       const result = await sendEmail({ to: email, subject, html });
       results.push({ channel: "EMAIL", success: result.success, error: result.error });
       await prisma.invoiceReminder.create({
-        data: { invoiceId, channel: "EMAIL", sentTo: email, status: result.success ? "SENT" : "FAILED", errorDetail: result.error },
+        data: { institutionId: invoice.institutionId, invoiceId, channel: "EMAIL", sentTo: email, status: result.success ? "SENT" : "FAILED", errorDetail: result.error },
       });
     }
 
@@ -50,7 +50,7 @@ export async function sendInvoiceReminder(invoiceId: string, channels: ReminderC
       const phone = invoice.institution.phone;
       if (!phone) {
         results.push({ channel: "SMS", success: false, error: "Kurumun telefon numarası yok" });
-        await prisma.invoiceReminder.create({ data: { invoiceId, channel: "SMS", sentTo: "", status: "FAILED", errorDetail: "Telefon numarası yok" } });
+        await prisma.invoiceReminder.create({ data: { institutionId: invoice.institutionId, invoiceId, channel: "SMS", sentTo: "", status: "FAILED", errorDetail: "Telefon numarası yok" } });
         continue;
       }
 
@@ -66,7 +66,7 @@ export async function sendInvoiceReminder(invoiceId: string, channels: ReminderC
       const result = await sendSms(phone, message);
       results.push({ channel: "SMS", success: result.success, error: result.error });
       await prisma.invoiceReminder.create({
-        data: { invoiceId, channel: "SMS", sentTo: phone, status: result.success ? "SENT" : "FAILED", errorDetail: result.error },
+        data: { institutionId: invoice.institutionId, invoiceId, channel: "SMS", sentTo: phone, status: result.success ? "SENT" : "FAILED", errorDetail: result.error },
       });
     }
   }
@@ -85,6 +85,12 @@ const MIN_HOURS_BETWEEN_REMINDERS = 20;
 // insan onayı olmadan otomatik/tekrarlayan bir işten SMS harcamak istenmeyen
 // bir maliyet sürprizi olur. E-posta ücretsiz ve sınırsız tekrarlanabilir.
 export async function runDueInvoiceReminderSweep(): Promise<{ checked: number; sent: number; failed: number; skippedRecent: number }> {
+  // Otomatik görev, platform kanalı kapalıyken başarısız gönderim kaydı
+  // üretmemeli. Manuel gönderim sendInvoiceReminder üzerinden açık hata verir.
+  if (!(await getSmtpTransporter())) {
+    return { checked: 0, sent: 0, failed: 0, skippedRecent: 0 };
+  }
+
   const now = new Date();
   const cutoff = new Date(now.getTime() - MIN_HOURS_BETWEEN_REMINDERS * 60 * 60 * 1000);
 

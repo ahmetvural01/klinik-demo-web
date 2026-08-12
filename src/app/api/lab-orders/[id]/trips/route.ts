@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export const dynamic = "force-dynamic";
 
@@ -8,6 +9,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   const params = await props.params;
   const auth = await requireAuth("lab:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   const body = await req.json().catch(() => null);
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -26,7 +29,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   const order = await (prisma as any).labOrder.findFirst({
     where: {
       id: params.id,
-      ...(auth.user.role !== "SUPERADMIN" ? { patient: { institutionId: auth.user.institutionId } } : {}),
+      ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      branchId: branch.branchId,
     },
     select: { id: true, status: true },
   });
@@ -55,6 +59,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
         await tx.labTrip.create({
           data: {
+            institutionId: auth.user.institutionId!,
+            branchId: branch.branchId,
             labOrderId: params.id,
             order: nextOrder,
             description: description.trim(),
@@ -66,7 +72,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         return tx.labOrder.findUnique({
           where: { id: params.id },
           include: {
-            invoices: { orderBy: { issuedAt: "asc" } },
+            invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
             patient: { select: { id: true, fullName: true, phone: true } },
             doctor: { select: { id: true, fullName: true } },
             trips: { orderBy: { order: "asc" } },

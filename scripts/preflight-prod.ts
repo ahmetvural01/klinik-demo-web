@@ -5,7 +5,7 @@ export {};
 
 loadEnvConfig(process.cwd());
 
-const requiredEnv = ["DATABASE_URL", "JWT_SECRET", "APP_URL", "FIELD_ENCRYPTION_KEY"] as const;
+const requiredEnv = ["DATABASE_URL", "JWT_SECRET", "APP_URL", "FIELD_ENCRYPTION_KEY", "REDIS_URL"] as const;
 
 async function check(url: string) {
   const start = Date.now();
@@ -27,6 +27,12 @@ async function main() {
   const missing = requiredEnv.filter((key) => !process.env[key]);
   if (missing.length > 0) {
     console.error(`Eksik zorunlu env: ${missing.join(", ")}`);
+    process.exit(1);
+  }
+
+  const trustedProxyHops = Number.parseInt(process.env.TRUSTED_PROXY_HOPS || "1", 10);
+  if (!Number.isInteger(trustedProxyHops) || trustedProxyHops < 1) {
+    console.error("TRUSTED_PROXY_HOPS pozitif bir tam sayı olmalıdır.");
     process.exit(1);
   }
 
@@ -63,10 +69,6 @@ async function main() {
       process.exit(1);
     }
   }
-  if (!process.env.REDIS_URL) {
-    console.warn("REDIS_URL tanimli degil; tek web worker için süreç içi gerçek zamanli bildirim kullaniliyor.");
-  }
-
   const baseUrl = process.env.PREFLIGHT_BASE_URL || process.env.APP_URL || "http://localhost:3000";
   const health = await checkWithFallback(`${baseUrl}/api/system/health`);
   console.log("PREFLIGHT RESULTS");

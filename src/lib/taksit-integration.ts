@@ -52,6 +52,7 @@ export async function applyTaksitIntegration(
   tarih?: Date,
   paymentId?: string | null,
   doctorId?: string | null,
+  branchId?: string | null,
 ): Promise<TaksitApplyResult> {
   const result: TaksitApplyResult = { applied: 0, updatedCount: 0, completedPlanIds: [] };
   if (!patientId || amount <= 0) return result;
@@ -60,12 +61,12 @@ export async function applyTaksitIntegration(
   // olduğu doktorun planları (doctorId verilmemişse eski davranış korunur).
   const pendingTaksitler = await tx.taksit.findMany({
     where: {
-      plan: { patientId, ...(doctorId ? { doctorId } : {}) },
+      plan: { patientId, ...(doctorId ? { doctorId } : {}), ...(branchId ? { branchId } : {}) },
       status: { in: ["GECIKTI", "BEKLIYOR"] },
     },
     orderBy: [{ vadeDate: "asc" }, { siraNo: "asc" }],
     select: {
-      id: true, planId: true, siraNo: true,
+      id: true, institutionId: true, branchId: true, planId: true, siraNo: true,
       tutar: true, odenen: true, kalan: true, status: true,
     },
   });
@@ -96,6 +97,8 @@ export async function applyTaksitIntegration(
 
     await tx.taksitOdeme.create({
       data: {
+        institutionId: taksit.institutionId,
+        branchId: taksit.branchId,
         taksitId: taksit.id,
         paymentId: paymentId ?? null,
         tarih: odeDate,
@@ -163,7 +166,7 @@ export async function reverseTaksitIntegrationForPayment(
   paymentId: string,
 ): Promise<{ reversed: number; updatedCount: number }> {
   const odemeler = await tx.taksitOdeme.findMany({
-    where: { paymentId },
+    where: { paymentId, status: "ACTIVE" },
     orderBy: { createdAt: "desc" },
     select: { id: true, taksitId: true, tutar: true, taksit: { select: { odenen: true, kalan: true } } },
   });
@@ -183,7 +186,10 @@ export async function reverseTaksitIntegrationForPayment(
         status: "BEKLIYOR",
       },
     });
-    await tx.taksitOdeme.delete({ where: { id: odeme.id } });
+    await tx.taksitOdeme.update({
+      where: { id: odeme.id },
+      data: { status: "VOID", voidedAt: new Date() },
+    });
     reversed = reversed.plus(amount);
     touched.add(odeme.taksitId);
   }
@@ -212,7 +218,7 @@ export async function payTaksit(
   }
   const taksit = await tx.taksit.findUnique({
     where: { id: taksitId },
-    select: { id: true, planId: true, kalan: true, odenen: true, status: true },
+    select: { id: true, institutionId: true, branchId: true, planId: true, kalan: true, odenen: true, status: true },
   });
   if (!taksit || taksit.status === "ODENDI" || taksit.status === "IPTAL") {
     return { updated: false, planCompleted: false };
@@ -231,6 +237,8 @@ export async function payTaksit(
 
   await tx.taksitOdeme.create({
     data: {
+      institutionId: taksit.institutionId,
+      branchId: taksit.branchId,
       taksitId,
       paymentId: null,
       tarih: tarih ?? new Date(),

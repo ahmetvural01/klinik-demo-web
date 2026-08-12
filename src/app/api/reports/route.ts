@@ -4,6 +4,7 @@ import { requireAuth, withApiTiming } from "@/lib/api";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { buildDataConsistencyReport } from "@/lib/data-consistency";
 import { turkeyDayRangeUtc, turkeyDateKey, turkeyLocalDateTimeToUtc, turkeyTodayStartUtc } from "@/lib/tz";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 // Rapor ekranındaki <input type="datetime-local"> zaman dilimi belirtmeden
 // ("2026-07-15T09:30") gönderir — bu, kullanıcının Türkiye yerel saatidir.
@@ -36,6 +37,8 @@ function gelirVergisiHesapla(matrah: number): number {
 export const GET = withApiTiming("reports", async function GET(request: NextRequest) {
   const auth = await requireAuth("reports:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
   const institutionId = auth.user.institutionId;
 
@@ -63,7 +66,7 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
 
   const institutionDoctors = institutionId
     ? await prisma.user.findMany({
-        where: effectiveDoctorWhere(institutionId),
+        where: effectiveDoctorWhere(institutionId, branch.branchId),
         select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
       })
     : [];
@@ -80,12 +83,13 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
 
   // ── Paralel sorgular ──────────────────────────────────────────────────────
   const overdueTodayStart = turkeyTodayStartUtc();
-  const [payments, examinations, labOrders, expenses, firmaIslemler, newPatients, taksitler] =
+  const [payments, examinations, labOrders, labInvoices, expenses, firmaIslemler, newPatients, taksitler] =
     await Promise.all([
       prisma.payment.findMany({
         where: institutionId
           ? {
               institutionId,
+              branchId: branch.branchId,
               status: "ACTIVE",
               createdAt: dateFilter,
               patientId: { not: null },
@@ -94,7 +98,7 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
       }),
       prisma.examination.findMany({
         where: institutionId
-          ? { diagnosedAt: dateFilter, ...treatmentOnlyWhere, doctorId: { in: doctorIds } }
+          ? { institutionId, branchId: branch.branchId, diagnosedAt: dateFilter, ...treatmentOnlyWhere, doctorId: { in: doctorIds } }
           : { diagnosedAt: dateFilter, ...treatmentOnlyWhere },
         include: {
           doctor: { select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true } },
@@ -102,15 +106,29 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
       }),
       (prisma as any).labOrder.findMany({
         where: institutionId
-          ? { createdAt: dateFilter, status: { not: "IPTAL" }, patient: { institutionId } }
+          ? { institutionId, branchId: branch.branchId, createdAt: dateFilter, status: { not: "IPTAL" } }
           : { createdAt: dateFilter, status: { not: "IPTAL" } },
         include: { doctor: { select: { id: true, fullName: true } } },
+      }),
+      // Lab maliyeti, sipariş açılış tarihine (LabOrder.createdAt) göre değil
+      // fatura kesim tarihine (LabOrderInvoice.issuedAt) göre hesaplanır —
+      // hakedis.ts'teki computeDoctorMonthlyHakedis ile aynı kaynak/tarih
+      // kullanılmazsa Rapor ve Hakediş ekranları aynı ay için farklı lab
+      // maliyeti/brüt kâr gösterir (bkz. denetim raporu).
+      (prisma as any).labOrderInvoice.findMany({
+        where: {
+          status: "ACTIVE",
+          labOrder: institutionId ? { institutionId, branchId: branch.branchId } : { branchId: branch.branchId },
+          issuedAt: dateFilter,
+        },
+        select: { amount: true },
       }),
       (prisma as any).expense.findMany({
         where: {
           tarih: dateFilter,
           status: { not: "IPTAL" },
           ...(institutionId ? { institutionId } : {}),
+          branchId: branch.branchId,
         },
         include: { expenseCategory: { select: { name: true } } },
       }),
@@ -119,13 +137,14 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
           tarih: dateFilter,
           status: { not: "IPTAL" },
           islemTipi: { in: ["ALIM", "HIZMET"] },
-          ...(institutionId ? { firma: { institutionId } } : {}),
+          ...(institutionId ? { institutionId } : {}),
+          branchId: branch.branchId,
         },
         include: { firma: { select: { name: true } } },
       }),
       prisma.patient.count({
         where: institutionId
-          ? { createdAt: dateFilter, institutionId }
+          ? { createdAt: dateFilter, institutionId, homeBranchId: branch.branchId }
           : doctorIds.length > 0
           ? { createdAt: dateFilter, ...institutionPatientScope }
           : { createdAt: dateFilter },
@@ -140,7 +159,7 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
             { status: "GECIKTI" },
             { status: "BEKLIYOR", vadeDate: { lt: overdueTodayStart } },
           ],
-          ...(institutionId ? { plan: { patient: { institutionId } } } : {}),
+          ...(institutionId ? { plan: { institutionId, branchId: branch.branchId } } : {}),
         },
       }),
     ]);
@@ -166,7 +185,7 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
   }
 
   // ── Lab maliyeti özeti ─────────────────────────────────────────────────────
-  const totalLabCost = labOrders.reduce((s: number, o: any) => s + Number(o.price || 0), 0);
+  const totalLabCost = labInvoices.reduce((s: number, inv: any) => s + Number(inv.amount || 0), 0);
 
   // ── Firma alımları (tedarikçi) ─────────────────────────────────────────────
   const totalFirmaAlim = firmaIslemler.reduce((s: number, f: any) => s + Number(f.tutar), 0);
@@ -211,6 +230,7 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
         status: "ACTIVE",
         createdAt: { gte: yearStart, lte: yearEnd },
         ...(institutionId ? { institutionId } : {}),
+        branchId: branch.branchId,
       },
     }),
     (prisma as any).expense.findMany({
@@ -218,6 +238,7 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
         tarih: { gte: yearStart, lte: yearEnd },
         status: { not: "IPTAL" },
         ...(institutionId ? { institutionId } : {}),
+        branchId: branch.branchId,
       },
       select: { tutar: true, kdvOrani: true },
     }),
@@ -248,16 +269,17 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
     (prisma as any).labOrder.count({
       where: {
         status: "DEVAM_EDIYOR",
-        ...(institutionId ? { patient: { institutionId } } : {}),
+        ...(institutionId ? { institutionId } : {}),
+        branchId: branch.branchId,
       },
     }),
     (prisma as any).patientFollowUp.count({
       where: {
         status: "ACIK",
-        ...(institutionId ? { patient: { institutionId } } : {}),
+        ...(institutionId ? { patient: { institutionId, homeBranchId: branch.branchId } } : {}),
       },
     }),
-    buildDataConsistencyReport(institutionId),
+    buildDataConsistencyReport(institutionId, branch.branchId),
   ]);
 
   const dayCloseChecks = [

@@ -4,10 +4,13 @@ import { requireAuth, withApiTiming } from "@/lib/api";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { stripSystemTags } from "@/lib/format-text";
 import { isValidDateKey, turkeyDateKey, turkeyDayRangeUtc } from "@/lib/tz";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export const GET = withApiTiming("finance", async function GET(request: NextRequest) {
   const auth = await requireAuth("finance:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
   const institutionId = auth.user.institutionId;
 
@@ -43,7 +46,7 @@ export const GET = withApiTiming("finance", async function GET(request: NextRequ
 
   const institutionDoctors = institutionId
     ? await prisma.user.findMany({
-        where: effectiveDoctorWhere(institutionId),
+        where: effectiveDoctorWhere(institutionId, branch.branchId),
         select: { id: true, fullName: true, kkYuzde: true, genelYuzde: true, maasYuzde: true },
       })
     : [];
@@ -76,15 +79,22 @@ export const GET = withApiTiming("finance", async function GET(request: NextRequ
   const [examinations, doctorPayments, doctorPayoutExpenses, allPatientPayments, labInvoices] = await Promise.all([
     // Bu doktorun yaptığı ücretlendirilebilir tedaviler
     prisma.examination.findMany({
-      where: hasScopedDoctors ? { doctorId: doctorIdFilter, ...dateFilter, ...treatmentOnlyWhere } : { ...dateFilter, ...treatmentOnlyWhere },
+      where: { ...(institutionId ? { institutionId } : {}), branchId: branch.branchId, ...(hasScopedDoctors ? { doctorId: doctorIdFilter } : {}), ...dateFilter, ...treatmentOnlyWhere },
       select: { patientId: true, doctorId: true, treatmentName: true, toothNo: true, amount: true },
       orderBy: { diagnosedAt: "desc" }
     }),
-    // Kurumun bu doktora yaptığı ödemeler — eski (Payment.doctorId) akış
+    // Kurumun bu doktora yaptığı ödemeler — eski (Payment.doctorId, patientId
+    // boş) "hakediş öde" akışı. patientId: null şartı kritik: hasta tahsilatı
+    // POST /api/payments'ta artık doctorId de zorunlu olduğu için bu şart
+    // olmadan HER hasta ödemesi burada "doktora yapılan hakediş ödemesi"
+    // sanılıp "earned" tutarına sızıyordu (bkz. denetim raporu — hakedis.ts'teki
+    // computeDoctorMonthlyOdenen ile aynı ayrım burada da uygulanmalı).
     prisma.payment.findMany({
       where: {
         status: "ACTIVE",
+        patientId: null,
         ...(institutionId ? { institutionId } : {}),
+        branchId: branch.branchId,
         ...(hasScopedDoctors ? { doctorId: doctorIdFilter } : {}),
         ...payDateFilter,
       },
@@ -97,18 +107,23 @@ export const GET = withApiTiming("finance", async function GET(request: NextRequ
     prisma.expense.findMany({
       where: {
         status: "AKTIF",
+        ...(institutionId ? { institutionId } : {}),
+        branchId: branch.branchId,
         doctorId: hasScopedDoctors ? doctorIdFilter : { not: null },
         ...expenseDateFilter,
       },
       select: { id: true, tarih: true, tutar: true, description: true },
       orderBy: { tarih: "desc" },
     }),
-    // Tüm hasta ödemeleri (patientId üzerinden)
+    // Tüm hasta ödemeleri (patientId üzerinden) — doctorId artık hasta
+    // tahsilatlarında da zorunlu dolduğu için ayrım "doctorId: null" ile değil
+    // "patientId: not null" ile yapılır (bkz. yukarıdaki doctorPayments notu).
     prisma.payment.findMany({
       where: {
         status: "ACTIVE",
         ...(institutionId ? { institutionId } : {}),
-        doctorId: null,
+        branchId: branch.branchId,
+        patientId: { not: null },
         ...payDateFilter,
         ...(hasScopedDoctors
           ? {
@@ -127,7 +142,10 @@ export const GET = withApiTiming("finance", async function GET(request: NextRequ
     }),
     prisma.labOrderInvoice.findMany({
       where: {
+        status: "ACTIVE",
         labOrder: {
+          ...(institutionId ? { institutionId } : {}),
+          branchId: branch.branchId,
           ...(hasScopedDoctors ? { doctorId: doctorIdFilter } : {}),
         },
         ...(fromDate || toDate

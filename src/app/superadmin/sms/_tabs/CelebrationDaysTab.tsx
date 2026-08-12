@@ -43,16 +43,21 @@ export default function CelebrationDaysTab() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
-    fetch("/api/superadmin/celebration-days")
-      .then((r) => r.json())
-      .then((d) => setDays(Array.isArray(d) ? d : []))
-      .catch(() => setDays([]))
-      .finally(() => setLoading(false));
+    try {
+      const response = await fetch("/api/superadmin/celebration-days", { cache: "no-store" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.message || "Özel günler yüklenemedi.");
+      setDays(Array.isArray(data) ? data : []);
+    } catch (error) {
+      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "Özel günler yüklenemedi.", type: "error" });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
 
   const openCreate = () => {
     setEditing(null);

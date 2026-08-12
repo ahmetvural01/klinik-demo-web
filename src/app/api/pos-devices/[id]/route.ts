@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -14,6 +15,8 @@ export async function PUT(request: NextRequest, props: Params) {
   const params = await props.params;
   const auth = await requireAuth("settings:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
   const body = await request.json();
   if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -23,6 +26,7 @@ export async function PUT(request: NextRequest, props: Params) {
     where: {
       id: params.id,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      branchId: branch.branchId,
     },
   });
   if (!existing) return NextResponse.json({ message: "POS cihazı bulunamadı" }, { status: 404 });
@@ -34,7 +38,13 @@ export async function PUT(request: NextRequest, props: Params) {
   }
 
   const updated = await (prisma as any).posDevice.update({
-    where: { id: existing.id },
+    where: {
+      id_institutionId_branchId: {
+        id: existing.id,
+        institutionId: existing.institutionId,
+        branchId: existing.branchId,
+      },
+    },
     data: {
       ...(body.name     !== undefined && { name:     body.name.trim() }),
       ...(body.isActive !== undefined && { isActive: body.isActive }),
@@ -69,23 +79,31 @@ export async function DELETE(_: NextRequest, props: Params) {
   const params = await props.params;
   const auth = await requireAuth("settings:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
   const existing = await (prisma as any).posDevice.findFirst({
     where: {
       id: params.id,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      branchId: branch.branchId,
     },
   });
   if (!existing) return NextResponse.json({ message: "POS cihazı bulunamadı" }, { status: 404 });
 
-  const paymentCount = await prisma.payment.count({ where: { posId: existing.id } });
+  const paymentCount = await prisma.payment.count({ where: { posId: existing.id, branchId: branch.branchId } });
   if (paymentCount > 0) {
-    const deactivated = await (prisma as any).posDevice.update({ where: { id: existing.id }, data: { isActive: false } });
+    const deactivated = await (prisma as any).posDevice.update({
+      where: { id_institutionId_branchId: { id: existing.id, institutionId: existing.institutionId, branchId: existing.branchId } },
+      data: { isActive: false },
+    });
     await writeAudit(auth.user.id, "POS_DEACTIVATE", `Geçmiş tahsilatı bulunan POS pasife alındı: ${deactivated.name}`);
     return NextResponse.json({ ok: true, deactivated: true, message: "Geçmiş tahsilatlar korundu; POS cihazı pasife alındı." });
   }
 
-  const deleted = await (prisma as any).posDevice.delete({ where: { id: existing.id } });
+  const deleted = await (prisma as any).posDevice.delete({
+    where: { id_institutionId_branchId: { id: existing.id, institutionId: existing.institutionId, branchId: existing.branchId } },
+  });
   await writeAudit(auth.user.id, "POS_DELETE", `POS cihazı silindi: ${deleted.name}`);
   return NextResponse.json({ ok: true, deactivated: false });
 }

@@ -46,11 +46,23 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
 
   const institution = await prisma.institution.findUnique({
     where: { id: params.id },
-    select: { maxActiveUsers: true, maxActiveDoctors: true },
+    select: {
+      maxActiveUsers: true,
+      maxActiveDoctors: true,
+      branches: { where: { isHeadquarters: true, isActive: true }, select: { id: true }, take: 1 },
+    },
   });
 
   if (!institution) {
     return NextResponse.json({ message: "Kurum bulunamadı" }, { status: 404 });
+  }
+  // Bu uçtan oluşturulan personel şube üyeliği olmadan yaratılıyordu — hiçbir
+  // UserBranch kaydı olmayan bir personel /api/staff altındaki hiçbir uçta
+  // (liste, detay, güncelleme) görünmüyordu ("personel bulunamadı" 404),
+  // çünkü tüm o uçlar branchMemberships üzerinden şube filtreler.
+  const headquartersBranchId = institution.branches[0]?.id;
+  if (!headquartersBranchId) {
+    return NextResponse.json({ message: "Kurumun aktif merkez şubesi bulunamadı" }, { status: 409 });
   }
 
   const [activeUsers, activeDoctors] = await Promise.all([
@@ -88,6 +100,9 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
       role: body.role || "DOKTOR",
       institutionId: params.id,
       isActive: true,
+      branchMemberships: {
+        create: { branchId: headquartersBranchId, isPrimary: true },
+      },
     },
     select: {
       id: true,

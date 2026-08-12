@@ -65,20 +65,28 @@ export default function AuditPage() {
   };
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
     fetch(`/api/superadmin/audit?${buildParams(true).toString()}`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        const data = await r.json().catch(() => null);
+        if (!r.ok) throw new Error(data?.message || "Denetim kayıtları yüklenemedi.");
+        return data;
+      })
       .then((d) => {
+        if (controller.signal.aborted) return;
         setLogs(Array.isArray(d) ? d : d.logs ?? []);
         setTotal(d.total ?? 0);
         setTotalPages(d.totalPages ?? 1);
       })
-      .catch(() => {
-        setLogs([]);
-        setTotal(0);
-        setTotalPages(1);
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "Denetim kayıtları yüklenemedi.", type: "error" });
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, debouncedSearch, startDate, endDate]);
 

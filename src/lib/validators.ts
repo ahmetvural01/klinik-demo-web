@@ -115,13 +115,13 @@ export const APPOINTMENT_STATUS_VALUES = [
 ] as const;
 
 export const appointmentSchema = z.object({
-  patientId: z.string().min(1),
-  doctorId: z.string().min(1),
+  patientId: z.string().trim().min(1).max(80),
+  doctorId: z.string().trim().min(1).max(80),
   clinicUnitId: z.string().trim().min(1).max(80).nullable().optional(),
   startAt: z.string().datetime(),
   endAt: z.string().datetime(),
-  colorCode: z.string().default("#2a9d8f"),
-  note: z.string().optional(),
+  colorCode: z.string().trim().regex(/^#[0-9a-fA-F]{6}$/).default("#2a9d8f"),
+  note: z.string().max(5000).optional(),
   type: z.enum(["STANDART", "KONTROL", "ACIL"]).default("STANDART"),
   status: z.enum(APPOINTMENT_STATUS_VALUES).default("BEKLIYOR"),
   smsInfo: z.boolean().default(true),
@@ -373,6 +373,7 @@ export const publicBookingSendCodeSchema = z.object({
 
 export const publicBookingSchema = z.object({
   kurum: z.string().trim().min(1, "Kurum belirtilmedi"),
+  branchId: z.preprocess(emptyToNull, z.string().nullable()),
   fullName: z.string().trim().min(3, "Ad soyad zorunlu"),
   phone: z.string().trim().regex(PHONE_REGEX, PHONE_MESSAGE),
   code: z.string().trim().regex(/^\d{6}$/, "Doğrulama kodu 6 haneli olmalıdır"),

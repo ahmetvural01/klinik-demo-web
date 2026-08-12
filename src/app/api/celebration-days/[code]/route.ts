@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAnyAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 
 export async function PATCH(req: NextRequest, props: { params: Promise<{ code: string }> }) {
   const params = await props.params;
-  const auth = await requireAuth("sms:write");
+  const auth = await requireAnyAuth(["sms:write", "whatsapp:write"]);
   if (auth.error) return auth.error;
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Yalnızca klinik kullanıcıları güncelleyebilir." }, { status: 403 });

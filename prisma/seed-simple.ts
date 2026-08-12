@@ -1,3 +1,4 @@
+/* eslint-disable no-console -- Seed progress belongs in terminal output. */
 import bcrypt from "bcryptjs";
 import { PrismaClient, Role } from "@prisma/client";
 
@@ -34,6 +35,12 @@ async function main() {
 
   if (!institution) throw new Error("Institution creation failed");
 
+  const branch = await prisma.clinicBranch.upsert({
+    where: { institutionId_slug: { institutionId: institution.id, slug: "merkez" } },
+    update: { isActive: true, isHeadquarters: true },
+    create: { institutionId: institution.id, name: "Merkez Şube", code: "MRK", slug: "merkez", isHeadquarters: true },
+  });
+
   // Create Admin User
   const admin = await prisma.user.create({
     data: {
@@ -51,6 +58,14 @@ async function main() {
       }
     }
   }).catch(() => null);
+
+  if (admin) {
+    await prisma.userBranch.upsert({
+      where: { userId_branchId: { userId: admin.id, branchId: branch.id } },
+      update: { isActive: true, isPrimary: true },
+      create: { institutionId: institution.id, userId: admin.id, branchId: branch.id, isPrimary: true },
+    });
+  }
 
   // Create Setting
   await prisma.setting.create({
@@ -78,3 +93,4 @@ main()
     process.exit(1);
   })
   .finally(() => prisma.$disconnect());
+/* eslint-disable no-console -- Seed progress belongs in terminal output. */

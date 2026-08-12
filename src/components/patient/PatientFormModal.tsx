@@ -116,13 +116,16 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
     if (!patientId) {
       initialTcNoRef.current = "";
       setForm(INITIAL_FORM);
+      setLoading(false);
       return;
     }
+    const controller = new AbortController();
     setLoading(true);
-    fetch(`/api/patients/${patientId}`, { cache: "no-store" })
+    fetch(`/api/patients/${patientId}`, { cache: "no-store", signal: controller.signal })
       .then(async (res) => {
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body?.message || "Hasta bilgileri alınamadı");
+        if (controller.signal.aborted) return;
         initialTcNoRef.current = body.tcNo || "";
         setForm({
           tcNo: body.tcNo || "", isForeigner: body.isForeigner || false,
@@ -141,8 +144,15 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
           hasContagiousDisease: body.hasContagiousDisease || false, contagiousDiseaseNote: body.contagiousDiseaseNote || "",
         });
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Hasta bilgileri alınamadı"))
-      .finally(() => setLoading(false));
+      .catch((err) => {
+        if (!controller.signal.aborted) {
+          setError(err instanceof Error ? err.message : "Hasta bilgileri alınamadı");
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
   }, [open, patientId]);
 
   // Olası mükerrer kayıt uyarısı — sadece yeni kayıtta anlamlı.
@@ -150,14 +160,26 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
     if (isEdit || !open) { setDuplicates([]); return; }
     const searchValue = form.tcNo.length >= 5 ? form.tcNo : form.phone.length >= 7 ? form.phone : form.fullName.trim().length >= 3 ? form.fullName.trim() : "";
     if (!searchValue) { setDuplicates([]); return; }
+    const controller = new AbortController();
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/patients?q=${encodeURIComponent(searchValue)}&take=5&summary=false`, { cache: "no-store" });
+        const res = await fetch(`/api/patients?q=${encodeURIComponent(searchValue)}&take=5&summary=false`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!res.ok) throw new Error("Benzer hasta sorgusu başarısız");
         const body = await res.json().catch(() => ({}));
-        setDuplicates(Array.isArray(body?.patients) ? body.patients : []);
-      } catch { setDuplicates([]); }
+        if (!controller.signal.aborted) {
+          setDuplicates(Array.isArray(body?.patients) ? body.patients : []);
+        }
+      } catch {
+        if (!controller.signal.aborted) setDuplicates([]);
+      }
     }, 350);
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, [isEdit, open, form.fullName, form.phone, form.tcNo]);
 
   const medicalRiskCount = useMemo(
@@ -315,7 +337,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
                 <button
                   key={section.key}
                   type="button"
-                  onClick={() => document.getElementById(`patient-form-${section.key}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                  onClick={() => document.getElementById(`patient-form-${section.key}`)?.scrollIntoView({ behavior: "auto", block: "start" })}
                   className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 transition hover:border-primary/30 hover:text-primary"
                 >
                   {section.label}
@@ -396,6 +418,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
                           phoneCountryCode: value,
                           phone: limitLocalPhoneInput(current.phone, value),
                         }));
+                        setDirty(true);
                         setFieldErrors((current) => {
                           if (!current.phone) return current;
                           const next = { ...current };

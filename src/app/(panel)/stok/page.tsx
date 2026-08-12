@@ -20,6 +20,7 @@ import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { CountUp } from "@/components/ui/CountUp";
 import { Spinner } from "@/components/ui/Spinner";
 import { usePermissions } from "@/components/auth/PermissionProvider";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 
 const StockEmptyIcon = createSceneIllustration("stok");
 
@@ -58,6 +59,8 @@ export default function StokPage() {
   const canDeleteStock = can("stock:delete");
   const [items,      setItems]      = useState<StockItem[]>([]);
   const [loading,    setLoading]    = useState(false);
+  const [loadError,  setLoadError]  = useState<string | null>(null);
+  const loadSequenceRef = useRef(0);
   const [category,   setCategory]   = useState("Tümü");
   const [statusFilter, setStatusFilter] = useState<"TUMU" | "KRITIK" | "SKT_YAKIN" | "SKT_GECMIS">("TUMU");
   const [search,     setSearch]     = useState("");
@@ -128,22 +131,31 @@ export default function StokPage() {
   }, [category]);
 
   async function fetchItems() {
+    const sequence = ++loadSequenceRef.current;
     setLoading(true);
+    setLoadError(null);
     const qs = category !== "Tümü" ? `?category=${encodeURIComponent(category)}` : "";
     try {
       const r = await fetch(`/api/stock${qs}`, { cache: "no-store" });
       const d = await r.json().catch(() => null);
       if (!r.ok) throw new Error(d?.message || "Stok verileri yüklenemedi.");
+      if (sequence !== loadSequenceRef.current) return;
       setItems(Array.isArray(d) ? d : []);
     } catch (error) {
-      setItems([]);
-      showToastSafe({ title: "Stok yüklenemedi", message: error instanceof Error ? error.message : "Stok verileri yüklenemedi.", type: "error" });
+      if (sequence !== loadSequenceRef.current) return;
+      const message = error instanceof Error ? error.message : "Stok verileri yüklenemedi.";
+      setLoadError(message);
+      showToastSafe({ title: "Stok yüklenemedi", message, type: "error" });
     } finally {
-      setLoading(false);
+      if (sequence === loadSequenceRef.current) setLoading(false);
     }
   }
 
   function upsertItem(nextItem: StockItem) {
+    // Başarılı mutasyondan önce başlamış bir liste isteği yeni kaydı geri alamaz.
+    loadSequenceRef.current += 1;
+    setLoading(false);
+    setLoadError(null);
     setItems((current) => {
       const exists = current.some((item) => item.id === nextItem.id);
       if (!exists) return [...current, nextItem].sort((a, b) => a.name.localeCompare(b.name, "tr"));
@@ -296,8 +308,12 @@ export default function StokPage() {
     try {
       const res = await fetch(`/api/stock/${item.id}`, { cache: "no-store" });
       const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        showToastSafe({ message: body?.message || "Stok hareketleri yüklenemedi", type: "error" });
+      }
       setHistoryMovements(res.ok && Array.isArray(body?.movements) ? body.movements : []);
     } catch {
+      showToastSafe({ message: "Stok hareketleri yüklenemedi", type: "error" });
       setHistoryMovements([]);
     } finally {
       setHistoryLoading(false);
@@ -516,7 +532,9 @@ export default function StokPage() {
         <StatsCard icon={PackageX} label="SKT Geçmiş" value={<><CountUp value={expiredCount} /> kalem</>} tone={expiredCount > 0 ? "critical" : "neutral"} badge={expiredCount > 0 ? "Kritik" : undefined} />
       </div>
 
-      {loading && filtered.length === 0 ? (
+      {loadError ? (
+        <LoadErrorState message={loadError} onRetry={() => void fetchItems()} />
+      ) : loading && filtered.length === 0 ? (
         <div className="ui-surface flex flex-col items-center gap-2 py-12 text-sm text-slate-400">
           <Spinner className="h-5 w-5 text-primary" />
           Stok kalemleri yükleniyor...
@@ -552,37 +570,37 @@ export default function StokPage() {
       >
         <div className="space-y-4">
           <FormField label="Malzeme Adı" required>
-            <input value={newItem.name} onChange={e => setNewItem(i => ({ ...i, name: e.target.value }))} className={inp + " w-full"} placeholder="Anestezi kartuşu, implant…" />
+            <input value={newItem.name} onChange={e => setNewItem(i => ({ ...i, name: e.target.value }))} className={`${inp} w-full`} placeholder="Anestezi kartuşu, implant…" />
           </FormField>
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Kategori">
-              <select value={newItem.category} onChange={e => setNewItem(i => ({ ...i, category: e.target.value }))} className={inp + " w-full"}>
+              <select value={newItem.category} onChange={e => setNewItem(i => ({ ...i, category: e.target.value }))} className={`${inp} w-full`}>
                 {CATEGORIES.slice(1).map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </FormField>
             <FormField label="Birim">
-              <select value={newItem.unit} onChange={e => setNewItem(i => ({ ...i, unit: e.target.value }))} className={inp + " w-full"}>
+              <select value={newItem.unit} onChange={e => setNewItem(i => ({ ...i, unit: e.target.value }))} className={`${inp} w-full`}>
                 {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
               </select>
             </FormField>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Başlangıç Stok">
-              <input type="number" value={newItem.quantity} onChange={e => setNewItem(i => ({ ...i, quantity: e.target.value }))} className={inp + " w-full"} placeholder="0" />
+              <input type="number" value={newItem.quantity} onChange={e => setNewItem(i => ({ ...i, quantity: e.target.value }))} className={`${inp} w-full`} placeholder="0" />
             </FormField>
             <FormField label="Min. Stok">
-              <input type="number" value={newItem.minQuantity} onChange={e => setNewItem(i => ({ ...i, minQuantity: e.target.value }))} className={inp + " w-full"} placeholder="5" />
+              <input type="number" value={newItem.minQuantity} onChange={e => setNewItem(i => ({ ...i, minQuantity: e.target.value }))} className={`${inp} w-full`} placeholder="5" />
             </FormField>
           </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <FormField label="Barkod">
-              <input value={newItem.barcode} onChange={e => setNewItem(i => ({ ...i, barcode: e.target.value }))} className={inp + " w-full font-mono"} placeholder="CODE128" />
+              <input value={newItem.barcode} onChange={e => setNewItem(i => ({ ...i, barcode: e.target.value }))} className={`${inp} w-full font-mono`} placeholder="CODE128" />
             </FormField>
             <FormField label="Son Kullanma">
-              <input type="date" value={newItem.expiresAt} onChange={e => setNewItem(i => ({ ...i, expiresAt: e.target.value }))} className={inp + " w-full"} />
+              <input type="date" value={newItem.expiresAt} onChange={e => setNewItem(i => ({ ...i, expiresAt: e.target.value }))} className={`${inp} w-full`} />
             </FormField>
             <FormField label="Raf / Konum">
-              <input value={newItem.storageLocation} onChange={e => setNewItem(i => ({ ...i, storageLocation: e.target.value }))} className={inp + " w-full"} placeholder="A-2, depo" />
+              <input value={newItem.storageLocation} onChange={e => setNewItem(i => ({ ...i, storageLocation: e.target.value }))} className={`${inp} w-full`} placeholder="A-2, depo" />
             </FormField>
           </div>
           <p className="text-xs text-slate-500">Bu form yalnızca ürün kartı açar. Tedarikçi, fatura, alış miktarı ve fiyatı Satın Alma & Tedarikçiler ekranındaki satın alma kaydında tutulur.</p>
@@ -661,32 +679,32 @@ export default function StokPage() {
       >
         <div className="space-y-4">
           <FormField label="Malzeme Adı" required>
-            <input value={editForm.name} onChange={e => setEditForm(i => ({ ...i, name: e.target.value }))} className={inp + " w-full"} />
+            <input value={editForm.name} onChange={e => setEditForm(i => ({ ...i, name: e.target.value }))} className={`${inp} w-full`} />
           </FormField>
           <div className="grid grid-cols-2 gap-3">
             <FormField label="Kategori">
-              <select value={editForm.category} onChange={e => setEditForm(i => ({ ...i, category: e.target.value }))} className={inp + " w-full"}>
+              <select value={editForm.category} onChange={e => setEditForm(i => ({ ...i, category: e.target.value }))} className={`${inp} w-full`}>
                 {CATEGORIES.slice(1).map(c => <option key={c} value={c}>{c}</option>)}
               </select>
             </FormField>
             <FormField label="Birim">
-              <select value={editForm.unit} onChange={e => setEditForm(i => ({ ...i, unit: e.target.value }))} className={inp + " w-full"}>
+              <select value={editForm.unit} onChange={e => setEditForm(i => ({ ...i, unit: e.target.value }))} className={`${inp} w-full`}>
                 {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
               </select>
             </FormField>
           </div>
           <FormField label="Minimum Stok">
-            <input type="number" value={editForm.minQuantity} onChange={e => setEditForm(i => ({ ...i, minQuantity: e.target.value }))} className={inp + " w-full"} />
+            <input type="number" value={editForm.minQuantity} onChange={e => setEditForm(i => ({ ...i, minQuantity: e.target.value }))} className={`${inp} w-full`} />
           </FormField>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <FormField label="Barkod">
-              <input value={editForm.barcode} onChange={e => setEditForm(i => ({ ...i, barcode: e.target.value }))} className={inp + " w-full font-mono"} />
+              <input value={editForm.barcode} onChange={e => setEditForm(i => ({ ...i, barcode: e.target.value }))} className={`${inp} w-full font-mono`} />
             </FormField>
             <FormField label="Son Kullanma">
-              <input type="date" value={editForm.expiresAt} onChange={e => setEditForm(i => ({ ...i, expiresAt: e.target.value }))} className={inp + " w-full"} />
+              <input type="date" value={editForm.expiresAt} onChange={e => setEditForm(i => ({ ...i, expiresAt: e.target.value }))} className={`${inp} w-full`} />
             </FormField>
             <FormField label="Raf / Konum">
-              <input value={editForm.storageLocation} onChange={e => setEditForm(i => ({ ...i, storageLocation: e.target.value }))} className={inp + " w-full"} />
+              <input value={editForm.storageLocation} onChange={e => setEditForm(i => ({ ...i, storageLocation: e.target.value }))} className={`${inp} w-full`} />
             </FormField>
           </div>
         </div>
@@ -716,10 +734,10 @@ export default function StokPage() {
             </div>
           )}
           <FormField label="Çıkış Miktarı">
-            <input type="number" value={move.quantity} onChange={e => setMove(m => ({ ...m, quantity: e.target.value }))} min="1" className={inp + " w-full"} placeholder="0" />
+            <input type="number" value={move.quantity} onChange={e => setMove(m => ({ ...m, quantity: e.target.value }))} min="1" className={`${inp} w-full`} placeholder="0" />
           </FormField>
           <FormField label="Açıklama">
-            <input value={move.note} onChange={e => setMove(m => ({ ...m, note: e.target.value }))} className={inp + " w-full"} placeholder="Hangi işlemde kullanıldı?" />
+            <input value={move.note} onChange={e => setMove(m => ({ ...m, note: e.target.value }))} className={`${inp} w-full`} placeholder="Hangi işlemde kullanıldı?" />
           </FormField>
         </div>
       </Modal>

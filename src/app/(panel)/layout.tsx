@@ -14,6 +14,7 @@ import { PermissionProvider } from "@/components/auth/PermissionProvider";
 import { PanelRouteGuard } from "@/components/auth/PanelRouteGuard";
 import { getPermissionMap } from "@/lib/role-permission-store";
 import type { Role } from "@prisma/client";
+import { getBranchScopedPermissions, resolveBranchContext } from "@/lib/branch-context";
 
 export default async function PanelLayout({ children }: { children: React.ReactNode }) {
   const user = await getCurrentUserFast();
@@ -24,21 +25,45 @@ export default async function PanelLayout({ children }: { children: React.ReactN
 
   // Fotoğraf JWT'ye gömülmez (data-URL büyük olabilir) — sidebar/topbar
   // avatarı için tek, hafif bir DB sorgusuyla ayrıca alınır.
-  const profile = await prisma.profile.findUnique({ where: { userId: user.id }, select: { photoUrl: true } }).catch(() => null);
+  const [profile, institutionFeatures, branchContext] = await Promise.all([
+    prisma.profile.findUnique({ where: { userId: user.id }, select: { photoUrl: true } }).catch(() => null),
+    user.institution
+      ? prisma.institution.findUnique({
+          where: { id: user.institution },
+          select: { whatsappEnabled: true },
+        }).catch(() => null)
+      : Promise.resolve(null),
+    resolveBranchContext({
+      id: user.id,
+      role: user.rawRole,
+      institutionId: user.institution || null,
+      ghost: user.ghost,
+    }),
+  ]);
   const photoUrl = profile?.photoUrl || null;
   const permissionMap = await getPermissionMap();
-  const permissions = user.ghost ? ["*"] : (permissionMap[user.role as Role] || []);
+  const permissions = getBranchScopedPermissions(
+    branchContext,
+    permissionMap[user.role as Role] || [],
+    Boolean(user.ghost),
+  );
+  const scopeKey = `${user.id}:${user.institution || "platform"}:${branchContext.activeBranchId || "none"}`;
 
   const institutionName = user.ghost
     ? (await prisma.institution.findUnique({ where: { id: user.institution }, select: { name: true } }).catch(() => null))?.name || ""
     : "";
 
   return (
-    <PermissionProvider role={user.role} permissions={permissions}>
+    <PermissionProvider
+      role={user.role}
+      permissions={permissions}
+      features={{ whatsapp: Boolean(institutionFeatures?.whatsappEnabled) }}
+      scopeKey={scopeKey}
+    >
     <div className="panel-body flex h-dvh overflow-hidden bg-[rgb(var(--app-bg))]">
       <PanelRealtimeSync />
       <PanelRouteWarmup />
-      <PanelCacheReset />
+      <PanelCacheReset scopeKey={scopeKey} />
       <Sidebar user={{ fullName: user.fullName, role: user.rawRole, photoUrl }} />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Topbar user={{ fullName: user.fullName, role: user.role, photoUrl }} />

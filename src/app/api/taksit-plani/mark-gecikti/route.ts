@@ -8,11 +8,14 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, bumpRealtimeInstitution, writeAudit } from "@/lib/api";
 import { turkeyTodayStartUtc } from "@/lib/tz";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export async function POST() {
   try {
     const auth = await requireAuth("installments:write");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ updated: 0, error: branch.message }, { status: 403 });
     if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
       return NextResponse.json({ updated: 0 }, { status: 403 });
     }
@@ -20,9 +23,7 @@ export async function POST() {
     // Vade günü Türkiye takvimiyle henüz "bugün" ise gecikmiş sayılmaz — sadece
     // Türkiye takviminde vade gününden sonraki gün başlayınca gecikti işaretlenir.
     const cutoff = turkeyTodayStartUtc();
-    const tenantWhere = auth.user.role !== "SUPERADMIN"
-      ? { plan: { patient: { institutionId: auth.user.institutionId } } }
-      : {};
+    const tenantWhere = { plan: { ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}), branchId: branch.branchId } };
 
     // Vadesi geçmiş BEKLIYOR taksitleri GECIKTI yap
     const result = await (prisma as any).taksit.updateMany({
@@ -44,7 +45,12 @@ export async function POST() {
       const ids = [...new Set(geciktiPlanIds.map((r: { planId: string }) => r.planId))];
       if (ids.length > 0) {
         await (prisma as any).taksitPlan.updateMany({
-          where: { id: { in: ids }, status: { notIn: ["TAMAMLANDI", "IPTAL"] } },
+          where: {
+            id: { in: ids },
+            institutionId: auth.user.institutionId,
+            branchId: branch.branchId,
+            status: { notIn: ["TAMAMLANDI", "IPTAL"] },
+          },
           data:  { status: "DEVAM_EDIYOR" },
         });
       }
@@ -67,15 +73,15 @@ export async function POST() {
 export async function GET() {
   const auth = await requireAuth("installments:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ pending: 0, error: branch.message }, { status: 403 });
   if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
     return NextResponse.json({ pending: 0 }, { status: 403 });
   }
 
   const count = await (prisma as any).taksit.count({
     where: {
-      ...(auth.user.role !== "SUPERADMIN"
-        ? { plan: { patient: { institutionId: auth.user.institutionId } } }
-        : {}),
+      plan: { ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}), branchId: branch.branchId },
       status: "BEKLIYOR",
       vadeDate: { lt: turkeyTodayStartUtc() },
     },

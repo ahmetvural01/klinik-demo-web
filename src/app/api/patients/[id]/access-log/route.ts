@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export const dynamic = "force-dynamic";
 
@@ -11,6 +12,8 @@ export async function GET(
   const params = await props.params;
   const auth = await requireAuth("patients:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   const patient = await prisma.patient.findFirst({
     where: {
@@ -18,6 +21,7 @@ export async function GET(
       ...(auth.user.institutionId
         ? { institutionId: auth.user.institutionId }
         : {}),
+      homeBranchId: branch.branchId,
     },
     select: { id: true },
   });

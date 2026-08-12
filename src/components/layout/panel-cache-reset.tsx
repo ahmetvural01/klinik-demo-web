@@ -29,10 +29,11 @@ const CACHE_KEYS = [
   "muhasebe:center:v1",
 ];
 
-export function PanelCacheReset() {
+export function PanelCacheReset({ scopeKey }: { scopeKey: string }) {
   useEffect(() => {
+    const expected = `${PANEL_CACHE_VERSION}:${scopeKey}`;
     const current = sessionStorage.getItem("panel-cache-version");
-    if (current === PANEL_CACHE_VERSION) return;
+    if (current === expected) return;
 
     for (const key of CACHE_KEYS) {
       sessionStorage.removeItem(key);
@@ -50,12 +51,17 @@ export function PanelCacheReset() {
       for (let i = localStorage.length - 1; i >= 0; i -= 1) {
         const key = localStorage.key(i);
         if (!key) continue;
-        if (key.startsWith("panel-alerts:")) localStorage.removeItem(key);
+        if (
+          key.startsWith("panel-alerts:")
+          || key.startsWith("clinic-unread-messages:")
+          || key.startsWith("clinic-messages-last-seen:")
+          || key.startsWith("klinikcep-active-price-list:")
+        ) localStorage.removeItem(key);
       }
     } catch {}
 
-    sessionStorage.setItem("panel-cache-version", PANEL_CACHE_VERSION);
-  }, []);
+    sessionStorage.setItem("panel-cache-version", expected);
+  }, [scopeKey]);
 
   return null;
 }

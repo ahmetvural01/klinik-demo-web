@@ -10,12 +10,20 @@ type RebuildOptions = {
 export async function rebuildFirmaPaymentAllocations(
   tx: TxClient,
   firmaId: string,
+  branchId: string,
   options: RebuildOptions = {},
 ) {
+  const firma = await tx.firma.findFirst({
+    where: { id: firmaId, branchId },
+    select: { institutionId: true },
+  });
+  if (!firma) throw new Error("Firma kapsamı bulunamadı");
+
   const [debts, payments, existing] = await Promise.all([
     tx.firmaIslem.findMany({
       where: {
         firmaId,
+        branchId,
         status: "AKTIF",
         islemTipi: { in: ["ALIM", "HIZMET"] },
       },
@@ -25,6 +33,7 @@ export async function rebuildFirmaPaymentAllocations(
     tx.firmaIslem.findMany({
       where: {
         firmaId,
+        branchId,
         status: "AKTIF",
         islemTipi: "ODEME",
       },
@@ -32,7 +41,11 @@ export async function rebuildFirmaPaymentAllocations(
       orderBy: [{ tarih: "asc" }, { createdAt: "asc" }, { id: "asc" }],
     }),
     tx.firmaPaymentAllocation.findMany({
-      where: { firmaId },
+      where: {
+        firmaId,
+        paymentIslem: { branchId },
+        debtIslem: { branchId },
+      },
       select: { paymentIslemId: true, debtIslemId: true, createdAt: true },
       orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     }),
@@ -45,13 +58,23 @@ export async function rebuildFirmaPaymentAllocations(
     existingPreference.set(allocation.paymentIslemId, list);
   }
 
-  await tx.firmaPaymentAllocation.deleteMany({ where: { firmaId } });
+  await tx.firmaPaymentAllocation.deleteMany({
+    where: {
+      firmaId,
+      OR: [
+        { paymentIslem: { branchId } },
+        { debtIslem: { branchId } },
+      ],
+    },
+  });
 
   const debtRemaining = new Map<string, number>(
     debts.map((debt: { id: string; tutar: unknown }) => [debt.id, toCents(debt.tutar)]),
   );
   const debtIds = debts.map((debt: { id: string }) => debt.id);
   const rows: Array<{
+    institutionId: string;
+    branchId: string;
     firmaId: string;
     paymentIslemId: string;
     debtIslemId: string;
@@ -72,6 +95,8 @@ export async function rebuildFirmaPaymentAllocations(
       if (remaining <= 0) continue;
       const allocated = Math.min(paymentRemaining, remaining);
       rows.push({
+        institutionId: firma.institutionId,
+        branchId,
         firmaId,
         paymentIslemId: payment.id,
         debtIslemId: debtId,

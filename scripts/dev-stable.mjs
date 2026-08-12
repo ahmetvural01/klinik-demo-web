@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { rm } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import "./ensure-postgres.mjs";
 
@@ -31,15 +31,44 @@ const print = (msg) => {
   console.log(`[dev-stable ${ts}] ${msg}`);
 };
 
+function stopChildProcess() {
+  if (!childProcess || childProcess.killed) return;
+  const pid = childProcess.pid;
+  if (!pid) return;
+
+  if (process.platform === "win32") {
+    const taskkill = spawn("taskkill", ["/pid", String(pid), "/t", "/f"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    taskkill.on("error", () => {
+      try {
+        childProcess.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
+    });
+    return;
+  }
+
+  try {
+    childProcess.kill("SIGTERM");
+  } catch {
+    // ignore
+  }
+}
+
 async function cleanupNextDist() {
-  for (let i = 0; i < 5; i += 1) {
+  for (let i = 0; i < 3; i += 1) {
     try {
+      await mkdir(NEXT_DIST_DIR, { recursive: true });
       await rm(NEXT_DIST_DIR, { recursive: true, force: true, maxRetries: 0 });
+      await mkdir(NEXT_DIST_DIR, { recursive: true });
       print(".next-dev temizlendi.");
       return;
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      print(`.next-dev temizleme denemesi basarisiz (${i + 1}/5): ${msg}`);
+      print(`.next-dev temizleme denemesi basarisiz (${i + 1}/3): ${msg}`);
       await sleep(500 + i * 250);
     }
   }
@@ -55,16 +84,14 @@ async function scheduleRestart(reason, forceCleanup = false) {
   }
 
   restartCount += 1;
-  const delay = Math.min(5000, 1000 + restartCount * 500);
+  const delay = Math.min(2500, 800 + restartCount * 300);
   print(`Yeniden baslatma planlandi (${reason}). ${delay}ms bekleniyor...`);
 
-  if (forceCleanup) {
+  if (forceCleanup && restartCount <= 2) {
     await cleanupNextDist();
   }
 
-  if (childProcess && !childProcess.killed) {
-    childProcess.kill("SIGTERM");
-  }
+  stopChildProcess();
 
   restartTimer = setTimeout(() => {
     restartInProgress = false;
@@ -75,7 +102,7 @@ async function scheduleRestart(reason, forceCleanup = false) {
 process.on("SIGINT", async () => {
   stopping = true;
   print("SIGINT alindi, supervisor kapaniyor.");
-  if (childProcess && !childProcess.killed) childProcess.kill("SIGTERM");
+  stopChildProcess();
   if (restartTimer) clearTimeout(restartTimer);
   process.exit(0);
 });
@@ -83,7 +110,7 @@ process.on("SIGINT", async () => {
 process.on("SIGTERM", async () => {
   stopping = true;
   print("SIGTERM alindi, supervisor kapaniyor.");
-  if (childProcess && !childProcess.killed) childProcess.kill("SIGTERM");
+  stopChildProcess();
   if (restartTimer) clearTimeout(restartTimer);
   process.exit(0);
 });
@@ -121,7 +148,7 @@ function run() {
       return;
     }
 
-    const shouldCleanup = code !== 0;
+    const shouldCleanup = code !== 0 && restartCount < 3;
     print(`next dev kapandi (code=${code ?? "null"}, signal=${signal ?? "null"}).`);
     await scheduleRestart("cikis algilandi", shouldCleanup);
   });

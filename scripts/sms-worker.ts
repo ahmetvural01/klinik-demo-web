@@ -10,7 +10,7 @@ async function main() {
   if (isSmsQueueConfigured()) {
     await runSmsWorker();
   }
-  console.warn(
+  console.log(
     process.env.ENABLE_IN_PROCESS_SCHEDULER === "true"
       ? "REDIS_URL tanımlı değil; toplu SMS kuyruğu kapalı, zamanlanmış işler çalışmaya devam ediyor."
       : "REDIS_URL tanımlı değil; bu worker için toplu SMS kuyruğu ve zamanlanmış işler kapalı.",

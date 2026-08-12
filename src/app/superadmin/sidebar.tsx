@@ -80,8 +80,6 @@ const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-const ALL_ITEMS = NAV_GROUPS.flatMap((g) => g.items);
-
 function SidebarNav({ visibleGroups, pathname, onNavigate }: { visibleGroups: NavGroup[]; pathname: string; onNavigate?: () => void }) {
   return (
     <nav className="flex-1 overflow-y-auto p-3">
@@ -121,18 +119,7 @@ function SidebarNav({ visibleGroups, pathname, onNavigate }: { visibleGroups: Na
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const [modules, setModules] = useState<string[]>([]);
   const [mobileOpen, setMobileOpen] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/auth/superadmin/permissions")
-      .then((r) => r.json())
-      .then((d: { modules?: string[] }) => {
-        if (Array.isArray(d.modules)) setModules(d.modules);
-        else setModules(ALL_ITEMS.map((i) => i.module));
-      })
-      .catch(() => setModules(ALL_ITEMS.map((i) => i.module)));
-  }, []);
 
   useEffect(() => {
     const h = () => setMobileOpen((v) => !v);
@@ -144,10 +131,7 @@ export default function Sidebar() {
     setMobileOpen(false);
   }, [pathname]);
 
-  const visibleGroups = NAV_GROUPS.map((group) => ({
-    ...group,
-    items: modules.length > 0 ? group.items.filter((item) => modules.includes(item.module)) : group.items,
-  })).filter((group) => group.items.length > 0);
+  const visibleGroups = NAV_GROUPS;
 
   return (
     <>

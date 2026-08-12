@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 
-export async function GET(req: NextRequest) {
+export async function GET(_req: NextRequest) {
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
       orderBy: { name: "asc" }
     });
     return NextResponse.json(cats);
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
   }
 }

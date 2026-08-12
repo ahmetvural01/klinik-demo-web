@@ -30,6 +30,15 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
     const current = await prisma.invoice.findUnique({ where: { id: params.id } });
     return NextResponse.json(current);
   }
+  const allowedTransitions: Record<string, ReadonlySet<string>> = {
+    PENDING: new Set(["OVERDUE", "PAID", "CANCELLED"]),
+    OVERDUE: new Set(["PAID", "CANCELLED"]),
+    PAID: new Set(),
+    CANCELLED: new Set(),
+  };
+  if (!allowedTransitions[existing.status]?.has(body.status)) {
+    return NextResponse.json({ message: "Bu fatura durum geçişine izin verilmiyor" }, { status: 409 });
+  }
 
   // Fatura durumu güncellemesi ile kurumun paymentGraceUntil senkronu TEK
   // transaction içinde yapılır: sync adımı (ör. geçici DB hatası) başarısız
@@ -39,13 +48,15 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
   // yutuluyordu).
   const invoice = await prisma.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "Institution" WHERE id = ${existing.institutionId} FOR UPDATE`;
-    const updated = await tx.invoice.update({
-      where: { id: params.id },
+    const changed = await tx.invoice.updateMany({
+      where: { id: params.id, status: existing.status },
       data: {
         status: body.status,
         paidAt: body.status === "PAID" ? new Date() : null,
       },
     });
+    if (changed.count !== 1) return null;
+    const updated = await tx.invoice.findUniqueOrThrow({ where: { id: params.id } });
 
     // Ödendi/iptal işaretlendiğinde veya tekrar açıldığında kurumun yazma
     // kısıtlaması (paymentGraceUntil) kalan ödenmemiş faturalara göre yeniden
@@ -54,6 +65,9 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
 
     return updated;
   });
+  if (!invoice) {
+    return NextResponse.json({ message: "Fatura başka bir işlem tarafından değiştirildi; listeyi yenileyin" }, { status: 409 });
+  }
 
   // requireAuth() kurum kısıtlama durumunu 60sn'lik in-process cache'ten
   // okuyor — bu invalidasyon olmadan süperadmin faturayı "Ödendi" işaretleyip

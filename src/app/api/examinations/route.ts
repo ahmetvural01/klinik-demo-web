@@ -3,17 +3,21 @@ import { prisma } from "@/lib/prisma";
 import { examinationSchema } from "@/lib/validators";
 import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export const GET = withApiTiming("examinations", async function GET(request: NextRequest) {
   const auth = await requireAuth("examinations:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
   const patientId = request.nextUrl.searchParams.get("patientId");
 
   const examinations = await prisma.examination.findMany({
     where: {
       ...(patientId ? { patientId } : {}),
-      ...(auth.user.role !== "SUPERADMIN" && auth.user.institutionId ? { patient: { institutionId: auth.user.institutionId } } : {}),
+      institutionId: auth.user.institutionId as string,
+      branchId: branch.branchId,
     },
     include: { patient: true, doctor: { select: { id: true, fullName: true } } },
     orderBy: { diagnosedAt: "desc" },
@@ -26,6 +30,8 @@ export const GET = withApiTiming("examinations", async function GET(request: Nex
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("examinations:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok || !auth.user.institutionId) return NextResponse.json({ message: branch.ok ? "Kurum bilgisi bulunamadı" : branch.message }, { status: 403 });
 
   const body = await request.json();
   const parsed = examinationSchema.safeParse(body);
@@ -34,38 +40,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Geçersiz muayene verisi" }, { status: 400 });
   }
 
-  let patientInfo: { id: string; fullName: string } | null = null;
-  let doctorInfo: { id: string; fullName: string } | null = null;
-  if (auth.user.role !== "SUPERADMIN") {
-    const [patient, doctor] = await Promise.all([
-      prisma.patient.findFirst({
-        where: { id: parsed.data.patientId, institutionId: auth.user.institutionId as string, archivedAt: null },
-        select: { id: true, fullName: true },
-      }),
-      prisma.user.findFirst({
-        where: { id: parsed.data.doctorId, ...effectiveDoctorWhere(auth.user.institutionId) },
-        select: { id: true, fullName: true },
-      }),
-    ]);
-    if (!patient) return NextResponse.json({ message: "Hasta bulunamadı" }, { status: 404 });
-    if (!doctor) return NextResponse.json({ message: "Doktor kurum kapsamı dışında" }, { status: 403 });
-    patientInfo = patient;
-    doctorInfo = doctor;
-  } else {
-    const [patient, doctor] = await Promise.all([
-      prisma.patient.findUnique({ where: { id: parsed.data.patientId }, select: { id: true, fullName: true } }),
-      prisma.user.findUnique({ where: { id: parsed.data.doctorId }, select: { id: true, fullName: true } }),
-    ]);
-    patientInfo = patient;
-    doctorInfo = doctor;
-  }
-  if (!patientInfo || !doctorInfo) {
-    return NextResponse.json({ message: "Hasta veya doktor bulunamadı" }, { status: 404 });
-  }
+  const [patientInfo, doctorInfo] = await Promise.all([
+    prisma.patient.findFirst({
+      where: { id: parsed.data.patientId, institutionId: auth.user.institutionId, homeBranchId: branch.branchId, archivedAt: null },
+      select: { id: true, fullName: true },
+    }),
+    prisma.user.findFirst({
+      where: { id: parsed.data.doctorId, ...effectiveDoctorWhere(auth.user.institutionId, branch.branchId) },
+      select: { id: true, fullName: true },
+    }),
+  ]);
+  if (!patientInfo) return NextResponse.json({ message: "Hasta bu şubede bulunamadı" }, { status: 404 });
+  if (!doctorInfo) return NextResponse.json({ message: "Doktor bu şubenin kapsamı dışında" }, { status: 403 });
 
   const examination = await prisma.examination.create({
     data: {
       ...parsed.data,
+      institutionId: auth.user.institutionId,
+      branchId: branch.branchId,
       diagnosedAt: new Date(parsed.data.diagnosedAt)
     }
   });

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { ensureDefaultCommunicationTemplates } from "@/lib/default-communication-templates";
 
 export async function GET() {
   const auth = await requireAuth("superadmin");
@@ -10,53 +11,7 @@ export async function GET() {
     return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
   }
 
-  // NOT: skipDuplicates burada GÜVENLE kullanılamaz — Postgres @@unique
-  // kısıtı NULL institutionId'leri çakışmayan sayar, yani DB seviyesinde
-  // "code zaten var mı" kontrolü institutionId=null satırlar için çalışmaz.
-  // Bu yüzden her kod için elle var mı diye bakılıp sadece eksik olanlar
-  // eklenir (aksi halde her GET çağrısı yinelenen satırlar oluşturur).
-  const DEFAULT_TEMPLATES = [
-    {
-      code: "BILGI",
-      title: "Bilgi SMS",
-      content: "Sayın {{patientName}}, {{institutionName}} kliniğindeki randevunuz {{dateTime}} tarihine planlanmıştır. Sizi aramızda görmekten memnuniyet duyarız.",
-    },
-    {
-      code: "HATIRLATMA",
-      title: "Hatirlatma SMS",
-      content: "Sayın {{patientName}}, {{institutionName}} kliniğindeki {{dateTime}} tarihli randevunuzu hatırlatmak isteriz. Doktorunuz: {{doctorName}}.",
-    },
-    {
-      code: "ANKET",
-      title: "Anket SMS",
-      content: "Sayın {{patientName}}, {{institutionName}} kliniğini tercih ettiğiniz için teşekkür ederiz. Deneyiminizi bizimle paylaşmak isterseniz memnun oluruz.",
-    },
-    {
-      code: "ODEME_YAKLASIYOR",
-      title: "Ödeme Vadesi Yaklaşıyor",
-      content: "Sayın {{patientName}}, {{institutionName}} nezdindeki {{amount}} TL tutarındaki ödemenizin son {{daysLeft}} gün içinde tamamlanmasını rica ederiz.",
-    },
-    {
-      code: "ODEME_GECIKTI",
-      title: "Ödeme Vadesi Geçti",
-      content: "Sayın {{patientName}}, {{institutionName}} nezdindeki {{amount}} TL tutarındaki ödemenizin vadesi {{daysLate}} gün geçmiştir. En kısa sürede tamamlamanızı rica ederiz.",
-    },
-    {
-      code: "DOGUM_GUNU",
-      title: "Doğum Günü Kutlaması",
-      content: "Sayın {{patientName}}, doğum gününüzü candan kutlar, sağlık ve mutluluk dolu bir yıl dileriz. {{institutionName}} ailesi olarak sizinle birlikte olmaktan mutluluk duyarız.",
-    },
-  ];
-
-  const existingCodes = new Set(
-    (await prisma.smsTemplate.findMany({ where: { institutionId: null }, select: { code: true } })).map((t) => t.code)
-  );
-  const missing = DEFAULT_TEMPLATES.filter((t) => !existingCodes.has(t.code));
-  if (missing.length > 0) {
-    await prisma.smsTemplate.createMany({
-      data: missing.map((t) => ({ ...t, isActive: true })),
-    });
-  }
+  await ensureDefaultCommunicationTemplates();
 
   // Süperadmin sadece sistem varsayılanlarını (institutionId=null) yönetir —
   // kliniklerin kendi özelleştirdiği şablonlar (bkz. /api/sms/templates)
@@ -80,7 +35,12 @@ export async function POST(request: NextRequest) {
   const body = await request.json() as {
     code?: string;
     title?: string;
+    description?: string;
+    category?: string;
     content?: string;
+    whatsappContent?: string;
+    whatsappTemplateName?: string;
+    whatsappTemplateLanguage?: string;
     isActive?: boolean;
   };
 
@@ -96,10 +56,24 @@ export async function POST(request: NextRequest) {
   const template = existing
     ? await prisma.smsTemplate.update({
         where: { id: existing.id },
-        data: { title: body.title, content: body.content, isActive: body.isActive ?? true },
+        data: {
+          title: body.title, description: body.description?.trim() || null,
+          category: body.category?.trim() || "GENERAL", content: body.content,
+          whatsappContent: body.whatsappContent?.trim() || null,
+          whatsappTemplateName: body.whatsappTemplateName?.trim() || null,
+          whatsappTemplateLanguage: body.whatsappTemplateLanguage?.trim() || "tr",
+          isActive: body.isActive ?? true,
+        },
       })
     : await prisma.smsTemplate.create({
-        data: { institutionId: null, code: body.code, title: body.title, content: body.content, isActive: body.isActive ?? true },
+        data: {
+          institutionId: null, code: body.code, title: body.title,
+          description: body.description?.trim() || null, category: body.category?.trim() || "GENERAL",
+          content: body.content, whatsappContent: body.whatsappContent?.trim() || null,
+          whatsappTemplateName: body.whatsappTemplateName?.trim() || null,
+          whatsappTemplateLanguage: body.whatsappTemplateLanguage?.trim() || "tr",
+          isActive: body.isActive ?? true,
+        },
       });
 
   await writeAudit(auth.user.id, "SMS_TEMPLATE_SAVE", `SMS sablonu kaydedildi: ${template.code}`);
@@ -118,7 +92,12 @@ export async function PUT(request: NextRequest) {
   const body = await request.json() as {
     id?: string;
     title?: string;
+    description?: string;
+    category?: string;
     content?: string;
+    whatsappContent?: string;
+    whatsappTemplateName?: string;
+    whatsappTemplateLanguage?: string;
     isActive?: boolean;
   };
 
@@ -138,7 +117,12 @@ export async function PUT(request: NextRequest) {
     where: { id: body.id },
     data: {
       title: body.title,
+      description: body.description?.trim() || null,
+      category: body.category?.trim() || existing.category,
       content: body.content,
+      whatsappContent: body.whatsappContent?.trim() || null,
+      whatsappTemplateName: body.whatsappTemplateName?.trim() || null,
+      whatsappTemplateLanguage: body.whatsappTemplateLanguage?.trim() || "tr",
       isActive: body.isActive,
     },
   });
@@ -156,6 +140,8 @@ export async function PUT(request: NextRequest) {
 
   pushDiff("Başlık", existing.title, template.title);
   pushDiff("İçerik", existing.content, template.content);
+  pushDiff("WhatsApp İçeriği", existing.whatsappContent, template.whatsappContent);
+  pushDiff("Meta Şablonu", existing.whatsappTemplateName, template.whatsappTemplateName);
   pushDiff("Durum", existing.isActive ? "Aktif" : "Pasif", template.isActive ? "Aktif" : "Pasif");
 
   const detail = [

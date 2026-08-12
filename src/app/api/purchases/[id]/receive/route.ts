@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAllAuth, writeAudit } from "@/lib/api";
 import { purchaseReceiveSchema, formatZodError } from "@/lib/validators";
 import { applyStockMovement } from "@/lib/stock-ledger";
 import { applyFirmaIslemIntegration } from "@/lib/firma-integration";
 import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
 import { purchasePaymentToken } from "@/lib/purchase-payment-links";
+import { requireActiveBranch } from "@/lib/branch-context";
+import { BusinessRuleError, publicErrorResponse } from "@/lib/public-error";
 
 function toPublicPurchase(purchase: any) {
   if (!purchase) return purchase;
@@ -17,11 +19,11 @@ function toPublicPurchase(purchase: any) {
   return rest;
 }
 
-async function loadPurchase(id: string, institutionId: string | null) {
+async function loadPurchase(id: string, institutionId: string | null, branchId: string) {
   return (prisma as any).purchase.findFirst({
-    where: { id, ...(institutionId ? { institutionId } : {}) },
+    where: { id, branchId, ...(institutionId ? { institutionId } : {}) },
     include: {
-      items: true,
+      items: { where: { archivedAt: null } },
       firma: {
         select: {
           id: true,
@@ -38,14 +40,16 @@ async function loadPurchase(id: string, institutionId: string | null) {
 
 export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
-  const auth = await requireAuth("finance:write");
+  const auth = await requireAllAuth(["finance:write", "stock:write"]);
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   const requestKey = req.headers.get("Idempotency-Key")?.trim() || null;
   if (requestKey && (requestKey.length < 8 || requestKey.length > 180)) {
     return NextResponse.json({ error: "İşlem anahtarı geçersiz" }, { status: 400 });
   }
-  const purchase = await loadPurchase(params.id, auth.user.institutionId);
+  const purchase = await loadPurchase(params.id, auth.user.institutionId, branch.branchId);
   if (!purchase) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
   if (purchase.status !== "AKTIF") {
     return NextResponse.json({ error: "İptal edilmiş sipariş teslim alınamaz" }, { status: 400 });
@@ -85,9 +89,12 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       await tx.$queryRaw`SELECT "id" FROM "Purchase" WHERE "id" = ${purchase.id} FOR UPDATE`;
       const current = await tx.purchase.findUnique({
         where: { id: purchase.id },
-        select: { receiptStatus: true, receiptRequestKey: true },
+        select: { status: true, receiptStatus: true, receiptRequestKey: true },
       });
-      if (current?.receiptStatus === "TESLIM_ALINDI") {
+      if (!current || current.status !== "AKTIF") {
+        throw new BusinessRuleError("İptal edilmiş sipariş teslim alınamaz", 409);
+      }
+      if (current.receiptStatus === "TESLIM_ALINDI") {
         return { duplicate: true, paymentIslem: null };
       }
 
@@ -97,6 +104,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       );
       const firmaIslem = await tx.firmaIslem.create({
         data: {
+          institutionId: auth.user.institutionId,
+          branchId: branch.branchId,
           firmaId: purchase.firma.id,
           tarih: receivedAt,
           islemTipi: "ALIM",
@@ -122,6 +131,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
           tx,
           stockItemId: item.stockItemId,
           institutionId: auth.user.institutionId,
+          branchId: branch.branchId,
           userId: auth.user.id,
           type: "GIRIS",
           quantity: Number(item.quantity),
@@ -157,6 +167,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       if (parsed.data.paidNow) {
         paymentIslem = await tx.firmaIslem.create({
           data: {
+            institutionId: auth.user.institutionId,
+            branchId: branch.branchId,
             firmaId: purchase.firma.id,
             tarih: new Date(parsed.data.paymentDate || parsed.data.receivedAt),
             islemTipi: "ODEME",
@@ -184,7 +196,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
           },
         });
       }
-      await rebuildFirmaPaymentAllocations(tx, purchase.firma.id, {
+      await rebuildFirmaPaymentAllocations(tx, purchase.firma.id, branch.branchId, {
         preferredDebtByPayment: paymentIslem
           ? new Map([[paymentIslem.id, [firmaIslem.id]]])
           : undefined,
@@ -192,12 +204,14 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       return { duplicate: false, paymentIslem };
     });
 
-    const fresh = await loadPurchase(purchase.id, auth.user.institutionId);
-    await writeAudit(
-      auth.user.id,
-      "PURCHASE_RECEIVE",
-      `${purchase.firma.name} siparişi teslim alındı; ${purchase.items.length} kalem stoğa işlendi${result.paymentIslem ? " ve ödeme kaydedildi" : ""}.`,
-    );
+    const fresh = await loadPurchase(purchase.id, auth.user.institutionId, branch.branchId);
+    if (!result.duplicate) {
+      await writeAudit(
+        auth.user.id,
+        "PURCHASE_RECEIVE",
+        `${purchase.firma.name} siparişi teslim alındı; ${purchase.items.length} kalem stoğa işlendi${result.paymentIslem ? " ve ödeme kaydedildi" : ""}.`,
+      );
+    }
     return NextResponse.json(
       { ...toPublicPurchase(fresh), duplicateRequest: result.duplicate },
       { status: result.duplicate ? 200 : 201 },
@@ -210,15 +224,13 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       && "code" in error
       && (error as { code?: string }).code === "P2002"
     ) {
-      const existing = await loadPurchase(purchase.id, auth.user.institutionId);
+      const existing = await loadPurchase(purchase.id, auth.user.institutionId, branch.branchId);
       if (existing?.receiptStatus === "TESLIM_ALINDI") {
         return NextResponse.json({ ...toPublicPurchase(existing), duplicateRequest: true }, { status: 200 });
       }
     }
     console.error("[purchases/:id/receive POST]", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Sipariş teslim alınamadı" },
-      { status: 400 },
-    );
+    const publicError = publicErrorResponse(error, "Sipariş teslim alınamadı. Lütfen tekrar deneyin.");
+    return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }
 }

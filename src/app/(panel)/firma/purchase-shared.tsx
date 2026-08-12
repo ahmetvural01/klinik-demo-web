@@ -38,7 +38,7 @@ export type PurchaseLineForm = {
 };
 
 export const fmt = (n: number) =>
-  "₺" + new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 2 }).format(n);
+  `₺${new Intl.NumberFormat("tr-TR", { minimumFractionDigits: 2 }).format(n)}`;
 export const fmtDate = (d: string) => new Date(d).toLocaleDateString("tr-TR");
 export const formLabel = "mb-1.5 block text-sm font-semibold text-slate-700";
 export const formInput = "w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30 disabled:bg-slate-100";
@@ -212,13 +212,14 @@ export function PurchaseLineEditor({ items, setItems, stockItems }: {
  * yönetir — hem firma listesi hem firma detay sayfası bu tek yerden kullanır.
  */
 export function usePurchaseModals({
-  stockItems, firmas, showToast, onChanged, currentFirmaId,
+  stockItems, firmas, showToast, onChanged, currentFirmaId, canWrite = true,
 }: {
   stockItems: StockItem[];
   firmas: { id: string; name: string }[];
   showToast: (type: "success" | "error" | "info", text: string) => void;
   onChanged: (firmaId: string) => void | Promise<void>;
   currentFirmaId?: string;
+  canWrite?: boolean;
 }) {
   const [showAddPurchase, setShowAddPurchase] = useState(false);
   const [purchaseFirmaId, setPurchaseFirmaId] = useState("");
@@ -301,6 +302,7 @@ export function usePurchaseModals({
   };
 
   const openAddPurchase = (firmaId?: string) => {
+    if (!canWrite) return;
     const targetFirma = firmaId ? firmas.find(f => f.id === firmaId) : null;
     setPurchaseFirmaId(firmaId || "");
     setPurchaseFirmaQuery(targetFirma?.name || "");
@@ -408,6 +410,7 @@ export function usePurchaseModals({
   };
 
   const openReceivePurchase = (purchase: Purchase) => {
+    if (!canWrite) return;
     const today = turkeyDateKey();
     const total = (purchase.items || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0);
     setReceivingPurchase(purchase);
@@ -484,6 +487,7 @@ export function usePurchaseModals({
   };
 
   const openPurchaseEdit = async (purchaseId: string) => {
+    if (!canWrite) return;
     let p: Purchase;
     try {
       const r = await fetch(`/api/purchases/${purchaseId}`, { cache: "no-store" });
@@ -552,6 +556,7 @@ export function usePurchaseModals({
   };
 
   const cancelPurchase = async (purchaseId: string, firmaId: string) => {
+    if (!canWrite) return;
     if (!(await confirmDialog({ message: "Bu satın almayı iptal etmek istediğinizden emin misiniz? Stok ve firma bakiyesi geri alınacak.", danger: true, confirmText: "İptal Et" }))) return;
     try {
       const r = await fetch(`/api/purchases/${purchaseId}/cancel`, { method: "POST" });
@@ -737,7 +742,7 @@ export function usePurchaseModals({
         size="lg"
         footer={viewingPurchase && !purchaseDetailLoading ? (
           <>
-            {viewingPurchase.status === "AKTIF" && (
+            {canWrite && viewingPurchase.status === "AKTIF" && (
               <>
                 <Button variant="secondary" onClick={() => { setShowPurchaseDetail(false); void openPurchaseEdit(viewingPurchase.id); }}>
                   Düzenle
@@ -772,13 +777,13 @@ export function usePurchaseModals({
                       <p className="text-sm font-black text-amber-900">Teslimat bekleniyor</p>
                       <p className="mt-0.5 text-xs text-amber-700">Stok ve firma borcu henüz oluşmadı.</p>
                     </div>
-                    <button
+                    {canWrite && <button
                       type="button"
                       onClick={() => openReceivePurchase(viewingPurchase)}
                       className="rounded-lg bg-amber-600 px-3 py-2 text-sm font-bold text-white hover:bg-amber-700"
                     >
                       Teslim Al
-                    </button>
+                    </button>}
                   </div>
                 ) : (
                   <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5 text-sm font-bold text-emerald-800">

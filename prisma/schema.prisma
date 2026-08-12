@@ -31,6 +31,7 @@ model Institution {
   adsEnabled             Boolean                   @default(false)
   maxActiveDoctors       Int?
   maxActiveUsers         Int?
+  maxActiveBranches      Int?
   paymentGraceUntil      DateTime?
   serviceMode            ServiceMode               @default(NORMAL)
   serviceNote            String?
@@ -43,6 +44,13 @@ model Institution {
   adAssignments          InstitutionAdAssignment[]
   announcements          Announcement[]
   clinicTasks            ClinicTask[]
+  examinations           Examination[]
+  prescriptions          Prescription[]
+  treatmentPlans         TreatmentPlan[]
+  labOrders              LabOrder[]
+  taksitPlans            TaksitPlan[]
+  firmaIslemler          FirmaIslem[]
+  doctorRateHistory      DoctorRateHistory[]
   demoRequests           DemoRequest[]             @relation("DemoRequestInstitution")
   invoices               Invoice[]
   patients               Patient[]
@@ -61,7 +69,9 @@ model Institution {
   users                  User[]
   supportTickets         SupportTicket[]
   whatsappProviders      WhatsappProviderConfig[]
+  whatsappSignupSessions WhatsappSignupSession[]
   whatsappMessages       WhatsappMessage[]
+  messages               Message[]
   documents              Document[]
   waitlistEntries        Waitlist[]
   bookingRequests        BookingRequest[]
@@ -72,7 +82,105 @@ model Institution {
   packageDefinitions     PackageDefinition[]
   patientPackages        PatientPackage[]
   clinicUnits            ClinicUnit[]
+  branches               ClinicBranch[]
+  appointments           Appointment[]
+  doctorBlocks           DoctorBlock[]
   celebrationDaySettings CelebrationDaySetting[]
+  patientFollowUps       PatientFollowUp[]
+  patientFollowUpEvents  PatientFollowUpEvent[]
+  reminders              Reminder[]
+  smsDispatches          SmsDispatch[]
+  clinicTaskAssignees    ClinicTaskAssignee[]
+  paymentRevisions       PaymentRevision[]
+  treatmentSteps         TreatmentStep[]
+  patientPackageUsages   PatientPackageUsage[]
+  labTrips               LabTrip[]
+  labOrderInvoices       LabOrderInvoice[]
+  stockLotAllocations    StockMovementLotAllocation[]
+  taksitler              Taksit[]
+  taksitOdemeleri        TaksitOdeme[]
+  birthdaySmsLogs        BirthdaySmsLog[]
+  celebrationSmsLogs     CelebrationSmsLog[]
+  firmaPaymentAllocations FirmaPaymentAllocation[]
+  firmaKontaktler        FirmaKontakt[]
+  purchaseItems          PurchaseItem[]
+  whatsappTemplates      WhatsappTemplate[]
+  invoiceReminders       InvoiceReminder[]
+  taksitReminderLogs     TaksitReminderLog[]
+}
+
+// Kurumun fiziksel hizmet noktası. Institution abonelik ve tenant sınırı,
+// ClinicBranch ise aynı kuruma bağlı operasyon/raporlama sınırıdır.
+model ClinicBranch {
+  id              String              @id @default(cuid())
+  institutionId   String
+  name            String
+  code            String?
+  slug            String
+  phone           String?
+  email           String?
+  address         String?
+  district        String?
+  city            String?
+  timeZone        String              @default("Europe/Istanbul")
+  colorCode       String              @default("#0f766e")
+  isHeadquarters  Boolean             @default(false)
+  isActive        Boolean             @default(true)
+  sortOrder       Int                 @default(0)
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  institution     Institution         @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  memberships     UserBranch[]
+  clinicUnits     ClinicUnit[]
+  appointments    Appointment[]
+  homePatients    Patient[]           @relation("PatientHomeBranch")
+  clinicTasks     ClinicTask[]
+  examinations    Examination[]
+  payments        Payment[]
+  prescriptions   Prescription[]
+  treatmentPlans  TreatmentPlan[]
+  patientPackages PatientPackage[]
+  labOrders       LabOrder[]
+  stockItems      StockItem[]
+  stockMovements  StockMovement[]
+  stockLots       StockLot[]
+  taksitPlans     TaksitPlan[]
+  posDevices      PosDevice[]
+  expenses        Expense[]
+  firmaIslemler   FirmaIslem[]
+  firmas          Firma[]
+  purchases       Purchase[]
+  doctorRates     DoctorRateHistory[]
+  waitlistEntries Waitlist[]
+  bookingRequests BookingRequest[]
+  doctorBlocks    DoctorBlock[]
+  messages        Message[]
+  patientFollowUps PatientFollowUp[]
+  patientFollowUpEvents PatientFollowUpEvent[]
+  reminders       Reminder[]
+  smsDispatches   SmsDispatch[]
+  whatsappMessages WhatsappMessage[]
+  clinicTaskAssignees ClinicTaskAssignee[]
+  paymentRevisions PaymentRevision[]
+  treatmentSteps TreatmentStep[]
+  patientPackageUsages PatientPackageUsage[]
+  labTrips LabTrip[]
+  labOrderInvoices LabOrderInvoice[]
+  stockLotAllocations StockMovementLotAllocation[]
+  taksitler Taksit[]
+  taksitOdemeleri TaksitOdeme[]
+  birthdaySmsLogs BirthdaySmsLog[]
+  celebrationSmsLogs CelebrationSmsLog[]
+  firmaPaymentAllocations FirmaPaymentAllocation[]
+  firmaKontaktler FirmaKontakt[]
+  purchaseItems PurchaseItem[]
+  taksitReminderLogs TaksitReminderLog[]
+
+  @@unique([institutionId, name])
+  @@unique([institutionId, code])
+  @@unique([institutionId, slug])
+  @@unique([id, institutionId])
+  @@index([institutionId, isActive, sortOrder])
 }
 
 // Klinik içindeki fiziksel çalışma alanı (ünit, oda veya koltuk). Randevuya
@@ -82,17 +190,20 @@ model Institution {
 model ClinicUnit {
   id            String        @id @default(cuid())
   institutionId String
+  branchId      String
   name          String
   code          String?
   isActive      Boolean       @default(true)
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
   institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  branch        ClinicBranch  @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: Cascade)
   appointments  Appointment[]
 
-  @@unique([institutionId, name])
-  @@unique([institutionId, code])
-  @@index([institutionId, isActive])
+  @@unique([branchId, name])
+  @@unique([branchId, code])
+  @@unique([id, institutionId, branchId])
+  @@index([institutionId, branchId, isActive])
 }
 
 model DemoRequest {
@@ -209,15 +320,20 @@ model PlatformSmsPurchase {
 // varsayılanları (institutionId=null) arasındaki code benzersizliğini DB
 // garanti etmez — bu, süperadmin route'unda uygulama seviyesinde kontrol edilir.
 model SmsTemplate {
-  id            String       @id @default(cuid())
-  institutionId String?
-  code          String
-  title         String
-  content       String
-  isActive      Boolean      @default(true)
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  institution   Institution? @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  id                       String       @id @default(cuid())
+  institutionId            String?
+  code                     String
+  title                    String
+  description              String?
+  category                 String       @default("GENERAL")
+  content                  String
+  whatsappContent          String?
+  whatsappTemplateName     String?
+  whatsappTemplateLanguage String       @default("tr")
+  isActive                 Boolean      @default(true)
+  createdAt                DateTime     @default(now())
+  updatedAt                DateTime     @updatedAt
+  institution              Institution? @relation(fields: [institutionId], references: [id], onDelete: Cascade)
 
   @@unique([institutionId, code])
   @@index([code])
@@ -263,15 +379,15 @@ model MockSmsLog {
 // mesajı hiçbir zaman başka bir ortak numaradan gitmemelidir. Klinik kendi
 // Meta Business hesabını bu tablo üzerinden tanımlar (bkz. src/lib/whatsapp.ts).
 model WhatsappProviderConfig {
-  id                          String             @id @default(cuid())
+  id                          String                   @id @default(cuid())
   institutionId               String
   code                        String
   name                        String
-  providerType                String             @default("CUSTOM")
-  isActive                    Boolean            @default(false)
-  priority                    Int                @default(100)
+  providerType                String                   @default("CUSTOM")
+  isActive                    Boolean                  @default(false)
+  priority                    Int                      @default(100)
   sendUrl                     String?
-  httpMethod                  String             @default("POST")
+  httpMethod                  String                   @default("POST")
   username                    String?
   password                    String?
   apiKey                      String?
@@ -281,20 +397,46 @@ model WhatsappProviderConfig {
   successPattern              String?
   phoneNumberId               String?
   businessAccountId           String?
+  businessId                  String?
+  displayPhoneNumber          String?
+  verifiedName                String?
+  accessTokenEncrypted        String?
+  registrationPinEncrypted    String?
+  tokenExpiresAt              DateTime?
+  connectionStatus            WhatsappConnectionStatus @default(NOT_CONNECTED)
+  connectionError             String?
+  connectedAt                 DateTime?
+  disconnectedAt              DateTime?
+  lastWebhookAt               DateTime?
+  lastSuccessfulSendAt        DateTime?
   verifyToken                 String?
   appSecret                   String?
-  apiVersion                  String             @default("v23.0")
+  apiVersion                  String                   @default("v25.0")
   appointmentTemplateName     String?
-  appointmentTemplateLanguage String             @default("tr")
-  createdAt                   DateTime           @default(now())
-  updatedAt                   DateTime           @updatedAt
-  institution                 Institution        @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  appointmentTemplateLanguage String                   @default("tr")
+  createdAt                   DateTime                 @default(now())
+  updatedAt                   DateTime                 @updatedAt
+  institution                 Institution              @relation(fields: [institutionId], references: [id], onDelete: Cascade)
   templates                   WhatsappTemplate[]
   messages                    WhatsappMessage[]
 
   @@unique([institutionId, code])
+  @@unique([id, institutionId])
+  @@unique([phoneNumberId])
   @@index([institutionId, isActive])
-  @@index([phoneNumberId])
+}
+
+model WhatsappSignupSession {
+  id            String      @id @default(cuid())
+  institutionId String
+  userId        String
+  stateHash     String      @unique
+  expiresAt     DateTime
+  usedAt        DateTime?
+  createdAt     DateTime    @default(now())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@index([institutionId, expiresAt])
 }
 
 model MockWhatsappLog {
@@ -309,6 +451,7 @@ model MockWhatsappLog {
 
 model WhatsappTemplate {
   id             String                 @id @default(cuid())
+  institutionId  String
   providerId     String
   name           String
   language       String                 @default("tr")
@@ -317,19 +460,23 @@ model WhatsappTemplate {
   componentsJson String?
   createdAt      DateTime               @default(now())
   updatedAt      DateTime               @updatedAt
-  provider       WhatsappProviderConfig @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  provider       WhatsappProviderConfig @relation(fields: [providerId, institutionId], references: [id, institutionId], onDelete: Cascade)
+  institution    Institution            @relation(fields: [institutionId], references: [id], onDelete: Cascade)
 
   @@unique([providerId, name, language])
+  @@unique([id, institutionId])
+  @@index([institutionId])
   @@index([providerId, status])
 }
 
 model WhatsappMessage {
   id                String                  @id @default(cuid())
   institutionId     String
+  branchId          String
   providerId        String?
   patientId         String?
   appointmentId     String?
-  externalMessageId String?                 @unique
+  externalMessageId String?
   contextMessageId  String?
   direction         String
   status            String
@@ -345,15 +492,17 @@ model WhatsappMessage {
   createdAt         DateTime                @default(now())
   updatedAt         DateTime                @updatedAt
   institution       Institution             @relation(fields: [institutionId], references: [id], onDelete: Cascade)
-  provider          WhatsappProviderConfig? @relation(fields: [providerId], references: [id], onDelete: SetNull)
-  patient           Patient?                @relation(fields: [patientId], references: [id], onDelete: SetNull)
-  appointment       Appointment?            @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+  branch            ClinicBranch            @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  provider          WhatsappProviderConfig? @relation(fields: [providerId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  patient           Patient?                @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
+  appointment       Appointment?            @relation(fields: [appointmentId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
 
-  @@index([institutionId, createdAt])
+  @@index([institutionId, branchId, createdAt])
   @@index([institutionId, status])
   @@index([institutionId, direction, seenAt])
   @@index([patientId, createdAt])
   @@index([phone, createdAt])
+  @@unique([institutionId, externalMessageId])
 }
 
 model Invoice {
@@ -374,18 +523,21 @@ model Invoice {
   @@index([status])
   @@index([dueDate])
   @@index([institutionId, status])
+  @@unique([id, institutionId])
 }
 
 model InvoiceReminder {
-  id          String   @id @default(cuid())
-  invoiceId   String
-  channel     String
-  sentTo      String
-  status      String
-  message     String?
-  errorDetail String?
-  sentAt      DateTime @default(now())
-  invoice     Invoice  @relation(fields: [invoiceId], references: [id])
+  id            String      @id @default(cuid())
+  institutionId String
+  invoiceId     String
+  channel       String
+  sentTo        String
+  status        String
+  message       String?
+  errorDetail   String?
+  sentAt        DateTime    @default(now())
+  institution   Institution @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  invoice       Invoice     @relation(fields: [invoiceId, institutionId], references: [id, institutionId], onDelete: NoAction)
 
   @@index([invoiceId])
 }
@@ -397,7 +549,7 @@ model SmtpConfig {
   secure    Boolean  @default(false)
   username  String   @default("")
   password  String   @default("")
-  fromName  String   @default("Klinik Yönetim Paneli")
+  fromName  String   @default("KlinikCep")
   fromEmail String   @default("noreply@klinik.local")
   isActive  Boolean  @default(false)
   updatedAt DateTime @updatedAt
@@ -515,8 +667,36 @@ model User {
   patientPackagesSold     PatientPackage[]       @relation("PatientPackageDoctor")
   patientPackageUsages    PatientPackageUsage[]  @relation("PatientPackageUsageCreatedBy")
   patientAccessLogs       PatientAccessLog[]
+  branchMemberships       UserBranch[]
 
   @@unique([institutionId, identityNo])
+  @@unique([id, institutionId])
+}
+
+// Rol yetkiyi, UserBranch ise o yetkinin hangi fiziksel lokasyonlarda
+// kullanılabileceğini belirler. Aynı personel birden fazla şubede çalışabilir.
+model UserBranch {
+  id              String       @id @default(cuid())
+  institutionId   String
+  userId          String
+  branchId        String
+  isPrimary       Boolean      @default(false)
+  isActive        Boolean      @default(true)
+  isBranchManager Boolean      @default(false)
+  // null: rolün tüm izinleri; dizi: rol izinlerinin şube yöneticisince
+  // daraltılmış alt kümesi. Bu alan hiçbir zaman rol tavanını genişletemez.
+  permissionCodes Json?
+  genelYuzde      Decimal?     @db.Decimal(5, 2)
+  kkYuzde         Decimal?     @db.Decimal(5, 2)
+  maasYuzde       Decimal?     @db.Decimal(5, 2)
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+  user            User         @relation(fields: [userId, institutionId], references: [id, institutionId], onDelete: Cascade)
+  branch          ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: Cascade)
+
+  @@unique([userId, branchId])
+  @@index([institutionId, branchId, isActive])
+  @@index([userId, isActive, isPrimary])
 }
 
 // Doktor komisyon oranları (kkYuzde/genelYuzde/maasYuzde) personel ekranından
@@ -526,16 +706,20 @@ model User {
 // oran değişikliği burada dönem-damgalı bir satır olarak saklanır; hakediş
 // hesabı her ay için o ayın başında geçerli olan orana bakar.
 model DoctorRateHistory {
-  id            String   @id @default(cuid())
+  id            String       @id @default(cuid())
+  institutionId String
+  branchId      String
   doctorId      String
-  kkYuzde       Decimal  @db.Decimal(5, 2)
-  genelYuzde    Decimal  @db.Decimal(5, 2)
-  maasYuzde     Decimal  @db.Decimal(5, 2)
+  kkYuzde       Decimal      @db.Decimal(5, 2)
+  genelYuzde    Decimal      @db.Decimal(5, 2)
+  maasYuzde     Decimal      @db.Decimal(5, 2)
   effectiveFrom DateTime
-  createdAt     DateTime @default(now())
-  doctor        User     @relation("DoctorRateHistoryDoctor", fields: [doctorId], references: [id])
+  createdAt     DateTime     @default(now())
+  doctor        User         @relation("DoctorRateHistoryDoctor", fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  branch        ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: Cascade)
 
-  @@index([doctorId, effectiveFrom])
+  @@index([institutionId, branchId, doctorId, effectiveFrom])
 }
 
 model SuperadminPermission {
@@ -563,6 +747,7 @@ model Profile {
 model Patient {
   id                         String                      @id @default(cuid())
   institutionId              String
+  homeBranchId               String
   // Yabancı uyruklu hastalarda TC kimlik no zorunlu değildir (bkz. isForeigner)
   // — Postgres benzersiz indekste NULL değerler birbirinden farklı sayılır,
   // yani birden fazla TC'siz yabancı hasta kaydı çakışma yaratmaz.
@@ -604,6 +789,7 @@ model Patient {
   toothChart                 String?
   referrer                   String?
   institution                Institution                 @relation(fields: [institutionId], references: [id])
+  homeBranch                 ClinicBranch                @relation("PatientHomeBranch", fields: [homeBranchId, institutionId], references: [id, institutionId])
   appointments               Appointment[]
   examinations               Examination[]
   labOrders                  LabOrder[]
@@ -628,9 +814,12 @@ model Patient {
   smsConsentTokens           PatientSmsConsentToken[]
   smsDispatches              SmsDispatch[]
 
-  @@unique([institutionId, tcNo])
+  @@unique([institutionId, homeBranchId, tcNo])
+  @@unique([id, institutionId])
+  @@unique([id, institutionId, homeBranchId])
   @@index([institutionId])
   @@index([institutionId, archivedAt])
+  @@index([homeBranchId])
   @@index([fullName])
   @@index([phone])
 }
@@ -645,8 +834,8 @@ model PatientAccessLog {
   route         String?
   ip            String?
   createdAt     DateTime @default(now())
-  patient       Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  user          User     @relation(fields: [userId], references: [id])
+  patient       Patient  @relation(fields: [patientId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  user          User     @relation(fields: [userId], references: [id], onDelete: NoAction)
 
   @@index([institutionId, createdAt])
   @@index([patientId, createdAt])
@@ -655,6 +844,8 @@ model PatientAccessLog {
 
 model Appointment {
   id               String                @id @default(cuid())
+  institutionId    String
+  branchId         String
   patientId        String
   doctorId         String
   clinicUnitId     String?
@@ -669,10 +860,12 @@ model Appointment {
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
   status           AppointmentStatus     @default(BEKLIYOR)
-  doctor           User                  @relation(fields: [doctorId], references: [id])
-  clinicUnit       ClinicUnit?           @relation(fields: [clinicUnitId], references: [id], onDelete: SetNull)
+  institution      Institution           @relation(fields: [institutionId], references: [id])
+  branch           ClinicBranch          @relation(fields: [branchId, institutionId], references: [id, institutionId])
+  doctor           User                  @relation(fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  clinicUnit       ClinicUnit?           @relation(fields: [clinicUnitId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
   followUps        PatientFollowUp[]
-  patient          Patient               @relation(fields: [patientId], references: [id])
+  patient          Patient               @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
   waitlistEntries  Waitlist[]
   packageUsages    PatientPackageUsage[]
   whatsappMessages WhatsappMessage[]
@@ -683,12 +876,15 @@ model Appointment {
   @@index([doctorId, startAt])
   @@index([patientId, startAt])
   @@index([clinicUnitId, startAt])
+  @@index([institutionId, branchId, startAt])
+  @@unique([id, institutionId, branchId])
 }
 
 model ClinicTask {
   id            String               @id @default(cuid())
-  requestKey    String?              @unique
+  requestKey    String?
   institutionId String
+  branchId      String
   patientId     String?
   title         String
   details       String?
@@ -704,23 +900,30 @@ model ClinicTask {
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
   institution   Institution          @relation(fields: [institutionId], references: [id])
-  patient       Patient?             @relation(fields: [patientId], references: [id])
-  assignedTo    User?                @relation("ClinicTaskAssignedUser", fields: [assignedToId], references: [id])
+  branch        ClinicBranch         @relation(fields: [branchId, institutionId], references: [id, institutionId])
+  patient       Patient?             @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
+  assignedTo    User?                @relation("ClinicTaskAssignedUser", fields: [assignedToId, institutionId], references: [id, institutionId], onDelete: NoAction)
   assignees     ClinicTaskAssignee[]
-  createdBy     User                 @relation("ClinicTaskCreatedBy", fields: [createdById], references: [id])
+  createdBy     User                 @relation("ClinicTaskCreatedBy", fields: [createdById, institutionId], references: [id, institutionId], onDelete: NoAction)
 
-  @@index([institutionId, status, dueAt])
+  @@unique([branchId, requestKey])
+  @@unique([id, institutionId, branchId])
+  @@index([institutionId, branchId, status, dueAt])
   @@index([institutionId, patientId])
   @@index([assignedToId, status])
 }
 
 model ClinicTaskAssignee {
-  id        String     @id @default(cuid())
-  taskId    String
-  userId    String
-  createdAt DateTime   @default(now())
-  task      ClinicTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id            String       @id @default(cuid())
+  institutionId String
+  branchId      String
+  taskId        String
+  userId        String
+  createdAt     DateTime     @default(now())
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch        ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  task          ClinicTask   @relation(fields: [taskId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
+  user          User         @relation(fields: [userId, institutionId], references: [id, institutionId], onDelete: NoAction)
 
   @@unique([taskId, userId])
   @@index([userId])
@@ -729,6 +932,8 @@ model ClinicTaskAssignee {
 
 model PatientFollowUp {
   id             String                 @id @default(cuid())
+  institutionId  String
+  branchId       String
   patientId      String
   appointmentId  String?
   doctorId       String?
@@ -748,12 +953,14 @@ model PatientFollowUp {
   // düzenlenirse bağ sessizce kopuyordu (bkz. denetim raporu Tema 3).
   labOrderId     String?
   labTripId      String?
-  appointment    Appointment?           @relation(fields: [appointmentId], references: [id])
-  assignedDoctor User?                  @relation("FollowUpAssignedDoctor", fields: [doctorId], references: [id])
-  createdBy      User                   @relation("FollowUpCreatedBy", fields: [createdById], references: [id])
-  patient        Patient                @relation(fields: [patientId], references: [id])
-  labOrder       LabOrder?              @relation(fields: [labOrderId], references: [id])
-  labTrip        LabTrip?               @relation(fields: [labTripId], references: [id])
+  institution    Institution            @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch         ClinicBranch           @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  appointment    Appointment?           @relation(fields: [appointmentId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
+  assignedDoctor User?                  @relation("FollowUpAssignedDoctor", fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  createdBy      User                   @relation("FollowUpCreatedBy", fields: [createdById], references: [id], onDelete: NoAction)
+  patient        Patient                @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
+  labOrder       LabOrder?              @relation(fields: [labOrderId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
+  labTrip        LabTrip?               @relation(fields: [labTripId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
   events         PatientFollowUpEvent[]
 
   @@index([patientId])
@@ -764,10 +971,14 @@ model PatientFollowUp {
   @@index([createdAt])
   @@index([labOrderId])
   @@index([labTripId])
+  @@unique([id, institutionId, branchId])
+  @@index([institutionId, branchId, status, nextActionAt])
 }
 
 model PatientFollowUpEvent {
   id              String          @id @default(cuid())
+  institutionId   String
+  branchId        String
   followUpId      String
   patientId       String
   occurredAt      DateTime
@@ -778,16 +989,23 @@ model PatientFollowUpEvent {
   nextStep        String?
   createdById     String
   updatedById     String
+  voidedAt        DateTime?
+  voidedById      String?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
-  followUp        PatientFollowUp @relation(fields: [followUpId], references: [id], onDelete: Cascade)
-  patient         Patient         @relation(fields: [patientId], references: [id])
-  createdBy       User            @relation("FollowUpEventCreatedBy", fields: [createdById], references: [id])
-  updatedBy       User            @relation("FollowUpEventUpdatedBy", fields: [updatedById], references: [id])
+  institution     Institution     @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch          ClinicBranch    @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  followUp        PatientFollowUp @relation(fields: [followUpId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
+  patient         Patient         @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
+  createdBy       User            @relation("FollowUpEventCreatedBy", fields: [createdById], references: [id], onDelete: NoAction)
+  updatedBy       User            @relation("FollowUpEventUpdatedBy", fields: [updatedById], references: [id], onDelete: NoAction)
 
   @@index([followUpId, occurredAt])
   @@index([patientId, occurredAt])
   @@index([createdAt])
+  @@index([institutionId, branchId, occurredAt])
+  @@index([institutionId, branchId, voidedAt])
+  @@unique([id, institutionId, branchId])
 }
 
 model ConsentTemplate {
@@ -824,9 +1042,9 @@ model PatientConsent {
   signedAt         DateTime         @default(now())
   createdById      String
   createdAt        DateTime         @default(now())
-  patient          Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patient          Patient          @relation(fields: [patientId, institutionId], references: [id, institutionId], onDelete: NoAction)
   template         ConsentTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
-  createdBy        User             @relation("ConsentCreatedBy", fields: [createdById], references: [id])
+  createdBy        User             @relation("ConsentCreatedBy", fields: [createdById], references: [id], onDelete: NoAction)
   institution      Institution      @relation(fields: [institutionId], references: [id])
 
   @@index([institutionId])
@@ -836,30 +1054,36 @@ model PatientConsent {
 }
 
 model Examination {
-  id            String   @id @default(cuid())
+  id            String       @id @default(cuid())
+  institutionId String
+  branchId      String
   patientId     String
   doctorId      String
   treatmentName String
   toothNo       String?
-  amount        Decimal  @db.Decimal(10, 2)
+  amount        Decimal      @db.Decimal(10, 2)
   status        String
   diagnosedAt   DateTime
   note          String?
-  createdAt     DateTime @default(now())
-  doctor        User     @relation(fields: [doctorId], references: [id])
-  patient       Patient  @relation(fields: [patientId], references: [id])
+  createdAt     DateTime     @default(now())
+  doctor        User         @relation(fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  patient       Patient      @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
+  institution   Institution  @relation(fields: [institutionId], references: [id])
+  branch        ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId])
 
   @@index([patientId])
   @@index([doctorId])
-  @@index([patientId, diagnosedAt])
+  @@index([institutionId, branchId, patientId, diagnosedAt])
   @@index([doctorId, diagnosedAt])
   @@index([patientId, status, diagnosedAt])
+  @@unique([id, institutionId, branchId])
 }
 
 model Payment {
   id             String            @id @default(cuid())
   institutionId  String
-  requestKey     String?           @unique
+  branchId       String
+  requestKey     String?
   patientId      String?
   doctorId       String?
   method         PaymentMethod     @default(NAKIT)
@@ -873,32 +1097,39 @@ model Payment {
   updatedAt      DateTime          @updatedAt
   posId          String?
   institution    Institution       @relation(fields: [institutionId], references: [id])
-  patient        Patient?          @relation(fields: [patientId], references: [id])
-  doctor         User?             @relation("PaymentDoctor", fields: [doctorId], references: [id])
-  pos            PosDevice?        @relation(fields: [posId], references: [id])
+  branch         ClinicBranch      @relation(fields: [branchId, institutionId], references: [id, institutionId])
+  patient        Patient?          @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
+  doctor         User?             @relation("PaymentDoctor", fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  pos            PosDevice?        @relation(fields: [posId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
   taksitOdemeler TaksitOdeme[]
   patientPackage PatientPackage?
   revisions      PaymentRevision[]
 
-  @@index([institutionId, status, createdAt])
+  @@unique([branchId, requestKey])
+  @@index([institutionId, branchId, status, createdAt])
   @@index([patientId])
   @@index([doctorId])
   @@index([patientId, status, createdAt])
   @@index([doctorId, status, createdAt])
   @@index([posId])
   @@index([createdAt])
+  @@unique([id, institutionId, branchId])
 }
 
 model PaymentRevision {
-  id         String   @id @default(cuid())
-  paymentId  String
-  actorId    String?
-  action     String
-  beforeData Json
-  afterData  Json?
-  reason     String?
-  createdAt  DateTime @default(now())
-  payment    Payment  @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  id            String       @id @default(cuid())
+  institutionId String
+  branchId      String
+  paymentId     String
+  actorId       String?
+  action        String
+  beforeData    Json
+  afterData     Json?
+  reason        String?
+  createdAt     DateTime     @default(now())
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch        ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  payment       Payment      @relation(fields: [paymentId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Restrict)
 
   @@index([paymentId, createdAt])
   @@index([actorId, createdAt])
@@ -923,6 +1154,7 @@ model PriceItem {
 model AuditLog {
   id        String   @id @default(cuid())
   userId    String
+  branchId  String?
   action    String
   detail    String?
   /// Gerçek işlemi yapan kullanıcı (ghost/superadmin oturumlarında userId'den farklı olabilir)
@@ -931,54 +1163,65 @@ model AuditLog {
   isGhost   Boolean  @default(false)
   ip        String?
   createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: NoAction)
 
   @@index([userId])
   @@index([createdAt])
   @@index([actorId])
   @@index([userId, createdAt])
+  @@index([branchId, createdAt])
 }
 
 model Setting {
-  id                         String              @id @default(cuid())
-  institutionName            String
-  institutionAddress         String?
-  institutionPhone           String?
-  institutionWebsite         String?
-  openingTime                String              @default("08:30")
-  closingTime                String              @default("23:00")
-  appointmentDuration        Int                 @default(15)
-  holidayDays                String              @default("[]")
+  id                              String              @id @default(cuid())
+  institutionName                 String
+  institutionAddress              String?
+  institutionPhone                String?
+  institutionWebsite              String?
+  openingTime                     String              @default("08:30")
+  closingTime                     String              @default("23:00")
+  appointmentDuration             Int                 @default(15)
+  holidayDays                     String              @default("[]")
   // Günlük özel çalışma saatleri: JSON array of {day:"pazartesi",open:"08:30",close:"17:00",lunchStart:"12:00",lunchEnd:"13:00",isHoliday:false}
-  dailySchedules             String              @default("[]")
+  dailySchedules                  String              @default("[]")
   // Genel öğle arası (günlük override yoksa kullanılır)
-  lunchStart                 String              @default("")
-  lunchEnd                   String              @default("")
-  smsEnabled                 Boolean             @default(true)
-  smsDefaultInfo             Boolean             @default(true)
-  smsDefaultReminder         Boolean             @default(false)
-  smsDefaultSurvey           Boolean             @default(false)
+  lunchStart                      String              @default("")
+  lunchEnd                        String              @default("")
+  smsEnabled                      Boolean             @default(true)
+  smsDefaultInfo                  Boolean             @default(true)
+  smsDefaultReminder              Boolean             @default(false)
+  smsDefaultSurvey                Boolean             @default(false)
   // Hastanın taksit/ödeme vadesi yaklaştığında veya geciktiğinde otomatik SMS
   // gönderilsin mi (bkz. src/lib/patient-payment-reminders.ts). Varsayılan
   // kapalı: SMS kurumun kendi bakiyesinden düşer, bu yüzden bilinçli açılmalı.
-  paymentReminderSmsEnabled  Boolean             @default(false)
+  paymentReminderSmsEnabled       Boolean             @default(false)
   // Ödeme hatırlatması vadeden kaç gün önce gönderilsin (klinik ayarlanabilir).
-  paymentReminderWindowDays  Int                 @default(3)
+  paymentReminderWindowDays       Int                 @default(3)
+  // Birden fazla yaklaşan vade bildirimi (ör. 3 ve 2 gün önce), vade günü
+  // ve gecikmede periyodik tekrar aynı otomasyon kuralının parçalarıdır.
+  paymentReminderDaysBefore       Int[]               @default([3])
+  paymentReminderOnDueDate        Boolean             @default(true)
+  paymentReminderOverdueEnabled   Boolean             @default(true)
+  paymentReminderOverdueEveryDays Int                 @default(3)
   // Değerlendirme (ANKET) SMS şablonunda {{surveyLink}} yer tutucusu için
   // kliniğin kendi belirlediği bağlantı (ör. Google yorum linki). Opsiyonel.
-  reviewLink                 String?
+  reviewLink                      String?
   // Doğum günü olan hastalara otomatik kutlama SMS'i (bkz. src/lib/birthday-reminders.ts).
-  birthdaySmsEnabled         Boolean             @default(false)
+  birthdaySmsEnabled              Boolean             @default(false)
   // Otomatik bildirimlerin (randevu, hatırlatma, ödeme vb.) varsayılan olarak
   // hangi kanaldan gideceği. Yalnızca Institution.whatsappEnabled açık kliniklerde
   // WHATSAPP seçilebilir; kapalıysa merkezi servis her zaman SMS'e düşer
   // (bkz. src/lib/notification-dispatch.ts).
-  defaultNotificationChannel NotificationChannel @default(SMS)
-  updatedAt                  DateTime            @updatedAt
-  institutionId              String              @unique
-  activePriceList            String              @default("standard")
-  followUpCustomTypes        String              @default("[]")
-  institution                Institution         @relation(fields: [institutionId], references: [id])
+  defaultNotificationChannel      NotificationChannel @default(SMS)
+  whatsappSmsFallback             Boolean             @default(true)
+  whatsappAppointmentEnabled      Boolean             @default(true)
+  whatsappPaymentEnabled          Boolean             @default(true)
+  whatsappInfoEnabled             Boolean             @default(true)
+  updatedAt                       DateTime            @updatedAt
+  institutionId                   String              @unique
+  activePriceList                 String              @default("standard")
+  followUpCustomTypes             String              @default("[]")
+  institution                     Institution         @relation(fields: [institutionId], references: [id])
 }
 
 // Kuruma özel randevu tedavi türleri ve renkleri (Ayarlar > Tedavi Türleri)
@@ -1000,16 +1243,20 @@ model TreatmentType {
 
 // Doktor bazlı zaman blokajı (belirli tarih/saat aralığında randevuya kapalı)
 model DoctorBlock {
-  id        String   @id @default(cuid())
-  doctorId  String
-  date      String // YYYY-MM-DD
-  startTime String // HH:mm
-  endTime   String // HH:mm
-  reason    String?
-  createdAt DateTime @default(now())
-  doctor    User     @relation(fields: [doctorId], references: [id])
+  id            String       @id @default(cuid())
+  institutionId String
+  branchId      String
+  doctorId      String
+  date          String // YYYY-MM-DD
+  startTime     String // HH:mm
+  endTime       String // HH:mm
+  reason        String?
+  createdAt     DateTime     @default(now())
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  branch        ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: Cascade)
+  doctor        User         @relation(fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
 
-  @@index([doctorId, date])
+  @@index([institutionId, branchId, doctorId, date])
 }
 
 model SupportTicket {
@@ -1019,22 +1266,34 @@ model SupportTicket {
   subject       String
   message       String
   answer        String?
+  status        String       @default("OPEN")
+  closedAt      DateTime?
+  closedById    String?
   createdAt     DateTime     @default(now())
   user          User?        @relation(fields: [userId], references: [id])
   institution   Institution? @relation(fields: [institutionId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([institutionId])
+  @@index([institutionId, status, createdAt])
 }
 
 model Message {
-  id        String   @id @default(cuid())
-  userId    String
-  text      String
-  createdAt DateTime @default(now())
-  user      User     @relation(fields: [userId], references: [id])
+  id            String       @id @default(cuid())
+  userId        String
+  institutionId String
+  branchId      String
+  text          String
+  deletedAt     DateTime?
+  deletedById   String?
+  createdAt     DateTime     @default(now())
+  user          User         @relation(fields: [userId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  branch        ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: Cascade)
 
   @@index([userId])
+  @@index([institutionId, branchId, createdAt])
+  @@index([institutionId, branchId, deletedAt, createdAt])
 }
 
 model Announcement {
@@ -1052,39 +1311,60 @@ model Announcement {
 }
 
 model Prescription {
-  id        String   @id @default(cuid())
-  patientId String
-  doctorId  String?
-  drugs     String
-  note      String?
-  createdAt DateTime @default(now())
-  patient   Patient  @relation(fields: [patientId], references: [id])
-  doctor    User?    @relation("PrescriptionDoctor", fields: [doctorId], references: [id])
+  id            String       @id @default(cuid())
+  institutionId String
+  branchId      String
+  requestKey    String?
+  patientId     String
+  doctorId      String?
+  drugs         String
+  note          String?
+  status        String       @default("ACTIVE")
+  voidedAt      DateTime?
+  voidedById    String?
+  voidReason    String?
+  createdAt     DateTime     @default(now())
+  patient       Patient      @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
+  doctor        User?        @relation("PrescriptionDoctor", fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  institution   Institution  @relation(fields: [institutionId], references: [id])
+  branch        ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId])
 
-  @@index([patientId])
+  @@index([institutionId, branchId, patientId])
+  @@index([institutionId, branchId, status, createdAt])
   @@index([doctorId])
+  @@unique([branchId, requestKey])
+  @@unique([id, institutionId, branchId])
 }
 
 model TreatmentPlan {
-  id        String              @id @default(cuid())
-  patientId String
-  doctorId  String
-  title     String
-  status    TreatmentPlanStatus @default(PLANLANDI)
-  totalCost Decimal?            @db.Decimal(10, 2)
-  notes     String?
-  createdAt DateTime            @default(now())
-  updatedAt DateTime            @updatedAt
-  doctor    User                @relation("TreatmentPlanDoctor", fields: [doctorId], references: [id])
-  patient   Patient             @relation(fields: [patientId], references: [id])
-  steps     TreatmentStep[]
+  id            String              @id @default(cuid())
+  institutionId String
+  branchId      String
+  requestKey    String?
+  patientId     String
+  doctorId      String
+  title         String
+  status        TreatmentPlanStatus @default(PLANLANDI)
+  totalCost     Decimal?            @db.Decimal(10, 2)
+  notes         String?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+  doctor        User                @relation("TreatmentPlanDoctor", fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  patient       Patient             @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
+  institution   Institution         @relation(fields: [institutionId], references: [id])
+  branch        ClinicBranch        @relation(fields: [branchId, institutionId], references: [id, institutionId])
+  steps         TreatmentStep[]
 
-  @@index([patientId])
+  @@unique([id, institutionId, branchId])
+  @@unique([branchId, requestKey])
+  @@index([institutionId, branchId, patientId])
   @@index([doctorId])
 }
 
 model TreatmentStep {
   id            String        @id @default(cuid())
+  institutionId String
+  branchId      String
   planId        String
   order         Int
   treatmentName String
@@ -1093,10 +1373,16 @@ model TreatmentStep {
   status        String        @default("BEKLIYOR")
   doneAt        DateTime?
   note          String?
+  archivedAt    DateTime?
+  archivedById  String?
+  archiveReason String?
   createdAt     DateTime      @default(now())
-  plan          TreatmentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch        ClinicBranch  @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  plan          TreatmentPlan @relation(fields: [planId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
 
   @@index([planId])
+  @@index([planId, archivedAt])
 }
 
 // Kurumun sattığı, yeniden kullanılabilir paket şablonu (ör. "6 Seans
@@ -1117,6 +1403,7 @@ model PackageDefinition {
   institution     Institution      @relation(fields: [institutionId], references: [id])
   patientPackages PatientPackage[]
 
+  @@unique([id, institutionId])
   @@index([institutionId])
 }
 
@@ -1127,8 +1414,9 @@ model PackageDefinition {
 // tahsilat/taksit gibi görünür, ayrı bir "paket geliri" silosu yoktur.
 model PatientPackage {
   id            String                @id @default(cuid())
-  requestKey    String?               @unique
+  requestKey    String?
   institutionId String
+  branchId      String
   patientId     String
   definitionId  String?
   doctorId      String?
@@ -1145,14 +1433,19 @@ model PatientPackage {
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
   institution   Institution           @relation(fields: [institutionId], references: [id])
-  patient       Patient               @relation(fields: [patientId], references: [id])
-  definition    PackageDefinition?    @relation(fields: [definitionId], references: [id])
-  doctor        User?                 @relation("PatientPackageDoctor", fields: [doctorId], references: [id])
-  payment       Payment?              @relation(fields: [paymentId], references: [id])
-  taksitPlan    TaksitPlan?           @relation(fields: [taksitPlanId], references: [id])
+  branch        ClinicBranch          @relation(fields: [branchId, institutionId], references: [id, institutionId])
+  patient       Patient               @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
+  definition    PackageDefinition?    @relation(fields: [definitionId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  doctor        User?                 @relation("PatientPackageDoctor", fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  payment       Payment?              @relation(fields: [paymentId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
+  taksitPlan    TaksitPlan?           @relation(fields: [taksitPlanId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
   usages        PatientPackageUsage[]
 
-  @@index([institutionId])
+  @@unique([branchId, requestKey])
+  @@unique([id, institutionId, branchId])
+  @@unique([paymentId, institutionId, branchId])
+  @@unique([taksitPlanId, institutionId, branchId])
+  @@index([institutionId, branchId])
   @@index([patientId])
   @@index([status])
 }
@@ -1161,81 +1454,108 @@ model PatientPackage {
 // böylece paket kullanımı ile randevu geçmişi arasında iz kaybolmaz.
 model PatientPackageUsage {
   id               String         @id @default(cuid())
-  requestKey       String?        @unique
+  institutionId    String
+  branchId         String
+  requestKey       String?
   patientPackageId String
   appointmentId    String?
   usedAt           DateTime       @default(now())
   note             String?
+  status           String         @default("ACTIVE")
+  voidedAt         DateTime?
   createdById      String?
-  patientPackage   PatientPackage @relation(fields: [patientPackageId], references: [id], onDelete: Cascade)
-  appointment      Appointment?   @relation(fields: [appointmentId], references: [id])
-  createdBy        User?          @relation("PatientPackageUsageCreatedBy", fields: [createdById], references: [id])
+  institution      Institution    @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch           ClinicBranch   @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  patientPackage   PatientPackage @relation(fields: [patientPackageId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
+  appointment      Appointment?   @relation(fields: [appointmentId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
+  createdBy        User?          @relation("PatientPackageUsageCreatedBy", fields: [createdById, institutionId], references: [id, institutionId], onDelete: NoAction)
 
   // Aynı randevu için aynı paketten iki kez seans düşülmesin.
   @@unique([patientPackageId, appointmentId])
+  @@unique([branchId, requestKey])
   @@index([patientPackageId])
   @@index([appointmentId])
+  @@index([patientPackageId, status])
 }
 
 model LabOrder {
-  id         String            @id @default(cuid())
-  requestKey String?           @unique
-  patientId  String
-  doctorId   String
+  id            String            @id @default(cuid())
+  institutionId String
+  branchId      String
+  requestKey    String?
+  patientId     String
+  doctorId      String
   // labName tarihsel/gösterim amaçlı serbest metin olarak kalır; asıl ilişki
   // firmaId ile kurulur (bkz. denetim raporu Tema 3 — önceden yalnızca isim
   // eşleşmesiyle kuruluyordu, firma adı değişince zincir kopabiliyordu).
-  labName    String
-  firmaId    String?
-  labType    String
-  teeth      String?
-  notes      String?
-  status     LabOrderStatus    @default(DEVAM_EDIYOR)
-  price      Decimal?          @db.Decimal(10, 2)
-  invoiceNo  String?
-  createdAt  DateTime          @default(now())
-  updatedAt  DateTime          @updatedAt
-  doctor     User              @relation("LabOrderDoctor", fields: [doctorId], references: [id])
-  firma      Firma?            @relation(fields: [firmaId], references: [id])
-  invoices   LabOrderInvoice[]
-  patient    Patient           @relation(fields: [patientId], references: [id])
-  trips      LabTrip[]
-  followUps  PatientFollowUp[]
+  labName       String
+  firmaId       String?
+  labType       String
+  teeth         String?
+  notes         String?
+  status        LabOrderStatus    @default(DEVAM_EDIYOR)
+  price         Decimal?          @db.Decimal(10, 2)
+  invoiceNo     String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  doctor        User              @relation("LabOrderDoctor", fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  institution   Institution       @relation(fields: [institutionId], references: [id])
+  branch        ClinicBranch      @relation(fields: [branchId, institutionId], references: [id, institutionId])
+  firma         Firma?            @relation(fields: [firmaId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
+  invoices      LabOrderInvoice[]
+  patient       Patient           @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
+  trips         LabTrip[]
+  followUps     PatientFollowUp[]
 
-  @@index([patientId])
+  @@unique([branchId, requestKey])
+  @@index([institutionId, branchId, patientId])
   @@index([doctorId])
   @@index([firmaId])
+  @@unique([id, institutionId, branchId])
 }
 
 model LabTrip {
-  id           String            @id @default(cuid())
-  labOrderId   String
-  order        Int
-  description  String
-  sentAt       DateTime          @default(now())
-  expectedAt   DateTime?
-  followUps    PatientFollowUp[]
-  receivedAt   DateTime?
-  sentNote     String?
-  receivedNote String?
-  createdAt    DateTime          @default(now())
-  labOrder     LabOrder          @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
+  id            String            @id @default(cuid())
+  institutionId String
+  branchId      String
+  labOrderId    String
+  order         Int
+  description   String
+  sentAt        DateTime          @default(now())
+  expectedAt    DateTime?
+  followUps     PatientFollowUp[]
+  receivedAt    DateTime?
+  sentNote      String?
+  receivedNote  String?
+  createdAt     DateTime          @default(now())
+  institution   Institution       @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch        ClinicBranch      @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  labOrder      LabOrder          @relation(fields: [labOrderId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
 
   @@unique([labOrderId, order])
+  @@unique([id, institutionId, branchId])
   @@index([labOrderId])
 }
 
 model LabOrderInvoice {
-  id         String   @id @default(cuid())
-  labOrderId String
-  requestKey String?  @unique
-  item       String
-  amount     Decimal  @db.Decimal(10, 2)
-  invoiceNo  String?
-  issuedAt   DateTime @default(now())
-  note       String?
-  createdAt  DateTime @default(now())
-  labOrder   LabOrder @relation(fields: [labOrderId], references: [id], onDelete: Cascade)
+  id            String       @id @default(cuid())
+  institutionId String
+  branchId      String
+  labOrderId    String
+  requestKey    String?
+  item          String
+  amount        Decimal      @db.Decimal(10, 2)
+  invoiceNo     String?
+  issuedAt      DateTime     @default(now())
+  note          String?
+  status        String       @default("ACTIVE")
+  voidedAt      DateTime?
+  voidedById    String?
+  voidReason    String?
+  createdAt     DateTime     @default(now())
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch        ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  labOrder      LabOrder     @relation(fields: [labOrderId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
 
   // Postgres'te unique indekste NULL değerler birbirinden farklı sayılır —
   // yani bu kısıt yalnızca gerçek bir invoiceNo GİRİLDİĞİNDE aynı siparişte
@@ -1244,13 +1564,17 @@ model LabOrderInvoice {
   // tasarımdır (bkz. denetim raporu), çünkü bir laboratuvar siparişine birden
   // fazla numarasız maliyet kalemi eklenebilmesi gerekir.
   @@unique([labOrderId, invoiceNo])
+  @@unique([id, institutionId, branchId])
+  @@unique([branchId, requestKey])
   @@index([labOrderId])
   @@index([issuedAt])
+  @@index([labOrderId, status])
 }
 
 model StockItem {
   id              String          @id @default(cuid())
   institutionId   String
+  branchId        String
   name            String
   category        String          @default("SARF")
   unit            String          @default("adet")
@@ -1265,6 +1589,7 @@ model StockItem {
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
   institution     Institution     @relation(fields: [institutionId], references: [id])
+  branch          ClinicBranch    @relation(fields: [branchId, institutionId], references: [id, institutionId])
   movements       StockMovement[]
   purchaseItems   PurchaseItem[]
   lots            StockLot[]
@@ -1274,8 +1599,9 @@ model StockItem {
   // garanti eden bir kısıt yoktu — eşzamanlı iki "yeni ürün" isteği veya
   // "Yeni Kart" formundan elle tekrar aynı isim girilmesi mükerrer kart
   // yaratabiliyordu). Firma modeliyle aynı desen.
-  @@unique([institutionId, name])
-  @@index([institutionId])
+  @@unique([branchId, name])
+  @@unique([id, institutionId, branchId])
+  @@index([institutionId, branchId])
   @@index([barcode])
   @@index([expiresAt])
 }
@@ -1284,6 +1610,7 @@ model StockMovement {
   id             String                       @id @default(cuid())
   stockItemId    String
   institutionId  String
+  branchId       String
   requestKey     String?
   type           StockMovementType
   quantity       Int
@@ -1292,19 +1619,23 @@ model StockMovement {
   note           String?
   userId         String
   createdAt      DateTime                     @default(now())
-  stockItem      StockItem                    @relation(fields: [stockItemId], references: [id])
+  stockItem      StockItem                    @relation(fields: [stockItemId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
   institution    Institution                  @relation(fields: [institutionId], references: [id])
-  user           User                         @relation("StockMovementUser", fields: [userId], references: [id])
+  branch         ClinicBranch                 @relation(fields: [branchId, institutionId], references: [id, institutionId])
+  user           User                         @relation("StockMovementUser", fields: [userId, institutionId], references: [id, institutionId], onDelete: NoAction)
   purchaseItem   PurchaseItem?
   lotAllocations StockMovementLotAllocation[]
 
-  @@unique([institutionId, requestKey])
+  @@unique([branchId, requestKey])
+  @@unique([id, institutionId, branchId])
+  @@index([institutionId, branchId, createdAt])
   @@index([stockItemId, createdAt])
 }
 
 model StockLot {
   id                String                       @id @default(cuid())
   institutionId     String
+  branchId          String
   stockItemId       String
   purchaseItemId    String?
   lotNo             String?
@@ -1318,24 +1649,30 @@ model StockLot {
   createdAt         DateTime                     @default(now())
   updatedAt         DateTime                     @updatedAt
   institution       Institution                  @relation(fields: [institutionId], references: [id])
-  stockItem         StockItem                    @relation(fields: [stockItemId], references: [id])
-  purchaseItem      PurchaseItem?                @relation(fields: [purchaseItemId], references: [id])
+  branch            ClinicBranch                 @relation(fields: [branchId, institutionId], references: [id, institutionId])
+  stockItem         StockItem                    @relation(fields: [stockItemId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
+  purchaseItem      PurchaseItem?                @relation(fields: [purchaseItemId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
   allocations       StockMovementLotAllocation[]
 
-  @@index([institutionId, stockItemId, status])
+  @@index([institutionId, branchId, stockItemId, status])
   @@index([stockItemId, expiresAt, receivedAt])
   @@index([purchaseItemId])
+  @@unique([id, institutionId, branchId])
 }
 
 model StockMovementLotAllocation {
-  id         String        @id @default(cuid())
-  movementId String
-  lotId      String
-  quantity   Int
-  unitCost   Decimal       @db.Decimal(10, 2)
-  createdAt  DateTime      @default(now())
-  movement   StockMovement @relation(fields: [movementId], references: [id], onDelete: Cascade)
-  lot        StockLot      @relation(fields: [lotId], references: [id])
+  id            String        @id @default(cuid())
+  institutionId String
+  branchId      String
+  movementId    String
+  lotId         String
+  quantity      Int
+  unitCost      Decimal       @db.Decimal(10, 2)
+  createdAt     DateTime      @default(now())
+  institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch        ClinicBranch  @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  movement      StockMovement @relation(fields: [movementId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
+  lot           StockLot      @relation(fields: [lotId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
 
   @@unique([movementId, lotId])
   @@index([lotId])
@@ -1343,6 +1680,8 @@ model StockMovementLotAllocation {
 
 model TaksitPlan {
   id             String           @id @default(cuid())
+  institutionId  String
+  branchId       String
   patientId      String
   doctorId       String
   baslik         String?
@@ -1357,17 +1696,22 @@ model TaksitPlan {
   updatedAt      DateTime         @updatedAt
   reminders      Reminder[]
   taksitler      Taksit[]
-  doctor         User             @relation("TaksitPlanDoctor", fields: [doctorId], references: [id])
-  patient        Patient          @relation(fields: [patientId], references: [id])
+  doctor         User             @relation("TaksitPlanDoctor", fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  patient        Patient          @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
+  institution    Institution      @relation(fields: [institutionId], references: [id])
+  branch         ClinicBranch     @relation(fields: [branchId, institutionId], references: [id, institutionId])
   patientPackage PatientPackage?
 
-  @@index([patientId])
+  @@index([institutionId, branchId, patientId])
   @@index([doctorId])
   @@index([status])
+  @@unique([id, institutionId, branchId])
 }
 
 model Taksit {
   id           String              @id @default(cuid())
+  institutionId String
+  branchId     String
   planId       String
   siraNo       Int
   vadeDate     DateTime
@@ -1378,44 +1722,58 @@ model Taksit {
   note         String?
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
-  plan         TaksitPlan          @relation(fields: [planId], references: [id], onDelete: Cascade)
+  institution  Institution         @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch       ClinicBranch        @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  plan         TaksitPlan          @relation(fields: [planId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
   odemeler     TaksitOdeme[]
   reminderLogs TaksitReminderLog[]
 
   @@index([planId])
   @@index([vadeDate])
   @@index([status])
+  @@unique([id, institutionId, branchId])
 }
 
 model TaksitOdeme {
-  id        String        @id @default(cuid())
-  taksitId  String
-  paymentId String?
-  tarih     DateTime      @default(now())
-  tutar     Decimal       @db.Decimal(10, 2)
-  yontem    PaymentMethod @default(NAKIT)
-  posId     String?
-  note      String?
-  createdAt DateTime      @default(now())
-  payment   Payment?      @relation(fields: [paymentId], references: [id], onDelete: SetNull)
-  pos       PosDevice?    @relation(fields: [posId], references: [id])
-  taksit    Taksit        @relation(fields: [taksitId], references: [id], onDelete: Cascade)
+  id            String        @id @default(cuid())
+  institutionId String
+  branchId      String
+  taksitId      String
+  paymentId     String?
+  tarih         DateTime      @default(now())
+  tutar         Decimal       @db.Decimal(10, 2)
+  yontem        PaymentMethod @default(NAKIT)
+  posId         String?
+  note          String?
+  status        String        @default("ACTIVE")
+  voidedAt      DateTime?
+  createdAt     DateTime      @default(now())
+  institution   Institution   @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch        ClinicBranch  @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  payment       Payment?      @relation(fields: [paymentId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
+  pos           PosDevice?    @relation(fields: [posId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
+  taksit        Taksit        @relation(fields: [taksitId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
 
   @@index([taksitId])
   @@index([paymentId])
+  @@index([taksitId, status])
 }
 
 // Bir taksit için otomatik SMS hatırlatması ne zaman gönderildi — aynı taksite
 // saatlik taramada tekrar tekrar SMS gitmesin diye (bkz. InvoiceReminder ile
 // aynı desen, src/lib/patient-payment-reminders.ts).
 model TaksitReminderLog {
-  id          String   @id @default(cuid())
-  taksitId    String
-  sentTo      String
-  status      String
-  errorDetail String?
-  sentAt      DateTime @default(now())
-  taksit      Taksit   @relation(fields: [taksitId], references: [id], onDelete: Cascade)
+  id            String       @id @default(cuid())
+  institutionId String
+  branchId      String
+  taksitId      String
+  sentTo        String
+  status        String
+  errorDetail   String?
+  sentAt        DateTime     @default(now())
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch        ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  taksit        Taksit       @relation(fields: [taksitId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
 
   @@index([taksitId])
 }
@@ -1424,14 +1782,18 @@ model TaksitReminderLog {
 // yılda-bir-kez gönderim garantisini DB seviyesinde sağlar (saatlik tarama aynı
 // gün birden fazla kez çalışsa bile ikinci kez göndermez), bkz. src/lib/birthday-reminders.ts.
 model BirthdaySmsLog {
-  id          String   @id @default(cuid())
-  patientId   String
-  year        Int
-  sentTo      String
-  status      String
-  errorDetail String?
-  sentAt      DateTime @default(now())
-  patient     Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  id            String       @id @default(cuid())
+  institutionId String
+  branchId      String
+  patientId     String
+  year          Int
+  sentTo        String
+  status        String
+  errorDetail   String?
+  sentAt        DateTime     @default(now())
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch        ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  patient       Patient      @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
 
   @@unique([patientId, year])
 }
@@ -1445,17 +1807,25 @@ model BirthdaySmsLog {
 // açar/kapatır — varsayılan kapalı (bkz. Setting.birthdaySmsEnabled felsefesi:
 // SMS bakiyesi tükettiği için bilinçli açılmalı).
 model CelebrationDay {
-  id                String                  @id @default(cuid())
-  code              String                  @unique
-  title             String
-  month             Int
-  day               Int
-  targetProfessions String[]                @default([])
-  messageTemplate   String
-  isActive          Boolean                 @default(true)
-  createdAt         DateTime                @default(now())
-  updatedAt         DateTime                @updatedAt
-  settings          CelebrationDaySetting[]
+  id                       String                  @id @default(cuid())
+  code                     String                  @unique
+  title                    String
+  category                 String                  @default("GENERAL")
+  month                    Int
+  day                      Int
+  recurrenceRule           String                  @default("FIXED")
+  weekOfMonth              Int?
+  weekday                  Int?
+  dateOverrides            String[]                @default([])
+  targetProfessions        String[]                @default([])
+  messageTemplate          String
+  whatsappMessageTemplate  String?
+  whatsappTemplateName     String?
+  whatsappTemplateLanguage String                  @default("tr")
+  isActive                 Boolean                 @default(true)
+  createdAt                DateTime                @default(now())
+  updatedAt                DateTime                @updatedAt
+  settings                 CelebrationDaySetting[]
 }
 
 model CelebrationDaySetting {
@@ -1474,6 +1844,8 @@ model CelebrationDaySetting {
 // @@unique([patientId, celebrationCode, year]) ile DB seviyesinde sağlanır.
 model CelebrationSmsLog {
   id              String   @id @default(cuid())
+  institutionId   String
+  branchId        String
   patientId       String
   celebrationCode String
   year            Int
@@ -1481,7 +1853,9 @@ model CelebrationSmsLog {
   status          String
   errorDetail     String?
   sentAt          DateTime @default(now())
-  patient         Patient  @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  institution     Institution @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch          ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  patient         Patient  @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: NoAction)
 
   @@unique([patientId, celebrationCode, year])
 }
@@ -1510,11 +1884,12 @@ model PatientSmsPreference {
   lastChangeSource     SmsConsentSource        @default(SYSTEM_MIGRATION)
   createdAt            DateTime                @default(now())
   updatedAt            DateTime                @updatedAt
-  patient              Patient                 @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  consentToken         PatientSmsConsentToken? @relation(fields: [consentTokenId], references: [id], onDelete: SetNull)
+  patient              Patient                 @relation(fields: [patientId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  consentToken         PatientSmsConsentToken? @relation(fields: [consentTokenId, institutionId], references: [id, institutionId], onDelete: NoAction)
 
   @@index([institutionId])
   @@index([institutionId, status])
+  @@unique([patientId, institutionId])
 }
 
 // Tercih geçmişini silmeden tutan ekleme temelli audit tablosu — eski
@@ -1529,7 +1904,7 @@ model PatientSmsPreferenceEvent {
   tokenId       String?
   ipHash        String?
   createdAt     DateTime          @default(now())
-  patient       Patient           @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patient       Patient           @relation(fields: [patientId, institutionId], references: [id, institutionId], onDelete: NoAction)
 
   @@index([institutionId, createdAt])
   @@index([patientId, createdAt])
@@ -1557,9 +1932,10 @@ model PatientSmsConsentToken {
   invalidatedAt DateTime?
   createdById   String?
   createdAt     DateTime               @default(now())
-  patient       Patient                @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  patient       Patient                @relation(fields: [patientId, institutionId], references: [id, institutionId], onDelete: NoAction)
   preferences   PatientSmsPreference[]
 
+  @@unique([id, institutionId])
   @@index([institutionId])
   @@index([patientId, createdAt])
 }
@@ -1572,6 +1948,7 @@ model PatientSmsConsentToken {
 model SmsDispatch {
   id                String              @id @default(cuid())
   institutionId     String
+  branchId          String
   patientId         String
   channel           NotificationChannel
   eventType         String
@@ -1587,28 +1964,35 @@ model SmsDispatch {
   scheduledFor      DateTime?
   sentAt            DateTime?
   deliveredAt       DateTime?
+  readAt            DateTime?
   createdById       String?
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt
-  patient           Patient             @relation(fields: [patientId], references: [id], onDelete: Cascade)
+  institution       Institution         @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  branch            ClinicBranch        @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  patient           Patient             @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: Cascade)
 
   @@unique([institutionId, idempotencyKey])
   @@index([institutionId, createdAt])
+  @@index([institutionId, branchId, createdAt])
   @@index([patientId, createdAt])
 }
 
 model PosDevice {
   id             String        @id @default(cuid())
   institutionId  String
+  branchId       String
   name           String
   isActive       Boolean       @default(true)
   createdAt      DateTime      @default(now())
   institution    Institution   @relation(fields: [institutionId], references: [id])
+  branch         ClinicBranch  @relation(fields: [branchId, institutionId], references: [id, institutionId])
   payments       Payment[]
   taksitOdemeler TaksitOdeme[]
 
-  @@unique([institutionId, name])
-  @@index([institutionId])
+  @@unique([branchId, name])
+  @@unique([id, institutionId, branchId])
+  @@index([institutionId, branchId])
 }
 
 model ExpenseCategory {
@@ -1624,13 +2008,15 @@ model ExpenseCategory {
   expenses       Expense[]
 
   @@unique([institutionId, name])
+  @@unique([id, institutionId])
   @@index([institutionId])
 }
 
 model Expense {
   id              String           @id @default(cuid())
   institutionId   String
-  requestKey      String?          @unique
+  branchId        String
+  requestKey      String?
   tarih           DateTime
   categoryId      String?
   category        String
@@ -1650,19 +2036,23 @@ model Expense {
   createdAt       DateTime         @default(now())
   updatedAt       DateTime         @updatedAt
   institution     Institution      @relation(fields: [institutionId], references: [id])
-  expenseCategory ExpenseCategory? @relation(fields: [categoryId], references: [id])
-  doctor          User?            @relation("ExpenseDoctor", fields: [doctorId], references: [id])
+  branch          ClinicBranch     @relation(fields: [branchId, institutionId], references: [id, institutionId])
+  expenseCategory ExpenseCategory? @relation(fields: [categoryId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  doctor          User?            @relation("ExpenseDoctor", fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
 
-  @@unique([institutionId, sourceType, sourceId])
-  @@index([institutionId])
+  @@unique([branchId, sourceType, sourceId])
+  @@unique([branchId, requestKey])
+  @@index([institutionId, branchId])
   @@index([tarih])
   @@index([status])
   @@index([doctorId, periodYear, periodMonth])
+  @@unique([id, institutionId, branchId])
 }
 
 model Firma {
   id                 String                   @id @default(cuid())
   institutionId      String
+  branchId           String
   name               String
   phone              String?
   iban               String?
@@ -1677,22 +2067,26 @@ model Firma {
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
   institution        Institution              @relation(fields: [institutionId], references: [id])
+  branch             ClinicBranch             @relation(fields: [branchId, institutionId], references: [id, institutionId])
   islemler           FirmaIslem[]
   kontaktler         FirmaKontakt[]
   purchases          Purchase[]
   labOrders          LabOrder[]
   paymentAllocations FirmaPaymentAllocation[]
 
-  @@unique([institutionId, name])
-  @@index([institutionId])
+  @@unique([branchId, name])
+  @@unique([id, institutionId, branchId])
+  @@index([institutionId, branchId])
   @@index([kategori])
   @@index([vendorScore])
 }
 
 model FirmaIslem {
   id                 String                   @id @default(cuid())
+  institutionId      String
+  branchId           String
   firmaId            String
-  requestKey         String?                  @unique
+  requestKey         String?
   tarih              DateTime
   islemTipi          FirmaIslemTipi           @default(ALIM)
   urunHizmet         String?
@@ -1707,27 +2101,36 @@ model FirmaIslem {
   sourceId           String?
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
-  firma              Firma                    @relation(fields: [firmaId], references: [id])
+  firma              Firma                    @relation(fields: [firmaId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
+  institution        Institution              @relation(fields: [institutionId], references: [id])
+  branch             ClinicBranch             @relation(fields: [branchId, institutionId], references: [id, institutionId])
   purchase           Purchase?
   paymentAllocations FirmaPaymentAllocation[] @relation("FirmaPaymentMovement")
   debtAllocations    FirmaPaymentAllocation[] @relation("FirmaDebtMovement")
 
-  @@unique([firmaId, sourceType, sourceId, islemTipi])
+  @@unique([branchId, firmaId, sourceType, sourceId, islemTipi])
+  @@unique([branchId, requestKey])
+  @@index([institutionId, branchId])
   @@index([firmaId])
   @@index([tarih])
   @@index([dueDate])
+  @@unique([id, institutionId, branchId])
 }
 
 model FirmaPaymentAllocation {
-  id             String     @id @default(cuid())
+  id             String       @id @default(cuid())
+  institutionId  String
+  branchId       String
   firmaId        String
   paymentIslemId String
   debtIslemId    String
-  tutar          Decimal    @db.Decimal(10, 2)
-  createdAt      DateTime   @default(now())
-  firma          Firma      @relation(fields: [firmaId], references: [id], onDelete: Cascade)
-  paymentIslem   FirmaIslem @relation("FirmaPaymentMovement", fields: [paymentIslemId], references: [id], onDelete: Cascade)
-  debtIslem      FirmaIslem @relation("FirmaDebtMovement", fields: [debtIslemId], references: [id], onDelete: Cascade)
+  tutar          Decimal      @db.Decimal(10, 2)
+  createdAt      DateTime     @default(now())
+  institution    Institution  @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch         ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  firma          Firma        @relation(fields: [firmaId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
+  paymentIslem   FirmaIslem   @relation("FirmaPaymentMovement", fields: [paymentIslemId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
+  debtIslem      FirmaIslem   @relation("FirmaDebtMovement", fields: [debtIslemId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
 
   @@unique([paymentIslemId, debtIslemId])
   @@index([firmaId])
@@ -1735,21 +2138,26 @@ model FirmaPaymentAllocation {
 }
 
 model FirmaKontakt {
-  id        String   @id @default(cuid())
-  firmaId   String
-  ad        String
-  unvan     String?
-  email     String?
-  telefon   String?
-  rol       String?
-  isPrimary Boolean  @default(false)
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  firma     Firma    @relation(fields: [firmaId], references: [id], onDelete: Cascade)
+  id            String       @id @default(cuid())
+  institutionId String
+  branchId      String
+  firmaId       String
+  ad            String
+  unvan         String?
+  email         String?
+  telefon       String?
+  rol           String?
+  isPrimary     Boolean      @default(false)
+  isActive      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  institution   Institution  @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch        ClinicBranch @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  firma         Firma        @relation(fields: [firmaId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
 
   @@index([firmaId])
   @@index([email])
+  @@unique([id, institutionId, branchId])
 }
 
 // Çok kalemli satın alma belgesi. Toplam tutar tek bir ALIM tipi FirmaIslem'e
@@ -1758,10 +2166,11 @@ model FirmaKontakt {
 model Purchase {
   id                String                @id @default(cuid())
   institutionId     String
+  branchId          String
   firmaId           String
   firmaIslemId      String?               @unique
-  requestKey        String?               @unique
-  receiptRequestKey String?               @unique
+  requestKey        String?
+  receiptRequestKey String?
   tarih             DateTime
   receiptStatus     PurchaseReceiptStatus @default(TESLIM_ALINDI)
   receivedAt        DateTime?
@@ -1773,18 +2182,25 @@ model Purchase {
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
   institution       Institution           @relation(fields: [institutionId], references: [id])
-  firma             Firma                 @relation(fields: [firmaId], references: [id])
-  firmaIslem        FirmaIslem?           @relation(fields: [firmaIslemId], references: [id])
-  createdBy         User?                 @relation("PurchaseCreatedBy", fields: [createdById], references: [id])
+  branch            ClinicBranch          @relation(fields: [branchId, institutionId], references: [id, institutionId])
+  firma             Firma                 @relation(fields: [firmaId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
+  firmaIslem        FirmaIslem?           @relation(fields: [firmaIslemId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
+  createdBy         User?                 @relation("PurchaseCreatedBy", fields: [createdById, institutionId], references: [id, institutionId], onDelete: NoAction)
   items             PurchaseItem[]
 
-  @@index([institutionId])
+  @@unique([branchId, requestKey])
+  @@unique([branchId, receiptRequestKey])
+  @@unique([firmaIslemId, institutionId, branchId])
+  @@unique([id, institutionId, branchId])
+  @@index([institutionId, branchId])
   @@index([firmaId])
   @@index([tarih])
 }
 
 model PurchaseItem {
   id              String         @id @default(cuid())
+  institutionId   String
+  branchId        String
   purchaseId      String
   stockItemId     String
   productName     String
@@ -1795,19 +2211,29 @@ model PurchaseItem {
   lotNo           String?
   expiresAt       DateTime?
   stockMovementId String?        @unique
+  archivedAt      DateTime?
+  archivedById    String?
+  archiveReason   String?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
-  purchase        Purchase       @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
-  stockItem       StockItem      @relation(fields: [stockItemId], references: [id])
-  stockMovement   StockMovement? @relation(fields: [stockMovementId], references: [id])
+  institution     Institution    @relation(fields: [institutionId], references: [id], onDelete: NoAction)
+  branch          ClinicBranch   @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  purchase        Purchase       @relation(fields: [purchaseId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
+  stockItem       StockItem      @relation(fields: [stockItemId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
+  stockMovement   StockMovement? @relation(fields: [stockMovementId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
   stockLots       StockLot[]
 
   @@index([purchaseId])
+  @@index([purchaseId, archivedAt])
   @@index([stockItemId])
+  @@unique([id, institutionId, branchId])
+  @@unique([stockMovementId, institutionId, branchId])
 }
 
 model Reminder {
   id            String         @id @default(cuid())
+  institutionId String
+  branchId      String
   patientId     String?
   planId        String?
   note          String
@@ -1820,13 +2246,17 @@ model Reminder {
   lastChannel   String?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
-  patient       Patient?       @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  plan          TaksitPlan?    @relation(fields: [planId], references: [id], onDelete: Cascade)
+  institution   Institution    @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  branch        ClinicBranch   @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  patient       Patient?       @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: Cascade)
+  plan          TaksitPlan?    @relation(fields: [planId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: Cascade)
 
   @@index([reminderDate])
   @@index([status])
   @@index([status, reminderDate])
   @@index([status, nextAttemptAt])
+  @@index([institutionId, branchId, status, reminderDate])
+  @@unique([id, institutionId, branchId])
 }
 
 enum Role {
@@ -1918,6 +2348,7 @@ enum ReminderStatus {
   GONDERILIYOR
   TAMAMLANDI
   BASARISIZ
+  IPTAL
 }
 
 enum TreatmentPlanStatus {
@@ -2031,13 +2462,17 @@ model Document {
   fileSize        Int
   toothNo         String?
   note            String?
+  archivedAt      DateTime?
+  archivedById    String?
+  archiveReason   String?
   createdAt       DateTime         @default(now())
-  patient         Patient          @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  uploadedBy      User             @relation(fields: [uploadedById], references: [id])
+  patient         Patient          @relation(fields: [patientId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  uploadedBy      User             @relation(fields: [uploadedById], references: [id], onDelete: NoAction)
   institution     Institution      @relation(fields: [institutionId], references: [id])
 
   @@index([patientId])
   @@index([institutionId])
+  @@index([institutionId, archivedAt])
   @@index([category])
   @@index([storageProvider])
 }
@@ -2057,6 +2492,7 @@ enum DocumentCategory {
 model Waitlist {
   id            String         @id @default(cuid())
   institutionId String
+  branchId      String
   patientId     String
   doctorId      String?
   createdById   String
@@ -2070,16 +2506,19 @@ model Waitlist {
   appointmentId String?
   createdAt     DateTime       @default(now())
   updatedAt     DateTime       @updatedAt
-  patient       Patient        @relation(fields: [patientId], references: [id], onDelete: Cascade)
-  doctor        User?          @relation("WaitlistDoctor", fields: [doctorId], references: [id])
-  appointment   Appointment?   @relation(fields: [appointmentId], references: [id])
-  createdBy     User           @relation("WaitlistCreatedBy", fields: [createdById], references: [id])
+  patient       Patient        @relation(fields: [patientId, institutionId, branchId], references: [id, institutionId, homeBranchId], onDelete: Cascade)
+  doctor        User?          @relation("WaitlistDoctor", fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
+  appointment   Appointment?   @relation(fields: [appointmentId, institutionId, branchId], references: [id, institutionId, branchId], onDelete: NoAction)
+  createdBy     User           @relation("WaitlistCreatedBy", fields: [createdById, institutionId], references: [id, institutionId], onDelete: NoAction)
   institution   Institution    @relation(fields: [institutionId], references: [id])
+  branch        ClinicBranch   @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: Cascade)
 
-  @@index([institutionId])
+  @@index([institutionId, branchId])
   @@index([status])
   @@index([patientId])
   @@index([appointmentId])
+  @@unique([branchId, appointmentId])
+  @@unique([id, institutionId, branchId])
 }
 
 enum WaitlistStatus {
@@ -2092,6 +2531,7 @@ enum WaitlistStatus {
 model BookingRequest {
   id                   String               @id @default(cuid())
   institutionId        String
+  branchId             String
   doctorId             String?
   fullName             String
   phone                String
@@ -2103,11 +2543,13 @@ model BookingRequest {
   createdAppointmentId String?
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
-  doctor               User?                @relation(fields: [doctorId], references: [id])
+  doctor               User?                @relation(fields: [doctorId, institutionId], references: [id, institutionId], onDelete: NoAction)
   institution          Institution          @relation(fields: [institutionId], references: [id])
+  branch               ClinicBranch         @relation(fields: [branchId, institutionId], references: [id, institutionId], onDelete: Cascade)
 
-  @@index([institutionId])
+  @@index([institutionId, branchId])
   @@index([status])
+  @@unique([id, institutionId, branchId])
 }
 
 enum BookingRequestStatus {
@@ -2143,6 +2585,7 @@ enum SmsDispatchStatus {
   QUEUED
   SENT
   DELIVERED
+  READ
   FAILED
   SUPPRESSED
 }
@@ -2156,4 +2599,12 @@ enum SmsDispatchPurpose {
 enum NotificationChannel {
   SMS
   WHATSAPP
+}
+
+enum WhatsappConnectionStatus {
+  NOT_CONNECTED
+  CONNECTING
+  CONNECTED
+  ERROR
+  DISCONNECTED
 }

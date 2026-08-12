@@ -12,11 +12,14 @@ export async function PUT(request: NextRequest) {
   const body = await request.json();
   const { oldPassword, newPassword } = body;
 
-  if (!oldPassword || !newPassword) {
+  if (typeof oldPassword !== "string" || !oldPassword || typeof newPassword !== "string" || !newPassword) {
     return NextResponse.json({ message: "Eski ve yeni şifre gerekli" }, { status: 400 });
   }
+  if (newPassword.length < 8 || newPassword.length > 72) {
+    return NextResponse.json({ message: "Yeni şifre 8-72 karakter olmalı" }, { status: 400 });
+  }
 
-  const rate = checkRateLimit(`password-change:${getClientIpFromHeaders(request.headers)}:${auth.user.id}`, 5, 15 * 60_000);
+  const rate = await checkRateLimit(`password-change:${getClientIpFromHeaders(request.headers)}:${auth.user.id}`, 5, 15 * 60_000);
   if (!rate.ok) {
     return NextResponse.json({ message: "Çok fazla hatalı deneme yapıldı. Lütfen daha sonra tekrar deneyin." }, { status: 429 });
   }

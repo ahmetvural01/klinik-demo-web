@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
   const password = String(body?.password || "");
   if (!password) return NextResponse.json({ error: "Şifre zorunlu" }, { status: 400 });
 
-  const rate = checkRateLimit(`2fa-disable:${getClientIpFromHeaders(req.headers)}:${auth.user.id}`, 5, 15 * 60_000);
+  const rate = await checkRateLimit(`2fa-disable:${getClientIpFromHeaders(req.headers)}:${auth.user.id}`, 5, 15 * 60_000);
   if (!rate.ok) {
     return NextResponse.json({ error: "Çok fazla hatalı deneme yapıldı. Lütfen daha sonra tekrar deneyin." }, { status: 429 });
   }

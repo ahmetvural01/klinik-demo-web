@@ -2,9 +2,11 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { patientSchema } from "@/lib/validators";
-import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
+import { hasEffectivePermission, requireAuth, withApiTiming, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 import { turkeyTodayStartUtc } from "@/lib/tz";
+import { getClientIpFromHeaders } from "@/lib/edge-rate-limit";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -121,12 +123,33 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
   const params = await props.params;
   const auth = await requireAuth("patients:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
+
+  const [
+    canReadAppointments,
+    canReadExaminations,
+    canReadPayments,
+    canReadPrescriptions,
+    canReadLab,
+    canReadInstallments,
+    canReadMessaging,
+  ] = await Promise.all([
+    hasEffectivePermission(auth.user, "appointments:read"),
+    hasEffectivePermission(auth.user, "examinations:read"),
+    hasEffectivePermission(auth.user, "payments:read"),
+    hasEffectivePermission(auth.user, "prescriptions:read"),
+    hasEffectivePermission(auth.user, "lab:read"),
+    hasEffectivePermission(auth.user, "installments:read"),
+    hasEffectivePermission(auth.user, "sms:read"),
+  ]);
 
   const patient = await prisma.patient.findFirst({
     where: {
       id: params.id,
       archivedAt: null,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      homeBranchId: branch.branchId,
     },
     select: {
       id: true,
@@ -163,7 +186,7 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
       toothChart: true,
       createdAt: true,
       updatedAt: true,
-      smsPreference: {
+      smsPreference: canReadMessaging ? {
         select: {
           status: true,
           firstConsentAt: true,
@@ -172,13 +195,14 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
           lastRequestAttemptAt: true,
           lastRequestError: true,
         },
-      },
-      smsConsentTokens: {
+      } : false,
+      smsConsentTokens: canReadMessaging ? {
         orderBy: { createdAt: "desc" },
         take: 1,
         select: { purpose: true, expiresAt: true, usedAt: true, resultStatus: true },
-      },
-      appointments: {
+      } : false,
+      appointments: canReadAppointments ? {
+        where: { branchId: branch.branchId },
         select: {
           id: true,
           startAt: true,
@@ -188,8 +212,9 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
           doctor: { select: { fullName: true } },
         },
         orderBy: { startAt: "desc" },
-      },
-      examinations: {
+      } : false,
+      examinations: canReadExaminations ? {
+        where: { branchId: branch.branchId },
         select: {
           id: true,
           treatmentName: true,
@@ -201,9 +226,9 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
           doctor: { select: { id: true, fullName: true } },
         },
         orderBy: { diagnosedAt: "desc" },
-      },
-      payments: {
-        where: { status: "ACTIVE" },
+      } : false,
+      payments: canReadPayments ? {
+        where: { status: "ACTIVE", branchId: branch.branchId },
         select: {
           id: true,
           amount: true,
@@ -215,12 +240,14 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
           doctor: { select: { id: true, fullName: true } },
         },
         orderBy: { createdAt: "desc" },
-      },
-      prescriptions: {
+      } : false,
+      prescriptions: canReadPrescriptions ? {
+        where: { branchId: branch.branchId },
         select: { id: true, drugs: true, note: true, createdAt: true },
         orderBy: { createdAt: "desc" },
-      },
-      labOrders: {
+      } : false,
+      labOrders: canReadLab ? {
+        where: { branchId: branch.branchId },
         select: {
           id: true,
           labName: true,
@@ -234,8 +261,9 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
           doctor: { select: { id: true, fullName: true } },
         },
         orderBy: { createdAt: "desc" }
-      },
-      taksitPlanlari: {
+      } : false,
+      taksitPlanlari: canReadInstallments ? {
+        where: { branchId: branch.branchId },
         select: {
           id: true,
           baslik: true,
@@ -254,7 +282,7 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
           },
         },
         orderBy: { createdAt: "desc" }
-      }
+      } : false,
     }
   });
 
@@ -291,17 +319,16 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
         action: "DOSYA_GORUNTULEME",
         purpose: request.headers.get("x-access-purpose")?.slice(0, 250) || "Klinik hizmet sunumu",
         route: request.nextUrl.pathname,
-        ip: (request.headers.get("x-forwarded-for") || request.headers.get("x-real-ip") || "")
-          .split(",")[0]
-          .trim()
-          .slice(0, 100) || null,
+        ip: getClientIpFromHeaders(request.headers).slice(0, 100) || null,
       },
     });
   }
 
-  // DOKTOR ve ASISTAN telefon numaralarını göremez
+  // DOKTOR ve ASISTAN telefon numaralarını ve TC kimlik numarasını göremez
+  // (bkz. patients/route.ts — aynı gerekçe: TC no telefondan daha az hassas
+  // sayılıp maskesiz bırakılamaz).
   if (await shouldHidePatientPhoneForRole(auth.user.role)) {
-    return NextResponse.json({ ...patient, phone: "***" });
+    return NextResponse.json({ ...patient, phone: "***", tcNo: patient.tcNo ? "***" : patient.tcNo });
   }
 
   return NextResponse.json(patient);
@@ -311,6 +338,8 @@ export async function PUT(request: NextRequest, props: Params) {
   const params = await props.params;
   const auth = await requireAuth("patients:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
   const body = await request.json();
   const existing = await prisma.patient.findFirst({
@@ -318,6 +347,7 @@ export async function PUT(request: NextRequest, props: Params) {
       id: params.id,
       archivedAt: null,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      homeBranchId: branch.branchId,
     },
   });
 
@@ -428,12 +458,15 @@ export async function DELETE(request: NextRequest, props: Params) {
   const params = await props.params;
   const auth = await requireAuth("patients:delete");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
   const existing = await prisma.patient.findFirst({
     where: {
       id: params.id,
       archivedAt: null,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      homeBranchId: branch.branchId,
     },
     select: { id: true, fullName: true },
   });

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-KlinikModern — a multi-tenant (multi-clinic) SaaS practice-management system for dental/medical clinics in Turkey. Next.js 14 App Router + TypeScript + Prisma/PostgreSQL + Tailwind. UI copy, comments, and commit messages are in Turkish; keep new user-facing text in Turkish.
+KlinikCep — a multi-tenant (multi-clinic) SaaS practice-management system for dental/medical clinics in Turkey. Next.js 15 App Router + TypeScript + Prisma/PostgreSQL + Tailwind. UI copy, comments, and commit messages are in Turkish; keep new user-facing text in Turkish.
 
 ## Commands
 

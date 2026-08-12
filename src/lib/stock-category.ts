@@ -19,3 +19,8 @@ export function normalizeCategory(value?: string | null) {
   }
   return normalized;
 }
+
+export function getCategoryAliases(value?: string | null) {
+  const normalized = normalizeCategory(value);
+  return CATEGORY_ALIASES[normalized] || [normalized];
+}

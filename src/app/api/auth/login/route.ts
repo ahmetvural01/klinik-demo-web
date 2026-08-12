@@ -4,68 +4,36 @@ import { loginSchema } from "@/lib/validators";
 import { setAuthCookie, signToken, signPendingTwoFactorToken, verifyPassword } from "@/lib/auth";
 import { writeAudit } from "@/lib/api";
 import { metricIncrement, metricObserve } from "@/lib/metrics";
-import { checkRateLimit } from "@/lib/rate-limit";
+import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
+import { clearFailures, isFailureBlocked, recordFailure } from "@/lib/security-store";
 
-type AttemptState = { count: number; blockedUntil?: number };
-
-const attemptStore = new Map<string, AttemptState>();
 const MAX_ATTEMPT = 5;
 const BLOCK_MINUTES = 15;
 
 function getClientIp(request: NextRequest) {
-  // bkz. src/lib/rate-limit.ts getClientIpFromHeaders — ilk değer istemci
-  // tarafından sahtelenebilir, güvenilir olan SON değerdir.
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    const parts = forwarded.split(",").map((p) => p.trim()).filter(Boolean);
-    if (parts.length > 0) return parts[parts.length - 1];
-  }
-  return request.headers.get("x-real-ip") || "unknown";
+  return getClientIpFromHeaders(request.headers);
 }
 
-function getAttemptKey(request: NextRequest, identityNo: string) {
-  return `${getClientIp(request)}:${identityNo}`;
-}
-
-function isBlocked(key: string) {
-  const state = attemptStore.get(key);
-  if (!state?.blockedUntil) return false;
-  if (state.blockedUntil < Date.now()) {
-    attemptStore.delete(key);
-    return false;
-  }
-  return true;
-}
-
-function failAttempt(key: string) {
-  const current = attemptStore.get(key) || { count: 0 };
-  const nextCount = current.count + 1;
-  if (nextCount >= MAX_ATTEMPT) {
-    attemptStore.set(key, {
-      count: nextCount,
-      blockedUntil: Date.now() + BLOCK_MINUTES * 60 * 1000,
-    });
-    return;
-  }
-  attemptStore.set(key, { count: nextCount });
-}
-
-function clearAttempt(key: string) {
-  attemptStore.delete(key);
+function getAttemptKey(request: NextRequest, institution: string, identityNo: string) {
+  return `clinic-login:${getClientIp(request)}:${institution}:${identityNo}`;
 }
 
 export async function POST(request: NextRequest) {
   const started = Date.now();
   metricIncrement("api_requests_total");
 
-  const preLimit = checkRateLimit(`auth:${getClientIp(request)}`, 30, 60_000);
+  const preLimit = await checkRateLimit(`auth:${getClientIp(request)}`, 30, 60_000);
   if (!preLimit.ok) {
     metricIncrement("rate_limit_hits_total");
     metricIncrement("api_errors_total");
     return NextResponse.json({ message: "Çok fazla giriş denemesi yapıldı. Lütfen biraz sonra tekrar deneyin." }, { status: 429 });
   }
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  if (!body) {
+    metricIncrement("api_errors_total");
+    return NextResponse.json({ message: "Geçersiz giriş verisi" }, { status: 400 });
+  }
   const parsed = loginSchema.safeParse(body);
 
   if (!parsed.success) {
@@ -75,47 +43,19 @@ export async function POST(request: NextRequest) {
 
   const institutionInput = parsed.data.institution.toLowerCase().trim();
   const rememberMe = parsed.data.rememberMe ?? false;
+  const attemptKey = getAttemptKey(request, institutionInput, parsed.data.identityNo);
 
   try {
-    // ── Superadmin girişi ─────────────────────────────────────────────────────
+    // Klinik ve platform yönetimi oturumları ayrı güvenlik yüzeyleridir.
+    // Süperadmin hesabını buradan kabul etmek, ayrı süperadmin girişindeki 2FA
+    // ve modül kapsamı üretimini atlatan ikinci bir giriş yolu oluşturuyordu.
     if (institutionInput === "superadmin" || institutionInput === "admin") {
-      const attemptKey = getAttemptKey(request, parsed.data.identityNo);
-      if (isBlocked(attemptKey)) {
-        metricIncrement("auth_failures_total");
-        return NextResponse.json({ message: "Çok fazla hatalı deneme. 15 dakika bekleyin." }, { status: 429 });
-      }
+      return NextResponse.json({ message: "Bu hesapla klinik giriş ekranı kullanılamaz." }, { status: 400 });
+    }
 
-      const saUser = await prisma.user.findFirst({
-        where: { role: "SUPERADMIN", identityNo: parsed.data.identityNo, isActive: true },
-      });
-
-      if (!saUser) {
-        failAttempt(attemptKey);
-        metricIncrement("auth_failures_total");
-        return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
-      }
-
-      const isValid = await verifyPassword(parsed.data.password, saUser.passwordHash);
-      if (!isValid) {
-        failAttempt(attemptKey);
-        metricIncrement("auth_failures_total");
-        return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
-      }
-
-      clearAttempt(attemptKey);
-
-      const token = signToken({
-        userId: saUser.id,
-        role: saUser.role,
-        institutionId: null,
-        fullName: saUser.fullName,
-        tokenVersion: saUser.tokenVersion,
-      }, rememberMe);
-
-      await setAuthCookie(token, rememberMe);
-      // Superadmin için log kaydı tutulmaz
-      metricObserve("api_request_ms", Date.now() - started);
-      return NextResponse.json({ id: saUser.id, fullName: saUser.fullName, role: saUser.role, institutionId: null });
+    if (await isFailureBlocked(attemptKey, MAX_ATTEMPT)) {
+      metricIncrement("auth_failures_total");
+      return NextResponse.json({ message: "Çok fazla hatalı deneme. 15 dakika bekleyin." }, { status: 429 });
     }
 
     // Regular clinic user login
@@ -126,8 +66,9 @@ export async function POST(request: NextRequest) {
     });
 
     if (!institution) {
+      await recordFailure(attemptKey, BLOCK_MINUTES * 60_000);
       metricIncrement("auth_failures_total");
-      return NextResponse.json({ message: "Kurum bulunamadı" }, { status: 404 });
+      return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
     }
 
     if (!institution.isActive) {
@@ -140,71 +81,47 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ message: "Demo erişim süresi doldu. Devam etmek için satış ekibiyle iletişime geçin." }, { status: 423 });
     }
 
-    const attemptKey = getAttemptKey(request, parsed.data.identityNo);
-    if (isBlocked(attemptKey)) {
-      metricIncrement("auth_failures_total");
-      return NextResponse.json({ message: "Çok fazla hatalı deneme. 15 dakika bekleyin." }, { status: 429 });
-    }
-
     const user = await prisma.user.findFirst({
       where: {
         institutionId: institution.id,
         identityNo: parsed.data.identityNo,
         isActive: true
-      }
+      },
+      include: {
+        branchMemberships: {
+          where: { isActive: true, branch: { isActive: true } },
+          select: { id: true },
+          take: 1,
+        },
+      },
     });
 
-    // ── Superadmin gizli erişim: kullanıcı klinikte bulunamazsa SUPERADMIN dene ──
     if (!user) {
-      const saUser = await prisma.user.findFirst({
-        where: { role: "SUPERADMIN", identityNo: parsed.data.identityNo, isActive: true },
-      });
-
-      if (!saUser) {
-        failAttempt(attemptKey);
-        metricIncrement("auth_failures_total");
-        return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
-      }
-
-      const isValidSa = await verifyPassword(parsed.data.password, saUser.passwordHash);
-      if (!isValidSa) {
-        failAttempt(attemptKey);
-        metricIncrement("auth_failures_total");
-        return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
-      }
-
-      clearAttempt(attemptKey);
-
-      // Token: superadmin rolü ama o kliniğin institutionId'si → kliniğe tam erişim
-      const token = signToken({
-        userId: saUser.id,
-        role: saUser.role,
-        institutionId: institution.id,
-        fullName: saUser.fullName,
-        tokenVersion: saUser.tokenVersion,
-      }, rememberMe);
-
-      await setAuthCookie(token, rememberMe);
-      // Gizli superadmin erişimi artık kaydediliyor (isGhost/actorRole ile) —
-      // kurumun kendi /log ekranından filtrelenip görünmez, ama superadmin'in
-      // kendi hesap verebilirlik kaydında (bkz. src/lib/api.ts writeAudit) iz bırakır.
-      await writeAudit(saUser.id, "LOGIN", `Superadmin gizli erişim: ${institution.name}`);
-      metricObserve("api_request_ms", Date.now() - started);
-      return NextResponse.json({ id: saUser.id, fullName: saUser.fullName, role: saUser.role, institutionId: institution.id });
+      await recordFailure(attemptKey, BLOCK_MINUTES * 60_000);
+      metricIncrement("auth_failures_total");
+      return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
     }
 
     const isValid = await verifyPassword(parsed.data.password, user.passwordHash);
 
     if (!isValid) {
-      failAttempt(attemptKey);
+      await recordFailure(attemptKey, BLOCK_MINUTES * 60_000);
       metricIncrement("auth_failures_total");
       return NextResponse.json({ message: "Kullanıcı adı veya şifre hatalı" }, { status: 401 });
     }
 
-    clearAttempt(attemptKey);
+    if (user.branchMemberships.length === 0) {
+      metricIncrement("auth_failures_total");
+      return NextResponse.json(
+        { message: "Hesabınıza aktif bir şube atanmamış. Klinik yöneticinizle iletişime geçin." },
+        { status: 403 },
+      );
+    }
+
+    await clearFailures(attemptKey);
 
     if (user.twoFactorEnabled) {
-      const pendingToken = signPendingTwoFactorToken(user.id, rememberMe);
+      const pendingToken = await signPendingTwoFactorToken(user.id, rememberMe);
       metricObserve("api_request_ms", Date.now() - started);
       return NextResponse.json({ requires2FA: true, pendingToken });
     }

@@ -12,7 +12,7 @@ export async function POST(req: NextRequest) {
   // sınırı yoktu — TOTP secret'ının 6 haneli kodunu deneme yanılma ile
   // tahmin etmeye çalışan bir saldırıya karşı tutarlılık için eklendi
   // (bkz. denetim raporu).
-  const rate = checkRateLimit(`2fa-confirm:${auth.user.id}`, 8, 60_000);
+  const rate = await checkRateLimit(`2fa-confirm:${auth.user.id}`, 8, 60_000);
   if (!rate.ok) {
     return NextResponse.json({ error: "Çok fazla deneme yapıldı. Lütfen biraz sonra tekrar deneyin." }, { status: 429 });
   }

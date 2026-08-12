@@ -47,7 +47,17 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
 
-  const institution = await prisma.institution.findUnique({ where: { id: params.id }, select: { id: true } });
+  const institution = await prisma.institution.findUnique({
+    where: { id: params.id },
+    select: {
+      id: true,
+      branches: {
+        where: { isActive: true },
+        select: { id: true, isHeadquarters: true },
+        orderBy: [{ isHeadquarters: "desc" }, { createdAt: "asc" }],
+      },
+    },
+  });
   if (!institution) return NextResponse.json({ message: "Kurum bulunamadı" }, { status: 404 });
 
   const formData = await req.formData().catch(() => null);
@@ -55,6 +65,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   if (!(file instanceof File)) {
     return NextResponse.json({ message: "Dosya bulunamadı" }, { status: 400 });
   }
+  const requestedBranchId = String(formData?.get("branchId") || "").trim();
+  const branchId = requestedBranchId
+    ? institution.branches.find((branch) => branch.id === requestedBranchId)?.id
+    : institution.branches[0]?.id;
+  if (!branchId) return NextResponse.json({ message: "Geçersiz veya aktif olmayan hedef şube" }, { status: 400 });
   if (file.size > MAX_FILE_BYTES) {
     return NextResponse.json({ message: "Dosya çok büyük (maks. 5MB)" }, { status: 400 });
   }
@@ -73,7 +88,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
   const existingPatients = fileTcNos.length
     ? await prisma.patient.findMany({
-        where: { institutionId: params.id, tcNo: { in: fileTcNos } },
+        where: { institutionId: params.id, homeBranchId: branchId, tcNo: { in: fileTcNos } },
         select: { tcNo: true },
       })
     : [];
@@ -81,7 +96,12 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   const allKnownTc = new Set([...fileTcNos, ...existingTcSet]);
 
   const doctorRows = await prisma.user.findMany({
-    where: { institutionId: params.id, isActive: true, role: { in: ["DOKTOR", "YONETICI"] } },
+    where: {
+      institutionId: params.id,
+      isActive: true,
+      role: { in: ["DOKTOR", "YONETICI"] },
+      branchMemberships: { some: { branchId, isActive: true } },
+    },
     select: { fullName: true },
   });
   const knownDoctorNames = new Set(doctorRows.map((d) => normalizeTrKey(d.fullName)));

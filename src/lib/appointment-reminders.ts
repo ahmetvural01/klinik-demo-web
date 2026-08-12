@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
-import { resolveSmsTemplate } from "@/lib/sms-templates";
+import { renderCommunicationTemplate, resolveSmsTemplate } from "@/lib/sms-templates";
 import { dispatchPatientMessage } from "@/lib/notification-dispatch";
+import { operationalInstitutionWhere } from "@/lib/operational-state";
 
 const APPOINTMENT_REMINDER_PREFIX = "[APPT_REMINDER]";
 const MAX_ATTEMPTS = 3;
@@ -10,10 +11,6 @@ type SweepOptions = {
   institutionId?: string;
   take?: number;
 };
-
-function renderTemplate(template: string, vars: Record<string, string>) {
-  return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
-}
 
 function parseAppointmentId(note: string) {
   if (!note.startsWith(`${APPOINTMENT_REMINDER_PREFIX}:`)) return null;
@@ -34,15 +31,20 @@ export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
       reminderDate: { lte: now },
       attemptCount: { lt: MAX_ATTEMPTS },
       note: { startsWith: APPOINTMENT_REMINDER_PREFIX },
+      institution: operationalInstitutionWhere(now),
+      branch: { isActive: true },
       OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
       patient: options.institutionId
-        ? { institutionId: options.institutionId }
-        : { institutionId: { not: "" } },
+        ? { institutionId: options.institutionId, archivedAt: null }
+        : { institutionId: { not: "" }, archivedAt: null },
     },
     orderBy: [{ nextAttemptAt: "asc" }, { reminderDate: "asc" }],
     take,
     select: {
       id: true,
+      institutionId: true,
+      branchId: true,
+      patientId: true,
       note: true,
       attemptCount: true,
       patient: { select: { institutionId: true } },
@@ -58,9 +60,15 @@ export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
   ];
   const appointments = appointmentIds.length
     ? await prisma.appointment.findMany({
-        where: { id: { in: appointmentIds } },
+        where: {
+          id: { in: appointmentIds },
+          institution: operationalInstitutionWhere(now),
+          branch: { isActive: true },
+        },
         select: {
           id: true,
+          institutionId: true,
+          branchId: true,
           startAt: true,
           status: true,
           smsReminder: true,
@@ -107,6 +115,9 @@ export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
     if (
       !appointment
       || !institutionId
+      || appointment.patient.id !== reminder.patientId
+      || appointment.institutionId !== reminder.institutionId
+      || appointment.branchId !== reminder.branchId
       || appointment.doctor.institutionId !== institutionId
       || !appointment.smsReminder
       || appointment.startAt <= now
@@ -139,15 +150,13 @@ export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
     const institutionName = context.settings?.institutionName || context.institution.name;
     const institutionPhone = context.settings?.institutionPhone || context.institution.phone || "";
     const fallbackMessage = `${institutionName}: Sayın ${appointment.patient.fullName}, ${dateText} tarihindeki randevunuzu hatırlatırız. Hekim: ${appointment.doctor.fullName}.`;
-    const message = context.template
-      ? renderTemplate(context.template.content, {
-          institutionName,
-          institutionPhone,
-          patientName: appointment.patient.fullName,
-          doctorName: appointment.doctor.fullName,
-          dateTime: dateText,
-        })
-      : fallbackMessage;
+    const rendered = renderCommunicationTemplate(context.template, {
+      institutionName,
+      institutionPhone,
+      patientName: appointment.patient.fullName,
+      doctorName: appointment.doctor.fullName,
+      dateTime: dateText,
+    }, fallbackMessage);
 
     // Kanal seçimi, hasta SMS izni, bakiye rezervasyonu/iadesi ve idempotency
     // artık tek merkezden yönetiliyor (bkz. src/lib/notification-dispatch.ts).
@@ -157,11 +166,10 @@ export async function runAppointmentReminderSweep(options: SweepOptions = {}) {
       eventType: "APPOINTMENT_REMINDER",
       purpose: "SERVICE",
       templateCode: "HATIRLATMA",
-      message,
+      message: rendered.smsMessage,
+      whatsappMessage: rendered.whatsappMessage,
       idempotencyKey: `appt-reminder:${reminder.id}`,
-      whatsappTemplate: {
-        bodyParameters: [appointment.patient.fullName, dateText, appointment.doctor.fullName],
-      },
+      whatsappTemplate: rendered.whatsappTemplate,
     });
 
     if (result.success) {

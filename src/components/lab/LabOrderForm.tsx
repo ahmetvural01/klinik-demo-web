@@ -27,6 +27,8 @@ export function LabOrderForm({
   onPatientSearchChange,
   patientOptions,
   onPatientSelect,
+  patientLoading,
+  patientError,
   doctorSearch,
   onDoctorSearchChange,
   doctorOptions,
@@ -57,6 +59,8 @@ export function LabOrderForm({
   onPatientSearchChange?: (value: string) => void;
   patientOptions?: Option[];
   onPatientSelect?: (option: Option) => void;
+  patientLoading?: boolean;
+  patientError?: string;
   doctorSearch: string;
   onDoctorSearchChange: (value: string) => void;
   doctorOptions: Option[];
@@ -93,6 +97,8 @@ export function LabOrderForm({
             onSelect={onPatientSelect || (() => {})}
             placeholder="Hasta adı yazın..."
             emptyText="Hasta bulunamadı"
+            loading={patientLoading}
+            error={patientError}
             className={fieldClass}
           />
         </Field>

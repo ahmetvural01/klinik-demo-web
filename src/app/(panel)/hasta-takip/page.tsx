@@ -19,6 +19,7 @@ import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
+import { isAbortError, useLatestRequest } from "@/lib/use-latest-request";
 
 type Appointment = {
   id: string;
@@ -315,21 +316,19 @@ function followBadgeClassByType(type: string) {
   return "bg-slate-100 text-slate-600";
 }
 
-function readCachedDashboard(rangeDays: string) {
+function readCachedDashboard(rangeDays: string, scopeKey: string) {
   if (typeof window === "undefined") {
     return {
-      userRole: "",
       appointments: [] as Appointment[],
       manualFollowUps: [] as ManualFollowUp[],
       staff: [] as Staff[],
     };
   }
 
-  const cacheKey = `hasta-takip:dashboard:${rangeDays}`;
+  const cacheKey = `hasta-takip:dashboard:${scopeKey}:${rangeDays}`;
   const raw = sessionStorage.getItem(cacheKey);
   if (!raw) {
     return {
-      userRole: "",
       appointments: [] as Appointment[],
       manualFollowUps: [] as ManualFollowUp[],
       staff: [] as Staff[],
@@ -338,21 +337,18 @@ function readCachedDashboard(rangeDays: string) {
 
   try {
     const cached = JSON.parse(raw) as {
-      userRole?: string;
       appointments?: Appointment[];
       followUps?: ManualFollowUp[];
       staff?: Staff[];
     };
 
     return {
-      userRole: cached.userRole || "",
       appointments: Array.isArray(cached.appointments) ? cached.appointments : [],
       manualFollowUps: Array.isArray(cached.followUps) ? cached.followUps : [],
       staff: Array.isArray(cached.staff) ? cached.staff : [],
     };
   } catch {
     return {
-      userRole: "",
       appointments: [] as Appointment[],
       manualFollowUps: [] as ManualFollowUp[],
       staff: [] as Staff[],
@@ -361,10 +357,15 @@ function readCachedDashboard(rangeDays: string) {
 }
 
 export default function HastaTakipPage() {
-  const { can } = usePermissions();
+  const { can, hasFeature, scopeKey } = usePermissions();
+  const startDashboardRequest = useLatestRequest();
   const canWriteFollowUps = can("hastatracking:write");
+  const canUseWhatsapp = hasFeature("whatsapp") && can("whatsapp:write");
+  const eventChannelOptions = canUseWhatsapp
+    ? EVENT_CHANNEL_OPTIONS
+    : EVENT_CHANNEL_OPTIONS.filter((option) => option !== "WhatsApp");
   const [rangeDays, setRangeDays] = useState<"30" | "60" | "90">("90");
-  const cached = useMemo(() => readCachedDashboard(rangeDays), [rangeDays]);
+  const cached = useMemo(() => readCachedDashboard(rangeDays, scopeKey), [rangeDays, scopeKey]);
   const [appointments, setAppointments] = useState<Appointment[]>(() => cached.appointments);
   const [manualFollowUps, setManualFollowUps] = useState<ManualFollowUp[]>(() => cached.manualFollowUps);
   const [staff, setStaff] = useState<Staff[]>(() => cached.staff);
@@ -380,7 +381,6 @@ export default function HastaTakipPage() {
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [denseView, setDenseView] = useState(true);
   const [selectedDetailKey, setSelectedDetailKey] = useState("");
-  const [userRole, setUserRole] = useState("");
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const { showToast } = useToast();
@@ -445,14 +445,14 @@ export default function HastaTakipPage() {
   const hidePhone = !can("patients:phone");
 
   const loadData = useCallback(async () => {
-    const cacheKey = `hasta-takip:dashboard:${rangeDays}`;
+    const request = startDashboardRequest();
+    const cacheKey = `hasta-takip:dashboard:${scopeKey}:${rangeDays}`;
     let hadCached = false;
     if (typeof window !== "undefined") {
       const raw = sessionStorage.getItem(cacheKey);
       if (raw) {
         try {
           const cached = JSON.parse(raw) as {
-            userRole?: string;
             appointments?: Appointment[];
             followUps?: ManualFollowUp[];
             staff?: Staff[];
@@ -462,7 +462,6 @@ export default function HastaTakipPage() {
             setAppointments(cached.appointments);
             setManualFollowUps(cached.followUps);
             if (Array.isArray(cached.staff)) setStaff(cached.staff);
-            if (cached.userRole) setUserRole(cached.userRole);
             hadCached = true;
           }
         } catch {}
@@ -476,10 +475,9 @@ export default function HastaTakipPage() {
     from.setDate(from.getDate() - Number(rangeDays));
 
     try {
-      const [meData, apptRes, followRes] = await Promise.all([
-        cachedGet<{ role?: string } | null>("/api/auth/me", 60_000),
-        fetch(`/api/appointments?from=${from.toISOString()}&to=${to.toISOString()}`, { cache: "no-store" }),
-        fetch(`/api/patient-follow-ups?from=${from.toISOString()}&to=${to.toISOString()}`, { cache: "no-store" }),
+      const [apptRes, followRes] = await Promise.all([
+        fetch(`/api/appointments?from=${from.toISOString()}&to=${to.toISOString()}`, { cache: "no-store", signal: request.signal }),
+        fetch(`/api/patient-follow-ups?from=${from.toISOString()}&to=${to.toISOString()}`, { cache: "no-store", signal: request.signal }),
       ]);
 
       const apptData = await apptRes.json();
@@ -492,17 +490,15 @@ export default function HastaTakipPage() {
         throw new Error(followData?.message || "Manuel takip verileri yüklenemedi.");
       }
 
-      const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
-      const nextRole = preview || meData?.role || "";
       const nextAppointments = Array.isArray(apptData) ? apptData : [];
       const nextFollowUps = Array.isArray(followData) ? followData : [];
 
-      setUserRole(nextRole);
+      if (!request.isLatest()) return;
       setAppointments(nextAppointments);
       setManualFollowUps(nextFollowUps);
 
       void Promise.allSettled([
-        cachedGet<unknown>("/api/staff", 60_000)
+        cachedGet<unknown>("/api/staff", 60_000, { throwOnError: true })
           .then((staffData) => {
             const nextStaff = Array.isArray(staffData) ? staffData : [];
             setStaff(nextStaff);
@@ -519,24 +515,26 @@ export default function HastaTakipPage() {
               }
             }
           })
-          .catch(() => {}),
+          .catch((staffError) => {
+            setError((current) => current || (staffError instanceof Error ? staffError.message : "Personel listesi yüklenemedi."));
+          }),
       ]);
 
       if (typeof window !== "undefined") {
         sessionStorage.setItem(cacheKey, JSON.stringify({
-          userRole: nextRole,
           appointments: nextAppointments,
           followUps: nextFollowUps,
         }));
       }
     } catch (e) {
+      if (isAbortError(e) || !request.isLatest()) return;
       setError(e instanceof Error ? e.message : "Takip verileri yuklenemedi.");
       setAppointments([]);
       setManualFollowUps([]);
     } finally {
-      setLoading(false);
+      if (request.isLatest()) setLoading(false);
     }
-  }, [rangeDays]);
+  }, [rangeDays, scopeKey, startDashboardRequest]);
 
   useEffect(() => {
     void loadData();
@@ -571,15 +569,6 @@ export default function HastaTakipPage() {
       document.removeEventListener("visibilitychange", refreshVisible);
     };
   }, [loadData]);
-
-  useEffect(() => {
-    const onPreview = () => {
-      const preview = sessionStorage.getItem("dev-preview-role");
-      cachedGet<{ role?: string }>("/api/auth/me", 60_000).then((d) => setUserRole(preview || d?.role || "")).catch(() => {});
-    };
-    window.addEventListener("preview-role-change", onPreview);
-    return () => window.removeEventListener("preview-role-change", onPreview);
-  }, []);
 
   const persistCustomTypes = useCallback(async (types: string[]) => {
     const normalized = normalizeCustomTypes(types);
@@ -1157,18 +1146,6 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
     }
   }, []);
 
-  const toggleFollowUpHistory = async (followUpId: string) => {
-    if (activeHistoryFollowUpId === followUpId) {
-      setActiveHistoryFollowUpId("");
-      setFollowUpEvents([]);
-      resetEventForm();
-      return;
-    }
-    setActiveHistoryFollowUpId(followUpId);
-    resetEventForm();
-    await loadFollowUpEvents(followUpId);
-  };
-
   const saveFollowUpEvent = async () => {
     if (!activeHistoryFollowUpId) return;
     if (!eventForm.summary.trim()) {
@@ -1591,7 +1568,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                 {!hidePhone && detailItem.patientPhone && (
                   <div className="mt-2 flex flex-wrap gap-2">
                     <a href={`tel:${detailItem.patientPhone}`} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Ara</a>
-                    {detailItem.patientWhatsappConsent ? (
+                    {canUseWhatsapp && (detailItem.patientWhatsappConsent ? (
                       <a href={`https://wa.me/90${detailItem.patientPhone.replace(/\D/g, "").replace(/^0/, "")}`} target="_blank" rel="noreferrer" className="rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">WhatsApp</a>
                     ) : (
                       // Hasta WhatsApp/mesajlaşma iznini vermemiş (veya hiç sorulmamış) —
@@ -1604,7 +1581,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                       >
                         WhatsApp (izin yok)
                       </span>
-                    )}
+                    ))}
                   </div>
                 )}
               </div>
@@ -1660,7 +1637,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                 {canWriteFollowUps && <div className="grid gap-2 md:grid-cols-3">
                   <input type="datetime-local" value={eventForm.occurredAt} onChange={(e) => setEventForm((prev) => ({ ...prev, occurredAt: e.target.value }))} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
                   <select value={eventForm.channel} onChange={(e) => setEventForm((prev) => ({ ...prev, channel: e.target.value }))} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
-                    {EVENT_CHANNEL_OPTIONS.map((opt) => (
+                    {eventChannelOptions.map((opt) => (
                       <option key={opt} value={opt}>{opt}</option>
                     ))}
                   </select>

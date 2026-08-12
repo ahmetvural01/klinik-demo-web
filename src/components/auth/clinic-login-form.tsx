@@ -3,12 +3,14 @@
 import { FormEvent, useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowRight, Eye, EyeOff, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, Building2, Eye, EyeOff, ShieldCheck, UsersRound } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
 import { Button } from "@/components/ui/Button";
-import { ModuleIcon } from "@/components/ui/ModuleIcon";
+import { DentalMark } from "@/components/brand/DentalMark";
+import { KlinikCepMark } from "@/components/brand/KlinikCepMark";
+import { BRAND_NAME } from "@/lib/brand";
 
-const HERO_IMAGE = "/clinic-workspace-hero.jpg";
+const AUTH_IMAGE = "/marketing/auth-dental-clinic.webp";
 
 // Şifre HİÇBİR ZAMAN burada saklanmaz — tarayıcının kendi şifre yöneticisi
 // autoComplete="current-password" ile bunu güvenli şekilde yönetir. Burada
@@ -27,26 +29,28 @@ function loadRememberedLogin(): { institution: string; identityNo: string } | nu
 
 function AuthBackground() {
   return (
-    <div className="fixed inset-0 -z-10 bg-slate-950">
+    <div className="fixed inset-0 -z-10 bg-slate-100">
       <Image
-        src={HERO_IMAGE}
-        alt="Diş hekimliği muayenesi"
+        src={AUTH_IMAGE}
+        alt="Dijital diş şeması ve tedavi koltuğu bulunan modern diş kliniği"
         fill
         priority
-        unoptimized
-        className="object-cover opacity-45"
+        sizes="100vw"
+        className="object-cover object-[42%_center]"
       />
+      <div className="absolute inset-0 bg-gradient-to-r from-slate-950/10 via-transparent to-white/35" />
     </div>
   );
 }
 
 function BrandMark() {
   return (
-    <Link href="/" className="fixed left-6 top-6 z-10 flex items-center gap-2.5" aria-label="Ana sayfa">
-      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-[#0d7d6f] to-[#0a5b57] text-sm font-black text-white shadow-sm">
-        KM
+    <Link href="/" className="fixed left-4 top-4 z-20 flex items-center gap-3 rounded-lg border border-white/70 bg-white/90 px-3 py-2 shadow-lg shadow-slate-900/10 backdrop-blur-md sm:left-6 sm:top-6" aria-label={`${BRAND_NAME} ana sayfa`}>
+      <span className="relative flex h-10 w-10 items-center justify-center rounded-lg bg-[#087f73] text-white shadow-[0_8px_20px_rgba(8,127,115,.25)]">
+        <KlinikCepMark className="h-6 w-6" />
+        <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border-2 border-white bg-[#ff8063]" />
       </span>
-      <span className="text-sm font-black tracking-tight text-white drop-shadow">KlinikModern</span>
+      <span><span className="block text-sm font-black leading-none text-slate-950">{BRAND_NAME}</span><span className="mt-1 block text-[9px] font-black uppercase text-slate-400">Diş Klinik Yönetimi</span></span>
     </Link>
   );
 }
@@ -146,10 +150,10 @@ export function ClinicLoginForm() {
 
   if (pendingToken) {
     return (
-      <main className="flex min-h-dvh items-center justify-center p-4">
+      <main className="flex min-h-dvh items-center justify-center p-4 sm:justify-end sm:p-8 lg:p-12">
         <AuthBackground />
         <BrandMark />
-        <form onSubmit={onSubmit2FA} className="auth-panel mt-14 w-full max-w-sm p-6 sm:mt-0 sm:p-7">
+        <form onSubmit={onSubmit2FA} className="auth-panel mt-20 w-full max-w-md rounded-lg p-6 shadow-[0_28px_80px_rgba(15,23,42,.2)] sm:mt-0 sm:p-8">
           <div className="auth-panel-heading">
             <span className="auth-panel-icon"><ShieldCheck className="h-5 w-5" /></span>
             <div>
@@ -167,7 +171,7 @@ export function ClinicLoginForm() {
             autoFocus
             required
           />
-          {error && <p className="auth-status auth-status-error mt-3 px-3 py-2 text-sm font-semibold">{error}</p>}
+          {error && <p role="alert" aria-live="polite" className="auth-status auth-status-error mt-3 px-3 py-2 text-sm font-semibold">{error}</p>}
           <Button type="submit" loading={loading} fullWidth icon={ArrowRight} className="mt-4">
             {loading ? "Doğrulanıyor..." : "Doğrula ve Giriş Yap"}
           </Button>
@@ -180,41 +184,45 @@ export function ClinicLoginForm() {
   }
 
   return (
-    <main className="flex min-h-dvh items-start justify-center px-4 py-8 sm:items-center sm:py-12">
+    <main className="flex min-h-dvh items-start justify-center px-4 pb-8 pt-28 sm:items-center sm:justify-end sm:px-8 sm:py-12 lg:px-12 xl:px-20">
       <AuthBackground />
       <BrandMark />
-      <form onSubmit={onSubmit} className="auth-panel mt-14 w-full max-w-md p-6 sm:mt-0 sm:p-8">
+      <form onSubmit={onSubmit} className="auth-panel w-full max-w-[470px] rounded-lg border-white/80 bg-white/95 p-6 shadow-[0_30px_90px_rgba(15,23,42,.22)] backdrop-blur-xl sm:p-8">
         <div className="auth-brand-row">
-          <span className="auth-panel-icon"><ModuleIcon module="calendar" size="md" /></span>
+          <span className="flex h-12 w-12 flex-none items-center justify-center rounded-lg bg-emerald-50 text-[#087f73]"><DentalMark className="h-8 w-8" /></span>
           <div>
             <p className="auth-eyebrow">Yetkili personel girişi</p>
-            <h1 className="text-xl font-black text-slate-950">Panele giriş</h1>
+            <h1 className="text-2xl font-black text-slate-950">Klinik paneline giriş</h1>
           </div>
         </div>
         <div className="mt-3 border-b border-slate-100 pb-5">
-          <p className="mt-1 text-sm text-slate-500">Kurum ve personel bilgilerinizle devam edin.</p>
+          <p className="mt-1 text-sm leading-6 text-slate-500">Kurumunuzda tanımlı bilgilerle güvenli çalışma alanınıza devam edin.</p>
         </div>
 
           <div className="mt-6 space-y-4">
             <label className="auth-label block text-xs font-bold">
-              Kurum Kodu veya Kısa Adı
+              Kurum Adı
               <input
+                name="organization"
                 className="auth-input mt-1.5 w-full px-3 py-3 text-sm"
                 value={institution}
                 onChange={(e) => setInstitution(e.target.value)}
-                placeholder="ornekklinik"
+                placeholder="Kurumunuzun sistemde kayıtlı adı"
                 autoComplete="organization"
+                autoFocus
                 required
               />
+              <span className="mt-1.5 block text-[11px] font-medium leading-4 text-slate-400">Demo kullanıyorsanız size verilen kurum adını eksiksiz yazın.</span>
             </label>
 
             <label className="auth-label block text-xs font-bold">
-              TC Kimlik No
+              TC Kimlik / Personel No
               <input
+                name="username"
                 className="auth-input mt-1.5 w-full px-3 py-3 text-sm"
                 value={identityNo}
                 onChange={(e) => setIdentityNo(e.target.value.replace(/\D/g, "").slice(0, 11))}
-                placeholder="11 haneli"
+                placeholder="Kimlik veya personel numaranız"
                 inputMode="numeric"
                 autoComplete="username"
                 required
@@ -225,6 +233,7 @@ export function ClinicLoginForm() {
               Şifre
               <span className="relative mt-1.5 block">
                 <input
+                  name="password"
                   className="auth-input w-full px-3 py-3 pr-11 text-sm"
                   type={showPassword ? "text" : "password"}
                   value={password}
@@ -245,17 +254,24 @@ export function ClinicLoginForm() {
             </label>
 
             <div className="flex items-center justify-between gap-3">
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600" title="İşaretliyse oturum 24 saat, işaretli değilse 3 saat sonra kendiliğinden sona erer.">
+              <label className="flex cursor-pointer items-start gap-2.5 text-sm text-slate-600" title="İşaretliyse oturum 24 saat, işaretli değilse 3 saat sonra kendiliğinden sona erer.">
                 <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} className="h-4 w-4 accent-primary" />
-                Oturumu açık tut (24 saat)
+                <span><span className="block font-semibold text-slate-700">Bu cihazda oturumu açık tut</span><span className="mt-0.5 block text-[11px] text-slate-400">Oturum 24 saat boyunca açık kalır.</span></span>
               </label>
             </div>
 
-            {error && <p className="auth-status auth-status-error px-3 py-2 text-sm font-semibold">{error}</p>}
+            {error && <p role="alert" aria-live="polite" className="auth-status auth-status-error px-3 py-2 text-sm font-semibold">{error}</p>}
 
             <Button type="submit" loading={loading} fullWidth icon={ArrowRight}>
               {loading ? "Giriş yapılıyor..." : "Panele Giriş Yap"}
             </Button>
+
+            <div className="grid grid-cols-2 gap-2 border-t border-slate-100 pt-4">
+              <span className="flex items-center gap-2 text-[11px] font-bold text-slate-500"><Building2 className="h-4 w-4 text-[#087f73]" /> Kurum bazlı erişim</span>
+              <span className="flex items-center gap-2 text-[11px] font-bold text-slate-500"><UsersRound className="h-4 w-4 text-[#087f73]" /> Yetkiye göre görünüm</span>
+            </div>
+
+            <Link href="/" className="inline-flex items-center gap-2 text-xs font-bold text-slate-500 transition-colors hover:text-[#087f73]"><ArrowLeft className="h-3.5 w-3.5" /> Tanıtım sayfasına dön</Link>
           </div>
         </form>
     </main>

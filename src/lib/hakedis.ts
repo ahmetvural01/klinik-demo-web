@@ -15,10 +15,11 @@ const TREATMENT_ONLY_WHERE = {
   ],
 };
 
-export function effectiveDoctorWhere(institutionId?: string | null): Prisma.UserWhereInput {
+export function effectiveDoctorWhere(institutionId?: string | null, branchId?: string): Prisma.UserWhereInput {
   return {
     isActive: true,
     ...(institutionId ? { institutionId } : {}),
+    ...(branchId ? { branchMemberships: { some: { branchId, isActive: true } } } : {}),
     OR: [
       { role: "DOKTOR" },
       { role: "YONETICI", profile: { is: { hideAsDoctor: false } } },
@@ -32,22 +33,35 @@ export function effectiveDoctorWhere(institutionId?: string | null): Prisma.User
  * "randevu/hakediş ekranlarında doktor olarak görünsün" işaretlenmişse
  * (profile.hideAsDoctor === false) uygun sayılır.
  */
-export async function findEligibleDoctor(params: { doctorId: string; institutionId: string | null }) {
-  const { doctorId, institutionId } = params;
+export async function findEligibleDoctor(params: { doctorId: string; institutionId: string | null; branchId: string }) {
+  const { doctorId, institutionId, branchId } = params;
   const user = await prisma.user.findFirst({
     where: {
       id: doctorId,
       ...(institutionId ? { institutionId } : {}),
+      branchMemberships: { some: { branchId, isActive: true } },
     },
     select: {
       id: true, fullName: true, role: true,
       kkYuzde: true, genelYuzde: true, maasYuzde: true,
       profile: { select: { hideAsDoctor: true } },
+      branchMemberships: {
+        where: { branchId, isActive: true },
+        select: { kkYuzde: true, genelYuzde: true, maasYuzde: true },
+        take: 1,
+      },
     },
   });
   if (!user) return null;
   const eligible = user.role === "DOKTOR" || (user.role === "YONETICI" && !user.profile?.hideAsDoctor);
-  return eligible ? user : null;
+  if (!eligible) return null;
+  const branchRates = user.branchMemberships[0];
+  return {
+    ...user,
+    kkYuzde: branchRates?.kkYuzde ?? user.kkYuzde,
+    genelYuzde: branchRates?.genelYuzde ?? user.genelYuzde,
+    maasYuzde: branchRates?.maasYuzde ?? user.maasYuzde,
+  };
 }
 
 // Önceden doğrudan Date.UTC ay sınırları kullanıyordu — Türkiye saatiyle
@@ -73,10 +87,10 @@ function monthKey(year: number, month: number) {
  * oran) kullanılır — böylece geçmişte zaten ödenmiş bir ayın hakedişi, oran
  * daha sonra değiştirildiğinde sessizce değişmez.
  */
-export async function getDoctorRatesForMonth(doctorId: string, year: number, month: number, fallback: DoctorRates): Promise<DoctorRates> {
+export async function getDoctorRatesForMonth(doctorId: string, institutionId: string, branchId: string, year: number, month: number, fallback: DoctorRates): Promise<DoctorRates> {
   const { end } = monthRangeUtc(year, month);
   const historyRow = await prisma.doctorRateHistory.findFirst({
-    where: { doctorId, effectiveFrom: { lte: end } },
+    where: { doctorId, institutionId, branchId, effectiveFrom: { lte: end } },
     orderBy: { effectiveFrom: "desc" },
   });
   if (!historyRow) return fallback;
@@ -96,19 +110,21 @@ export async function getDoctorRatesForMonth(doctorId: string, year: number, mon
  */
 export async function computeDoctorMonthlyHakedis(params: {
   doctorId: string;
+  institutionId: string;
+  branchId: string;
   rates: DoctorRates;
   rangeStart: Date;
   rangeEnd: Date;
 }) {
-  const { doctorId, rates, rangeStart, rangeEnd } = params;
+  const { doctorId, institutionId, branchId, rates, rangeStart, rangeEnd } = params;
 
   const [examinations, labInvoices] = await Promise.all([
     prisma.examination.findMany({
-      where: { doctorId, diagnosedAt: { gte: rangeStart, lte: rangeEnd }, ...TREATMENT_ONLY_WHERE },
+      where: { doctorId, institutionId, branchId, diagnosedAt: { gte: rangeStart, lte: rangeEnd }, ...TREATMENT_ONLY_WHERE },
       select: { patientId: true, amount: true, diagnosedAt: true },
     }),
     (prisma as any).labOrderInvoice.findMany({
-      where: { labOrder: { doctorId }, issuedAt: { gte: rangeStart, lte: rangeEnd } },
+      where: { status: "ACTIVE", labOrder: { doctorId, institutionId, branchId }, issuedAt: { gte: rangeStart, lte: rangeEnd } },
       select: { amount: true, issuedAt: true },
     }),
   ]);
@@ -119,6 +135,8 @@ export async function computeDoctorMonthlyHakedis(params: {
         where: {
           patientId: { in: patientIds },
           doctorId,
+          institutionId,
+          branchId,
           status: "ACTIVE",
           createdAt: { gte: rangeStart, lte: rangeEnd },
         },
@@ -153,7 +171,7 @@ export async function computeDoctorMonthlyHakedis(params: {
 
   const results = await Promise.all(
     Array.from(buckets.values()).map(async (b) => {
-      const monthRates = await getDoctorRatesForMonth(doctorId, b.year, b.month, rates);
+      const monthRates = await getDoctorRatesForMonth(doctorId, institutionId, branchId, b.year, b.month, rates);
       const kkMasraf = b.kk * (monthRates.kkYuzde / 100);
       const genelMasraf = b.ciro * (monthRates.genelYuzde / 100);
       const toplamGider = kkMasraf + b.labCost + genelMasraf;
@@ -190,7 +208,7 @@ export async function computeDoctorMonthlyHakedis(params: {
  * hakedişi geçmişe dönük olarak tutarsız hale getirir — bu yüzden ilgili
  * API'ler bu kontrolü kullanarak değişikliği reddeder (bkz. denetim raporu).
  */
-export async function isDoctorPeriodSettled(doctorId: string, institutionId: string | null, year: number, month: number): Promise<boolean> {
+export async function isDoctorPeriodSettled(doctorId: string, institutionId: string | null, branchId: string, year: number, month: number): Promise<boolean> {
   const [expenseCount, legacyPaymentCount] = await Promise.all([
     (prisma as any).expense.count({
       where: {
@@ -199,6 +217,7 @@ export async function isDoctorPeriodSettled(doctorId: string, institutionId: str
         periodYear: year,
         periodMonth: month,
         ...(institutionId ? { institutionId } : {}),
+        branchId,
       },
     }),
     prisma.payment.count({
@@ -207,6 +226,7 @@ export async function isDoctorPeriodSettled(doctorId: string, institutionId: str
         patientId: null,
         status: "ACTIVE",
         ...(institutionId ? { institutionId } : {}),
+        branchId,
         createdAt: { gte: monthRangeUtc(year, month).start, lte: monthRangeUtc(year, month).end },
       },
     }),
@@ -223,10 +243,11 @@ export async function isDoctorPeriodSettled(doctorId: string, institutionId: str
 export async function computeDoctorMonthlyOdenen(params: {
   doctorId: string;
   institutionId: string | null;
+  branchId: string;
   rangeStart: Date;
   rangeEnd: Date;
 }) {
-  const { doctorId, institutionId, rangeStart, rangeEnd } = params;
+  const { doctorId, institutionId, branchId, rangeStart, rangeEnd } = params;
 
   const [expenseRows, legacyPayments] = await Promise.all([
     (prisma as any).expense.findMany({
@@ -235,6 +256,7 @@ export async function computeDoctorMonthlyOdenen(params: {
         status: "AKTIF",
         tarih: { gte: rangeStart, lte: rangeEnd },
         ...(institutionId ? { institutionId } : {}),
+        branchId,
       },
       select: { tutar: true, periodYear: true, periodMonth: true, tarih: true },
     }),
@@ -244,6 +266,7 @@ export async function computeDoctorMonthlyOdenen(params: {
         patientId: null,
         status: "ACTIVE",
         ...(institutionId ? { institutionId } : {}),
+        branchId,
         createdAt: { gte: rangeStart, lte: rangeEnd },
       },
       select: { amount: true, createdAt: true },
@@ -280,14 +303,15 @@ export async function computeDoctorMonthlyOdenen(params: {
 export async function getDoctorMonthDetail(params: {
   doctorId: string;
   institutionId: string | null;
+  branchId: string;
   year: number;
   month: number;
 }) {
-  const { doctorId, institutionId, year, month } = params;
+  const { doctorId, institutionId, branchId, year, month } = params;
   const { start, end } = monthRangeUtc(year, month);
 
   const examinations = await prisma.examination.findMany({
-    where: { doctorId, diagnosedAt: { gte: start, lte: end }, ...TREATMENT_ONLY_WHERE },
+    where: { doctorId, ...(institutionId ? { institutionId } : {}), branchId, diagnosedAt: { gte: start, lte: end }, ...TREATMENT_ONLY_WHERE },
     select: {
       id: true, patientId: true, diagnosedAt: true, treatmentName: true, toothNo: true, amount: true,
       patient: { select: { fullName: true } },
@@ -303,6 +327,7 @@ export async function getDoctorMonthDetail(params: {
           doctorId,
           status: "ACTIVE",
           ...(institutionId ? { institutionId } : {}),
+          branchId,
           createdAt: { gte: start, lte: end },
         },
         select: { id: true, createdAt: true, amount: true, method: true, patient: { select: { fullName: true } } },
@@ -312,7 +337,7 @@ export async function getDoctorMonthDetail(params: {
 
   const [labInvoices, payoutExpenses] = await Promise.all([
     (prisma as any).labOrderInvoice.findMany({
-      where: { labOrder: { doctorId }, issuedAt: { gte: start, lte: end } },
+      where: { status: "ACTIVE", labOrder: { doctorId, ...(institutionId ? { institutionId } : {}), branchId }, issuedAt: { gte: start, lte: end } },
       select: { id: true, issuedAt: true, amount: true, item: true, labOrder: { select: { labName: true } } },
       orderBy: { issuedAt: "asc" },
     }),
@@ -326,6 +351,7 @@ export async function getDoctorMonthDetail(params: {
           { AND: [{ periodYear: null }, { tarih: { gte: start, lte: end } }] },
         ],
         ...(institutionId ? { institutionId } : {}),
+        branchId,
       },
       select: { id: true, tarih: true, tutar: true, description: true, yontem: true },
       orderBy: { tarih: "asc" },

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { requireActiveBranch } from "@/lib/branch-context";
 import { patientFollowUpCreateSchema } from "@/lib/validators";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
@@ -8,15 +9,11 @@ import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 export async function GET(request: NextRequest) {
   try {
   const auth = await requireAuth("hastatracking:read");
-    if (auth.error) return auth.error;
-
-    const institutionDoctors = auth.user.institutionId
-      ? await prisma.user.findMany({
-          where: effectiveDoctorWhere(auth.user.institutionId),
-          select: { id: true },
-        })
-      : [];
-    const doctorIds = institutionDoctors.map((doctor) => doctor.id);
+  if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
+  const institutionId = auth.user.institutionId;
+  if (!institutionId) return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 403 });
 
     const from = request.nextUrl.searchParams.get("from");
     const to = request.nextUrl.searchParams.get("to");
@@ -53,7 +50,7 @@ export async function GET(request: NextRequest) {
       // Hasta takibinin sahibi hastadır. Oluşturan personel veya doktorun
       // kurumu üzerinden OR kapsamı kurmak, hatalı eski bir bağlantıda başka
       // kliniğin hasta iletişim bilgisini görünür hale getirebilirdi.
-      whereClauses.push({ patient: { institutionId: auth.user.institutionId } });
+      whereClauses.push({ patient: { institutionId: auth.user.institutionId, homeBranchId: branch.branchId } });
     }
     if (q) {
       whereClauses.push({
@@ -105,10 +102,14 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("hastatracking:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
+  const institutionId = auth.user.institutionId;
+  if (!institutionId) return NextResponse.json({ message: "Kurum bilgisi bulunamadı." }, { status: 403 });
 
   const institutionDoctors = auth.user.institutionId
     ? await prisma.user.findMany({
-        where: effectiveDoctorWhere(auth.user.institutionId),
+        where: effectiveDoctorWhere(auth.user.institutionId, branch.branchId),
         select: { id: true },
       })
     : [];
@@ -132,6 +133,7 @@ export async function POST(request: NextRequest) {
         id: parsed.data.patientId,
         archivedAt: null,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        homeBranchId: branch.branchId,
       },
       select: { id: true, fullName: true },
     });
@@ -152,7 +154,7 @@ export async function POST(request: NextRequest) {
   if (parsed.data.appointmentId) {
     try {
       const appointment = await prisma.appointment.findUnique({
-        where: { id: parsed.data.appointmentId },
+        where: { id: parsed.data.appointmentId, branchId: branch.branchId },
         select: { id: true, doctorId: true, patientId: true, patient: { select: { institutionId: true } } },
       });
       if (!appointment) {
@@ -175,6 +177,8 @@ export async function POST(request: NextRequest) {
   try {
     followUp = await prisma.patientFollowUp.create({
       data: {
+        institutionId,
+        branchId: branch.branchId,
         patientId: parsed.data.patientId,
         appointmentId: parsed.data.appointmentId || null,
         doctorId: resolvedFollowUpDoctorId,

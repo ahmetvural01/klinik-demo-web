@@ -18,6 +18,7 @@ import { showToastSafe } from "@/lib/toast-client";
 import { getDisplayAppointmentStatus } from "@/lib/appointment-status";
 import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
 import { usePermissions } from "@/components/auth/PermissionProvider";
+import { scopedStorageKey } from "@/lib/scoped-client-storage";
 
 type ApptStatus = "BEKLIYOR" | "GELDI" | "IPTAL" | "TAMAMLANDI" | string;
 type Appt = { id: string; startAt: string; endAt: string; status: ApptStatus; patient: { fullName: string }; doctor: { fullName: string }; type: string };
@@ -72,25 +73,17 @@ const ROLE_LABELS: Record<string, string> = {
 
 const HOME_CACHE_KEY = "anasayfa:home:v1";
 
-function getHomeCacheKey() {
-  if (typeof window === "undefined") return HOME_CACHE_KEY;
+function getHomeCacheKey(scopeKey: string) {
+  if (typeof window === "undefined") return `${HOME_CACHE_KEY}:${scopeKey}`;
   const preview = sessionStorage.getItem("dev-preview-role");
-  if (preview) return `${HOME_CACHE_KEY}:${preview}`;
-  const raw = sessionStorage.getItem("auth:me:v1");
-  if (!raw) return HOME_CACHE_KEY;
-  try {
-    const cached = JSON.parse(raw) as { id?: string; role?: string };
-    return `${HOME_CACHE_KEY}:${cached.id || ""}:${cached.role || ""}`;
-  } catch {
-    return HOME_CACHE_KEY;
-  }
+  return `${HOME_CACHE_KEY}:${scopeKey}:${preview || "default"}`;
 }
 
-function readHomeCache() {
+function readHomeCache(scopeKey: string) {
   if (typeof window === "undefined") {
     return null;
   }
-  const raw = sessionStorage.getItem(getHomeCacheKey());
+  const raw = sessionStorage.getItem(getHomeCacheKey(scopeKey));
   if (!raw) return null;
   try {
     const cached = JSON.parse(raw) as {
@@ -131,7 +124,7 @@ function readHomeCache() {
 }
 
 export default function AnasayfaPage() {
-  const { can } = usePermissions();
+  const { can, scopeKey } = usePermissions();
   const [crossStats, setCrossStats] = useState<CrossStats>({ pendingLabOrders: 0, overdueInstallments: 0, todayInstallments: 0 });
   const [installmentAgenda, setInstallmentAgenda] = useState<{ overdue: InstallmentAgendaItem[]; upcoming: InstallmentAgendaItem[] }>({ overdue: [], upcoming: [] });
   const [todayCiro, setTodayCiro] = useState(0);
@@ -150,7 +143,6 @@ export default function AnasayfaPage() {
   const [announcementsLoaded, setAnnouncementsLoaded] = useState(false);
   const [annText, setAnnText] = useState("");
   const [annRole, setAnnRole] = useState("");
-  const [hydrated, setHydrated] = useState(false);
   const [rolePanelsLoaded, setRolePanelsLoaded] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const rolePanelsLoadingRef = useRef(false);
@@ -165,7 +157,7 @@ export default function AnasayfaPage() {
   const [appointmentReloadKey, setAppointmentReloadKey] = useState(0);
 
   useLayoutEffect(() => {
-    const cachedHome = readHomeCache();
+    const cachedHome = readHomeCache(scopeKey);
     if (!cachedHome) return;
     setCrossStats(cachedHome.crossStats);
     setInstallmentAgenda(cachedHome.installmentAgenda);
@@ -179,18 +171,17 @@ export default function AnasayfaPage() {
     setAnnouncements(cachedHome.announcements);
     setAnnouncementsLoaded(true);
     setAnnRole(cachedHome.role);
-    setHydrated(Boolean(cachedHome.role));
     setCriticalStockCount(cachedHome.criticalStockCount);
     setFailedSmsCount(cachedHome.failedSmsCount);
     setLastSyncAt(cachedHome.lastSyncAt);
     setRolePanelsLoaded(true);
-  }, []);
+  }, [scopeKey]);
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
+    if (typeof window === "undefined") return undefined;
     const timer = window.setTimeout(() => {
       try {
-        sessionStorage.setItem(getHomeCacheKey(), JSON.stringify({
+        sessionStorage.setItem(getHomeCacheKey(scopeKey), JSON.stringify({
           crossStats,
           installmentAgenda,
           todayCiro,
@@ -207,15 +198,17 @@ export default function AnasayfaPage() {
       } catch {}
     }, 120);
 
-    return () => window.clearTimeout(timer);
-  }, [crossStats, installmentAgenda, todayCiro, appts, dateOffset, messages, currentUserId, announcements, annRole, criticalStockCount, failedSmsCount, lastSyncAt]);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [scopeKey, crossStats, installmentAgenda, todayCiro, appts, dateOffset, messages, currentUserId, announcements, annRole, criticalStockCount, failedSmsCount, lastSyncAt]);
 
   const markMessagesSeen = (list: Msg[]) => {
     if (!Array.isArray(list) || list.length === 0) return;
     const lastCreatedAt = list[list.length - 1]?.createdAt;
     if (!lastCreatedAt) return;
-    localStorage.setItem("clinic-messages-last-seen", lastCreatedAt);
-    localStorage.setItem("clinic-unread-messages", "0");
+    localStorage.setItem(scopedStorageKey("clinic-messages-last-seen", scopeKey), lastCreatedAt);
+    localStorage.setItem(scopedStorageKey("clinic-unread-messages", scopeKey), "0");
     window.dispatchEvent(new Event("clinic-unread-messages-change"));
   };
 
@@ -241,10 +234,6 @@ export default function AnasayfaPage() {
     }
   };
 
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
-
   const loadRolePanels = async (role: string) => {
     if (!role) return;
     if (typeof document !== "undefined" && document.hidden) return;
@@ -264,7 +253,6 @@ export default function AnasayfaPage() {
           return fallback;
         }
       };
-      const canSeeRoleCiro = can("finance:read");
       const canSeeTaksitDash = can("installments:read");
       const canSeeLabDash = can("lab:read");
       const canSeeStockDash = can("stock:read");
@@ -443,11 +431,11 @@ export default function AnasayfaPage() {
       setAppts([]);
       setApptLoading(false);
       setAppointmentError("");
-      return;
+      return undefined;
     }
     setApptLoading(true);
     const controller = new AbortController();
-    fetch("/api/appointments?date=" + dateStr, { signal: controller.signal })
+    fetch(`/api/appointments?date=${dateStr}`, { signal: controller.signal })
       .then(async (r) => {
         const payload = await r.json().catch(() => null);
         if (!r.ok) throw new Error(payload?.message || "Randevular yüklenemedi");
@@ -462,7 +450,9 @@ export default function AnasayfaPage() {
         setAppointmentError(e instanceof Error ? e.message : "Randevular yüklenemedi");
       })
       .finally(() => setApptLoading(false));
-    return () => controller.abort();
+    return () => {
+      controller.abort();
+    };
   }, [dateStr, appointmentReloadKey]);
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -474,7 +464,7 @@ export default function AnasayfaPage() {
         void loadMessages();
         if (annRoleRef.current) void loadRolePanels(annRoleRef.current);
 
-        if (can("appointments:read")) fetch("/api/appointments?date=" + dateStr)
+        if (can("appointments:read")) fetch(`/api/appointments?date=${dateStr}`)
           .then(async (r) => {
             if (!r.ok) return; // geçici hata — ekrandaki mevcut randevu listesi olduğu gibi kalsın, yanlışlıkla boşaltılmasın
             const d = await r.json().catch(() => null);

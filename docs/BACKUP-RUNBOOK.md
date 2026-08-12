@@ -14,7 +14,7 @@ Bu dokuman PostgreSQL verisinin duzenli ve dogrulanabilir sekilde yedeklenmesi i
 2. Cikti dizini:
    - `backups/db`
 3. Dosya formati:
-   - `klinik-modern-YYYYMMDD-HHmmss.dump`
+   - `klinikcep-YYYYMMDD-HHmmss.dump`
 
 ## 4) Retention
 - Varsayilan saklama suresi: 14 gun.
@@ -25,7 +25,7 @@ Bu dokuman PostgreSQL verisinin duzenli ve dogrulanabilir sekilde yedeklenmesi i
 Gunluk 03:00 icin ornek:
 
 ```powershell
-schtasks /Create /SC DAILY /ST 03:00 /TN "KlinikModern-DB-Backup" /TR "cmd /c cd /d C:\path\to\project && npm run backup:db" /F
+schtasks /Create /SC DAILY /ST 03:00 /TN "KlinikCep-DB-Backup" /TR "cmd /c cd /d C:\path\to\project && npm run backup:db" /F
 ```
 
 Not: `C:\path\to\project` kismini kendi proje dizininizle degistirin.

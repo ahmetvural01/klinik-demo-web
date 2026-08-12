@@ -3,23 +3,27 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { computeDoctorMonthlyHakedis, computeDoctorMonthlyOdenen, monthRangeUtc } from "@/lib/hakedis";
 import { turkeyYearMonth } from "@/lib/tz";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
     const expense = await (prisma as any).expense.findFirst({
       where: {
         id: params.id,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
       },
       include: { expenseCategory: { select: { id: true, name: true } } }
     });
     if (!expense) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
     return NextResponse.json(expense);
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
   }
 }
@@ -29,6 +33,8 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
     const body = await req.json().catch(() => null);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
@@ -38,6 +44,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       where: {
         id: params.id,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
       },
       select: { id: true, doctorId: true, tarih: true, tutar: true, categoryId: true, category: true, periodYear: true, periodMonth: true },
     });
@@ -117,18 +124,19 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       const month = body.periodMonth ?? existing.periodMonth ?? existingDatePeriod.month;
       const doctor = await prisma.user.findUnique({
         where: { id: existing.doctorId },
-        select: { kkYuzde: true, genelYuzde: true, maasYuzde: true },
+        select: { kkYuzde: true, genelYuzde: true, maasYuzde: true, branchMemberships: { where: { branchId: branch.branchId }, select: { kkYuzde: true, genelYuzde: true, maasYuzde: true }, take: 1 } },
       });
       if (doctor && Number.isInteger(year) && Number.isInteger(month)) {
         const { start, end } = monthRangeUtc(year, month);
+        const branchRates = doctor.branchMemberships[0];
         const rates = {
-          kkYuzde: Number(doctor.kkYuzde || 0),
-          genelYuzde: Number(doctor.genelYuzde || 0),
-          maasYuzde: Number(doctor.maasYuzde || 0),
+          kkYuzde: Number(branchRates?.kkYuzde ?? doctor.kkYuzde ?? 0),
+          genelYuzde: Number(branchRates?.genelYuzde ?? doctor.genelYuzde ?? 0),
+          maasYuzde: Number(branchRates?.maasYuzde ?? doctor.maasYuzde ?? 0),
         };
         const [hakedisRows, odenenMap] = await Promise.all([
-          computeDoctorMonthlyHakedis({ doctorId: existing.doctorId, rates, rangeStart: start, rangeEnd: end }),
-          computeDoctorMonthlyOdenen({ doctorId: existing.doctorId, institutionId: auth.user.institutionId, rangeStart: start, rangeEnd: end }),
+          computeDoctorMonthlyHakedis({ doctorId: existing.doctorId, institutionId: auth.user.institutionId!, branchId: branch.branchId, rates, rangeStart: start, rangeEnd: end }),
+          computeDoctorMonthlyOdenen({ doctorId: existing.doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId, rangeStart: start, rangeEnd: end }),
         ]);
         const hakedilen = hakedisRows.find((r) => r.year === year && r.month === month)?.hakedilen ?? 0;
         const odenenKey = `${year}-${String(month).padStart(2, "0")}`;
@@ -165,13 +173,19 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     }
 
     const expense = await (prisma as any).expense.update({
-      where: { id: existing.id },
+      where: {
+        id_institutionId_branchId: {
+          id: existing.id,
+          institutionId: existing.institutionId,
+          branchId: existing.branchId,
+        },
+      },
       data,
       include: { expenseCategory: { select: { id: true, name: true } } }
     });
     await writeAudit(auth.user.id, "GIDER_UPDATE", `Gider güncellendi (${params.id})`);
     return NextResponse.json(expense);
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
   }
 }
@@ -181,24 +195,33 @@ export async function DELETE(req: NextRequest, props: { params: Promise<{ id: st
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
     // Soft delete (status = IPTAL)
     const existing = await (prisma as any).expense.findFirst({
       where: {
         id: params.id,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
       },
       select: { id: true },
     });
     if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
     await (prisma as any).expense.update({
-      where: { id: existing.id },
+      where: {
+        id_institutionId_branchId: {
+          id: existing.id,
+          institutionId: existing.institutionId,
+          branchId: existing.branchId,
+        },
+      },
       data: { status: "IPTAL" }
     });
     await writeAudit(auth.user.id, "GIDER_DELETE", `Gider iptal edildi (${params.id})`);
     return NextResponse.json({ ok: true });
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: "Sunucu hatası" }, { status: 500 });
   }
 }

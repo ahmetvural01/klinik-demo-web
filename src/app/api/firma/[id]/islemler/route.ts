@@ -8,6 +8,8 @@ import {
   writeFirmaIntegrationAudit,
 } from "@/lib/firma-integration";
 import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
+import { requireActiveBranch } from "@/lib/branch-context";
+import { BusinessRuleError, publicErrorResponse } from "@/lib/public-error";
 
 // GET: Firma ekstre (tum islemler + cari bakiye)
 export const GET = withApiTiming("firma-islemler", async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
@@ -15,11 +17,14 @@ export const GET = withApiTiming("firma-islemler", async function GET(req: NextR
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
     const firma = await (prisma as any).firma.findFirst({
       where: {
         id: params.id,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
       },
       select: { id: true },
     });
@@ -27,7 +32,7 @@ export const GET = withApiTiming("firma-islemler", async function GET(req: NextR
 
     const [islemler, sumsRaw] = await Promise.all([
       (prisma as any).firmaIslem.findMany({
-        where: { firmaId: params.id, status: "AKTIF" },
+        where: { firmaId: params.id, branchId: branch.branchId, status: "AKTIF" },
         orderBy: { tarih: "asc" },
         take: 20000, // güvenlik sınırı: tek bir cari hesap tüm sorguyu tıkamasın
       }),
@@ -35,7 +40,7 @@ export const GET = withApiTiming("firma-islemler", async function GET(req: NextR
       // tüm geçmiş üzerinden doğru hesaplanıyor (liste sınırlansa da bakiye doğru kalır).
       (prisma as any).firmaIslem.groupBy({
         by: ["islemTipi"],
-        where: { firmaId: params.id, status: "AKTIF" },
+        where: { firmaId: params.id, branchId: branch.branchId, status: "AKTIF" },
         _sum: { tutar: true },
       }),
     ]);
@@ -72,10 +77,14 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   const params = await props.params;
   let requestKey: string | null = null;
   let institutionId: string | null = null;
+  let activeBranchId: string | null = null;
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
     institutionId = auth.user.institutionId;
+    activeBranchId = branch.branchId;
     requestKey = req.headers.get("Idempotency-Key")?.trim() || null;
     if (requestKey && (requestKey.length < 8 || requestKey.length > 180)) {
       return NextResponse.json({ error: "İşlem anahtarı geçersiz" }, { status: 400 });
@@ -113,6 +122,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       where: {
         id: params.id,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
       },
       select: { id: true, name: true, institutionId: true, paymentTerms: true, customPaymentDays: true },
     });
@@ -123,7 +133,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
     if (requestKey) {
       const existing = await (prisma as any).firmaIslem.findFirst({
-        where: { firmaId: firma.id, requestKey },
+        where: { firmaId: firma.id, branchId: branch.branchId, requestKey },
       });
       if (existing) {
         const { requestKey: _requestKey, ...publicMovement } = existing;
@@ -139,7 +149,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
       const balanceRows = await tx.firmaIslem.groupBy({
         by: ["islemTipi"],
-        where: { firmaId: firma.id, status: "AKTIF" },
+        where: { firmaId: firma.id, branchId: branch.branchId, status: "AKTIF" },
         _sum: { tutar: true },
       });
       const balance = Math.round(balanceRows.reduce((sum: number, row: any) => {
@@ -147,14 +157,17 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         return sum + (row.islemTipi === "ODEME" ? -amount : amount);
       }, 0) * 100) / 100;
       if (tutar > balance) {
-        throw new Error(
+        throw new BusinessRuleError(
           `Ödeme tutarı firma bakiyesini aşamaz. Güncel kalan: ${balance.toLocaleString("tr-TR", { minimumFractionDigits: 2 })} TL`,
+          409,
         );
       }
 
       const transactionDate = new Date(tarih);
       const created = await tx.firmaIslem.create({
         data: {
+          institutionId: auth.user.institutionId,
+          branchId: branch.branchId,
           firmaId: params.id,
           requestKey,
           tarih: transactionDate,
@@ -182,7 +195,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         stockItemId: stockItemId || null,
         stockQuantity,
       });
-      const allocation = await rebuildFirmaPaymentAllocations(tx, firma.id);
+      const allocation = await rebuildFirmaPaymentAllocations(tx, firma.id, branch.branchId);
       if (allocation.allocatedTotal > 0) {
         integrationSummary.notes.push("ödeme açık firma borçlarına otomatik mahsup edildi");
       }
@@ -205,6 +218,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       const existing = await (prisma as any).firmaIslem.findFirst({
         where: {
           requestKey,
+          ...(activeBranchId ? { branchId: activeBranchId } : {}),
           firma: {
             ...(institutionId ? { institutionId } : {}),
           },
@@ -219,9 +233,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       }
     }
     console.error(e);
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "Firma ödemesi kaydedilemedi" },
-      { status: 400 },
-    );
+    const publicError = publicErrorResponse(e, "Firma ödemesi kaydedilemedi. Lütfen tekrar deneyin.");
+    return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }
 }

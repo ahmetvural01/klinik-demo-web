@@ -10,6 +10,7 @@ import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { ListPager } from "@/components/ui/ListPager";
 import { CountUp } from "@/components/ui/CountUp";
 import { confirmDialog } from "@/lib/confirm-client";
+import { isAbortError, useLatestRequest } from "@/lib/use-latest-request";
 
 type Invoice = {
   id: string;
@@ -57,6 +58,7 @@ export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [summary, setSummary] = useState<Summary>(EMPTY_SUMMARY);
   const [loading, setLoading] = useState(true);
+  const beginInvoiceLoad = useLatestRequest();
   const [markingOverdue, setMarkingOverdue] = useState(false);
   const [remindingId, setRemindingId] = useState<string | null>(null);
 
@@ -72,26 +74,28 @@ export default function InvoicesPage() {
 
   useEffect(() => { setPage(1); }, [debouncedQ, status]);
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
+    const request = beginInvoiceLoad();
     setLoading(true);
     const params = new URLSearchParams();
     if (status) params.set("status", status);
     if (debouncedQ) params.set("q", debouncedQ);
-    fetch(`/api/superadmin/invoices?${params.toString()}`, { cache: "no-store" })
-      .then((r) => r.json())
-      .then((d) => {
-        setInvoices(Array.isArray(d) ? d : d.invoices ?? []);
-        setSummary(d?.summary ?? EMPTY_SUMMARY);
-      })
-      .catch(() => {
-        setInvoices([]);
-        setSummary(EMPTY_SUMMARY);
-        showToastSafe({ message: "Faturalar yüklenemedi", type: "error" });
-      })
-      .finally(() => setLoading(false));
-  }, [status, debouncedQ]);
+    try {
+      const response = await fetch(`/api/superadmin/invoices?${params.toString()}`, { cache: "no-store", signal: request.signal });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.message || "Faturalar yüklenemedi.");
+      if (!request.isLatest()) return;
+      setInvoices(Array.isArray(data) ? data : data?.invoices ?? []);
+      setSummary(data?.summary ?? EMPTY_SUMMARY);
+    } catch (error) {
+      if (isAbortError(error)) return;
+      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "Faturalar yüklenemedi.", type: "error" });
+    } finally {
+      if (request.isLatest()) setLoading(false);
+    }
+  }, [status, debouncedQ, beginInvoiceLoad]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { void load(); }, [load]);
 
   const pageCount = Math.max(1, Math.ceil(invoices.length / PAGE_SIZE));
   const pagedInvoices = useMemo(

@@ -1,4 +1,4 @@
-# KlinikModern — Kapsamlı Sistem Envanteri
+# KlinikCep — Kapsamlı Sistem Envanteri
 
 > Bu rapor, kod tabanının doğrudan taranmasıyla derlenmiştir (Next.js 14 App Router, TypeScript, Prisma/PostgreSQL).
 > Tüm sayfaları, formları, butonları, iş kurallarını ve modüller arası veri akışını tek bir referans belgesinde toplar.

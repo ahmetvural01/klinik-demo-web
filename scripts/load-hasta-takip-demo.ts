@@ -142,10 +142,20 @@ async function main() {
     throw new Error("Demo veriler icin kurumu olan bir kullanici bulunamadi.");
   }
 
+  const homeBranch = await prisma.clinicBranch.findFirst({
+    where: { institutionId: creator.institutionId, isActive: true },
+    orderBy: [{ isHeadquarters: "desc" }, { createdAt: "asc" }],
+    select: { id: true },
+  });
+  if (!homeBranch) {
+    throw new Error("Demo veriler icin kurumun bir subesi bulunamadi.");
+  }
+
   for (const item of demoPatients) {
     const patient = await prisma.patient.create({
       data: {
         institutionId: creator.institutionId,
+        homeBranchId: homeBranch.id,
         tcNo: item.tcNo,
         fullName: item.fullName,
         phone: item.phone,
@@ -157,6 +167,8 @@ async function main() {
 
     const followUp = await prisma.patientFollowUp.create({
       data: {
+        institutionId: creator.institutionId,
+        branchId: homeBranch.id,
         patientId: patient.id,
         doctorId: doctor?.id || null,
         createdById: creator.id,
@@ -171,6 +183,8 @@ async function main() {
     for (const event of item.followUp.events) {
       await prisma.patientFollowUpEvent.create({
         data: {
+          institutionId: creator.institutionId,
+          branchId: homeBranch.id,
           followUpId: followUp.id,
           patientId: patient.id,
           occurredAt: addDays(new Date(), event.occurredAtOffsetDays),

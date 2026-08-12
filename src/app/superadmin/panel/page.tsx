@@ -28,6 +28,8 @@ type Dashboard = {
     createdAt: string;
   }[];
   planDistribution: { plan: string; count: number }[];
+  systemStats: SystemStats;
+  systemMetrics: SystemMetrics;
 };
 
 type SystemStats = {
@@ -52,8 +54,6 @@ type SystemMetrics = {
 
 export default function SuperadminPanelPage() {
   const [data, setData] = useState<Dashboard | null>(null);
-  const [stats, setStats] = useState<SystemStats | null>(null);
-  const [metrics, setMetrics] = useState<SystemMetrics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
@@ -69,27 +69,15 @@ export default function SuperadminPanelPage() {
         router.replace("/superadmin");
         return;
       }
-      const [dashboardRes, statsRes, metricsRes] = await Promise.allSettled([
-        fetch("/api/superadmin/dashboard", { cache: "no-store" }),
-        fetch("/api/dashboard/stats", { cache: "no-store" }),
-        fetch("/api/system/metrics", { cache: "no-store" }),
-      ]);
+      const dashboardRes = await fetch("/api/superadmin/dashboard", { cache: "no-store" });
 
-      if (dashboardRes.status !== "fulfilled" || !dashboardRes.value.ok) {
+      if (!dashboardRes.ok) {
         setError("Dashboard verisi alınamadı");
         setLoading(false);
         return;
       }
 
-      setData(await dashboardRes.value.json() as Dashboard);
-
-      if (statsRes.status === "fulfilled" && statsRes.value.ok) {
-        setStats(await statsRes.value.json() as SystemStats);
-      }
-
-      if (metricsRes.status === "fulfilled" && metricsRes.value.ok) {
-        setMetrics(await metricsRes.value.json() as SystemMetrics);
-      }
+      setData(await dashboardRes.json() as Dashboard);
 
       setLoading(false);
     };
@@ -114,6 +102,8 @@ export default function SuperadminPanelPage() {
   }
 
   const hasAttention = data.lowSmsInstitutions.length > 0 || data.overdueInvoices > 0 || data.suspendedInstitutions > 0;
+  const stats = data.systemStats;
+  const metrics = data.systemMetrics;
   const totalPatients = stats?.totalPatients ?? 0;
   const totalAppointments = stats?.totalAppointments ?? 0;
   const totalExaminations = stats?.totalExaminations ?? 0;

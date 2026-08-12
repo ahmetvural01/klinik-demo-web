@@ -3,38 +3,24 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { applyStockMovement } from "@/lib/stock-ledger";
 import { formatZodError, stockItemUpdateSchema, stockMovementSchema } from "@/lib/validators";
+import { requireActiveBranch } from "@/lib/branch-context";
+import { publicErrorResponse } from "@/lib/public-error";
+import { normalizeCategory } from "@/lib/stock-category";
 
 export const dynamic = "force-dynamic";
-
-const CATEGORY_ALIASES: Record<string, string[]> = {
-  "Anestezi": ["Anestezi", "ANESTEZI"],
-  "İmplant": ["İmplant", "Implant", "İMPLANT", "IMPLANT"],
-  "Protez": ["Protez", "PROTEZ"],
-  "Dolgu": ["Dolgu", "DOLGU"],
-  "Ortodonti": ["Ortodonti", "ORTODONTI"],
-  "Cerrahi": ["Cerrahi", "CERRAHI"],
-  "Sarf": ["Sarf", "SARF"],
-  "Diğer": ["Diğer", "Diger", "DİĞER", "DIGER"],
-};
-
-function normalizeCategory(value?: string | null) {
-  if (!value) return "Sarf";
-  const normalized = value.trim();
-  for (const [label, aliases] of Object.entries(CATEGORY_ALIASES)) {
-    if (aliases.some((alias) => alias.toLocaleLowerCase("tr-TR") === normalized.toLocaleLowerCase("tr-TR"))) return label;
-  }
-  return normalized;
-}
 
 export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const auth = await requireAuth("stock:read");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   const item = await (prisma as any).stockItem.findFirst({
     where: {
       id: params.id,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      branchId: branch.branchId,
     },
     include: {
       movements: {
@@ -74,6 +60,8 @@ export async function PUT(req: NextRequest, props: { params: Promise<{ id: strin
   const params = await props.params;
   const auth = await requireAuth("stock:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   const parsed = stockItemUpdateSchema.safeParse(await req.json());
   if (!parsed.success) {
@@ -84,6 +72,7 @@ export async function PUT(req: NextRequest, props: { params: Promise<{ id: strin
     where: {
       id: params.id,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      branchId: branch.branchId,
     },
     select: { id: true },
   });
@@ -94,6 +83,7 @@ export async function PUT(req: NextRequest, props: { params: Promise<{ id: strin
       where: {
         id: { not: params.id },
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
         isActive: true,
         name: { equals: name, mode: "insensitive" },
       },
@@ -110,7 +100,13 @@ export async function PUT(req: NextRequest, props: { params: Promise<{ id: strin
   let updated;
   try {
     updated = await (prisma as any).stockItem.update({
-      where: { id: params.id },
+      where: {
+        id_institutionId_branchId: {
+          id: params.id,
+          institutionId: auth.user.institutionId,
+          branchId: branch.branchId,
+        },
+      },
       data: {
         name,
         category: category !== undefined ? normalizeCategory(category) : undefined,
@@ -139,6 +135,8 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
   const params = await props.params;
   const auth = await requireAuth("stock:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   // Çift tıklama / ağ hatası sonrası retry koruması sunucu tarafındadır —
   // istemcinin loading state'ine güvenilmez (bkz. denetim raporu). Aynı
@@ -152,10 +150,10 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
 
   if (requestKey) {
     const existing = await (prisma as any).stockMovement.findFirst({
-      where: { institutionId, requestKey },
+      where: { institutionId, branchId: branch.branchId, requestKey },
     });
     if (existing) {
-      const item = await (prisma as any).stockItem.findFirst({ where: { id: params.id, ...(institutionId ? { institutionId } : {}) } });
+      const item = await (prisma as any).stockItem.findFirst({ where: { id: params.id, ...(institutionId ? { institutionId } : {}), branchId: branch.branchId } });
       if (item) {
         return NextResponse.json({ ...item, category: normalizeCategory(item.category), isCritical: Number(item.quantity) < Number(item.minQuantity), duplicateRequest: true });
       }
@@ -173,6 +171,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         tx,
         stockItemId: params.id,
         institutionId,
+        branchId: branch.branchId,
         userId: auth.user.id,
         type,
         quantity,
@@ -198,13 +197,14 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     // yakalanır; bu P2002 yalnızca farklı stok kalemlerine aynı anahtarla
     // gelen teorik bir yarış durumu için son savunma hattıdır.
     if (requestKey && error && typeof error === "object" && "code" in error && (error as { code?: string }).code === "P2002") {
-      const existing = await (prisma as any).stockMovement.findFirst({ where: { institutionId, requestKey } });
-      const item = existing ? await (prisma as any).stockItem.findFirst({ where: { id: params.id, ...(institutionId ? { institutionId } : {}) } }) : null;
+      const existing = await (prisma as any).stockMovement.findFirst({ where: { institutionId, branchId: branch.branchId, requestKey } });
+      const item = existing ? await (prisma as any).stockItem.findFirst({ where: { id: params.id, ...(institutionId ? { institutionId } : {}), branchId: branch.branchId } }) : null;
       if (item) {
         return NextResponse.json({ ...item, category: normalizeCategory(item.category), isCritical: Number(item.quantity) < Number(item.minQuantity), duplicateRequest: true });
       }
     }
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Stok hareketi kaydedilemedi" }, { status: 400 });
+    const publicError = publicErrorResponse(error, "Stok hareketi kaydedilemedi. Lütfen tekrar deneyin.");
+    return NextResponse.json({ error: publicError.message }, { status: publicError.status });
   }
 }
 
@@ -212,18 +212,27 @@ export async function DELETE(_req: NextRequest, props: { params: Promise<{ id: s
   const params = await props.params;
   const auth = await requireAuth("stock:delete");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   const existing = await (prisma as any).stockItem.findFirst({
     where: {
       id: params.id,
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+      branchId: branch.branchId,
     },
     select: { id: true },
   });
   if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
 
   await (prisma as any).stockItem.update({
-    where: { id: existing.id },
+    where: {
+      id_institutionId_branchId: {
+        id: existing.id,
+        institutionId: existing.institutionId,
+        branchId: existing.branchId,
+      },
+    },
     data:  { isActive: false },
   });
 

@@ -5,6 +5,8 @@ import { can } from "@/lib/rbac";
 import { prisma } from "@/lib/prisma";
 import { metricObserve } from "@/lib/metrics";
 import { parseRolePreview, ROLE_PREVIEW_COOKIE } from "@/lib/role-preview";
+import { hasBranchPermission, resolveBranchContext } from "@/lib/branch-context";
+import { getClientIpFromHeaders } from "@/lib/edge-rate-limit";
 import {
   bumpRealtimeInstitution as bumpRealtimeInstitutionBus,
   getRealtimeInstitutionVersion as getRealtimeInstitutionVersionBus,
@@ -30,39 +32,12 @@ export function withApiTiming<Args extends unknown[]>(
   };
 }
 
-// ── Kurum bilgisi in-memory cache (60 saniyelik TTL) ───────────────────────
-type CachedInstitution = {
-  isActive: boolean;
-  serviceMode: string;
-  serviceNote: string | null;
-  throttleMs: number;
-  paymentGraceUntil: Date | null;
-  suspendedUntil: Date | null;
-  isDemo: boolean;
-  demoExpiresAt: Date | null;
-  expiresAt: number;
-};
-const _instCache = new Map<string, CachedInstitution>();
-const INST_CACHE_TTL_MS = 60_000; // 60 saniye
-
-// ── Kullanıcı isActive kısa-TTL cache ──────────────────────────────────────
-// requireAuth() önceden yalnızca JWT'yi çözüyordu, DB'ye hiç bakmıyordu — bir
-// personel pasifleştirildiğinde (işten çıkarma vb.) elindeki token, 7 günlük
-// süresi dolana kadar TÜM API'lerde geçerliliğini koruyordu (bkz. denetim
-// raporu). Institution cache'iyle aynı desende, kısa TTL'li bir kontrol
-// eklenerek pasifleştirme birkaç dakika içinde etkili hale getiriliyor —
-// her istekte DB'ye gitmeden.
-const _userActiveCache = new Map<string, { isActive: boolean; tokenVersion: number; expiresAt: number }>();
-const USER_ACTIVE_CACHE_TTL_MS = 60_000;
-
 async function getUserSessionState(userId: string): Promise<{ isActive: boolean; tokenVersion: number }> {
-  const cached = _userActiveCache.get(userId);
-  if (cached && cached.expiresAt > Date.now()) return cached;
-
-  const row = await prisma.user.findUnique({ where: { id: userId }, select: { isActive: true, tokenVersion: true } });
-  const state = { isActive: row?.isActive ?? false, tokenVersion: row?.tokenVersion ?? 0 };
-  _userActiveCache.set(userId, { ...state, expiresAt: Date.now() + USER_ACTIVE_CACHE_TTL_MS });
-  return state;
+  const row = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { isActive: true, tokenVersion: true },
+  });
+  return { isActive: row?.isActive ?? false, tokenVersion: row?.tokenVersion ?? 0 };
 }
 
 /**
@@ -73,12 +48,11 @@ async function getUserSessionState(userId: string): Promise<{ isActive: boolean;
  * kendi işlemiyle dışarı atardı.
  */
 export function invalidateUserSessionCache(userId: string) {
-  _userActiveCache.delete(userId);
+  void userId;
 }
 
 export function invalidateInstitutionCache(institutionId?: string | null) {
-  if (!institutionId) return;
-  _instCache.delete(institutionId);
+  void institutionId;
 }
 
 export function getRealtimeInstitutionVersion(institutionId?: string | null) {
@@ -96,11 +70,8 @@ export function bumpRealtimeInstitution(institutionId?: string | null) {
   return bumpRealtimeInstitutionBus(institutionId);
 }
 
-async function getCachedInstitution(institutionId: string) {
-  const cached = _instCache.get(institutionId);
-  if (cached && cached.expiresAt > Date.now()) return cached;
-
-  const institution = await prisma.institution.findUnique({
+async function getInstitutionState(institutionId: string) {
+  return prisma.institution.findUnique({
     where: { id: institutionId },
     select: {
       isActive: true,
@@ -114,22 +85,45 @@ async function getCachedInstitution(institutionId: string) {
     },
   });
 
-  if (!institution) return null;
-
-  const entry: CachedInstitution = { ...institution, expiresAt: Date.now() + INST_CACHE_TTL_MS };
-  _instCache.set(institutionId, entry);
-  return entry;
 }
+
+// "write" kelimesi geçen izinlerin yanı sıra, veri değiştiren TÜM eylem
+// soneklerini kapsar. Önceden yalnızca ":write" kontrol ediliyordu — bu
+// yüzden READ_ONLY moddaki bir kurumda "appointments:delete",
+// "payments:refund", "examinations:delete", "patients:merge" gibi TÜM
+// silme/onay/iade/birleştirme uçları hâlâ çalışıyordu; "yazma işlemleri
+// kapatıldı" mesajı yanıltıcıydı (bkz. denetim raporu).
+const MUTATING_PERMISSION_SUFFIXES = new Set([
+  "write", "delete", "approve", "refund", "merge", "complete", "bulk", "close", "schedule",
+]);
 
 function isWritePermission(permission?: string) {
   if (!permission) return false;
   if (permission === "*") return true;
-  return permission.includes("write");
+  const suffix = permission.slice(permission.indexOf(":") + 1);
+  return MUTATING_PERMISSION_SUFFIXES.has(suffix);
 }
+
+// LIMITED mod yalnızca 5 sabit izni engelliyordu — muayene, tedavi, reçete,
+// laboratuvar, röntgen, taksit, stok, doküman gibi ana klinik iş akışının
+// GERÇEK çekirdeği bu listede hiç yoktu ve LIMITED modda serbest kalıyordu
+// (bkz. denetim raporu). Artık aynı "değiştirici eylem" soneklerine sahip
+// TÜM ana klinik/finans/personel modülleri kısıtlanır; sistem ayarları,
+// profil ve dahili mesajlaşma gibi düşük riskli modüller etkilenmez.
+const LIMITED_BLOCKED_PREFIXES = new Set([
+  "appointments", "payments", "patients", "finance", "staff",
+  "examinations", "treatment", "prescriptions", "lab", "xray",
+  "installments", "stock", "documents", "hastatracking",
+]);
 
 function isLimitedBlockedPermission(permission?: string) {
   if (!permission) return false;
-  return ["appointments:write", "payments:write", "patients:write", "finance:write", "staff:write"].includes(permission);
+  if (permission === "*") return true;
+  const separatorIdx = permission.indexOf(":");
+  if (separatorIdx === -1) return false;
+  const prefix = permission.slice(0, separatorIdx);
+  const suffix = permission.slice(separatorIdx + 1);
+  return LIMITED_BLOCKED_PREFIXES.has(prefix) && MUTATING_PERMISSION_SUFFIXES.has(suffix);
 }
 
 export async function requireAuth(permission?: string) {
@@ -140,7 +134,9 @@ export async function requireAuth(permission?: string) {
     return { error: NextResponse.json({ message: "Oturum gerekli" }, { status: 401 }) };
   }
 
-  const previewRole = tokenUser.role === "SUPERADMIN"
+  // Rol önizlemesi yalnız klinik yüzeyini simüle eder. Platform yönetim
+  // uçlarında bu cookie sistem sahibinin gerçek yetkisini daraltmamalıdır.
+  const previewRole = tokenUser.role === "SUPERADMIN" && permission !== "superadmin"
     ? parseRolePreview((await cookies()).get(ROLE_PREVIEW_COOKIE)?.value)
     : null;
   // Önizleme yalnızca doğrulanmış SUPERADMIN oturumunu daraltır. İstemci
@@ -160,8 +156,21 @@ export async function requireAuth(permission?: string) {
     return { error: NextResponse.json({ message: "Oturumunuz sona erdi. Lütfen yeniden giriş yapın." }, { status: 401 }) };
   }
 
-  if (permission === "superadmin" && user.role !== "SUPERADMIN") {
-    return { error: NextResponse.json({ message: "Bu işlem için süper yönetici yetkisi gerekli." }, { status: 403 }) };
+  if (permission === "superadmin" && user.actualRole !== "SUPERADMIN") {
+    return { error: NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 }) };
+  }
+
+  // Platform oturumu klinik verisi için doğrudan bir anahtar değildir.
+  // Süperadmin klinik işlemlerini yalnız denetimli kurum oturumu (ghost)
+  // üzerinden yapar; aksi halde boş institutionId filtreleri tüm tenantları
+  // kapsayabilir.
+  if (user.actualRole === "SUPERADMIN" && !user.ghost && permission && permission !== "superadmin") {
+    return {
+      error: NextResponse.json(
+        { message: "Klinik işlemleri için önce süperadmin panelinden ilgili kuruma giriş yapın." },
+        { status: 403 },
+      ),
+    };
   }
 
   // Ghost oturum superadmin'in klinik içine görünmez müdahale oturumudur.
@@ -181,14 +190,14 @@ export async function requireAuth(permission?: string) {
   }
 
   if (user.ghost) {
-    return { user };
+    const branchContext = await resolveBranchContext(user);
+    return { user: { ...user, branchContext } };
   }
 
   if (user.role !== "SUPERADMIN" && user.institutionId) {
     const now = new Date();
 
-    // TEK DB sorgusu (cache'li): kurum + gecikmiş fatura sayısı (sadece paymentGraceUntil dolmuşsa)
-    const institution = await getCachedInstitution(user.institutionId);
+    const institution = await getInstitutionState(user.institutionId);
 
     if (!institution) {
       return { error: NextResponse.json({ message: "Oturum kurumu bulunamadı. Lütfen yeniden giriş yapın." }, { status: 401 }) };
@@ -269,7 +278,19 @@ export async function requireAuth(permission?: string) {
     }
   }
 
-  return { user };
+  const branchContext = await resolveBranchContext(user);
+  if (!user.ghost && user.role !== "SUPERADMIN" && !branchContext.activeBranchId) {
+    return {
+      error: NextResponse.json(
+        { message: "Hesabınızın erişebildiği aktif bir şube bulunmuyor. Lütfen yöneticinizle iletişime geçin." },
+        { status: 403 },
+      ),
+    };
+  }
+  if (!user.ghost && user.role !== "SUPERADMIN" && permission && permission !== "superadmin" && !hasBranchPermission(branchContext, permission)) {
+    return { error: NextResponse.json({ message: "Bu şubede bu işlem için yetkiniz yok." }, { status: 403 }) };
+  }
+  return { user: { ...user, branchContext } };
 }
 
 export async function requireAnyAuth(permissions: readonly string[]) {
@@ -277,26 +298,67 @@ export async function requireAnyAuth(permissions: readonly string[]) {
   if (auth.error) return auth;
   if (auth.user.ghost) return auth;
 
-  const role = auth.user.role as import("@prisma/client").Role;
-  const allowed = (await Promise.all(permissions.map((permission) => can(role, permission)))).some(Boolean);
-  if (!allowed) {
+  const checks = await Promise.all(permissions.map(async (permission) => ({
+    permission,
+    allowed: await hasEffectivePermission(auth.user, permission),
+  })));
+  const selected = checks.find((check) => check.allowed)?.permission;
+  if (!selected) {
     return { error: NextResponse.json({ message: "Bu işlem için yetkiniz yok." }, { status: 403 }) };
   }
+
+  // Yetkinin türünü requireAuth'a tekrar geçirerek salt-okunur, kısıtlı mod,
+  // fatura kilidi ve yazma gecikmesi gibi kurum politikalarını da uygula.
+  // Sadece `can()` kontrolü yapmak bu çapraz kuralları sessizce atlıyordu.
+  return requireAuth(selected);
+}
+
+export async function requireAllAuth(permissions: readonly string[]) {
+  const auth = await requireAuth();
+  if (auth.error) return auth;
+  if (auth.user.ghost) return auth;
+
+  const checks = await Promise.all(
+    permissions.map((permission) => hasEffectivePermission(auth.user, permission)),
+  );
+  if (checks.some((allowed) => !allowed)) {
+    return { error: NextResponse.json({ message: "Bu işlem için gerekli yetkileriniz eksik." }, { status: 403 }) };
+  }
+
+  for (const permission of permissions) {
+    const policyAuth = await requireAuth(permission);
+    if (policyAuth.error) return policyAuth;
+  }
   return auth;
+}
+
+export async function requireSuperadmin() {
+  return requireAuth("superadmin");
+}
+
+export async function hasEffectivePermission(
+  user: {
+    ghost?: boolean;
+    role: string;
+    branchContext: Parameters<typeof hasBranchPermission>[0];
+  },
+  permission: string,
+) {
+  return Boolean(
+    user.ghost
+    || user.role === "SUPERADMIN"
+    || (
+      await can(user.role as import("@prisma/client").Role, permission)
+      && hasBranchPermission(user.branchContext, permission)
+    )
+  );
 }
 
 async function getRequestIp(): Promise<string | null> {
   try {
     const h = await headers();
-    // bkz. src/lib/rate-limit.ts getClientIpFromHeaders — zincirin ilk değeri
-    // istemci tarafından sahtelenebilir, güvenilir olan tek ters proxy'nin
-    // (Render) eklediği SON değerdir.
-    const forwarded = h.get("x-forwarded-for");
-    if (forwarded) {
-      const parts = forwarded.split(",").map((p) => p.trim()).filter(Boolean);
-      if (parts.length > 0) return parts[parts.length - 1];
-    }
-    return h.get("x-real-ip") || null;
+    const ip = getClientIpFromHeaders(h);
+    return ip === "unknown" ? null : ip.slice(0, 100);
   } catch {
     // İstek bağlamı dışında (ör. arka plan işleri) — sessizce atla
     return null;
@@ -305,6 +367,9 @@ async function getRequestIp(): Promise<string | null> {
 
 export async function writeAudit(userId: string, action: string, detail?: string) {
   const currentUser = await decodeTokenUser();
+  const branchContext = currentUser?.institutionId
+    ? await resolveBranchContext(currentUser).catch(() => null)
+    : null;
   let realtimeInstitutionId = currentUser?.institutionId || null;
   let realtimeBumped = false;
 
@@ -332,6 +397,7 @@ export async function writeAudit(userId: string, action: string, detail?: string
   await prisma.auditLog.create({
     data: {
       userId,
+      branchId: branchContext?.activeBranchId || null,
       action,
       detail,
       actorId: currentUser?.id ?? null,

@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { RefreshCw } from "lucide-react";
 import type { ConsistencyPayload } from "@/lib/data-consistency";
@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/Button";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { ModuleIcon } from "@/components/ui/ModuleIcon";
+import { isAbortError, useLatestRequest } from "@/lib/use-latest-request";
 
 const RaporEmptyIcon = createSceneIllustration("rapor", 130);
 
@@ -78,6 +79,7 @@ const STATUS_TONE: Record<DayCloseCheck["status"], BadgeTone> = { ok: "success",
 
 
 export default function RaporPage() {
+  const startReportRequest = useLatestRequest();
   const [fromDate, setFromDate] = useState("");
   const [toDate,   setToDate]   = useState("");
   const [stats,    setStats]    = useState<Stats>(EMPTY);
@@ -110,23 +112,25 @@ export default function RaporPage() {
     setToDate(now.toISOString().slice(0, 16));
   }, []);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     if (!fromDate || !toDate) return;
+    const request = startReportRequest();
     setLoading(true);
     setLoadError("");
     try {
-      const res = await fetch(`/api/reports?from=${fromDate}&to=${toDate}`);
+      const res = await fetch(`/api/reports?from=${fromDate}&to=${toDate}`, { signal: request.signal });
       const data = await res.json();
+      if (!request.isLatest()) return;
       if (!res.ok) throw new Error(data?.message || "Rapor verileri yüklenemedi.");
       setStats({ ...EMPTY, ...data });
     } catch (error) {
+      if (isAbortError(error) || !request.isLatest()) return;
       setLoadError(error instanceof Error ? error.message : "Rapor verileri yüklenemedi.");
     }
-    finally { setLoading(false); }
-  };
+    finally { if (request.isLatest()) setLoading(false); }
+  }, [fromDate, startReportRequest, toDate]);
 
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (fromDate && toDate) void load(); }, [fromDate, toDate]);
+  useEffect(() => { if (fromDate && toDate) void load(); }, [fromDate, load, toDate]);
 
   const dayCloseAlertCount = (stats.dayClose?.checks || []).filter(c => c.status !== "ok").length;
   const consistencyAlertCount = (stats.consistency?.summary.critical || 0) + (stats.consistency?.summary.warning || 0);
@@ -409,7 +413,7 @@ export default function RaporPage() {
                     <div key={e.category} className="flex items-center gap-3">
                       <span className="w-28 shrink-0 text-xs text-slate-600 truncate">{e.category}</span>
                       <div className="flex-1 overflow-hidden rounded-full bg-slate-100 h-4">
-                        <div className="h-4 rounded-full bg-orange-400 transition-all" style={{ width: Math.max(4, pct) + "%" }} />
+                        <div className="h-4 rounded-full bg-orange-400 transition-all" style={{ width: `${Math.max(4, pct)}%` }} />
                       </div>
                       <span className="w-24 shrink-0 text-right text-xs font-bold">{CUR(e.amount)}</span>
                     </div>
@@ -436,7 +440,7 @@ export default function RaporPage() {
                     <div key={f.name} className="flex items-center gap-3">
                       <span className="w-28 shrink-0 text-xs text-slate-600 truncate">{f.name}</span>
                       <div className="flex-1 overflow-hidden rounded-full bg-slate-100 h-4">
-                        <div className="h-4 rounded-full bg-purple-400 transition-all" style={{ width: Math.max(4, pct) + "%" }} />
+                        <div className="h-4 rounded-full bg-purple-400 transition-all" style={{ width: `${Math.max(4, pct)}%` }} />
                       </div>
                       <span className="w-24 shrink-0 text-right text-xs font-bold">{CUR(f.amount)}</span>
                     </div>
@@ -546,7 +550,7 @@ export default function RaporPage() {
                     <div key={i} className="flex items-center gap-2.5">
                       <span className="w-5 text-right text-xs font-bold text-slate-400">{i+1}</span>
                       <div className="flex-1 overflow-hidden rounded-full bg-slate-100 h-5">
-                        <div className="h-5 flex items-center rounded-full bg-primary transition-all" style={{ width: Math.max(8, pct) + "%" }}>
+                        <div className="h-5 flex items-center rounded-full bg-primary transition-all" style={{ width: `${Math.max(8, pct)}%` }}>
                           {pct > 20 && <span className="pl-2 text-xs font-bold text-white">{e.count}</span>}
                         </div>
                       </div>
@@ -568,7 +572,7 @@ export default function RaporPage() {
                     <div key={i} className="flex items-center gap-2.5">
                       <span className="w-5 text-right text-xs font-bold text-slate-400">{i+1}</span>
                       <div className="flex-1 overflow-hidden rounded-full bg-slate-100 h-5">
-                        <div className="h-5 flex items-center rounded-full bg-accent transition-all" style={{ width: Math.max(8, pct) + "%" }}>
+                        <div className="h-5 flex items-center rounded-full bg-accent transition-all" style={{ width: `${Math.max(8, pct)}%` }}>
                           {pct > 20 && <span className="pl-2 text-xs font-bold text-white">{t.count}</span>}
                         </div>
                       </div>

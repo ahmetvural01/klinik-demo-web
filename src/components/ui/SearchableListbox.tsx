@@ -117,11 +117,15 @@ export function SearchableListbox({
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
               <input
+                data-dirty-ignore
                 ref={searchRef}
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Escape") setOpen(false);
+                  if (event.key === "Escape") {
+                    event.stopPropagation();
+                    setOpen(false);
+                  }
                   if (event.key === "Enter" && !multiple && filteredOptions.length === 1) {
                     event.preventDefault();
                     toggleOption(filteredOptions[0].id);

@@ -51,16 +51,21 @@ export default function ProviderTab() {
   const [sendForm, setSendForm] = useState({ phone: "", message: "" });
   const [sending, setSending] = useState(false);
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
-    fetch("/api/superadmin/sms-provider")
-      .then((r) => r.json())
-      .then((d) => setProviders(d.providers ?? []))
-      .catch(() => setProviders([]))
-      .finally(() => setLoading(false));
+    try {
+      const response = await fetch("/api/superadmin/sms-provider", { cache: "no-store" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.message || "SMS sağlayıcıları yüklenemedi.");
+      setProviders(Array.isArray(data?.providers) ? data.providers : []);
+    } catch (error) {
+      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "SMS sağlayıcıları yüklenemedi.", type: "error" });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
 
   const openCreate = () => {
     setEditing(null);

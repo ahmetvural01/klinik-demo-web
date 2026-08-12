@@ -5,7 +5,7 @@ import { requireAuth, writeAudit } from "@/lib/api";
 export async function GET() {
   const auth = await requireAuth("announcements:read");
   if (auth.error) return auth.error;
-  if (auth.user.role !== "SUPERADMIN" && !auth.user.institutionId) {
+  if (!auth.user.institutionId) {
     return NextResponse.json({ error: "Kurum bilgisi bulunamadı" }, { status: 403 });
   }
 
@@ -14,9 +14,7 @@ export async function GET() {
     const announcements = await prisma.announcement.findMany({
       where: {
         isActive: true,
-        ...(auth.user.role !== "SUPERADMIN" || auth.user.institutionId
-          ? { institutionId: auth.user.institutionId }
-          : { institutionId: { not: null } }),
+        institutionId: auth.user.institutionId,
         OR: [
           { startsAt: null },
           { startsAt: { lte: now } },

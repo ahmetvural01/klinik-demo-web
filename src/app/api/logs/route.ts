@@ -1,12 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth } from "@/lib/api";
+import { requireAnyAuth, requireAuth } from "@/lib/api";
 import { isValidDateKey, turkeyDayRangeUtc } from "@/lib/tz";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await requireAuth("audit:read");
+    const requestedCategory = request.nextUrl.searchParams.get("category") || "";
+    // SMS teslimat ekranı yalnız kendi daraltılmış kayıt kümesini okuyabilir.
+    // Diğer tüm denetim sorguları audit:read yetkisine bağlı kalır.
+    const auth = requestedCategory === "sms-delivery"
+      ? await requireAnyAuth(["audit:read", "sms:read"])
+      : await requireAuth("audit:read");
     if (auth.error) return auth.error;
+    const branch = requireActiveBranch(auth.user.branchContext);
+    if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
     const sp = request.nextUrl.searchParams;
     const from = sp.get("from") || sp.get("start");
@@ -17,7 +25,7 @@ export async function GET(request: NextRequest) {
     const limit = Number.isInteger(rawLimit) ? Math.min(200, Math.max(1, rawLimit)) : 15;
     const q = sp.get("q") || "";
     const action = sp.get("action") || "";
-    const category = sp.get("category") || "";
+    const category = requestedCategory;
 
     if ((from && !isValidDateKey(from)) || (to && !isValidDateKey(to))) {
       return NextResponse.json({ message: "Geçersiz tarih aralığı" }, { status: 400 });
@@ -29,9 +37,10 @@ export async function GET(request: NextRequest) {
     }
 
     const where: Record<string, unknown> = {};
+    where.branchId = branch.branchId;
     where.user = {
       role: { not: "SUPERADMIN" },
-      ...(auth.user.role !== "SUPERADMIN" ? { institutionId: auth.user.institutionId } : {}),
+      institutionId: auth.user.institutionId,
     };
     where.NOT = [{ actorRole: "SUPERADMIN" }, { isGhost: true }];
     if (from || to) {

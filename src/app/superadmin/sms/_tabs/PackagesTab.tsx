@@ -25,16 +25,21 @@ export default function PackagesTab() {
   const [form, setForm] = useState({ name: "", smsCount: "", price: "" });
   const [saving, setSaving] = useState(false);
 
-  const load = () => {
+  const load = async () => {
     setLoading(true);
-    fetch("/api/superadmin/sms-packages")
-      .then((r) => r.json())
-      .then((d) => setPackages(Array.isArray(d) ? d : d.packages ?? []))
-      .catch(() => setPackages([]))
-      .finally(() => setLoading(false));
+    try {
+      const response = await fetch("/api/superadmin/sms-packages", { cache: "no-store" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.message || "SMS paketleri yüklenemedi.");
+      setPackages(Array.isArray(data) ? data : data?.packages ?? []);
+    } catch (error) {
+      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "SMS paketleri yüklenemedi.", type: "error" });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, []);
 
   const handleSave = async () => {
     if (!form.name || !form.smsCount || !form.price) {

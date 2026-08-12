@@ -7,7 +7,7 @@ import { generatePublicBookingOtp } from "@/lib/public-booking-otp";
 
 export async function POST(req: NextRequest) {
   const ip = getClientIpFromHeaders(req.headers);
-  const rate = checkRateLimit(`public-booking-code:${ip}`, 5, 15 * 60_000);
+  const rate = await checkRateLimit(`public-booking-code:${ip}`, 5, 15 * 60_000);
   if (!rate.ok) {
     return NextResponse.json({ error: "Çok fazla kod talebi gönderildi. Lütfen daha sonra tekrar deneyin." }, { status: 429 });
   }
@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
   // Aynı telefona kısa sürede tekrar kod istenmesini de ayrıca sınırla —
   // IP bazlı limit paylaşılan ağlarda (klinik bekleme salonu wifi'si gibi)
   // yetersiz kalabilir.
-  const phoneRate = checkRateLimit(`public-booking-code-phone:${phone}`, 3, 15 * 60_000);
+  const phoneRate = await checkRateLimit(`public-booking-code-phone:${phone}`, 3, 15 * 60_000);
   if (!phoneRate.ok) {
     return NextResponse.json({ error: "Bu numara için çok fazla kod istendi. Lütfen daha sonra tekrar deneyin." }, { status: 429 });
   }
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
   });
   if (!institution) return NextResponse.json({ error: "Kurum bulunamadı" }, { status: 404 });
 
-  const code = generatePublicBookingOtp(institution.id, phone);
+  const code = await generatePublicBookingOtp(institution.id, phone);
   const result = await sendSms(phone, `${institution.name}: Randevu doğrulama kodunuz ${code}. 5 dakika geçerlidir.`);
   if (!result.success) {
     return NextResponse.json({ error: "Doğrulama kodu gönderilemedi. Lütfen daha sonra tekrar deneyin." }, { status: 503 });

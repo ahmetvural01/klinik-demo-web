@@ -1,0 +1,2 @@
+# Safety
+Never expose secrets. Never push/force-push automatically. Never run destructive production DB actions. Preserve user work. Do not enable unrestricted YOLO execution. Use evidence and checkpoints.

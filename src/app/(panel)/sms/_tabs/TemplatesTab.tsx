@@ -1,20 +1,27 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, PenSquare, PlusCircle, Trash2 } from "lucide-react";
+import { CheckCircle2, MessageCircle, PenSquare, PlusCircle, Smartphone, Trash2 } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { FormField } from "@/components/ui/FormField";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { SmsMessageEditor } from "@/components/sms/SmsMessageEditor";
 import { showToastSafe } from "@/lib/toast-client";
 import { confirmDialog } from "@/lib/confirm-client";
 import { SMS_PLACEHOLDERS, renderSmsPreview, toReadableText, toStoredText } from "@/lib/sms-template-placeholders";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 
 type Template = {
   code: string;
   title: string;
+  description: string | null;
+  category: string;
   content: string;
+  whatsappContent: string | null;
+  whatsappTemplateName: string | null;
+  whatsappTemplateLanguage: string;
   isActive: boolean;
   isCustom: boolean;
   hasDefault: boolean;
@@ -25,9 +32,19 @@ type Template = {
 
 const inputClass = "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
 
-const emptyForm = { code: "", title: "", content: "", isActive: true };
+const emptyForm = { code: "", title: "", description: "", category: "GENERAL", content: "", whatsappContent: "", whatsappTemplateName: "", whatsappTemplateLanguage: "tr", isActive: true };
 
-export default function TemplatesTab() {
+const CATEGORY_LABELS: Record<string, string> = { APPOINTMENT: "Randevu", PAYMENT: "Ödeme", GREETING: "Kutlama", AFTERCARE: "Randevu Sonrası", GENERAL: "Genel" };
+
+export default function TemplatesTab({ readOnly = false }: { readOnly?: boolean }) {
+  const { can, hasFeature } = usePermissions();
+  const whatsappFeatureEnabled = hasFeature("whatsapp");
+  const canReadSms = can("sms:read");
+  const canWriteSms = !readOnly && can("sms:write");
+  const canReadWhatsapp = whatsappFeatureEnabled && can("whatsapp:read");
+  const canWriteWhatsapp = !readOnly && whatsappFeatureEnabled && can("whatsapp:write");
+  const canWriteAny = canWriteSms || canWriteWhatsapp;
+  const canManageShared = canWriteSms && (!whatsappFeatureEnabled || canWriteWhatsapp);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
   const [institutionName, setInstitutionName] = useState("");
@@ -79,7 +96,7 @@ export default function TemplatesTab() {
   const openEditCustom = (t: Template) => {
     setEditing(t);
     setIsNewCustom(false);
-    const next = { code: t.code, title: t.title, content: toReadableText(t.content), isActive: t.isActive };
+    const next = { code: t.code, title: t.title, description: t.description || "", category: t.category, content: toReadableText(t.content), whatsappContent: toReadableText(t.whatsappContent || t.content), whatsappTemplateName: t.whatsappTemplateName || "", whatsappTemplateLanguage: t.whatsappTemplateLanguage || "tr", isActive: t.isActive };
     setForm(next);
     formSnapshotRef.current = JSON.stringify(next);
     setShowForm(true);
@@ -91,7 +108,7 @@ export default function TemplatesTab() {
   const switchToCustom = (t: Template) => {
     setEditing(t);
     setIsNewCustom(false);
-    const next = { code: t.code, title: t.title, content: toReadableText(t.content), isActive: t.isActive };
+    const next = { code: t.code, title: t.title, description: t.description || "", category: t.category, content: toReadableText(t.content), whatsappContent: toReadableText(t.whatsappContent || t.content), whatsappTemplateName: t.whatsappTemplateName || "", whatsappTemplateLanguage: t.whatsappTemplateLanguage || "tr", isActive: t.isActive };
     setForm(next);
     formSnapshotRef.current = JSON.stringify(next);
     setShowForm(true);
@@ -142,8 +159,8 @@ export default function TemplatesTab() {
   };
 
   const submit = async () => {
-    if (!form.code.trim() || !form.title.trim() || !form.content.trim()) {
-      showToastSafe({ title: "Eksik alan", message: "Kod, başlık ve içerik zorunlu", type: "error" });
+    if (!form.code.trim() || !form.title.trim() || (canWriteSms && !form.content.trim()) || (canWriteWhatsapp && !form.whatsappContent.trim())) {
+      showToastSafe({ title: "Eksik alan", message: "Kod, başlık ve yetkili olduğunuz kanalın içeriği zorunlu", type: "error" });
       return;
     }
     setSaving(true);
@@ -151,7 +168,14 @@ export default function TemplatesTab() {
       const res = await fetch("/api/sms/templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: form.code, title: form.title, content: toStoredText(form.content), isActive: form.isActive }),
+        body: JSON.stringify({
+          ...form,
+          content: canWriteSms ? toStoredText(form.content) : undefined,
+          whatsappContent: canWriteWhatsapp ? toStoredText(form.whatsappContent) : undefined,
+          whatsappTemplateName: canWriteWhatsapp ? form.whatsappTemplateName : undefined,
+          whatsappTemplateLanguage: canWriteWhatsapp ? form.whatsappTemplateLanguage : undefined,
+          isActive: canManageShared ? form.isActive : undefined,
+        }),
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.message || "Kaydedilemedi");
@@ -171,12 +195,12 @@ export default function TemplatesTab() {
       <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-sm font-black text-slate-900">SMS Şablonları</h2>
+            <h2 className="text-sm font-black text-slate-900">İletişim Şablonları</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Her şablon için ya sistem varsayılanını kullanın, ya da kendi metninizi tasarlayın.
+              Yetkili olduğunuz iletişim kanallarının olay bazlı metinlerini tek karttan yönetin.
             </p>
           </div>
-          <Button icon={PlusCircle} size="sm" onClick={openCreate}>Yeni Özel Şablon</Button>
+          {canManageShared && <Button icon={PlusCircle} size="sm" onClick={openCreate}>Yeni Özel Şablon</Button>}
         </div>
       </div>
 
@@ -188,10 +212,7 @@ export default function TemplatesTab() {
             ))}
           </div>
         ) : loadError ? (
-          <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
-            <span>{loadError}</span>
-            <Button variant="secondary" size="sm" onClick={load}>Yeniden Dene</Button>
-          </div>
+          <LoadErrorState message={loadError} onRetry={load} />
         ) : templates.length === 0 ? (
           <div className="rounded-2xl border border-slate-100 bg-white px-6 py-14 text-center text-sm text-slate-400 shadow-sm">Şablon bulunamadı</div>
         ) : (
@@ -199,27 +220,32 @@ export default function TemplatesTab() {
             <div key={t.code} className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <div className="mb-1.5 flex flex-wrap items-center gap-2">
+                  <div className="mb-2 flex flex-wrap items-center gap-2">
                     <span className="font-bold text-slate-900">{t.title}</span>
+                    <Badge tone="info" size="sm">{CATEGORY_LABELS[t.category] || t.category}</Badge>
+                    <Badge tone="neutral" size="sm">{t.code}</Badge>
                     {!t.isActive && <Badge tone="neutral" size="sm">Pasif</Badge>}
                   </div>
-                  <p className="rounded-lg bg-slate-50 p-2 text-sm text-slate-600">{renderSmsPreview(t.content, previewContext)}</p>
-                  <p className="mt-1 text-xs text-slate-400">Örnek bir hastaya böyle görünür</p>
+                  {t.description && <p className="mb-3 text-xs text-slate-500">{t.description}</p>}
+                  <div className={`grid gap-2 ${canReadSms && canReadWhatsapp ? "md:grid-cols-2" : ""}`}>
+                    {canReadSms && <div className="rounded-lg border border-sky-100 bg-sky-50/60 p-3"><p className="mb-1 flex items-center gap-1.5 text-xs font-black text-sky-700"><Smartphone className="h-3.5 w-3.5" />SMS</p><p className="text-sm leading-5 text-slate-700">{renderSmsPreview(t.content, previewContext)}</p></div>}
+                    {canReadWhatsapp && <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 p-3"><p className="mb-1 flex items-center gap-1.5 text-xs font-black text-emerald-700"><MessageCircle className="h-3.5 w-3.5" />WhatsApp</p><p className="text-sm leading-5 text-slate-700">{renderSmsPreview(t.whatsappContent || t.content, previewContext)}</p></div>}
+                  </div>
                 </div>
-                {!t.hasDefault && (
+                {canWriteAny && !t.hasDefault && (
                   <div className="flex shrink-0 items-center gap-1">
                     <IconButton icon={PenSquare} title="Düzenle" tone="neutral" onClick={() => openEditCustom(t)} />
-                    <IconButton icon={Trash2} title="Sil" tone="danger" onClick={() => deleteCustomOnly(t)} />
+                    {canManageShared && <IconButton icon={Trash2} title="Sil" tone="danger" onClick={() => deleteCustomOnly(t)} />}
                   </div>
                 )}
               </div>
 
-              {t.hasDefault && (
+              {canWriteAny && t.hasDefault && (
                 <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
                   <button
                     type="button"
-                    onClick={() => { if (t.isCustom) void switchToDefault(t); }}
-                    disabled={switching === t.code}
+                    onClick={() => { if (t.isCustom && canManageShared) void switchToDefault(t); }}
+                    disabled={switching === t.code || (t.isCustom && !canManageShared)}
                     className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-bold transition ${
                       !t.isCustom ? "bg-primary text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
                     }`}
@@ -265,18 +291,23 @@ export default function TemplatesTab() {
           <FormField label="Başlık" required hint="Bu şablonu tanımak için kısa bir ad">
             <input className={inputClass} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
           </FormField>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField label="Kategori"><select className={inputClass} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>{Object.entries(CATEGORY_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></FormField>
+            <FormField label="Açıklama"><input className={inputClass} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Hangi durumda gönderilir?" /></FormField>
+          </div>
           {isNewCustom && (
             <FormField label="Kod" required hint="Sistemdeki bilinen bir kodu yazarsanız (BILGI, HATIRLATMA, ANKET, ODEME_YAKLASIYOR, ODEME_GECIKTI, DOGUM_GUNU) o şablonu kendi metninizle değiştirirsiniz; farklı bir kod yazarsanız yeni, tamamen size özel bir şablon oluşturursunuz">
               <input className={inputClass} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} />
             </FormField>
           )}
-          <SmsMessageEditor
+          {canWriteSms && <SmsMessageEditor
             value={form.content}
             onChange={(content) => setForm({ ...form, content })}
             placeholders={SMS_PLACEHOLDERS}
             previewContext={previewContext}
-          />
-          <label className="flex cursor-pointer items-center gap-2">
+          />}
+          {canWriteWhatsapp && <div className="space-y-3 border-t border-slate-100 pt-4"><div className="flex items-center gap-2"><MessageCircle className="h-5 w-5 text-emerald-600" /><h3 className="text-sm font-black text-slate-900">WhatsApp içeriği</h3></div><SmsMessageEditor value={form.whatsappContent} onChange={(whatsappContent) => setForm({ ...form, whatsappContent })} placeholders={SMS_PLACEHOLDERS} previewContext={previewContext} label="WhatsApp Mesajı" /><div className="grid gap-3 sm:grid-cols-2"><FormField label="Meta şablon adı" hint="Meta Business Manager'da onaylı teknik ad."><input className={inputClass} value={form.whatsappTemplateName} onChange={(e) => setForm({ ...form, whatsappTemplateName: e.target.value })} placeholder="appointment_reminder_tr" /></FormField><FormField label="Dil"><select className={inputClass} value={form.whatsappTemplateLanguage} onChange={(e) => setForm({ ...form, whatsappTemplateLanguage: e.target.value })}><option value="tr">Türkçe (tr)</option><option value="en_US">English (en_US)</option></select></FormField></div></div>}
+          {canManageShared && <label className="flex cursor-pointer items-center gap-2">
             <input
               type="checkbox"
               checked={form.isActive}
@@ -284,7 +315,7 @@ export default function TemplatesTab() {
               className="rounded border-slate-300 text-primary focus:ring-primary/30"
             />
             <span className="text-sm text-slate-700">Aktif</span>
-          </label>
+          </label>}
         </div>
       </Modal>
     </section>

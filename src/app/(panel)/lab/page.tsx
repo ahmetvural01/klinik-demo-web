@@ -4,7 +4,6 @@ import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { showToastSafe } from "@/lib/toast-client";
 import { useSlashFocus } from "@/lib/use-slash-focus";
-import { SearchSelect } from "@/components/ui/SearchSelect";
 import { LabOrderForm } from "@/components/lab/LabOrderForm";
 import { LabOrderDetailPanel } from "@/components/lab/LabOrderDetailPanel";
 import { usePermissions } from "@/components/auth/PermissionProvider";
@@ -15,10 +14,11 @@ import { Badge } from "@/components/ui/Badge";
 import { FormField } from "@/components/ui/FormField";
 import { ListTable } from "@/components/ui/ListTable";
 import type { ListTableColumn } from "@/components/ui/ListTable";
-import { Plus, CheckCircle2, TriangleAlert, FlaskConical, Stethoscope, CircleDashed } from "lucide-react";
+import { Plus, CheckCircle2, TriangleAlert, FlaskConical, Stethoscope, CircleDashed, List, Rows3 } from "lucide-react";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { turkeyDateKey } from "@/lib/tz";
 
 const LabEmptyIcon = createSceneIllustration("lab");
@@ -109,9 +109,6 @@ const LAB_CATEGORIES = [
     items: ["Beyazlatma Atel", "Zirkon Alt Yapı", "Braket", "Diğer"],
   },
 ];
-
-// Flat list for backward-compat lookups
-const LAB_TYPES = LAB_CATEGORIES.flatMap((c) => c.items);
 
 // Workflow templates: iş türüne göre adım önerileri
 const WORKFLOW_TEMPLATES: Record<string, { send: string; request: string }[]> = {
@@ -437,14 +434,6 @@ function buildReceivedNote(baseNote: string, receivedItem: string, needsAppointm
   ].filter(Boolean).join(" | ") || null;
 }
 
-function getProvaFollowUpTrips(order: LabOrder) {
-  return getCurrentCycleTrips(order.trips).filter((trip) => trip.receivedAt && needsProvaAppointment(trip.receivedNote));
-}
-
-function getLatestProvaFollowUpTrip(order: LabOrder) {
-  return getProvaFollowUpTrips(order).sort((a, b) => new Date(b.receivedAt || b.sentAt).getTime() - new Date(a.receivedAt || a.sentAt).getTime())[0] || null;
-}
-
 function getCurrentCycleTrips(trips: LabTrip[]) {
   const sorted = [...trips].sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime());
   let startIndex = 0;
@@ -549,6 +538,7 @@ export default function LabPage() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const loadSequenceRef = useRef(0);
   const [search, setSearch] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
   useSlashFocus(searchInputRef);
@@ -557,6 +547,9 @@ export default function LabPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [doctors, setDoctors] = useState<Doctor[]>([]);
   const [firmaLabNames, setFirmaLabNames] = useState<string[]>([]);
+  const [doctorDirectoryError, setDoctorDirectoryError] = useState("");
+  const [labDirectoryError, setLabDirectoryError] = useState("");
+  const [directoryReloadKey, setDirectoryReloadKey] = useState(0);
 
   const [modal, setModal] = useState<"new" | "trip" | "receive" | "invoice" | "editInvoice" | "editTrip" | null>(null);
   const [activeOrder, setActiveOrder] = useState<LabOrder | null>(null);
@@ -566,6 +559,8 @@ export default function LabPage() {
   const [orderForm, setOrderForm] = useState(emptyOrderForm);
   const orderRequestKeyRef = useRef("");
   const [orderPatientSearch, setOrderPatientSearch] = useState("");
+  const [orderPatientLoading, setOrderPatientLoading] = useState(false);
+  const [orderPatientError, setOrderPatientError] = useState("");
   const [orderDoctorSearch, setOrderDoctorSearch] = useState("");
   const [orderLabSearch, setOrderLabSearch] = useState("");
   const [orderLabTypeSearch, setOrderLabTypeSearch] = useState("");
@@ -589,6 +584,7 @@ export default function LabPage() {
   const focusedOrderFromQueryRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
+    const sequence = ++loadSequenceRef.current;
     setLoadError(null);
     setLoading(true);
 
@@ -607,11 +603,14 @@ export default function LabPage() {
       }
 
       const nextOrders = normalizeLabOrders(payload);
+      if (sequence !== loadSequenceRef.current) return;
       setOrders(nextOrders);
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "Laboratuvar verileri alınamadı.");
+      if (sequence === loadSequenceRef.current) {
+        setLoadError(error instanceof Error ? error.message : "Laboratuvar verileri alınamadı.");
+      }
     } finally {
-      setLoading(false);
+      if (sequence === loadSequenceRef.current) setLoading(false);
     }
   }, []);
 
@@ -623,6 +622,9 @@ export default function LabPage() {
   const replaceOrder = useCallback((rawOrder: LabOrder | (Partial<LabOrder> & Record<string, any>)) => {
     const nextOrder = normalizeLabOrder(rawOrder);
     if (!nextOrder.id) return;
+    loadSequenceRef.current += 1;
+    setLoading(false);
+    setLoadError(null);
     setOrders((current) => {
       const exists = current.some((order) => order.id === nextOrder.id);
       if (!exists) return [nextOrder, ...current];
@@ -633,6 +635,9 @@ export default function LabPage() {
   }, []);
 
   const patchOrder = useCallback((orderId: string, updater: (order: LabOrder) => LabOrder) => {
+    loadSequenceRef.current += 1;
+    setLoading(false);
+    setLoadError(null);
     setOrders((current) => current.map((order) => (order.id === orderId ? normalizeLabOrder(updater(order)) : order)));
     setFocusedOrderId(orderId);
   }, []);
@@ -654,16 +659,28 @@ export default function LabPage() {
 
   useEffect(() => {
     load();
+  }, [load]);
 
-    cachedGet<unknown>("/api/staff", 60_000)
+  useEffect(() => {
+    setDoctorDirectoryError("");
+    setLabDirectoryError("");
+    cachedGet<unknown>("/api/staff", 60_000, { throwOnError: true, force: directoryReloadKey > 0 })
       .then((d) => {
-        const nextDoctors = (Array.isArray(d) ? d : []).filter((u: Doctor) => isEffectiveDoctor(u));
+        if (!Array.isArray(d)) throw new Error("Doktor listesi beklenmeyen biçimde döndü.");
+        const nextDoctors = d.filter((u: Doctor) => isEffectiveDoctor(u));
         setDoctors(nextDoctors);
       })
-      .catch(() => {});
+      .catch((loadError) => {
+        setDoctors([]);
+        setDoctorDirectoryError(loadError instanceof Error ? loadError.message : "Doktor listesi yüklenemedi.");
+      });
 
     fetch("/api/firma", { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : []))
+      .then(async (response) => {
+        const data = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(data?.message || data?.error || "Laboratuvar firmaları yüklenemedi.");
+        return data;
+      })
       .then((d) => {
         const names = (Array.isArray(d) ? d : [])
           .filter((firma: { kategori?: string; name?: string }) => firma.kategori === "LAB" && firma.name)
@@ -671,9 +688,11 @@ export default function LabPage() {
           .filter(Boolean);
         setFirmaLabNames(Array.from(new Set(names)).sort((a, b) => a.localeCompare(b, "tr")));
       })
-      .catch(() => setFirmaLabNames([]));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [load]);
+      .catch((loadError) => {
+        setFirmaLabNames([]);
+        setLabDirectoryError(loadError instanceof Error ? loadError.message : "Laboratuvar firmaları yüklenemedi.");
+      });
+  }, [directoryReloadKey]);
 
   // Hasta listesinin tamamını sayfa açılırken yüklemek büyük kliniklerde hem
   // gereksiz veri taşır hem de laboratuvar ekranını yavaşlatır. Arama,
@@ -683,24 +702,32 @@ export default function LabPage() {
     const query = orderPatientSearch.trim();
     if (query.length < 2) {
       if (!orderForm.patientId) setPatients([]);
+      setOrderPatientLoading(false);
+      setOrderPatientError("");
       return;
     }
 
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      fetch(`/api/patients?q=${encodeURIComponent(query)}&take=20&summary=false`, {
-        cache: "no-store",
-        signal: controller.signal,
-      })
-        .then((response) => (response.ok ? response.json() : null))
-        .then((payload) => {
-          if (!payload) return;
-          setPatients(Array.isArray(payload) ? payload : Array.isArray(payload.patients) ? payload.patients : []);
-        })
-        .catch((error) => {
+      setOrderPatientLoading(true);
+      setOrderPatientError("");
+      void (async () => {
+        try {
+          const response = await fetch(`/api/patients?q=${encodeURIComponent(query)}&take=20&summary=false`, {
+            cache: "no-store",
+            signal: controller.signal,
+          });
+          const payload = await response.json().catch(() => null);
+          if (!response.ok) throw new Error(payload?.message || payload?.error || "Hasta araması yapılamadı.");
+          setPatients(Array.isArray(payload) ? payload : Array.isArray(payload?.patients) ? payload.patients : []);
+        } catch (error) {
           if (error instanceof DOMException && error.name === "AbortError") return;
           setPatients([]);
-        });
+          setOrderPatientError(error instanceof Error ? error.message : "Hasta araması yapılamadı.");
+        } finally {
+          if (!controller.signal.aborted) setOrderPatientLoading(false);
+        }
+      })();
     }, 250);
 
     return () => {
@@ -723,6 +750,7 @@ export default function LabPage() {
       })
       .catch((error) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
+        showToastSafe({ title: "Hasta bilgisi yüklenemedi", message: "Laboratuvar formunu hasta kartından açma işlemi tamamlanamadı.", type: "error" });
       });
 
     return () => controller.abort();
@@ -838,36 +866,59 @@ export default function LabPage() {
 
   useEffect(() => {
     if (!canWriteLab || !autoNewFromPatient || prefillHandledRef.current) return;
-    if (patients.length === 0 || doctors.length === 0) return;
+    if (doctors.length === 0 || knownLabs.length === 0) return;
 
-    const patientExists = prefillPatientId ? patients.some((patient) => patient.id === prefillPatientId) : false;
-    const defaultDoctorId = doctors[0]?.id || "";
-    const queryLab = knownLabs.find((lab) => lab === prefillLabName);
-    const currentLab = activeLab !== "all" && knownLabs.includes(activeLab) ? activeLab : "";
-
-    const initialOrderForm = {
-      ...emptyOrderForm,
-      patientId: patientExists ? prefillPatientId : "",
-      doctorId: defaultDoctorId,
-      labName: queryLab || currentLab || knownLabs[0] || "",
-    };
-    setOrderForm(initialOrderForm);
-    setOrderPatientSearch(patientExists ? patients.find((patient) => patient.id === prefillPatientId)?.fullName || "" : "");
-    setOrderDoctorSearch(doctors.find((doctor) => doctor.id === defaultDoctorId)?.fullName || "");
-    setOrderLabSearch(queryLab || currentLab || knownLabs[0] || "");
-    setOrderLabTypeSearch("");
-    orderRequestKeyRef.current = "";
-    modalSnapshotRef.current = JSON.stringify(initialOrderForm);
-    setModal("new");
+    const controller = new AbortController();
     prefillHandledRef.current = true;
 
-    const params = new URLSearchParams(window.location.search);
-    params.delete("new");
-    params.delete("patientId");
-    params.delete("labName");
-    const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
-    window.history.replaceState(null, "", nextUrl);
-  }, [activeLab, autoNewFromPatient, canWriteLab, doctors, knownLabs, patients, prefillLabName, prefillPatientId]);
+    void (async () => {
+      let selectedPatient: Patient | null = null;
+      if (prefillPatientId) {
+        try {
+          const response = await fetch(`/api/patients?id=${encodeURIComponent(prefillPatientId)}&take=1&summary=false`, {
+            cache: "no-store",
+            signal: controller.signal,
+          });
+          const payload = await response.json().catch(() => null);
+          if (!response.ok) throw new Error(payload?.message || "Hasta bilgisi yüklenemedi.");
+          selectedPatient = Array.isArray(payload?.patients) ? payload.patients[0] || null : null;
+          if (selectedPatient) setPatients([selectedPatient]);
+          else setOrderPatientError("Seçilen hasta bu şubede bulunamadı.");
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") return;
+          setOrderPatientError(error instanceof Error ? error.message : "Hasta bilgisi yüklenemedi.");
+        }
+      }
+
+      if (controller.signal.aborted) return;
+      const defaultDoctorId = doctors[0]?.id || "";
+      const queryLab = knownLabs.find((lab) => lab === prefillLabName);
+      const currentLab = activeLab !== "all" && knownLabs.includes(activeLab) ? activeLab : "";
+      const initialOrderForm = {
+        ...emptyOrderForm,
+        patientId: selectedPatient?.id || "",
+        doctorId: defaultDoctorId,
+        labName: queryLab || currentLab || knownLabs[0] || "",
+      };
+      setOrderForm(initialOrderForm);
+      setOrderPatientSearch(selectedPatient?.fullName || "");
+      setOrderDoctorSearch(doctors.find((doctor) => doctor.id === defaultDoctorId)?.fullName || "");
+      setOrderLabSearch(queryLab || currentLab || knownLabs[0] || "");
+      setOrderLabTypeSearch("");
+      orderRequestKeyRef.current = "";
+      modalSnapshotRef.current = JSON.stringify(initialOrderForm);
+      setModal("new");
+
+      const params = new URLSearchParams(window.location.search);
+      params.delete("new");
+      params.delete("patientId");
+      params.delete("labName");
+      const nextUrl = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}`;
+      window.history.replaceState(null, "", nextUrl);
+    })();
+
+    return () => controller.abort();
+  }, [activeLab, autoNewFromPatient, canWriteLab, doctors, knownLabs, prefillLabName, prefillPatientId]);
 
   useEffect(() => {
     if (!focusOrderId || orders.length === 0) return;
@@ -898,14 +949,6 @@ export default function LabPage() {
     }
     return pending.sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime());
   }, [visibleOrders]);
-
-  const stats = useMemo(() => {
-    const done = visibleOrders.filter(
-      (order) => order.status === "HASTAYA_TAKILDI" && !order.trips.some((trip) => !trip.receivedAt),
-    ).length;
-    const active = visibleOrders.length - done;
-    return { active, waiting: allPendingTrips.length, done };
-  }, [visibleOrders, allPendingTrips.length]);
 
   const workflowBoard = useMemo(() => {
     const fresh: LabOrder[] = [];
@@ -972,10 +1015,6 @@ export default function LabPage() {
     });
   }, [filteredOrders]);
 
-  const focusedOrder = useMemo(
-    () => filteredOrders.find((order) => order.id === focusedOrderId) ?? null,
-    [filteredOrders, focusedOrderId],
-  );
   const detailOrder = useMemo(
     () => orders.find((order) => order.id === detailOrderId) ?? null,
     [orders, detailOrderId],
@@ -1557,8 +1596,43 @@ export default function LabPage() {
         ]}
       />
 
+      {(doctorDirectoryError || labDirectoryError) && (
+        <LoadErrorState
+          compact
+          message={[doctorDirectoryError, labDirectoryError].filter(Boolean).join(" ")}
+          onRetry={() => setDirectoryReloadKey((value) => value + 1)}
+        />
+      )}
+
+      {canWriteLab && !labDirectoryError && knownLabs.length === 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <span>Yeni laboratuvar işi açmak için önce firmalar ekranında LAB kategorisinde bir laboratuvar tanımlayın.</span>
+          <Button href="/firma" variant="secondary" size="sm">Firmalara Git</Button>
+        </div>
+      )}
+
       <div className="sticky top-0 z-20 mb-0 space-y-2 rounded-lg border border-slate-200/80 bg-white px-2 py-2 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5" role="group" aria-label="Liste görünümü">
+            <button
+              type="button"
+              onClick={() => setViewMode("pro")}
+              className={`rounded-md p-1.5 transition ${viewMode === "pro" ? "bg-white text-primary shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+              aria-label="Kompakt tablo görünümü"
+              title="Kompakt tablo görünümü"
+            >
+              <List className="h-4 w-4" aria-hidden="true" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("classic")}
+              className={`rounded-md p-1.5 transition ${viewMode === "classic" ? "bg-white text-primary shadow-sm" : "text-slate-500 hover:text-slate-800"}`}
+              aria-label="Ayrıntılı akış görünümü"
+              title="Ayrıntılı akış görünümü"
+            >
+              <Rows3 className="h-4 w-4" aria-hidden="true" />
+            </button>
+          </div>
           {canWriteLab && <div className="ml-auto">
             <Button
               size="sm"
@@ -1586,7 +1660,7 @@ export default function LabPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-[180px] flex-1 sm:w-60 sm:flex-none">
+          <div className="relative w-full flex-none sm:w-60">
             <svg className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
               <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
             </svg>
@@ -1601,7 +1675,7 @@ export default function LabPage() {
           <select
             value={activeLab}
             onChange={(e) => setActiveLab(e.target.value)}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100"
+            className="h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-100 sm:w-auto"
           >
             <option value="all">Tümü ({searchedOrders.length} iş)</option>
             {labOverview.map((lab) => (
@@ -1610,7 +1684,7 @@ export default function LabPage() {
               </option>
             ))}
           </select>
-          <div className="flex flex-1 items-center gap-2 overflow-x-auto">
+          <div className="flex w-full flex-none items-center gap-2 overflow-x-auto sm:w-auto sm:flex-1">
             {([
               { key: "all" as const, label: "Tümü", count: orderedVisibleOrders.length },
               { key: "atLab" as const, label: "Laboratuvarda", count: workflowBoard.atLab.length },
@@ -1644,6 +1718,14 @@ export default function LabPage() {
             <p className="text-sm text-slate-500">{loadError}</p>
             <Button variant="secondary" size="sm" onClick={() => void load()}>Tekrar dene</Button>
           </div>
+        </div>
+      ) : viewMode === "classic" ? (
+        <div className="space-y-2">
+          {loading ? (
+            <div className="ui-surface min-h-40 animate-pulse bg-slate-100" aria-label="Laboratuvar işleri yükleniyor" />
+          ) : filteredOrders.length === 0 ? (
+            <div className="ui-surface p-8 text-center text-sm text-slate-500">Bu filtrede laboratuvar işi yok</div>
+          ) : filteredOrders.map(renderRow)}
         </div>
       ) : (
         <ListTable
@@ -1690,6 +1772,8 @@ export default function LabPage() {
               setOrderForm((p) => ({ ...p, patientId: "" }));
             }}
             patientOptions={orderPatientOptions}
+            patientLoading={orderPatientLoading}
+            patientError={orderPatientError}
             onPatientSelect={(option) => {
               setOrderPatientSearch(option.label);
               setOrderForm((p) => ({ ...p, patientId: option.id }));
@@ -2451,7 +2535,7 @@ function DentalChart({
         onClick={() => toggle(num)}
         className={`flex h-8 w-8 flex-col items-center justify-center rounded-lg border text-xs font-semibold transition-all
           ${active
-            ? `border-transparent bg-slate-800 text-white shadow-sm`
+            ? `border-transparent bg-slate-800 text-white shadow-sm ring-2 ${ringColor}`
             : `border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:bg-slate-50`
           }`}
         title={`Diş ${num}`}
@@ -2461,9 +2545,6 @@ function DentalChart({
     );
   };
 
-  const upperSelected = [...UPPER_RIGHT, ...UPPER_LEFT].every((n) => selected.includes(n));
-  const lowerSelected = [...LOWER_LEFT, ...LOWER_RIGHT].every((n) => selected.includes(n));
-
   return (
     <div className="mt-1 rounded-xl border border-slate-200 bg-slate-50 p-3">
       {/* Hızlı seçim butonları */}
@@ -2472,11 +2553,14 @@ function DentalChart({
           { label: "Üst Çene", group: [...UPPER_RIGHT, ...UPPER_LEFT] },
           { label: "Alt Çene", group: [...LOWER_LEFT, ...LOWER_RIGHT] },
           { label: "Tüm Çene", group: [...UPPER_RIGHT, ...UPPER_LEFT, ...LOWER_LEFT, ...LOWER_RIGHT] },
-        ].map(({ label, group }) => (
-          <Button key={label} type="button" size="sm" variant="secondary" onClick={() => selectGroup(group)}>
-            {label}
-          </Button>
-        ))}
+        ].map(({ label, group }) => {
+          const allSelected = group.every((tooth) => selected.includes(tooth));
+          return (
+            <Button key={label} type="button" size="sm" variant={allSelected ? "primary" : "secondary"} onClick={() => selectGroup(group)}>
+              {label}
+            </Button>
+          );
+        })}
         {selected.length > 0 && (
           <Button type="button" size="sm" variant="ghost" onClick={() => onChange([])}>
             Temizle

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
@@ -19,6 +19,7 @@ import { PageHeader } from "@/components/ui/PageHeader";
 import { CountUp } from "@/components/ui/CountUp";
 import { turkeyDateKey } from "@/lib/tz";
 import { usePermissions } from "@/components/auth/PermissionProvider";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 
 const FinanceEmptyIcon = createSceneIllustration("muhasebe", 140);
 const StaffEmptyIcon = createSceneIllustration("personel", 140);
@@ -142,42 +143,6 @@ const REMINDER_STATUS_LABELS: Record<string, string> = {
 };
 
 const INP = "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none";
-const MUHASEBE_CACHE_KEY = "muhasebe:page:v1";
-
-function readMuhasebeCache() {
-  if (typeof window === "undefined") return null;
-  const raw = sessionStorage.getItem(MUHASEBE_CACHE_KEY);
-  if (!raw) return null;
-  try {
-    const cached = JSON.parse(raw) as {
-      userRole?: string;
-      firmas?: FirmaData[];
-      taksitOverdue?: { count: number; amount: number };
-      alacaklar?: AlacakRow[];
-      alacakTotal?: number;
-      patients?: PatientOption[];
-      posDevices?: PosDevice[];
-      taksitPlans?: TaksitPlan[];
-      reminders?: Reminder[];
-      taksitDoctors?: Doctor[];
-    };
-    return {
-      userRole: cached.userRole || "",
-      firmas: Array.isArray(cached.firmas) ? cached.firmas : [],
-      taksitOverdue: cached.taksitOverdue || { count: 0, amount: 0 },
-      alacaklar: Array.isArray(cached.alacaklar) ? cached.alacaklar : [],
-      alacakTotal: Number(cached.alacakTotal || 0),
-      patients: Array.isArray(cached.patients) ? cached.patients : [],
-      posDevices: Array.isArray(cached.posDevices) ? cached.posDevices : [],
-      taksitPlans: Array.isArray(cached.taksitPlans) ? cached.taksitPlans : [],
-      reminders: Array.isArray(cached.reminders) ? cached.reminders : [],
-      taksitDoctors: Array.isArray(cached.taksitDoctors) ? cached.taksitDoctors : [],
-    };
-  } catch {
-    return null;
-  }
-}
-
 const TABS = [
   { id: "defter",   label: "Muhasebe Defteri", hint: "Tahsilat ve gider hareketleri" },
   { id: "alacak",   label: "Alacaklar", hint: "Hasta bakiyeleri ve taksitli ödeme planları" },
@@ -274,12 +239,6 @@ export default function MuhasebePage() {
     showToastSafe({ message: text, type, icon });
   }, []);
 
-  // ── Summary state ─────────────────────────────────────────────────────────
-  // Başlangıçta sessionStorage'dan oku — flash'siz render
-  const [userRole,      setUserRole]      = useState<string>(() =>
-    typeof window !== "undefined" ? (sessionStorage.getItem("dev-preview-role") || "") : ""
-  );
-
   const visibleTabs = useMemo(() => {
     return TABS.filter((tab) => {
       if (tab.id === "defter") return canReadPayments || canReadFinance;
@@ -305,30 +264,33 @@ export default function MuhasebePage() {
       canReadInstallments ? fetchList("/api/taksit-plani?status=GECIKTI") : Promise.resolve([]),
     ]);
     if (firmaResult.status === "fulfilled") setFirmas(firmaResult.value);
-    else showToastSafe({ title: "Özet yenilenemedi", message: "Firma seçenekleri korunarak yükleme durduruldu.", type: "error" });
+    else {
+      setFirmas([]);
+      showToastSafe({ title: "Özet yenilenemedi", message: "Firma seçenekleri güvenlik nedeniyle temizlendi.", type: "error" });
+    }
     if (taksitResult.status === "fulfilled") {
       const tr = taksitResult.value;
       const items = (tr as TaksitPlan[]).flatMap(p => (p.taksitler || []).filter(t => t.status === "GECIKTI"));
       setTaksitOverdue({ count: items.length, amount: items.reduce((s, t) => s + Number(t.kalan || 0), 0) });
-    } else showToastSafe({ title: "Özet yenilenemedi", message: "Geciken taksit özeti mevcut haliyle korundu.", type: "error" });
+    } else {
+      setTaksitOverdue({ count: 0, amount: 0 });
+      showToastSafe({ title: "Özet yenilenemedi", message: "Geciken taksit özeti gösterilemiyor.", type: "error" });
+    }
   }, [canReadFinance, canReadInstallments]);
 
   useEffect(() => {
-    const syncRole = () => {
-      cachedGet<{ role?: string } | null>("/api/auth/me", 60_000)
-        .then(d => {
-          const preview = typeof window !== "undefined" ? sessionStorage.getItem("dev-preview-role") : null;
-          if (preview || d?.role) setUserRole(preview || d?.role || "");
-        })
-        .catch(() => null);
-    };
-
-    syncRole();
-    if (canWriteInstallments) fetch("/api/taksit-plani/mark-gecikti", { method: "POST" }).catch(() => null);
-
-    const onPreview = () => syncRole();
-    window.addEventListener("preview-role-change", onPreview);
-    return () => window.removeEventListener("preview-role-change", onPreview);
+    if (!canWriteInstallments) return;
+    void fetch("/api/taksit-plani/mark-gecikti", { method: "POST" })
+      .then(async (response) => {
+        if (response.ok) return;
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.message || "Geciken taksitler güncellenemedi.");
+      })
+      .catch((error) => showToastSafe({
+        title: "Taksit durumu güncellenemedi",
+        message: error instanceof Error ? error.message : "Lütfen sayfayı yenileyip tekrar deneyin.",
+        type: "error",
+      }));
   }, [canWriteInstallments]);
 
   useEffect(() => {
@@ -376,8 +338,12 @@ export default function MuhasebePage() {
   // ── Shared: patients & pos ────────────────────────────────────────────────
   const [patients,   setPatients]   = useState<PatientOption[]>([]);
   const [posDevices, setPosDevices] = useState<PosDevice[]>([]);
+  const patientOptionsRequestRef = useRef<AbortController | null>(null);
 
   const loadPatientOptions = useCallback((query = "") => {
+    patientOptionsRequestRef.current?.abort();
+    const controller = new AbortController();
+    patientOptionsRequestRef.current = controller;
     const params = new URLSearchParams({
       q: query.trim(),
       take: "20",
@@ -385,10 +351,14 @@ export default function MuhasebePage() {
       sortDir: "asc",
       summary: "false",
     });
-    fetch(`/api/patients?${params.toString()}`, { cache: "no-store" })
+    fetch(`/api/patients?${params.toString()}`, { cache: "no-store", signal: controller.signal })
       .then(r => r.ok ? r.json() : null)
-      .then(d => setPatients(Array.isArray(d) ? d : (Array.isArray(d?.patients) ? d.patients : [])))
-      .catch(() => {});
+      .then(d => {
+        if (!controller.signal.aborted) setPatients(Array.isArray(d) ? d : (Array.isArray(d?.patients) ? d.patients : []));
+      })
+      .catch((error) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setPatients([]);
+      });
   }, []);
 
   const ensurePatients = useCallback(() => {
@@ -403,7 +373,7 @@ export default function MuhasebePage() {
   useEffect(() => {
     if (canWritePayments) ensurePos();
     if (canWritePayments || canWriteInstallments || canReadFinance) {
-      cachedGet<unknown>("/api/staff", 60_000).then(d => setTaksitDoctors((Array.isArray(d) ? d : []).filter(isEffectiveDoctor))).catch(() => {});
+      cachedGet<unknown>("/api/staff", 60_000, { throwOnError: true }).then(d => setTaksitDoctors((Array.isArray(d) ? d : []).filter(isEffectiveDoctor))).catch(() => showToastSafe({ title: "Doktor listesi yüklenemedi", message: "Sayfayı yenileyin.", type: "error" }));
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canReadFinance, canWriteInstallments, canWritePayments]);
@@ -783,6 +753,8 @@ export default function MuhasebePage() {
     searchParams.get("tab") === "taksit" ? "taksit" : "bakiye"
   );
   const [taksitLoading, setTaksitLoading] = useState(false);
+  const [taksitLoadError, setTaksitLoadError] = useState("");
+  const taksitLoadSequenceRef = useRef(0);
   const [taksitSearch,  setTaksitSearch]  = useState("");
   const [debouncedTaksitSearch, setDebouncedTaksitSearch] = useState("");
   const [taksitStatus,  setTaksitStatus]  = useState("HEPSI");
@@ -848,19 +820,32 @@ export default function MuhasebePage() {
   }, [editGiderTurSearch, giderKats]);
 
   const loadTaksitPlans = useCallback(async () => {
+    const sequence = ++taksitLoadSequenceRef.current;
     setTaksitLoading(true);
+    setTaksitLoadError("");
     try {
       const params = new URLSearchParams({ page: String(taksitPage) });
       if (taksitStatus !== "HEPSI") params.set("status", taksitStatus);
       if (debouncedTaksitSearch) params.set("q", debouncedTaksitSearch);
       const r = await fetch(`/api/taksit-plani?${params.toString()}`, { cache: "no-store" });
-      if (!r.ok) { showToast("error", "Taksit planları yüklenemedi."); setTaksitPlans([]); return; }
+      if (!r.ok) throw new Error("Taksit planları yüklenemedi.");
       const d = await r.json();
+      if (sequence !== taksitLoadSequenceRef.current) return;
       setTaksitPlans(Array.isArray(d.items) ? d.items : []);
       setTaksitTotal(d.total || 0);
-      setTaksitPageCount(d.pageCount || 1);
+      const nextPageCount = Math.max(1, Number(d.pageCount) || 1);
+      setTaksitPageCount(nextPageCount);
+      if (taksitPage > nextPageCount) setTaksitPage(nextPageCount);
       if (d.stats) setTaksitStats(d.stats);
-    } finally { setTaksitLoading(false); }
+    } catch (error) {
+      if (sequence !== taksitLoadSequenceRef.current) return;
+      const message = error instanceof Error ? error.message : "Taksit planları yüklenemedi.";
+      setTaksitLoadError(message);
+      setTaksitPlans([]);
+      showToast("error", message);
+    } finally {
+      if (sequence === taksitLoadSequenceRef.current) setTaksitLoading(false);
+    }
   }, [taksitStatus, debouncedTaksitSearch, taksitPage, showToast]);
 
   useEffect(() => { setTaksitPage(1); }, [taksitStatus]);
@@ -1294,68 +1279,29 @@ export default function MuhasebePage() {
   const [hakedisOzet, setHakedisOzet] = useState<HakedisOzetRow[]>([]);
   const [hakedisOzetLoading, setHakedisOzetLoading] = useState(false);
   const lastVisibleRefreshAtRef = useRef(0);
-
-  useLayoutEffect(() => {
-    const cached = readMuhasebeCache();
-    if (!cached) return;
-    setUserRole(cached.userRole);
-    setFirmas(cached.firmas);
-    setTaksitOverdue(cached.taksitOverdue);
-    setAlacaklar(cached.alacaklar);
-    setAlacakTotal(cached.alacakTotal);
-    setPatients(cached.patients);
-    setPosDevices(cached.posDevices);
-    setTaksitPlans(cached.taksitPlans);
-    setReminders(cached.reminders);
-    setHakDoctors(cached.taksitDoctors);
-  }, []);
-
-  useEffect(() => {
-    try {
-      sessionStorage.setItem(MUHASEBE_CACHE_KEY, JSON.stringify({
-        userRole,
-        firmas,
-        taksitOverdue,
-        alacaklar,
-        alacakTotal,
-        patients,
-        posDevices,
-        taksitPlans,
-        reminders,
-        taksitDoctors: hakDoctors,
-      }));
-    } catch {
-      // Cache başarısız olsa da sayfa çalışmaya devam etsin.
-    }
-  }, [
-    userRole,
-    firmas,
-    taksitOverdue,
-    alacaklar,
-    alacakTotal,
-    patients,
-    posDevices,
-    taksitPlans,
-    reminders,
-    hakDoctors,
-  ]);
+  const doctorFinanceSequenceRef = useRef(0);
+  const hakedisOzetSequenceRef = useRef(0);
 
   const loadDoctorFinance = useCallback(async (id: string) => {
+    const sequence = ++doctorFinanceSequenceRef.current;
     if (!id) { setDoctorFinance(null); return; }
     setHakLoading(true);
     try {
       const r = await fetch(`/api/finance?doctorId=${id}&from=${hakFrom}&to=${hakTo}`, { cache: "no-store" });
+      if (sequence !== doctorFinanceSequenceRef.current) return;
       if (!r.ok) {
         showToast("error", "Doktor hakediş verisi yüklenemedi");
         setDoctorFinance(null);
         return;
       }
-      setDoctorFinance(await r.json());
+      const data = await r.json();
+      if (sequence === doctorFinanceSequenceRef.current) setDoctorFinance(data);
     } catch {
+      if (sequence !== doctorFinanceSequenceRef.current) return;
       showToast("error", "Bağlantı hatası — doktor hakediş verisi yüklenemedi.");
       setDoctorFinance(null);
     } finally {
-      setHakLoading(false);
+      if (sequence === doctorFinanceSequenceRef.current) setHakLoading(false);
     }
   }, [hakFrom, hakTo, showToast]);
 
@@ -1394,11 +1340,15 @@ export default function MuhasebePage() {
   }, [selectedDoctor, loadDoctorFinance]);
 
   const loadHakedisOzet = useCallback(async () => {
+    const sequence = ++hakedisOzetSequenceRef.current;
     setHakedisOzetLoading(true);
     const r = await fetch("/api/hakedis/ozet", { cache: "no-store" }).catch(() => null);
-    if (r?.ok) { const d = await r.json(); setHakedisOzet(Array.isArray(d.doctors) ? d.doctors : []); }
-    else setHakedisOzet([]);
-    setHakedisOzetLoading(false);
+    if (sequence !== hakedisOzetSequenceRef.current) return;
+    if (r?.ok) {
+      const d = await r.json();
+      if (sequence === hakedisOzetSequenceRef.current) setHakedisOzet(Array.isArray(d.doctors) ? d.doctors : []);
+    } else setHakedisOzet([]);
+    if (sequence === hakedisOzetSequenceRef.current) setHakedisOzetLoading(false);
   }, []);
 
   useEffect(() => {
@@ -1443,7 +1393,7 @@ export default function MuhasebePage() {
       if (canWritePayments || canWriteInstallments) ensurePatients();
     }
     if (activeTab === "hakedis" && hakDoctors.length === 0)
-      cachedGet<unknown>("/api/staff", 60_000).then(d => setHakDoctors((Array.isArray(d) ? d : []).filter(isEffectiveDoctor))).catch(() => {});
+      cachedGet<unknown>("/api/staff", 60_000, { throwOnError: true }).then(d => setHakDoctors((Array.isArray(d) ? d : []).filter(isEffectiveDoctor))).catch(() => showToastSafe({ title: "Doktor listesi yüklenemedi", message: "Sayfayı yenileyin.", type: "error" }));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
@@ -1568,7 +1518,7 @@ export default function MuhasebePage() {
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih <span className="text-red-500">*</span></label>
-                <input type="date" value={tahForm.tarih} onChange={e => { setTahForm(f => ({ ...f, tarih: e.target.value })); setTahFormErrors(er => ({ ...er, tarih: undefined })); }} className={INP + (tahFormErrors.tarih ? " border-red-400" : "")} />
+                <input type="date" value={tahForm.tarih} onChange={e => { setTahForm(f => ({ ...f, tarih: e.target.value })); setTahFormErrors(er => ({ ...er, tarih: undefined })); }} className={`${INP} ${tahFormErrors.tarih ? " border-red-400" : ""}`} />
                 {tahFormErrors.tarih && <p className="mt-1 text-xs font-medium text-red-600">{tahFormErrors.tarih}</p>}
               </div>
               <div>
@@ -1607,7 +1557,7 @@ export default function MuhasebePage() {
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar <span className="text-red-500">*</span></label>
-                <input type="number" value={tahForm.amount} onChange={e => { setTahForm(f => ({ ...f, amount: e.target.value })); setTahFormErrors(er => ({ ...er, amount: undefined })); }} placeholder="0,00" className={INP + (tahFormErrors.amount ? " border-red-400" : "")} />
+                <input type="number" value={tahForm.amount} onChange={e => { setTahForm(f => ({ ...f, amount: e.target.value })); setTahFormErrors(er => ({ ...er, amount: undefined })); }} placeholder="0,00" className={`${INP} ${tahFormErrors.amount ? " border-red-400" : ""}`} />
                 {tahFormErrors.amount && <p className="mt-1 text-xs font-medium text-red-600">{tahFormErrors.amount}</p>}
               </div>
               <div>
@@ -1657,7 +1607,7 @@ export default function MuhasebePage() {
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih <span className="text-red-500">*</span></label>
-                <input type="date" value={giderForm.tarih} onChange={e => { setGiderForm(f => ({ ...f, tarih: e.target.value })); setGiderFormErrors(er => ({ ...er, tarih: undefined })); }} className={INP + (giderFormErrors.tarih ? " border-red-400" : "")} />
+                <input type="date" value={giderForm.tarih} onChange={e => { setGiderForm(f => ({ ...f, tarih: e.target.value })); setGiderFormErrors(er => ({ ...er, tarih: undefined })); }} className={`${INP} ${giderFormErrors.tarih ? " border-red-400" : ""}`} />
               </div>
               <div>
                 <div className="mb-1 flex items-center justify-between gap-2">
@@ -1723,7 +1673,7 @@ export default function MuhasebePage() {
               )}
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar <span className="text-red-500">*</span></label>
-                <input type="number" value={giderForm.tutar} onChange={e => { setGiderForm(f => ({ ...f, tutar: e.target.value })); setGiderFormErrors(er => ({ ...er, tutar: undefined })); }} placeholder="0,00" max={isDoctorPayoutCategory ? selectedPayoutPeriod?.kalan : undefined} className={INP + (giderFormErrors.tutar ? " border-red-400" : "")} />
+                <input type="number" value={giderForm.tutar} onChange={e => { setGiderForm(f => ({ ...f, tutar: e.target.value })); setGiderFormErrors(er => ({ ...er, tutar: undefined })); }} placeholder="0,00" max={isDoctorPayoutCategory ? selectedPayoutPeriod?.kalan : undefined} className={`${INP} ${giderFormErrors.tutar ? " border-red-400" : ""}`} />
                 {isDoctorPayoutCategory && selectedPayoutPeriod && (
                   <p className="mt-1 text-[11px] text-slate-500">En fazla {fmt(selectedPayoutPeriod.kalan)} ödenebilir.</p>
                 )}
@@ -1785,11 +1735,11 @@ export default function MuhasebePage() {
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih <span className="text-red-500">*</span></label>
-                <input type="date" value={firmaPayForm.tarih} onChange={e => { setFirmaPayForm(f => ({ ...f, tarih: e.target.value })); setFirmaPayErrors(er => ({ ...er, tarih: undefined })); }} className={INP + (firmaPayErrors.tarih ? " border-red-400" : "")} />
+                <input type="date" value={firmaPayForm.tarih} onChange={e => { setFirmaPayForm(f => ({ ...f, tarih: e.target.value })); setFirmaPayErrors(er => ({ ...er, tarih: undefined })); }} className={`${INP} ${firmaPayErrors.tarih ? " border-red-400" : ""}`} />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar <span className="text-red-500">*</span></label>
-                <input type="number" value={firmaPayForm.tutar} onChange={e => { setFirmaPayForm(f => ({ ...f, tutar: e.target.value })); setFirmaPayErrors(er => ({ ...er, tutar: undefined })); }} placeholder="0,00" className={INP + (firmaPayErrors.tutar ? " border-red-400" : "")} />
+                <input type="number" value={firmaPayForm.tutar} onChange={e => { setFirmaPayForm(f => ({ ...f, tutar: e.target.value })); setFirmaPayErrors(er => ({ ...er, tutar: undefined })); }} placeholder="0,00" className={`${INP} ${firmaPayErrors.tutar ? " border-red-400" : ""}`} />
                 {firmaPayErrors.tutar && <p className="mt-1 text-xs font-medium text-red-600">{firmaPayErrors.tutar}</p>}
                 <p className="mt-1 text-[11px] text-slate-500">Ödeme, firmanın en eski açık borçlarından başlayarak otomatik mahsup edilir.</p>
               </div>
@@ -2038,16 +1988,14 @@ export default function MuhasebePage() {
                     aria-label={`${row.label} kaydını düzenle`}
                     onClick={(event) => {
                       if ((event.target as HTMLElement).closest("button, a")) return;
-                      row.type === "TAHSILAT"
-                        ? startEditPayment(row.source as Payment)
-                        : startEditExpense(row.source as Expense);
+                      if (row.type === "TAHSILAT") startEditPayment(row.source as Payment);
+                      else startEditExpense(row.source as Expense);
                     }}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" && event.key !== " ") return;
                       event.preventDefault();
-                      row.type === "TAHSILAT"
-                        ? startEditPayment(row.source as Payment)
-                        : startEditExpense(row.source as Expense);
+                      if (row.type === "TAHSILAT") startEditPayment(row.source as Payment);
+                      else startEditExpense(row.source as Expense);
                     }}
                     className="cursor-pointer transition-colors hover:bg-primary/[0.035] focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25"
                   >
@@ -2189,7 +2137,15 @@ export default function MuhasebePage() {
                     <option value="IPTAL">İptal</option>
                   </select>
                 </div>
-                {filteredTaksitPlans.length === 0
+                {taksitLoadError
+                  ? <LoadErrorState compact message={taksitLoadError} onRetry={() => void loadTaksitPlans()} />
+                  : taksitLoading
+                    ? (
+                      <div className="space-y-2" aria-busy="true" aria-label="Taksit planları yükleniyor">
+                        {[0, 1, 2].map((row) => <div key={row} className="h-24 animate-pulse rounded-lg border border-slate-100 bg-slate-100" />)}
+                      </div>
+                    )
+                  : filteredTaksitPlans.length === 0
                     ? <EmptyState title="Taksit planı bulunamadı" accent="amber" icon={FinanceEmptyIcon} illustrative compact />
                     : (
                       <div className="space-y-2">
@@ -2198,8 +2154,11 @@ export default function MuhasebePage() {
                           const gec    = plan.taksitler.filter(t => t.status === "GECIKTI").length;
                           const bek    = plan.taksitler.filter(t => t.status === "BEKLIYOR").length;
                           return (
-                            <div key={plan.id} onClick={() => { setSelectedPlan(plan); loadPlanDetail(plan.id); }}
-                              className={`cursor-pointer rounded-lg border p-4 transition-all ${selectedPlan?.id === plan.id ? "border-primary/40 bg-primary/10" : "border-slate-200 bg-white hover:border-slate-300"}`}>
+                            <div key={plan.id} role="button" tabIndex={0}
+                              onClick={() => { setSelectedPlan(plan); loadPlanDetail(plan.id); }}
+                              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setSelectedPlan(plan); loadPlanDetail(plan.id); } }}
+                              aria-label={`${plan.patient.fullName} taksit planını aç`}
+                              className={`cursor-pointer rounded-lg border p-4 outline-none transition-all focus-visible:ring-2 focus-visible:ring-primary/40 ${selectedPlan?.id === plan.id ? "border-primary/40 bg-primary/10" : "border-slate-200 bg-white hover:border-slate-300"}`}>
                               <div className="flex items-start justify-between gap-2">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex flex-wrap items-center gap-2">
@@ -2394,7 +2353,7 @@ export default function MuhasebePage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Tahsilat Tutarı (₺) *</label>
-                  <input type="number" value={odeForm.tutar} onChange={e => setOdeForm(f => ({ ...f, tutar: e.target.value }))} className={INP + " text-lg font-bold"} />
+                  <input type="number" value={odeForm.tutar} onChange={e => setOdeForm(f => ({ ...f, tutar: e.target.value }))} className={`${INP} text-lg font-bold`} />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
@@ -2626,6 +2585,18 @@ export default function MuhasebePage() {
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
+            {selectedDoctor && (
+              <div className="flex flex-wrap items-end gap-2 rounded-lg border border-slate-200 bg-white p-2">
+                <label className="text-xs font-semibold text-slate-600">
+                  <span className="mb-1 block">Başlangıç</span>
+                  <input type="date" value={hakFrom} max={hakTo} onChange={(event) => setHakFrom(event.target.value)} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
+                </label>
+                <label className="text-xs font-semibold text-slate-600">
+                  <span className="mb-1 block">Bitiş</span>
+                  <input type="date" value={hakTo} min={hakFrom} onChange={(event) => setHakTo(event.target.value)} className="rounded-md border border-slate-200 px-2 py-1.5 text-sm" />
+                </label>
+              </div>
+            )}
           </div>
           {!selectedDoctor
             ? (
@@ -2674,7 +2645,11 @@ export default function MuhasebePage() {
               )
             : (
                 <div className="space-y-4">
-                  {doctorFinance && (
+                  {hakLoading ? (
+                    <div className="grid gap-px overflow-hidden rounded-lg border border-slate-200 bg-slate-100 sm:grid-cols-3" aria-busy="true" aria-label="Hakediş özeti yükleniyor">
+                      {[0, 1, 2].map((row) => <div key={row} className="h-24 animate-pulse bg-white p-5" />)}
+                    </div>
+                  ) : doctorFinance && (
                     <div className="grid divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm sm:grid-cols-3 sm:divide-x sm:divide-y-0">
                       {[
                         { label: "Bu Ay Ciro (ay başından bugüne)", value: fmt(Number(doctorFinance.totalTreatments) || 0), tone: "text-primary"      },
