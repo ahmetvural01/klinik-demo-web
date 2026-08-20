@@ -253,7 +253,9 @@ async function upsertPatients(institutionId: string) {
       hasDiabetes: fullName === "Hüseyin Sarı",
       bloodType: gender === "K" ? "A Rh+" : "0 Rh+",
     };
-    const existingByTc = await prisma.patient.findUnique({ where: { institutionId_tcNo: { institutionId, tcNo } } });
+    const existingByTc = await prisma.patient.findUnique({
+      where: { institutionId_homeBranchId_tcNo: { institutionId, homeBranchId: demoBranchId, tcNo } },
+    });
     const existingByName = existingByTc ? null : await prisma.patient.findFirst({ where: { institutionId, fullName } });
     const patient = existingByTc
       ? await prisma.patient.update({ where: { id: existingByTc.id }, data: patientData })

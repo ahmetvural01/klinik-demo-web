@@ -83,12 +83,12 @@ async function main() {
     assert(!beforeToggle, "Ön koşul hatası: MUHASEBE zaten appointments:write iznine sahip (varsayılan değişmiş olabilir).");
 
     const grantedMap = { ...original.map, MUHASEBE: [...original.map.MUHASEBE, "appointments:write"] };
-    await saveRolePermissionMap(grantedMap, "role-permission-test");
+    const granted = await saveRolePermissionMap(grantedMap, "role-permission-test", original.version);
     const afterGrant = await can("MUHASEBE" as any, "appointments:write");
     assert(afterGrant, "İzin Rol Yetkileri ekranından (saveRolePermissionMap) açıldı ama can() hâlâ false dönüyor — cache yenilenmiyor.");
     console.log("✓ İzin açıldıktan hemen sonra (yeniden giriş yapılmadan) can() = true.");
 
-    await saveRolePermissionMap(original.map, "role-permission-test-revert");
+    await saveRolePermissionMap(original.map, "role-permission-test-revert", granted.version);
     const afterRevert = await can("MUHASEBE" as any, "appointments:write");
     assert(!afterRevert, "İzin geri alındı ama can() hâlâ true dönüyor — cache yenilenmiyor.");
     console.log("✓ İzin kapatıldıktan hemen sonra can() = false.");
@@ -104,7 +104,8 @@ async function main() {
     console.log("\nTüm yetki senaryoları doğrulandı.");
   } finally {
     // Orijinal yetki matrisini birebir geri yükle.
-    await saveRolePermissionMap(original.map, original.updatedBy);
+    const current = await getRolePermissionState();
+    await saveRolePermissionMap(original.map, original.updatedBy, current.version);
     console.log("Yetki matrisi orijinal haline geri yüklendi.");
   }
 }

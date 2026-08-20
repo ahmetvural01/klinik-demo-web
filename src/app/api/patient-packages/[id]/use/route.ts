@@ -14,9 +14,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (requestKey && (requestKey.length < 8 || requestKey.length > 180)) {
     return NextResponse.json({ message: "İşlem anahtarı geçersiz" }, { status: 400 });
   }
+  const pkg = await prisma.patientPackage.findFirst({ where: { id, institutionId } });
+  if (!pkg) return NextResponse.json({ message: "Paket bulunamadı" }, { status: 404 });
   if (requestKey) {
     const existingUsage = await prisma.patientPackageUsage.findUnique({
-      where: { requestKey },
+      where: { branchId_requestKey: { branchId: pkg.branchId, requestKey } },
       include: { patientPackage: true },
     });
     if (existingUsage) {
@@ -26,9 +28,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json(existingUsage.patientPackage);
     }
   }
-
-  const pkg = await prisma.patientPackage.findFirst({ where: { id, institutionId } });
-  if (!pkg) return NextResponse.json({ message: "Paket bulunamadı" }, { status: 404 });
   if (pkg.status !== "AKTIF") {
     return NextResponse.json({ message: "Bu paket artık aktif değil" }, { status: 400 });
   }
@@ -48,14 +47,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   if (appointmentId) {
     const appointment = await prisma.appointment.findFirst({
-      where: { id: appointmentId, patientId: pkg.patientId },
+      where: { id: appointmentId, institutionId, branchId: pkg.branchId, patientId: pkg.patientId },
       select: { id: true, status: true },
     });
     if (!appointment) return NextResponse.json({ message: "Randevu bulunamadı" }, { status: 404 });
     if (!["GELDI", "TAMAMLANDI"].includes(appointment.status)) {
       return NextResponse.json({ message: "Paket seansı yalnızca hasta geldi veya randevu tamamlandı olarak işaretlendiğinde kullanılabilir." }, { status: 400 });
     }
-    const existingUsage = await prisma.patientPackageUsage.findFirst({ where: { patientPackageId: id, appointmentId }, select: { id: true } });
+    const existingUsage = await prisma.patientPackageUsage.findFirst({
+      where: { institutionId, branchId: pkg.branchId, patientPackageId: id, appointmentId },
+      select: { id: true },
+    });
     if (existingUsage) {
       return NextResponse.json({ message: "Bu randevu için bu paketten zaten seans kullanılmış." }, { status: 409 });
     }
@@ -65,7 +67,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const updated = await prisma.$transaction(async (tx) => {
       if (appointmentId) {
         const currentAppointment = await tx.appointment.findFirst({
-          where: { id: appointmentId, patientId: pkg.patientId },
+          where: { id: appointmentId, institutionId, branchId: pkg.branchId, patientId: pkg.patientId },
           select: { id: true, status: true },
         });
         if (!currentAppointment || !["GELDI", "TAMAMLANDI"].includes(currentAppointment.status)) {
@@ -79,6 +81,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         where: {
           id,
           institutionId,
+          branchId: pkg.branchId,
           status: "AKTIF",
           sessionsUsed: { lt: pkg.sessionsTotal },
           OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
@@ -89,7 +92,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         throw new Error("NO_SESSIONS_LEFT");
       }
       await tx.patientPackageUsage.create({
-        data: { requestKey, patientPackageId: id, appointmentId, note, createdById: auth.user.id },
+        data: {
+          institutionId,
+          branchId: pkg.branchId,
+          requestKey,
+          patientPackageId: id,
+          appointmentId,
+          note,
+          createdById: auth.user.id,
+        },
       });
       const fresh = await tx.patientPackage.findUniqueOrThrow({ where: { id } });
       if (fresh.sessionsUsed >= fresh.sessionsTotal) {
@@ -104,7 +115,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (typeof error === "object" && error && "code" in error && (error as { code?: string }).code === "P2002") {
       if (requestKey) {
         const existingUsage = await prisma.patientPackageUsage.findUnique({
-          where: { requestKey },
+          where: { branchId_requestKey: { branchId: pkg.branchId, requestKey } },
           include: { patientPackage: true },
         });
         if (existingUsage?.patientPackageId === id && existingUsage.patientPackage.institutionId === institutionId) {

@@ -80,10 +80,17 @@ export async function PUT(request: NextRequest, props: Params) {
     });
 
     if (requestedAssignees !== undefined) {
-      await tx.clinicTaskAssignee.deleteMany({ where: { taskId: existing.id } });
+      await tx.clinicTaskAssignee.deleteMany({
+        where: { taskId: existing.id, institutionId: existing.institutionId, branchId: existing.branchId },
+      });
       if (requestedAssignees.length) {
         await tx.clinicTaskAssignee.createMany({
-          data: requestedAssignees.map((userId) => ({ taskId: existing.id, userId })),
+          data: requestedAssignees.map((userId) => ({
+            institutionId: existing.institutionId,
+            branchId: existing.branchId,
+            taskId: existing.id,
+            userId,
+          })),
           skipDuplicates: true,
         });
       }

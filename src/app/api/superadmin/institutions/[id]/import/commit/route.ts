@@ -207,8 +207,6 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         createdAt,
         steps: {
           create: [{
-            institutionId: params.id,
-            branchId,
             order: 1,
             treatmentName: data.treatmentName,
             toothNo: data.toothNo,

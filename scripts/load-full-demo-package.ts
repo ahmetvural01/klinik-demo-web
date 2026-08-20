@@ -189,7 +189,13 @@ async function main() {
 
   for (const p of demoPatients) {
     const patient = await prisma.patient.upsert({
-      where: { institutionId_tcNo: { institutionId: institution.id, tcNo: p.tcNo } },
+      where: {
+        institutionId_homeBranchId_tcNo: {
+          institutionId: institution.id,
+          homeBranchId: demoBranchId,
+          tcNo: p.tcNo,
+        },
+      },
       update: {
         fullName: p.fullName,
         phone: p.phone,

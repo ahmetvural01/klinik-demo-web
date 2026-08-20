@@ -62,7 +62,7 @@ async function main() {
     return;
   }
 
-  const saved = await saveRolePermissionMap(nextMap, "backfill-fine-grained-permissions");
+  const saved = await saveRolePermissionMap(nextMap, "backfill-fine-grained-permissions", state.version);
   console.log(`Yetki matrisi güncellendi. Yeni sürüm: ${saved.version}`);
 }
 

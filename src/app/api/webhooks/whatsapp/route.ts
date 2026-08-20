@@ -97,6 +97,14 @@ export async function POST(request: NextRequest) {
   if (!provider || !provider.institutionId) {
     return NextResponse.json({ ok: false, message: "Kurum bağlantılı sağlayıcı bulunamadı." }, { status: 404 });
   }
+  const fallbackBranch = await prisma.clinicBranch.findFirst({
+    where: { institutionId: provider.institutionId, isActive: true },
+    orderBy: [{ isHeadquarters: "desc" }, { sortOrder: "asc" }, { createdAt: "asc" }],
+    select: { id: true },
+  });
+  if (!fallbackBranch) {
+    return NextResponse.json({ ok: false, message: "Aktif şube bulunamadı." }, { status: 409 });
+  }
 
   const appSecret = decryptField(provider.appSecret || "");
   const signature = request.headers.get("x-hub-signature-256") || "";
@@ -146,20 +154,26 @@ export async function POST(request: NextRequest) {
           archivedAt: null,
           phone: { contains: phoneSuffix },
         },
-        select: { id: true, phone: true, phoneCountryCode: true },
+        select: { id: true, homeBranchId: true, phone: true, phoneCountryCode: true },
         take: 25,
       });
       const patient = patients.find((candidate) =>
         normalizeWhatsappPhone(candidate.phone, candidate.phoneCountryCode) === phone
       );
       await prisma.whatsappMessage.upsert({
-        where: { externalMessageId: message.id },
+        where: {
+          institutionId_externalMessageId: {
+            institutionId: provider.institutionId,
+            externalMessageId: message.id,
+          },
+        },
         update: {
           status: "RECEIVED",
           content: encryptField(messageText(message)),
         },
         create: {
           institutionId: provider.institutionId,
+          branchId: patient?.homeBranchId || fallbackBranch.id,
           providerId: provider.id,
           patientId: patient?.id || null,
           externalMessageId: message.id,
