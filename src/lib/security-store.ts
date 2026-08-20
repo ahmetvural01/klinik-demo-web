@@ -47,20 +47,19 @@ function localGet(key: string) {
   return entry;
 }
 
-function unavailableRateResult(windowMs: number): RateResult {
-  return { ok: false, remaining: 0, resetAt: Date.now() + windowMs, unavailable: true };
+function localRateLimit(storageKey: string, limit: number, windowMs: number): RateResult {
+  const current = localGet(storageKey);
+  const count = current ? Number(current.value) + 1 : 1;
+  const resetAt = current?.expiresAt ?? Date.now() + windowMs;
+  localStore().set(storageKey, { value: String(count), expiresAt: resetAt });
+  return { ok: count <= limit, remaining: Math.max(0, limit - count), resetAt };
 }
 
 export async function distributedRateLimit(key: string, limit: number, windowMs: number): Promise<RateResult> {
   const redis = redisClient();
   const storageKey = `${namespaced(key)}:rate`;
   if (!redis) {
-    if (process.env.NODE_ENV === "production") return unavailableRateResult(windowMs);
-    const current = localGet(storageKey);
-    const count = current ? Number(current.value) + 1 : 1;
-    const resetAt = current?.expiresAt ?? Date.now() + windowMs;
-    localStore().set(storageKey, { value: String(count), expiresAt: resetAt });
-    return { ok: count <= limit, remaining: Math.max(0, limit - count), resetAt };
+    return { ...localRateLimit(storageKey, limit, windowMs), unavailable: process.env.NODE_ENV === "production" };
   }
 
   try {
@@ -81,12 +80,7 @@ export async function distributedRateLimit(key: string, limit: number, windowMs:
       resetAt: Date.now() + ttl,
     };
   } catch {
-    if (process.env.NODE_ENV === "production") return unavailableRateResult(windowMs);
-    const current = localGet(storageKey);
-    const count = current ? Number(current.value) + 1 : 1;
-    const resetAt = current?.expiresAt ?? Date.now() + windowMs;
-    localStore().set(storageKey, { value: String(count), expiresAt: resetAt });
-    return { ok: count <= limit, remaining: Math.max(0, limit - count), resetAt };
+    return { ...localRateLimit(storageKey, limit, windowMs), unavailable: process.env.NODE_ENV === "production" };
   }
 }
 
@@ -94,13 +88,12 @@ export async function isFailureBlocked(key: string, maxAttempts: number) {
   const storageKey = `${namespaced(key)}:fail`;
   const redis = redisClient();
   if (!redis) {
-    if (process.env.NODE_ENV === "production") return true;
     return Number(localGet(storageKey)?.value || 0) >= maxAttempts;
   }
   try {
     return Number(await redis.get(storageKey) || 0) >= maxAttempts;
   } catch {
-    return process.env.NODE_ENV === "production";
+    return Number(localGet(storageKey)?.value || 0) >= maxAttempts;
   }
 }
 
@@ -108,7 +101,6 @@ export async function recordFailure(key: string, ttlMs: number) {
   const storageKey = `${namespaced(key)}:fail`;
   const redis = redisClient();
   if (!redis) {
-    if (process.env.NODE_ENV === "production") return;
     const current = localGet(storageKey);
     localStore().set(storageKey, {
       value: String(Number(current?.value || 0) + 1),
@@ -123,7 +115,13 @@ export async function recordFailure(key: string, ttlMs: number) {
     1,
     storageKey,
     ttlMs,
-  );
+  ).catch(() => {
+    const current = localGet(storageKey);
+    localStore().set(storageKey, {
+      value: String(Number(current?.value || 0) + 1),
+      expiresAt: current?.expiresAt ?? Date.now() + ttlMs,
+    });
+  });
 }
 
 export async function clearFailures(key: string) {
