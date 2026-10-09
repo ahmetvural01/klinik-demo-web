@@ -9,6 +9,7 @@ import {
   withAdvSecret,
 } from "../src/lib/whatsapp-web/companion-refresh";
 import { PairingCodeRejectedError, requestPairingCodeChecked } from "../src/lib/whatsapp-web/pairing-code";
+import { createBaileysLogger } from "../src/lib/whatsapp-web/logger";
 
 // WhatsApp (28 Temmuz 2026 sonrası) QR okutulunca `companion_reg_refresh`
 // bildirimi gönderip gizli anahtarın yenilenmesini ister; Baileys rc14 yapmıyor.
@@ -104,6 +105,22 @@ async function main() {
   assert.equal(await requestPairingCodeChecked(silent.sock as never, "905000000000", { waitMs: 30 }), "ABCD1234", "Yanıt gelmezse kod yine gösterilir.");
   const ignored = fakeSocket((ws) => ws.emit("frame", { tag: "notification", attrs: { type: "error" } }));
   assert.equal(await requestPairingCodeChecked(ignored.sock as never, "905000000000", { waitMs: 30 }), "ABCD1234", "iq olmayan çerçeveler yok sayılmalı.");
+
+  // 9) Günlük: hata MESAJI görünür (teşhis için), numara maskelenir, mesaj/düğüm nesneleri yazılmaz
+  const lines: string[] = [];
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => { lines.push(args.map(String).join(" ")); };
+  try {
+    const logger = createBaileysLogger("kurum-123456789");
+    logger.error({ error: new Error("Bad MAC for 905454046939"), node: { gizli: "MESAJ-ICERIGI" } }, "error in handling message");
+    logger.error({ ackErr: new Error("Cannot read properties of undefined") }, "failed to ack notification");
+    logger.error({ node: { gizli: "MESAJ-ICERIGI" } }, "hata");
+  } finally {
+    console.error = originalError;
+  }
+  assert(lines[0].includes("error in handling message: Bad MAC for ***39"), "Hata mesajı günlükte görünmeli (numara maskeli).");
+  assert(lines[1].includes("failed to ack notification: Cannot read properties of undefined"));
+  assert(lines.every((line) => !line.includes("MESAJ-ICERIGI") && !line.includes("905454046939")), "Mesaj/düğüm içeriği ve telefon numarası günlüğe yazılmamalı.");
 
   console.log("WhatsApp QR gizli anahtar yenileme ve eşleştirme kodu kontrolleri başarılı.");
 }

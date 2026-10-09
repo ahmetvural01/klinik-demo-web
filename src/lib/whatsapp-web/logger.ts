@@ -30,9 +30,20 @@ export function logError(institutionId: string | null | undefined, message: stri
 
 /**
  * Baileys'e verilen sessiz günlükçü. Yalnız "error" seviyesindeki olayların
- * maskeli açıklama metni yazılır; trace/debug/info/warn tamamen susturulur
- * (bunlar telefon numarası ve mesaj düğümleri içerebilir).
+ * maskeli açıklama metni ve (varsa) hata nesnesinin KISA MESAJI yazılır
+ * (ör. "Bad MAC"); mesaj/düğüm nesneleri yazılmaz. trace/debug/info/warn tamamen
+ * susturulur (bunlar telefon numarası ve mesaj düğümleri içerebilir).
  */
+/** Baileys hata nesnesini farklı anahtarlarla verir (err / error / ackErr / e). */
+export function nestedError(obj: unknown): Error | undefined {
+  if (!obj || typeof obj !== "object") return undefined;
+  for (const key of ["err", "error", "ackErr", "e"] as const) {
+    const value = (obj as Record<string, unknown>)[key];
+    if (value instanceof Error) return value;
+  }
+  return undefined;
+}
+
 export function createBaileysLogger(institutionId: string): BaileysLogger {
   const logger: BaileysLogger = {
     level: "error",
@@ -43,8 +54,7 @@ export function createBaileysLogger(institutionId: string): BaileysLogger {
     warn: () => undefined,
     error: (obj: unknown, msg?: string) => {
       const base = typeof msg === "string" && msg ? msg : typeof obj === "string" ? obj : "Baileys hatası";
-      const nested = obj && typeof obj === "object" && "err" in obj ? (obj as { err?: unknown }).err : undefined;
-      logError(institutionId, `Baileys: ${base}`, nested instanceof Error ? nested : undefined);
+      logError(institutionId, `Baileys: ${base}`, nestedError(obj));
     },
   };
   return logger;
