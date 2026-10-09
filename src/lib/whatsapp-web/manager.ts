@@ -21,6 +21,7 @@ import {
 } from "./auth-state";
 import { WhatsappWebError, WHATSAPP_WEB_UNAVAILABLE_MESSAGE } from "./errors";
 import { attachCompanionRefresh, withAdvSecret } from "./companion-refresh";
+import { requestPairingCodeChecked } from "./pairing-code";
 import { createBaileysLogger, logError, logWarn } from "./logger";
 import { formatWhatsappDisplayPhone, maskPhoneDigits } from "./phone";
 import {
@@ -636,7 +637,9 @@ async function startSocket(session: Session, mode: SocketMode): Promise<void> {
     ...(version ? { version } : {}),
     auth: { creds: auth.loaded.state.creds, keys: auth.keys },
     logger,
-    browser: BROWSER,
+    // QR: kendi adımız (telefonda "CepKlinik" görünür; canlıda doğrulandı). Telefon numarasıyla
+    // bağlamada WhatsApp cihaz adını doğruluyor ("Chrome (<ad>)"): bilinen standart ad kullanılır.
+    browser: mode.kind === "pair" && mode.method === "code" ? baileys.Browsers.ubuntu("Chrome") : BROWSER,
     countryCode: "TR",
     // Telefona bildirimler gitmeye devam etsin (bağlı cihaz "çevrimiçi" görünmez).
     markOnlineOnConnect: false,
@@ -767,7 +770,8 @@ async function handleQr(session: Session, generation: number, sock: BaileysSocke
   if (session.pairingRequested || !mode.phone) return;
   session.pairingRequested = true;
   try {
-    const code = await sock.requestPairingCode(mode.phone);
+    // Kodu üretmeden önce WhatsApp isteği kabul etti mi bekler; reddederse ölü kod gösterilmez.
+    const code = await requestPairingCodeChecked(sock, mode.phone);
     if (!isCurrentSocket(session, generation, sock)) return;
     session.pairingCode = { code, at: Date.now() };
     setState(session, "QR");

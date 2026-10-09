@@ -8,6 +8,7 @@ import {
   newAdvSecret,
   withAdvSecret,
 } from "../src/lib/whatsapp-web/companion-refresh";
+import { PairingCodeRejectedError, requestPairingCodeChecked } from "../src/lib/whatsapp-web/pairing-code";
 
 // WhatsApp (28 Temmuz 2026 sonrası) QR okutulunca `companion_reg_refresh`
 // bildirimi gönderip gizli anahtarın yenilenmesini ister; Baileys rc14 yapmıyor.
@@ -16,7 +17,7 @@ import {
 
 const QR = "https://wa.me/settings/linked_devices#REF123,NOISEKEY,IDENTITYKEY,OLDADV,PLATFORM9";
 
-function main() {
+async function main() {
   // 1) QR metninde yalnız 4. parça (gizli anahtar) değişir
   assert.equal(
     withAdvSecret(QR, "NEWADV"),
@@ -73,7 +74,38 @@ function main() {
   assert(manager.includes("withAdvSecret("), "QR güncel gizli anahtarla çizilmeli.");
   assert(!manager.includes("shouldSyncHistoryMessage: () => false"), "Baileys ilk açılış eşitlemesini kapatmayı kararsız sayıyor; kapatılmamalı.");
 
-  console.log("WhatsApp QR gizli anahtar yenileme kontrolleri başarılı.");
+  assert(manager.includes("requestPairingCodeChecked(sock"), "Telefon numarasıyla bağlamada kod, WhatsApp isteği kabul ettikten sonra gösterilmeli.");
+  assert(manager.includes("Browsers.ubuntu("), "Telefon numarasıyla bağlama standart cihaz adıyla yapılmalı (özel ad reddedilebiliyor).");
+
+  // 8) Telefon numarasıyla bağlama: sunucunun yanıtı beklenir
+  const fakeSocket = (reply: (ws: EventEmitter) => void) => {
+    const ws = new EventEmitter();
+    return {
+      ws,
+      sock: {
+        ws: { on: (event: string, listener: (frame: unknown) => void) => ws.on(event, listener), off: (event: string, listener: (frame: unknown) => void) => ws.off(event, listener) },
+        requestPairingCode: async () => { setTimeout(() => reply(ws), 5); return "ABCD1234"; },
+      },
+    };
+  };
+  const ok = fakeSocket((ws) => ws.emit("frame", { tag: "iq", attrs: { type: "result" }, content: [{ tag: "link_code_companion_reg", attrs: {} }] }));
+  assert.equal(await requestPairingCodeChecked(ok.sock as never, "905000000000", { waitMs: 500 }), "ABCD1234");
+  assert.equal(ok.ws.listenerCount("frame"), 0, "Dinleyici temizlenmeli.");
+
+  const rejected = fakeSocket((ws) => ws.emit("frame", { tag: "iq", attrs: { type: "error" }, content: [{ tag: "error", attrs: { code: "400", text: "bad-request" } }] }));
+  await assert.rejects(
+    () => requestPairingCodeChecked(rejected.sock as never, "905000000000", { waitMs: 500 }),
+    (error: unknown) => error instanceof PairingCodeRejectedError && /400 bad-request/.test(error.message),
+    "WhatsApp isteği reddederse ölü kod gösterilmemeli.",
+  );
+  assert.equal(rejected.ws.listenerCount("frame"), 0);
+
+  const silent = fakeSocket(() => undefined);
+  assert.equal(await requestPairingCodeChecked(silent.sock as never, "905000000000", { waitMs: 30 }), "ABCD1234", "Yanıt gelmezse kod yine gösterilir.");
+  const ignored = fakeSocket((ws) => ws.emit("frame", { tag: "notification", attrs: { type: "error" } }));
+  assert.equal(await requestPairingCodeChecked(ignored.sock as never, "905000000000", { waitMs: 30 }), "ABCD1234", "iq olmayan çerçeveler yok sayılmalı.");
+
+  console.log("WhatsApp QR gizli anahtar yenileme ve eşleştirme kodu kontrolleri başarılı.");
 }
 
-main();
+void main();
