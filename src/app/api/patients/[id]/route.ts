@@ -330,7 +330,7 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
   if (
     patient.institutionId
     && auth.user.role !== "SUPERADMIN"
-    && !auth.user.ghost
+    && !auth.user.ghostSession
     && request.headers.get("x-silent-refresh") !== "1"
   ) {
     await prisma.patientAccessLog.create({

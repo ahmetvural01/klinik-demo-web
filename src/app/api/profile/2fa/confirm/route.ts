@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, writeAudit, rejectGhostAccountChange } from "@/lib/api";
 import { generateBackupCodes, verifyTwoFactorToken } from "@/lib/two-factor";
 import { checkRateLimit } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
   if (auth.error) return auth.error;
+  const ghostBlock = rejectGhostAccountChange(auth.user);
+  if (ghostBlock) return ghostBlock;
 
   // login/verify-2fa ve disable-2fa uç noktalarının aksine burada hiç oran
   // sınırı yoktu — TOTP secret'ının 6 haneli kodunu deneme yanılma ile

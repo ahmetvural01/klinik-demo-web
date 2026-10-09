@@ -157,6 +157,33 @@ function scanSourceContracts() {
     "src/app/api/purchases/[id]/cancel/route.ts",
   ]));
 
+  // Süperadmin'in kliniğe gizli girişi klinik personeline (yönetici dahil)
+  // görünmemeli. Kliniğin ekranlarına giden her işlem kaydı (AuditLog) okuması
+  // ortak filtreyi kullanır (src/lib/audit-visibility.ts); platform uçları
+  // (src/app/api/superadmin/) bilerek filtresiz okur.
+  const auditReadPattern = /\.auditLog\.(?:findMany|findFirst|findUnique|count|aggregate|groupBy)\s*\(/;
+  const auditReadAllowlist = new Set([
+    "src/app/api/sms/route.ts", // yalnız gönderilen SMS sayısı döner; kimlik/ad taşımaz
+  ]);
+  const accessLogCreatePattern = /\.patientAccessLog\.create\s*\(/;
+  for (const file of sourceFiles) {
+    const name = relative(file);
+    const source = fs.readFileSync(file, "utf8");
+    if (
+      auditReadPattern.test(source)
+      && !name.startsWith("src/app/api/superadmin/")
+      && !auditReadAllowlist.has(name)
+      && !source.includes("CLINIC_HIDDEN_AUDIT_NOT")
+    ) {
+      fail(`${name}: işlem kaydı okuması süperadmin/gizli giriş kayıtlarını klinikten gizlemiyor (src/lib/audit-visibility.ts)`);
+    }
+    // Hasta erişim günlüğü kliniğin KVKK kaydıdır: süperadmin oturumunda
+    // (Rol Görünümü açıkken de) yöneticinin adına sahte erişim yazılmamalı.
+    if (accessLogCreatePattern.test(source) && !source.includes("ghostSession")) {
+      fail(`${name}: hasta erişim günlüğü süperadmin gizli oturumunda (ghostSession) yazılıyor`);
+    }
+  }
+
   const storagePatterns = [
     /localStorage\.(?:getItem|setItem|removeItem)\(["']clinic-unread-messages["']\)/,
     /localStorage\.(?:getItem|setItem|removeItem)\(["']clinic-messages-last-seen["']\)/,

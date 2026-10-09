@@ -39,7 +39,7 @@ import { clientMutation } from "@/lib/client-mutation";
 import { routes } from "@/lib/routes";
 import { pageTitleFor } from "@/lib/page-titles";
 
-type Props = { user: { fullName: string; role: string; photoUrl?: string | null } };
+type Props = { user: { fullName: string; role: string; photoUrl?: string | null; ghost?: boolean } };
 
 type MessageLite = { id: string; userId: string; createdAt: string };
 
@@ -651,7 +651,8 @@ export function Topbar({ user }: Props) {
             name={displayName}
             roleLabel={displayRole}
             photoUrl={user.photoUrl}
-            showSupport={can("support:read")}
+            showSupport={can("support:read") && !user.ghost}
+            showProfile={!user.ghost}
             onLogout={handleLogout}
             loggingOut={loggingOut}
           />

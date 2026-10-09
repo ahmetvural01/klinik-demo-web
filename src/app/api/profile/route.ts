@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { parseTimeToMinutes, validateWorkHoursRange } from "@/lib/working-hours-core";
 import { turkeyTimeKey } from "@/lib/tz";
-import { invalidateUserSessionCache, requireAuth, writeAudit } from "@/lib/api";
+import { invalidateUserSessionCache, requireAuth, writeAudit, rejectGhostAccountChange } from "@/lib/api";
 import { setAuthCookie, signToken } from "@/lib/auth";
 
 function fmt(v: unknown): string {
@@ -50,6 +50,8 @@ export async function GET() {
 export async function PUT(request: NextRequest) {
   const auth = await requireAuth();
   if (auth.error) return auth.error;
+  const ghostBlock = rejectGhostAccountChange(auth.user);
+  if (ghostBlock) return ghostBlock;
 
   let body;
   try {

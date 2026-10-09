@@ -57,8 +57,27 @@ export type AuthPayload = {
   superadminModules?: string[];
   /** Superadmin gizli giriş — log kaydı atılmaz */
   ghost?: boolean;
+  /**
+   * Gizli girişte gerçek kişi (süperadmin). Yalnız süperadmin'in kendi
+   * çerezinde durur; klinik personeline hiçbir ekran/kayıt/API'de gösterilmez.
+   * Kliniğe yansıyan her şey (fullName) kliniğin yöneticisi adına işlenir.
+   */
+  ghostOwnerId?: string;
+  ghostOwnerName?: string;
   /** Sunucu taraflı oturum iptali için — bkz. requireAuth() ve User.tokenVersion */
   tokenVersion?: number;
+};
+
+export type TokenUser = {
+  id: string;
+  role: string;
+  institutionId: string | null;
+  fullName: string;
+  superadminModules?: string[];
+  ghost?: boolean;
+  tokenVersion?: number;
+  ghostOwnerId?: string;
+  ghostOwnerName?: string;
 };
 
 export function getVisibleRole(role: string) {
@@ -168,7 +187,7 @@ export async function getCurrentUser() {
  * JWT token'dan DB sorgusu yapmadan kullanıcı bilgilerini çöz.
  * requireAuth için yeterli: id, role, institutionId.
  */
-export async function decodeTokenUser(): Promise<{ id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean; tokenVersion?: number } | null> {
+export async function decodeTokenUser(): Promise<TokenUser | null> {
   const token = await readAuthToken();
   if (!token) return null;
   try {
@@ -178,7 +197,7 @@ export async function decodeTokenUser(): Promise<{ id: string; role: string; ins
   }
 }
 
-export function decodeTokenUserFromToken(token: string): { id: string; role: string; institutionId: string | null; fullName: string; superadminModules?: string[]; ghost?: boolean; tokenVersion?: number } | null {
+export function decodeTokenUserFromToken(token: string): TokenUser | null {
   try {
     const payload = verifyToken(token);
     return {
@@ -189,6 +208,8 @@ export function decodeTokenUserFromToken(token: string): { id: string; role: str
       superadminModules: payload.superadminModules,
       ghost: payload.ghost ?? false,
       tokenVersion: payload.tokenVersion,
+      ghostOwnerId: payload.ghostOwnerId,
+      ghostOwnerName: payload.ghostOwnerName,
     };
   } catch {
     return null;
@@ -196,7 +217,7 @@ export function decodeTokenUserFromToken(token: string): { id: string; role: str
 }
 
 /** JWT'den DB sorgusu yapmadan kullanıcı bilgilerini al (layout için hızlı) */
-export async function getCurrentUserFast(): Promise<{ id: string; role: string; rawRole: string; institution: string; fullName: string; ghost: boolean; previewRole: string | null } | null> {
+export async function getCurrentUserFast(): Promise<{ id: string; role: string; rawRole: string; institution: string; fullName: string; displayName: string; ghost: boolean; previewRole: string | null } | null> {
   const token = await readAuthToken();
   if (!token) return null;
   try {
@@ -212,6 +233,9 @@ export async function getCurrentUserFast(): Promise<{ id: string; role: string; 
       rawRole: payload.role,
       institution: payload.institutionId ?? "",
       fullName: payload.fullName || "",
+      // Ekranda süperadmin kendi adını görür; token fullName'i (kliniğe
+      // yansıyan) kliniğin yöneticisi adıdır.
+      displayName: (payload.ghost && payload.ghostOwnerName) || payload.fullName || "",
       ghost: payload.ghost ?? false,
       previewRole,
     };

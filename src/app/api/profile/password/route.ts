@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit, invalidateUserSessionCache } from "@/lib/api";
+import { requireAuth, writeAudit, invalidateUserSessionCache, rejectGhostAccountChange } from "@/lib/api";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 import { signToken, setAuthCookie } from "@/lib/auth";
 
 export async function PUT(request: NextRequest) {
   const auth = await requireAuth();
   if (auth.error) return auth.error;
+  const ghostBlock = rejectGhostAccountChange(auth.user);
+  if (ghostBlock) return ghostBlock;
 
   const body = await request.json();
   const { oldPassword, newPassword } = body;

@@ -104,10 +104,11 @@ export function ClinicLoginForm() {
         return;
       }
 
-      // Sistem sahibi klinik adı yazdıysa sunucu o kliniğe tam yetkili oturum
-      // açar (payload.clinic); "superadmin" yazdıysa Platform Yönetimi açılır.
-      if (payload.role === "SUPERADMIN" && !payload.clinic) {
-        window.location.href = "/superadmin/panel";
+      // Sistem sahibi kurum adına bir klinik yazdıysa sunucu o kliniğe gizli ve
+      // tam yetkili oturum açar (normal klinik girişi gibi döner). Bu ekran
+      // Platform panelini açmaz; panel /superadmin adresindedir.
+      if (payload.role === "SUPERADMIN") {
+        setError("Platform yönetimi için /superadmin adresinden giriş yapın.");
         return;
       }
 
@@ -162,10 +163,8 @@ export function ClinicLoginForm() {
         }
       } catch {}
 
-      // Klinik açılamadıysa (ör. silinmiş) sistem sahibi klinik listesinden seçer.
-      window.location.href = payload.role !== "SUPERADMIN" || payload.clinic
-        ? "/anasayfa"
-        : payload.clinicError ? "/superadmin/institutions" : "/superadmin/panel";
+      // Süperadmin ise de sunucu klinik oturumu açmıştır (payload.clinic).
+      window.location.href = "/anasayfa";
 
     } catch {
       setError("Bağlantı kurulamadı. Bilgilerinizi kontrol edip yeniden deneyin.");

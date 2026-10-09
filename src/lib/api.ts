@@ -143,9 +143,13 @@ export async function requireAuth(permission?: string) {
   // Önizleme yalnızca doğrulanmış süperadmin oturumunu (ghost iddiası yalnız
   // süperadmin girişinde imzalanır) daraltır. İstemci cookie'si normal bir
   // kullanıcıya ek yetki kazandıramaz.
+  // ghostSession: oturum GERÇEKTEN süperadmin'in gizli girişi mi? Rol
+  // önizlemesi `ghost`'u yetki kontrolleri için kapatır; ama kliniğe yansıyan
+  // kayıtlar (hasta erişim günlüğü vb.) önizlemede de yönetici adına
+  // düşmemeli — onlar `ghostSession`'a bakar.
   const user = previewRole
-    ? { ...tokenUser, role: previewRole, ghost: false, actualRole: tokenUser.role }
-    : { ...tokenUser, actualRole: tokenUser.role };
+    ? { ...tokenUser, role: previewRole, ghost: false, actualRole: tokenUser.role, ghostSession: true }
+    : { ...tokenUser, actualRole: tokenUser.role, ghostSession: Boolean(tokenUser.ghost) };
 
   const sessionState = await getUserSessionState(user.id);
   if (!sessionState.isActive) {
@@ -338,6 +342,21 @@ export async function requireSuperadmin() {
   return requireAuth("superadmin");
 }
 
+/**
+ * Süperadmin kliniğe gizli girdiğinde oturum kliniğin yöneticisi adına açılır.
+ * Yöneticinin KENDİ hesabını değiştiren işlemler (profil, şifre, iki adımlı
+ * doğrulama, "tüm cihazlardan çıkış") bu oturumdan yapılamaz: yönetici şifresinin
+ * değişmesi / oturumunun düşmesi onun için görünür bir iz olur ve süperadmin'in
+ * varlığını ele verirdi. Klinik verisi ve personel yönetimi etkilenmez.
+ */
+export function rejectGhostAccountChange(user: { ghostSession?: boolean }) {
+  if (!user.ghostSession) return null;
+  return NextResponse.json(
+    { message: "Sistem sahibi oturumunda klinik yöneticisinin kendi hesabı (profil, şifre, iki adımlı doğrulama) değiştirilemez." },
+    { status: 403 },
+  );
+}
+
 export async function hasEffectivePermission(
   user: {
     ghost?: boolean;
@@ -374,9 +393,15 @@ export async function writeAudit(
   /** Oturum çerezi henüz yazılmamışken (ör. giriş isteğinin içinde) işlemi yapanı açıkça belirtmek için. */
   actorOverride?: { id: string; role: string; ghost?: boolean },
 ) {
-  const currentUser = actorOverride
-    ? { id: actorOverride.id, role: actorOverride.role, institutionId: null as string | null, ghost: actorOverride.ghost ?? false }
+  const currentUser: { id: string; role: string; institutionId: string | null; ghost?: boolean; ghostOwnerId?: string } | null = actorOverride
+    ? { id: actorOverride.id, role: actorOverride.role, institutionId: null, ghost: actorOverride.ghost ?? false }
     : await decodeTokenUser();
+  // Süperadmin'in kliniğe gizli girişinde kayıt, gerçek aktörle (süperadmin)
+  // yazılır: Platform Denetim Günlüğü "kim yaptı"yı bilir, klinik tarafı ise
+  // actorRole=SUPERADMIN / isGhost kayıtlarını hiç görmez (bkz.
+  // src/lib/audit-visibility.ts). Önceden aktör olarak kliniğin yöneticisi
+  // yazılıyordu ve hangi süperadmin'in işlem yaptığı kayboluyordu.
+  const ghostActor = currentUser?.ghost && currentUser.ghostOwnerId ? currentUser.ghostOwnerId : null;
   const branchContext = currentUser?.institutionId
     ? await resolveBranchContext(currentUser).catch(() => null)
     : null;
@@ -410,8 +435,8 @@ export async function writeAudit(
       branchId: branchContext?.activeBranchId || null,
       action,
       detail,
-      actorId: currentUser?.id ?? null,
-      actorRole: currentUser?.role ?? null,
+      actorId: ghostActor ?? currentUser?.id ?? null,
+      actorRole: ghostActor ? "SUPERADMIN" : currentUser?.role ?? null,
       isGhost: Boolean(currentUser?.ghost),
       ip: await getRequestIp(),
     }

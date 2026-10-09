@@ -28,7 +28,7 @@ export function GhostModeBanner({ institutionName, previewLabel = null }: { inst
       <div className="flex items-center gap-2.5">
         <Eye className="h-4 w-4 shrink-0" />
         <p>
-          <span className="font-bold">Sistem sahibi oturumu:</span> {institutionName} kliniğindesiniz, {previewLabel ? <>şu an <strong>{previewLabel}</strong> görünümündesiniz (yalnız bu rolün yetkileri; sol menüden kapatabilirsiniz).</> : "tüm yetkiler açık."} Değişiklikler kliniğe kaydedilir ve Denetim Günlüğü&apos;nde izlenir.
+          <span className="font-bold">Sistem sahibi oturumu:</span> {institutionName} kliniğindesiniz, {previewLabel ? <>şu an <strong>{previewLabel}</strong> görünümündesiniz (yalnız bu rolün yetkileri; sol menüden kapatabilirsiniz).</> : "tüm yetkiler açık."} Klinik personeli bu oturumu ve işlemlerinizi göremez; yaptıklarınız yalnız Platform Denetim Günlüğü&apos;nde izlenir.
         </p>
       </div>
       <button

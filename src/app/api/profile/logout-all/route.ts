@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit, invalidateUserSessionCache } from "@/lib/api";
+import { requireAuth, writeAudit, invalidateUserSessionCache, rejectGhostAccountChange } from "@/lib/api";
 import { signToken, setAuthCookie } from "@/lib/auth";
 
 /**
@@ -13,6 +13,8 @@ import { signToken, setAuthCookie } from "@/lib/auth";
 export async function POST() {
   const auth = await requireAuth();
   if (auth.error) return auth.error;
+  const ghostBlock = rejectGhostAccountChange(auth.user);
+  if (ghostBlock) return ghostBlock;
 
   const updated = await prisma.user.update({
     where: { id: auth.user.id },

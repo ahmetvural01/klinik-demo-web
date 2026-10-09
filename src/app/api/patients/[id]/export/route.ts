@@ -114,7 +114,7 @@ export async function GET(request: NextRequest, props: Params) {
   if (
     patient.institutionId
     && auth.user.role !== "SUPERADMIN"
-    && !auth.user.ghost
+    && !auth.user.ghostSession
   ) {
     await prisma.patientAccessLog.create({
       data: {

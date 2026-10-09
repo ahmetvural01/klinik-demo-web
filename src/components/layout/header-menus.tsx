@@ -74,6 +74,7 @@ export function UserMenu({
   roleLabel,
   photoUrl,
   showSupport,
+  showProfile = true,
   onLogout,
   loggingOut,
 }: {
@@ -81,6 +82,8 @@ export function UserMenu({
   roleLabel: string;
   photoUrl?: string | null;
   showSupport: boolean;
+  /** Süperadmin kliniğe girdiğinde profil, kliniğin yöneticisinin hesabıdır; gösterilmez. */
+  showProfile?: boolean;
   onLogout: () => void;
   loggingOut: boolean;
 }) {
@@ -120,10 +123,12 @@ export function UserMenu({
             <p className="truncate text-sm font-semibold text-slate-900">{name}</p>
             <p className="text-xs text-slate-500">{roleLabel}</p>
           </div>
-          <Link href="/profil" role="menuitem" onClick={() => setOpen(false)} className="flex items-center gap-2.5 px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
-            <UserRound className="h-4 w-4 text-slate-400" aria-hidden="true" />
-            Profilim ve şifre
-          </Link>
+          {showProfile && (
+            <Link href="/profil" role="menuitem" onClick={() => setOpen(false)} className="flex items-center gap-2.5 px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+              <UserRound className="h-4 w-4 text-slate-400" aria-hidden="true" />
+              Profilim ve şifre
+            </Link>
+          )}
           {showSupport && (
             <Link href="/destek" role="menuitem" onClick={() => setOpen(false)} className="flex items-center gap-2.5 px-3 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
               <HelpCircle className="h-4 w-4 text-slate-400" aria-hidden="true" />

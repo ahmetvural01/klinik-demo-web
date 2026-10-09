@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { consumePendingTwoFactorChallenge, setAuthCookie, signToken, verifyPendingTwoFactorToken } from "@/lib/auth";
-import { writeAudit } from "@/lib/api";
+import { consumePendingTwoFactorChallenge, verifyPendingTwoFactorToken } from "@/lib/auth";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 import { verifyTwoFactorToken, verifyBackupCode, removeUsedBackupCode, currentTotpStep } from "@/lib/two-factor";
-import { DEFAULT_SUPERADMIN_MODULES } from "@/lib/superadmin-modules";
-import { findInstitutionByLoginName, isPlatformLoginName, startSuperadminClinicSession } from "@/lib/superadmin-clinic-session";
+import { completePlatformLogin } from "@/lib/platform-auth";
 
 // Genel /api/auth/login/verify-2fa uç noktasından AYRI: süperadmin token'ı
 // superadminModules claim'ini taşımalı (bkz. superadmin-modules.ts), genel
@@ -87,40 +85,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ message: "Bu doğrulama isteği daha önce kullanılmış." }, { status: 401 });
   }
 
-  const modules = DEFAULT_SUPERADMIN_MODULES;
-
-  const token = signToken({
-    userId: user.id,
-    role: user.role,
-    institutionId: null,
-    fullName: user.fullName,
-    superadminModules: modules,
-    tokenVersion: user.tokenVersion,
-  });
-
-  await setAuthCookie(token);
-  await writeAudit(user.id, "LOGIN", usedBackupCode ? "Superadmin yedek kod ile giris yapti" : "Superadmin 2FA ile giris yapti");
-
-  const result = {
-    id: user.id,
-    fullName: user.fullName,
-    role: user.role,
-    institutionId: null,
-    modules,
-  };
-
-  // Klinik giriş ekranından gelindiyse (klinik adı yazılmışsa) doğrudan o
-  // kliniğe tam yetkiyle girilir — bkz. src/app/api/auth/login/route.ts.
+  // Kurum adı yoksa /superadmin ekranıdır (panel oturumu); varsa klinik giriş
+  // ekranıdır ve yazılan kliniğe gizli, tam yetkili girilir (panel açılmaz).
+  // bkz. src/lib/platform-auth.ts
   const institutionInput = typeof body?.institution === "string" ? body.institution : "";
-  if (!isPlatformLoginName(institutionInput)) {
-    const target = await findInstitutionByLoginName(institutionInput);
-    const entry = target
-      ? await startSuperadminClinicSession({ superadmin: { id: user.id, fullName: user.fullName }, institutionId: target.id, source: "login" })
-      : null;
-    if (entry?.ok) return NextResponse.json({ ...result, clinic: { id: entry.institutionId, name: entry.institutionName } });
-    // Klinik açılamadıysa platform oturumu yine geçerlidir; ekran nedenini gösterir.
-    return NextResponse.json({ ...result, clinicError: entry && !entry.ok ? entry.message : "Klinik bulunamadı." });
-  }
-
-  return NextResponse.json(result);
+  return completePlatformLogin(
+    user,
+    institutionInput,
+    usedBackupCode ? "Superadmin yedek kod ile giris yapti" : "Superadmin 2FA ile giris yapti",
+  );
 }

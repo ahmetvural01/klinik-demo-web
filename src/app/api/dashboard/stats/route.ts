@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { CLINIC_HIDDEN_AUDIT_NOT } from "@/lib/audit-visibility";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +46,8 @@ export async function GET() {
           role: { not: "SUPERADMIN" },
           institutionId,
         },
+        // Süperadmin ve kliniğe gizli giriş kayıtları kliniğe görünmez.
+        NOT: [...CLINIC_HIDDEN_AUDIT_NOT],
       },
       take: 10,
       orderBy: { createdAt: "desc" },

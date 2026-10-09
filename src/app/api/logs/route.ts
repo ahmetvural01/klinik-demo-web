@@ -4,6 +4,7 @@ import { requireAnyAuth, requireAuth } from "@/lib/api";
 import { isValidDateKey, turkeyDayRangeUtc } from "@/lib/tz";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { auditCategoryWhere, isAuditCategoryKey } from "@/lib/audit-log-taxonomy";
+import { CLINIC_HIDDEN_AUDIT_NOT } from "@/lib/audit-visibility";
 
 export async function GET(request: NextRequest) {
   try {
@@ -47,7 +48,7 @@ export async function GET(request: NextRequest) {
       role: { not: "SUPERADMIN" },
       institutionId: auth.user.institutionId,
     };
-    where.NOT = [{ actorRole: "SUPERADMIN" }, { isGhost: true }];
+    where.NOT = [...CLINIC_HIDDEN_AUDIT_NOT];
     if (userId) where.userId = userId;
     if (from || to) {
       where.createdAt = {

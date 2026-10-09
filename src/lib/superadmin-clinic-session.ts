@@ -7,14 +7,21 @@ import { writeAudit } from "@/lib/api";
 // kısıtları ona uygulanmaz (bkz. requireAuth'taki ghost kuralı ve
 // getBranchScopedPermissions). Oturum kliniğin yöneticisi adına açılır,
 // çünkü randevu, ödeme gibi kayıtlar bir klinik kullanıcısına bağlanır.
-// Bu oturumun işlemleri kliniğin kendi İşlem Kayıtları'nda görünmez;
-// süperadmin Denetim Günlüğü'nde izlenir (bkz. writeAudit).
+//
+// GÖRÜNMEZLİK: klinik personeli — yönetici dahil — sahibin varlığından
+// haberdar olmaz. Bu yüzden belirteçteki kliniğe yansıyan ad (fullName)
+// kliniğin YÖNETİCİSİNİN adıdır; sahibin adı yalnız kendi çerezindeki ayrı
+// alanlarda (ghostOwnerId/ghostOwnerName) durur ve yalnız sahibin kendi
+// ekranında gösterilir. İşlem kayıtları gerçek aktörle (süperadmin) yazılır
+// ve kliniğin hiçbir ekranında okunmaz (bkz. src/lib/audit-visibility.ts);
+// Platform Denetim Günlüğü'nde "gizli giriş" olarak izlenir.
+//
 // İki giriş yolu aynı fonksiyonu kullanır: platform panelindeki "Kliniğe
 // gir" düğmesi ve klinik giriş ekranına süperadmin bilgileriyle giriş.
 // Kliniğin içinde sol menüdeki "Rol Görünümü" ile ekran bir rolün
 // yetkilerine daraltılarak önizlenebilir (bkz. requireAuth previewRole).
 
-/** Klinik giriş ekranında klinik adı yerine yazılınca Platform Yönetimi açılır. */
+/** Klinik giriş ekranında klinik adı olarak kabul edilmeyen (platforma ayrılmış) adlar. */
 export function isPlatformLoginName(name: string) {
   const value = name.trim().toLowerCase();
   return value === "" || value === "superadmin" || value === "admin";
@@ -66,9 +73,11 @@ export async function startSuperadminClinicSession(params: {
     userId: targetUser.id,
     role: "YONETICI",
     institutionId: institution.id,
-    // Ekranda ve "… tarafından güncellendi" bildirimlerinde süperadmin kendi adıyla görünür.
-    fullName: params.superadmin.fullName || `${targetUser.fullName} [SA]`,
+    // Kliniğe yansıyan ad: kliniğin yöneticisi. Süperadmin adı BURAYA yazılmaz.
+    fullName: targetUser.fullName,
     ghost: true,
+    ghostOwnerId: params.superadmin.id,
+    ghostOwnerName: params.superadmin.fullName,
     tokenVersion: targetUser.tokenVersion,
   });
   // Ayrı çerez: süperadmin'in kendi platform oturumu (klinik_token) bozulmaz.
@@ -80,7 +89,7 @@ export async function startSuperadminClinicSession(params: {
     targetUser.id,
     "IMPERSONATE_START",
     `${institution.name} kliniğine "${params.superadmin.fullName}" (superadmin) ${params.source === "login" ? "klinik giriş ekranından" : "platform panelinden"} ${targetUser.fullName} kimliğiyle giriş yaptı`,
-    { id: params.superadmin.id, role: "SUPERADMIN" },
+    { id: params.superadmin.id, role: "SUPERADMIN", ghost: true },
   );
 
   return { ok: true, institutionId: institution.id, institutionName: institution.name, fullName: targetUser.fullName };

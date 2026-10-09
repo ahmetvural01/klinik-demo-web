@@ -81,11 +81,11 @@ export default async function PanelLayout({ children }: { children: React.ReactN
       <PanelRouteWarmup />
       <PanelCacheReset scopeKey={scopeKey} />
       <Sidebar
-        user={{ fullName: user.fullName, role: sidebarRole, photoUrl }}
+        user={{ fullName: user.displayName, role: sidebarRole, photoUrl }}
         initialBrandName={institutionFeatures?.settings?.institutionName || institutionFeatures?.name || ""}
       />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <Topbar user={{ fullName: user.fullName, role: topbarRole, photoUrl }} />
+        <Topbar user={{ fullName: user.displayName, role: topbarRole, photoUrl, ghost: user.ghost }} />
         {user.ghost && <GhostModeBanner institutionName={institutionName} previewLabel={user.previewRole ? roleLabel(user.previewRole) : null} />}
         {/* Ödeme uyarısı kliniğe yöneliktir; sistem sahibi bunu platform panelinde görür. */}
         {user.rawRole !== "SUPERADMIN" && !elevated && <BillingStatusBanner />}

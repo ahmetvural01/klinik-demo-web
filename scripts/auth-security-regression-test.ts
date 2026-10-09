@@ -65,9 +65,13 @@ function main() {
       verifyTwoFactor.includes("twoFactorLastStep"),
     "TOTP ve yedek kodlar atomik olarak sahiplenilmeli; eşzamanlı tekrar kullanılamamalı.",
   );
+  // Platform oturumunun üretildiği TEK yer src/lib/platform-auth.ts (hem şifreli
+  // hem 2FA'lı giriş ve klinik ekranından giriş aynı fonksiyonu kullanır).
+  const platformAuth = source("src/lib/platform-auth.ts");
   assert(
-    verifySuperadminTwoFactor.includes("DEFAULT_SUPERADMIN_MODULES")
-      && verifySuperadminTwoFactor.includes("superadminModules: modules"),
+    verifySuperadminTwoFactor.includes("completePlatformLogin")
+      && platformAuth.includes("DEFAULT_SUPERADMIN_MODULES")
+      && platformAuth.includes("superadminModules: modules"),
     "Platform sahibi 2FA sonrası eksiksiz yönetim kapsamıyla oturum açmalı.",
   );
 

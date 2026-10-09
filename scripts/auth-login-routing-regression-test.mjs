@@ -5,11 +5,19 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 
-// Run the actual two login handlers with isolated storage/auth dependencies.
+// Gerçek giriş uçlarını (klinik giriş ekranı, /superadmin ekranı ve ortak
+// platform-auth) yalıtılmış depolama/oturum bağımlılıklarıyla çalıştırır.
+//
+// Sistem sahibinin kuralı:
+//  - Klinik giriş ekranı + süperadmin kimliği + kurum adı → o kliniğe GİZLİ ve
+//    tam yetkili girer; bu ekran Platform panelini ASLA açmaz.
+//  - Kliniğe yansıyan ad kliniğin yöneticisidir; sahibin kimliği yalnız
+//    belirtecin ayrı alanlarında (ghostOwnerId/ghostOwnerName) durur.
+//  - /superadmin ekranı Platform panelini açar.
 const require = createRequire(import.meta.url);
 const { NextRequest } = require("next/server");
-const output = path.join(process.cwd(), `.auth-login-regression-${randomUUID()}.cjs`);
-const state = { platform: true, active: true, twoFactor: false, blocked: false, queries: [], tokens: [], cookies: [], failures: [] };
+const tag = randomUUID();
+const state = { platform: true, active: true, twoFactor: false, blocked: false, queries: [], tokens: [], cookies: [], failures: [], audits: [] };
 globalThis.__authLoginRoutingTest = state;
 const mocks = {
   prisma: `const s=globalThis.__authLoginRoutingTest;
@@ -24,95 +32,169 @@ const mocks = {
     export const signPendingTwoFactorToken=async id=>'pending-'+id;
     export const setGhostAuthCookie=async token=>{s.cookies.push('ghost:'+token);};
     export const clearRolePreviewCookie=async()=>{};`,
-  api: `export const writeAudit=async()=>{};`,
+  api: `const s=globalThis.__authLoginRoutingTest;export const writeAudit=async(...args)=>{s.audits.push(args);};`,
   metrics: `export const metricIncrement=()=>{};export const metricObserve=()=>{};`,
   "rate-limit": `export const checkRateLimit=async()=>({ok:true});export const getClientIpFromHeaders=()=> 'test-ip';`,
   "security-store": `const s=globalThis.__authLoginRoutingTest;export const isFailureBlocked=async()=>s.blocked;export const clearFailures=async()=>{};export const recordFailure=async key=>{s.failures.push(key);};`,
 };
-try {
-  await build({ entryPoints: ["src/app/api/auth/login/route.ts"], outfile: output, bundle: true, platform: "node", format: "cjs", packages: "external",
+
+const outputs = [];
+async function bundle(entry, name) {
+  const outfile = path.join(process.cwd(), `.auth-login-regression-${name}-${tag}.cjs`);
+  outputs.push(outfile);
+  await build({ entryPoints: [entry], outfile, bundle: true, platform: "node", format: "cjs", packages: "external",
     plugins: [{ name: "auth-regression-dependencies", setup(builder) {
       builder.onResolve({ filter: /^@\/lib\// }, args => {
-        const name = args.path.slice("@/lib/".length);
-        return mocks[name] ? { path: name, namespace: "auth-fixture" } : { path: path.join(process.cwd(), "src/lib", name + ".ts") };
+        const lib = args.path.slice("@/lib/".length);
+        return mocks[lib] ? { path: lib, namespace: "auth-fixture" } : { path: path.join(process.cwd(), "src/lib", lib + ".ts") };
       });
       builder.onLoad({ filter: /.*/, namespace: "auth-fixture" }, args => ({ contents: mocks[args.path], loader: "js" }));
     } }],
   });
-  const { POST } = require(output);
-  async function login(password, institution = "whitedental") {
-    state.queries.length = 0; state.tokens.length = 0; state.cookies.length = 0; state.failures.length = 0;
-    return POST(new NextRequest("https://cepklinik.test/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ institution, identityNo: "00000000000", password }) }));
+  return require(outfile);
+}
+
+function reset() {
+  state.queries.length = 0; state.tokens.length = 0; state.cookies.length = 0; state.failures.length = 0; state.audits.length = 0;
+}
+
+try {
+  const clinicRoute = await bundle("src/app/api/auth/login/route.ts", "clinic");
+  const platformRoute = await bundle("src/app/api/auth/superadmin/login/route.ts", "platform");
+  const platformLib = await bundle("src/lib/platform-auth.ts", "lib");
+
+  async function clinicLogin(password, institution = "whitedental") {
+    reset();
+    return clinicRoute.POST(new NextRequest("https://cepklinik.test/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ institution, identityNo: "00000000000", password }) }));
   }
-  // "superadmin" yazılırsa yalnız Platform Yönetimi oturumu açılır.
-  let response = await login("platform-password", "superadmin");
+  async function platformLogin(password) {
+    reset();
+    return platformRoute.POST(new NextRequest("https://cepklinik.test/api/auth/superadmin/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ identityNo: "00000000000", password }) }));
+  }
+  const noSession = () => { assert.equal(state.tokens.length, 0, "Hiçbir oturum açılmamalı"); assert.equal(state.cookies.length, 0); };
+
+  // 1) Klinik ekranı + süperadmin + klinik adı → o kliniğe gizli, tam yetkili giriş
+  let response = await clinicLogin("platform-password");
   let body = await response.json();
   assert.equal(response.status, 200);
-  assert.equal(body.role, "SUPERADMIN");
-  assert.equal(body.id, "platform");
-  assert.equal(body.clinic, undefined);
-  assert.equal(state.tokens.length, 1);
-  assert.equal(state.tokens[0].institutionId, null);
-  assert(state.tokens[0].superadminModules.length > 0);
-  assert(!state.queries.some(query => query.institutionId), "Platform kimliği klinik hesabına düşmemeli");
-
-  // Klinik adı yazılırsa: önce platform şifresi doğrulanır, sonra o kliniğe tam yetkili (ghost) oturum açılır.
-  response = await login("platform-password");
-  body = await response.json();
-  assert.equal(response.status, 200);
-  assert.equal(body.role, "SUPERADMIN");
+  assert.notEqual(body.role, "SUPERADMIN", "Klinik ekranı Platform paneline yönlendirecek yanıt vermemeli");
+  assert.equal(body.role, "YONETICI");
   assert.deepEqual(body.clinic, { id: "institution", name: "whitedental" });
-  assert.equal(state.tokens.length, 2);
-  assert.equal(state.tokens[0].institutionId, null, "Platform oturumu da açık kalmalı");
-  assert.equal(state.tokens[1].ghost, true);
-  assert.equal(state.tokens[1].institutionId, "institution");
-  assert.equal(state.tokens[1].fullName, "Platform", "Klinikte süperadmin kendi adıyla görünmeli");
+  assert.equal(state.tokens.length, 2, "Platform oturumu (panele dönüş) ve klinik (gizli) oturumu");
+  const platformToken = state.tokens.find(token => !token.ghost);
+  const ghostToken = state.tokens.find(token => token.ghost);
+  assert.equal(platformToken.institutionId, null);
+  assert(platformToken.superadminModules.length > 0);
+  assert.equal(ghostToken.institutionId, "institution");
+  assert.equal(ghostToken.role, "YONETICI");
+  assert.equal(ghostToken.fullName, "Clinic", "Kliniğe yansıyan ad yöneticinin adı olmalı; sahibin adı yazılmamalı");
+  assert.equal(ghostToken.ghostOwnerId, "platform");
+  assert.equal(ghostToken.ghostOwnerName, "Platform");
   assert(state.cookies.some(cookie => String(cookie).startsWith("ghost:")));
+  const start = state.audits.find(entry => entry[1] === "IMPERSONATE_START");
+  assert(start, "Giriş Platform Denetim Günlüğü'ne yazılmalı");
+  assert.deepEqual(start[3], { id: "platform", role: "SUPERADMIN", ghost: true }, "Giriş kaydı gerçek aktörle ve gizli giriş işaretiyle yazılmalı");
 
-  // Olmayan klinik adı: açık hata, klinik oturumu açılmaz.
-  response = await login("platform-password", "yok");
+  // 2) "superadmin" / "admin" kurum adı klinik girişinde panel AÇMAZ
+  for (const typed of ["superadmin", "admin", "SuperAdmin"]) {
+    response = await clinicLogin("platform-password", typed);
+    body = await response.json();
+    assert.equal(response.status, 400, `"${typed}" klinik adı sayılmamalı`);
+    assert.match(body.message, /\/superadmin/);
+    noSession();
+  }
+
+  // 3) Olmayan klinik: açık hata, oturum yok
+  response = await clinicLogin("platform-password", "yok");
   body = await response.json();
   assert.equal(response.status, 404);
   assert.match(body.message, /bulunamadı/);
-  assert(!state.tokens.some(token => token.ghost));
+  noSession();
 
-  response = await login("clinic-password");
-  assert.equal(response.status, 401, "Aynı kimlikli klinik hesabının şifresi platform hesabı yerine kabul edilmemeli");
-  assert.equal(state.tokens.length, 0);
-  assert.equal(state.cookies.length, 0);
+  // 4) Yanlış şifre / aynı kimlikli klinik hesabının şifresi: kabul edilmez
+  response = await clinicLogin("yanlis-sifre");
+  assert.equal(response.status, 401);
   assert.equal(state.failures.length, 1);
-  assert(!state.queries.some(query => query.institutionId));
+  noSession();
+  response = await clinicLogin("clinic-password");
+  assert.equal(response.status, 401, "Aynı kimlikli klinik hesabının şifresi platform hesabı yerine kabul edilmemeli");
+  assert.equal(state.failures.length, 1);
+  noSession();
+  assert(!state.queries.some(query => query.institutionId), "Platform kimliği klinik hesabına düşmemeli");
 
+  // 5) 2FA açık: kod istenir; oturum kod sonrası açılır. Klinik adı kod ÖNCESİ doğrulanır.
   state.twoFactor = true;
-  response = await login("platform-password");
+  response = await clinicLogin("platform-password");
   body = await response.json();
   assert.equal(body.requiresTwoFactor, true);
   assert.equal(body.pendingToken, "pending-platform");
-  assert.equal(state.tokens.length, 0, "2FA tamamlanmadan oturum açılmamalı");
-  assert.equal(state.cookies.length, 0);
+  noSession();
+  response = await clinicLogin("platform-password", "superadmin");
+  assert.equal(response.status, 400, "Geçersiz klinik adı için 2FA kodu istenmemeli");
+  noSession();
   state.twoFactor = false;
 
+  // 6) Pasif platform hesabı ve kilit
   state.active = false;
-  response = await login("clinic-password");
+  response = await clinicLogin("clinic-password");
   assert.equal(response.status, 401, "Pasif platform hesabı klinik hesabına düşmemeli");
-  assert.equal(state.tokens.length, 0);
+  noSession();
   state.active = true;
-
   state.blocked = true;
-  response = await login("platform-password");
+  response = await clinicLogin("platform-password");
   assert.equal(response.status, 429);
-  assert.equal(state.tokens.length, 0);
+  noSession();
   state.blocked = false;
 
+  // 7) /superadmin ekranı Platform panelini açar (gizli klinik oturumu AÇILMAZ)
+  response = await platformLogin("platform-password");
+  body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.role, "SUPERADMIN");
+  assert.equal(body.institutionId, null);
+  assert.equal(state.tokens.length, 1);
+  assert.equal(state.tokens[0].institutionId, null);
+  assert(state.tokens[0].superadminModules.length > 0);
+  assert(!state.tokens.some(token => token.ghost));
+  state.twoFactor = true;
+  response = await platformLogin("platform-password");
+  body = await response.json();
+  assert.equal(body.requiresTwoFactor, true);
+  noSession();
+  state.twoFactor = false;
+  response = await platformLogin("yanlis-sifre");
+  assert.equal(response.status, 401);
+  noSession();
+
+  // 8) 2FA sonrası son adım (verify-2fa): kurum adı varsa klinik, yoksa panel
+  const user = { id: "platform", role: "SUPERADMIN", fullName: "Platform", tokenVersion: 1, twoFactorEnabled: true };
+  reset();
+  response = await platformLib.completePlatformLogin(user, "whitedental", "Superadmin 2FA ile giris yapti");
+  body = await response.json();
+  assert.equal(body.role, "YONETICI");
+  assert.deepEqual(body.clinic, { id: "institution", name: "whitedental" });
+  assert(state.tokens.some(token => token.ghost && token.fullName === "Clinic" && token.ghostOwnerName === "Platform"));
+  reset();
+  response = await platformLib.completePlatformLogin(user, "", "Superadmin 2FA ile giris yapti");
+  body = await response.json();
+  assert.equal(body.role, "SUPERADMIN");
+  assert(!state.tokens.some(token => token.ghost));
+  reset();
+  response = await platformLib.completePlatformLogin(user, "superadmin", "x");
+  assert.equal(response.status, 400);
+  noSession();
+
+  // 9) Platform hesabı olmayan kimlik: normal kurum girişi değişmeden çalışır
   state.platform = false;
-  response = await login("clinic-password");
+  response = await clinicLogin("clinic-password");
   body = await response.json();
   assert.equal(response.status, 200);
   assert.equal(body.role, "YONETICI");
   assert.equal(state.tokens[0].institutionId, "institution");
+  assert(!state.tokens[0].ghost);
   assert(state.queries.some(query => query.institutionId === "institution"));
-  console.log("PASS: süperadmin önceliği, kliniğe tam yetkili giriş, olmayan klinik, klinik hesaba düşmeme, yanlış şifre, pasif hesap, 2FA, kilit ve normal kurum girişi.");
+  console.log("PASS: klinik ekranı panel açmaz, süperadmin kliniğe gizli ve tam yetkili girer (yönetici adıyla), olmayan klinik/yanlış şifre/2FA/kilit, /superadmin paneli ve normal kurum girişi.");
 } finally {
   delete globalThis.__authLoginRoutingTest;
-  if (fs.existsSync(output)) fs.unlinkSync(output);
+  for (const file of outputs) if (fs.existsSync(file)) fs.unlinkSync(file);
 }

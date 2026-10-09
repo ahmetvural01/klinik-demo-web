@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { requireAuth, writeAudit, rejectGhostAccountChange } from "@/lib/api";
 import { verifyPassword } from "@/lib/auth";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 
 export async function POST(req: NextRequest) {
   const auth = await requireAuth();
   if (auth.error) return auth.error;
+  const ghostBlock = rejectGhostAccountChange(auth.user);
+  if (ghostBlock) return ghostBlock;
 
   const body = await req.json().catch(() => ({}));
   const password = String(body?.password || "");
