@@ -20,6 +20,7 @@ import {
   type LoadedAuthState,
 } from "./auth-state";
 import { WhatsappWebError, WHATSAPP_WEB_UNAVAILABLE_MESSAGE } from "./errors";
+import { attachCompanionRefresh, withAdvSecret } from "./companion-refresh";
 import { createBaileysLogger, logError, logWarn } from "./logger";
 import { formatWhatsappDisplayPhone, maskPhoneDigits } from "./phone";
 import {
@@ -127,6 +128,8 @@ type Session = {
   state: WhatsappWebState;
   stopping: boolean;
   qr: { dataUrl: string; at: number } | null;
+  /** Baileys'in verdiği son QR metni; WhatsApp gizli anahtarı yenilettiğinde yeniden çizilir. */
+  rawQr: string | null;
   pairingCode: { code: string; at: number } | null;
   pairingRequested: boolean;
   pairingExpiredAt: number | null;
@@ -196,6 +199,7 @@ function getSession(institutionId: string): Session {
       state: "NOT_CONNECTED",
       stopping: false,
       qr: null,
+      rawQr: null,
       pairingCode: null,
       pairingRequested: false,
       pairingExpiredAt: null,
@@ -617,7 +621,9 @@ async function startSocket(session: Session, mode: SocketMode): Promise<void> {
   session.pairingRequested = false;
   if (mode.kind === "pair") {
     session.qr = null;
+    session.rawQr = null;
     session.pairingCode = null;
+    session.notice = null;
   }
 
   const auth = await ensureAuth(session, baileys);
@@ -634,9 +640,10 @@ async function startSocket(session: Session, mode: SocketMode): Promise<void> {
     countryCode: "TR",
     // Telefona bildirimler gitmeye devam etsin (bağlı cihaz "çevrimiçi" görünmez).
     markOnlineOnConnect: false,
-    // Geçmiş sohbetler içe alınmaz; mesaj içeriği saklanmaz.
+    // Tam geçmiş istenmez. İlk açılış eşitlemesi (LID eşleşmeleri, uygulama durumu
+    // anahtarları) KAPATILMAZ: tamamını kapatmak Baileys'e göre kararsızlığa ve
+    // oturum hatalarına yol açıyor. Mesaj içeriği zaten dinlenmez/saklanmaz.
     syncFullHistory: false,
-    shouldSyncHistoryMessage: () => false,
     generateHighQualityLinkPreview: false,
     getMessage: async () => undefined,
   });
@@ -675,7 +682,23 @@ async function startSocket(session: Session, mode: SocketMode): Promise<void> {
   sock.ev.on("message-receipt.update", onReceiptUpdate);
   sock.ev.on("message-capping.update", onCappingUpdate);
   // Not: "messages.upsert" (gelen/telefondan yazılan mesajlar) bilinçli olarak dinlenmez.
+
+  // WhatsApp, QR okutulunca gizli anahtarın yenilenmesini ister; kütüphane bunu
+  // yapmıyor (bkz. companion-refresh.ts). Yenilenince aynı QR yeni anahtarla çizilir.
+  const detachRefresh = mode.kind === "pair" && mode.method === "qr"
+    ? attachCompanionRefresh(sock, {
+        isActive: () => isCurrentSocket(session, generation, sock),
+        isPaired: () => Boolean(auth.loaded.state.creds.me),
+        onRotated: () => {
+          logWarn(session.institutionId, "WhatsApp QR okutulunca gizli anahtarın yenilenmesini istedi; QR yeniden gösteriliyor");
+          void rerenderQr(session, generation, sock).catch((error: unknown) => {
+            logError(session.institutionId, "QR yenilenemedi", error);
+          });
+        },
+      })
+    : null;
   session.detach = () => {
+    detachRefresh?.();
     sock.ev.off("connection.update", onConnectionUpdate);
     sock.ev.off("creds.update", onCredsUpdate);
     sock.ev.off("messages.update", onMessagesUpdate);
@@ -697,6 +720,8 @@ async function handleConnectionUpdate(
     // Telefon QR'ı okuttu / kodu girdi: WhatsApp birazdan soketi yeniden başlatmamızı ister.
     session.justPaired = true;
     session.qr = null;
+    session.rawQr = null;
+    session.notice = null;
     session.pairingCode = null;
     setState(session, "CONNECTING");
   }
@@ -704,6 +729,26 @@ async function handleConnectionUpdate(
   if (update.connection === "open") await handleOpen(session, baileys, generation, sock);
   else if (update.connection === "close") await handleClose(session, baileys, generation, sock, update.lastDisconnect?.error);
   else if (update.connection === "connecting" && session.state !== "QR" && session.state !== "ERROR") setState(session, "CONNECTING");
+}
+
+const QR_REFRESHED_NOTICE =
+  "WhatsApp güvenlik için QR'ı yeniledi. Telefon hata verdiyse sorun değil: ekrandaki yeni QR'ı tekrar okutun.";
+
+/** QR'ı güncel gizli anahtarla çizer (yenilemeden sonra gelen QR'lar da yeni anahtarı taşır). */
+async function renderQr(session: Session, generation: number, sock: BaileysSocket, rawQr: string) {
+  const advSecret = session.auth?.loaded.state.creds.advSecretKey;
+  const shown = advSecret ? withAdvSecret(rawQr, advSecret) : rawQr;
+  const dataUrl = await QRCode.toDataURL(shown, { errorCorrectionLevel: "M", margin: 1, width: 360 });
+  if (!isCurrentSocket(session, generation, sock)) return;
+  session.qr = { dataUrl, at: Date.now() };
+  setState(session, "QR");
+}
+
+async function rerenderQr(session: Session, generation: number, sock: BaileysSocket) {
+  // Henüz QR gelmediyse sonraki QR zaten güncel anahtarla çizilir.
+  if (!session.rawQr) return;
+  await renderQr(session, generation, sock, session.rawQr);
+  if (isCurrentSocket(session, generation, sock)) session.notice = QR_REFRESHED_NOTICE;
 }
 
 async function handleQr(session: Session, generation: number, sock: BaileysSocket, qr: string) {
@@ -715,10 +760,8 @@ async function handleQr(session: Session, generation: number, sock: BaileysSocke
     return;
   }
   if (mode.method === "qr") {
-    const dataUrl = await QRCode.toDataURL(qr, { errorCorrectionLevel: "M", margin: 1, width: 360 });
-    if (!isCurrentSocket(session, generation, sock)) return;
-    session.qr = { dataUrl, at: Date.now() };
-    setState(session, "QR");
+    session.rawQr = qr;
+    await renderQr(session, generation, sock, qr);
     return;
   }
   if (session.pairingRequested || !mode.phone) return;
@@ -743,6 +786,7 @@ async function handleOpen(session: Session, baileys: BaileysModule, generation: 
   session.mode = { kind: "resume" };
   session.reconnectAttempts = 0;
   session.qr = null;
+  session.rawQr = null;
   session.pairingCode = null;
   session.pairingExpiredAt = null;
   session.error = null;
@@ -858,6 +902,7 @@ function scheduleReconnect(session: Session, statusCode: number | undefined) {
 async function finishPairingAttempt(session: Session, outcome: { expired?: boolean; error?: string }) {
   session.mode = null;
   session.qr = null;
+  session.rawQr = null;
   session.pairingCode = null;
   session.pairingRequested = false;
   session.justPaired = false;
@@ -883,6 +928,7 @@ async function invalidateSession(session: Session, message: string, auditAction:
   const phone = session.phone;
   session.mode = null;
   session.qr = null;
+  session.rawQr = null;
   session.pairingCode = null;
   session.justPaired = false;
   clearReconnectTimer(session);
@@ -1506,6 +1552,7 @@ export async function disconnect(
     }
     session.mode = null;
     session.qr = null;
+    session.rawQr = null;
     session.pairingCode = null;
     session.justPaired = false;
     session.pairingExpiredAt = null;

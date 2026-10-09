@@ -253,8 +253,9 @@ export function WhatsappWebConnect({ onChanged }: { onChanged?: () => void }) {
               <li><strong>Bağlı cihazlar</strong> → <strong>Cihaz bağla</strong> seçin.</li>
               {byCode
                 ? <li><strong>Bunun yerine telefon numarasıyla bağla</strong>&apos;ya dokunup yukarıdaki kodu yazın.</li>
-                : <li>Telefonu bu ekrandaki QR koda tutun.</li>}
+                : <li>Telefonu bu ekrandaki QR koda tutun. Telefon hata verirse bu ekrandaki QR yenilenir; yeni QR&apos;ı tekrar okutun.</li>}
             </ol>
+            {status.notice && <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">{status.notice}</p>}
             <p className="mt-3 flex items-center gap-2 text-xs text-slate-500">
               <Spinner className="h-3.5 w-3.5" /> {byCode ? "Kod yazılınca bağlantı kendiliğinden tamamlanır." : "Kod birkaç saniyede bir yenilenir; okutunca bağlantı kendiliğinden tamamlanır."}
             </p>
