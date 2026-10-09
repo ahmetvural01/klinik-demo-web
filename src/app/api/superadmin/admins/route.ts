@@ -12,18 +12,26 @@ export async function GET() {
   const admins = await prisma.user.findMany({
     where: { role: "SUPERADMIN" },
     orderBy: { createdAt: "desc" },
-    include: { superadminPermission: true },
+    select: { id: true, fullName: true, identityNo: true, email: true, isActive: true, createdAt: true, twoFactorEnabled: true },
   });
+  // Son giriş, giriş denetim kayıtlarından okunur (kullanıcı tablosunda ayrı alan yok).
+  const lastLogins = admins.length
+    ? await prisma.auditLog.groupBy({ by: ["userId"], where: { action: "LOGIN", userId: { in: admins.map((admin) => admin.id) } }, _max: { createdAt: true } })
+    : [];
+  const lastLoginById = new Map(lastLogins.map((row) => [row.userId, row._max.createdAt]));
 
   return NextResponse.json(
     admins.map((admin) => ({
       id: admin.id,
       fullName: admin.fullName,
-      identityNo: admin.identityNo,
+      // TC kimlik no tarayıcıya tam gönderilmez; yalnız son 4 hane.
+      identityNoMasked: admin.identityNo ? `•••••••${admin.identityNo.slice(-4)}` : null,
       email: admin.email,
       isActive: admin.isActive,
       createdAt: admin.createdAt,
-      modules: DEFAULT_SUPERADMIN_MODULES,
+      twoFactorEnabled: admin.twoFactorEnabled,
+      lastLoginAt: lastLoginById.get(admin.id) ?? null,
+      isSelf: admin.id === auth.user.id,
     }))
   );
 }
@@ -47,7 +55,13 @@ export async function POST(request: NextRequest) {
   const modules = DEFAULT_SUPERADMIN_MODULES;
 
   if (!fullName || !identityNo || password.length < 8 || password.length > 72) {
-    return NextResponse.json({ message: "Ad soyad, TC ve 8-72 karakter uzunluğunda şifre zorunlu" }, { status: 400 });
+    return NextResponse.json({ message: "Ad soyad, TC kimlik no ve 8-72 karakter şifre zorunlu" }, { status: 400 });
+  }
+  if (!/^\d{11}$/.test(identityNo)) {
+    return NextResponse.json({ message: "TC kimlik numarası 11 rakam olmalı" }, { status: 400 });
+  }
+  if (email && !/^\S+@\S+\.\S+$/.test(email)) {
+    return NextResponse.json({ message: "Geçerli bir e-posta adresi girin" }, { status: 400 });
   }
 
   // Superadmin hesapları kuruma bağlı değildir (institutionId=null), bu yüzden
@@ -78,12 +92,11 @@ export async function POST(request: NextRequest) {
     include: { superadminPermission: true },
   });
 
-  await writeAudit(auth.user.id, "SUPERADMIN_CREATE", `Yeni superadmin eklendi: ${user.fullName}`);
+  await writeAudit(auth.user.id, "SUPERADMIN_CREATE", `Yeni platform yöneticisi eklendi: ${user.fullName}`);
 
   return NextResponse.json({
     id: user.id,
     fullName: user.fullName,
-    identityNo: user.identityNo,
     email: user.email,
     isActive: user.isActive,
     modules,
@@ -113,6 +126,13 @@ export async function PATCH(request: NextRequest) {
   const target = await prisma.user.findUnique({ where: { id: body.id }, include: { superadminPermission: true } });
   if (!target || target.role !== "SUPERADMIN") {
     return NextResponse.json({ message: "Kullanıcı bulunamadı" }, { status: 404 });
+  }
+  // [id] rotasındaki kuralla aynı: etkin en az bir platform yöneticisi kalmalı.
+  if (body.isActive === false && target.isActive) {
+    const otherActiveCount = await prisma.user.count({ where: { role: "SUPERADMIN", isActive: true, id: { not: body.id } } });
+    if (otherActiveCount === 0) {
+      return NextResponse.json({ message: "Son etkin platform yöneticisi pasife alınamaz." }, { status: 400 });
+    }
   }
 
   const userData: {

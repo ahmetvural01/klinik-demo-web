@@ -2,8 +2,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import SignaturePad from "signature_pad";
+import { Eraser, PenLine, Printer, XCircle } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
-import { backdropClose, useEscapeClose } from "@/lib/use-modal-dismiss";
+import { cachedGet } from "@/lib/client-cache";
+import { Modal } from "@/components/ui/Modal";
+import { Button, IconButton } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { FormField } from "@/components/ui/FormField";
+import { Input, Select, Textarea } from "@/components/ui/Input";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 
 type ConsentTemplate = {
   id: string;
@@ -42,6 +49,8 @@ type Props = {
   patientId: string;
   patientName: string;
   patientTcNo?: string | null;
+  /** documents:write — yoksa yalnız imzalı onamlar listelenir (imza alanı gösterilmez). */
+  canWrite?: boolean;
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -69,7 +78,7 @@ function formatDate(value: string) {
   return new Date(value).toLocaleString("tr-TR", { dateStyle: "medium", timeStyle: "short" });
 }
 
-export function PatientConsentPanel({ patientId, patientName, patientTcNo }: Props) {
+export function PatientConsentPanel({ patientId, patientName, patientTcNo, canWrite = true }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const padRef = useRef<SignaturePad | null>(null);
   const [templates, setTemplates] = useState<ConsentTemplate[]>([]);
@@ -83,7 +92,6 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo }: Pro
   const [voidingConsent, setVoidingConsent] = useState<PatientConsent | null>(null);
   const [voidReason, setVoidReason] = useState("");
   const [voiding, setVoiding] = useState(false);
-  useEscapeClose(() => setVoidingConsent(null), Boolean(voidingConsent));
 
   const selectedTemplate = useMemo(
     () => templates.find((template) => template.id === selectedTemplateId) || templates[0],
@@ -122,8 +130,7 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo }: Pro
 
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/settings", { cache: "no-store" })
-      .then((res) => (res.ok ? res.json() : null))
+    cachedGet<InstitutionInfo | null>("/api/settings", 60_000)
       .then((body) => {
         if (!cancelled && body) setInstitution(body);
       })
@@ -394,105 +401,129 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo }: Pro
     setTimeout(() => URL.revokeObjectURL(url), 60_000);
   }
 
+  const activeCount = consents.filter((item) => item.status !== "IPTAL").length;
+  const consentColumns: ListTableColumn<PatientConsent>[] = [
+    {
+      key: "title",
+      header: "Onam",
+      render: (consent) => (
+        <div className="min-w-0">
+          <p className={`font-medium ${consent.status === "IPTAL" ? "text-slate-500" : "text-slate-800"}`}>{consent.title}</p>
+          {consent.status === "IPTAL" && <p className="text-xs text-red-700">İptal sebebi: {consent.voidReason || "—"}</p>}
+        </div>
+      ),
+    },
+    { key: "signer", header: "İmzalayan", render: (consent) => consent.signerName },
+    { key: "date", header: "Tarih", render: (consent) => <span className="whitespace-nowrap">{formatDate(consent.signedAt)}</span> },
+    { key: "status", header: "Durum", render: (consent) => (consent.status === "IPTAL" ? <Badge tone="neutral">İptal edildi</Badge> : <Badge tone="success">Geçerli</Badge>) },
+    { key: "actions", header: "", align: "right", render: (consent) => consentActions(consent) },
+  ];
+
+  function consentActions(consent: PatientConsent) {
+    const isVoided = consent.status === "IPTAL";
+    return (
+      <div className="flex justify-end gap-1.5">
+        <IconButton icon={Printer} title="Yazdır" size="sm" onClick={() => printConsent(consent)} />
+        {canWrite && <IconButton icon={PenLine} title="Yeniden imzalat" size="sm" onClick={() => prepareResign(consent)} />}
+        {canWrite && !isVoided && <IconButton icon={XCircle} title="Onamı iptal et" tone="danger" size="sm" onClick={() => { setVoidingConsent(consent); setVoidReason(""); }} />}
+      </div>
+    );
+  }
+
   return (
-    <div className="rounded-lg border bg-white p-4">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+    <section className="ui-surface space-y-4 p-4 sm:p-5" aria-label="Onam ve KVKK imzası">
+      <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
-          <h3 className="font-semibold text-slate-900">Onam / KVKK İmza</h3>
-          <p className="text-xs text-slate-500">Tek kapsamlı onam paketini hastaya okutun, tek imza ile tüm sayfaları imzalatın.</p>
+          <h2 className="text-base font-bold text-slate-900">Onam ve KVKK imzası</h2>
+          <p className="mt-0.5 text-sm text-slate-500">
+            {canWrite ? "Onam metnini hastaya okutun, aşağıdaki alana imzasını alın. Tek imza belgenin tamamı için geçerlidir." : "Hastanın imzaladığı onamlar."}
+          </p>
         </div>
-        <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-700">{consents.filter((item) => item.status !== "IPTAL").length} aktif imzalı kayıt</span>
+        <Badge tone={activeCount > 0 ? "success" : "warning"}>{activeCount > 0 ? `${activeCount} geçerli onam` : "Geçerli onam yok"}</Badge>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+      {canWrite && (
         <div className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-[minmax(260px,1fr)_minmax(280px,1fr)]">
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-              <p className="text-xs font-bold uppercase text-slate-500">Onam Paketi</p>
-              <p className="mt-1 text-sm font-bold text-slate-900">{selectedTemplate?.title || "Kapsamlı Klinik Onam ve KVKK Paketi"}</p>
-              <p className="mt-1 text-xs text-slate-500">Tüm KVKK, tedavi, cerrahi, implant, kanal, protez ve görüntüleme bölümleri tek belgede.</p>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-xs text-gray-600">İmzalayan</label>
-                <input aria-label={"İmzalayan"} value={signerName} onChange={(event) => setSignerName(event.target.value)} className="w-full rounded border px-3 py-2 text-sm" />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs text-gray-600">TC / Kimlik No</label>
-                <input aria-label={"TC / Kimlik No"} value={signerIdentityNo} onChange={(event) => setSignerIdentityNo(event.target.value.replace(/\D/g, "").slice(0, 11))} className="w-full rounded border px-3 py-2 text-sm font-mono" />
-              </div>
-            </div>
-          </div>
-
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="text-xs font-bold uppercase text-slate-500">{CATEGORY_LABELS[selectedTemplate?.category || ""] || selectedTemplate?.category || "Onam"}</span>
-              <button type="button" onClick={clearSignature} className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-black text-red-700 hover:bg-red-100">İmzayı Sıfırla</button>
-            </div>
-            <p className="mb-3 max-h-64 overflow-auto whitespace-pre-wrap rounded border border-slate-200 bg-white p-3 text-sm leading-relaxed text-slate-700">{selectedTemplate?.body || "Onam şablonu bulunamadı."}</p>
-            <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
-              Hasta yanlışlıkla dokunursa İmzayı Sıfırla ile alanı tamamen temizleyip yeniden imza alabilirsiniz.
-            </div>
-            <canvas ref={canvasRef} className="h-44 w-full rounded border-2 border-slate-300 bg-white" />
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void saveConsent()}
-            disabled={saving || !selectedTemplate}
-            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-bold text-white transition hover:bg-slate-700 disabled:opacity-50"
-          >
-            {saving ? "Kaydediliyor..." : "İmzalı Onamı Kaydet"}
-          </button>
-        </div>
-
-        <div className="space-y-2">
-          {loading && consents.length === 0 ? (
-            <p className="rounded-lg bg-slate-50 px-3 py-6 text-center text-sm text-slate-400">Onamlar yükleniyor...</p>
-          ) : consents.length === 0 ? (
-            <p className="rounded-lg bg-slate-50 px-3 py-6 text-center text-sm text-slate-400">Henüz imzalı onam yok.</p>
-          ) : (
-            consents.map((consent) => {
-              const isVoided = consent.status === "IPTAL";
-              return (
-              <div key={consent.id} className={`rounded-lg border p-3 ${isVoided ? "border-red-100 bg-red-50/60" : "border-slate-200"}`}>
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <p className="text-sm font-bold text-slate-800">{consent.title}</p>
-                      {isVoided && <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700">İptal</span>}
-                    </div>
-                    <p className="text-xs text-slate-500">{formatDate(consent.signedAt)} · {consent.signerName}</p>
-                  </div>
-                  <div className="flex flex-wrap justify-end gap-1">
-                    <button type="button" onClick={() => printConsent(consent)} className="rounded border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50">Yazdır</button>
-                    <button type="button" onClick={() => prepareResign(consent)} className="rounded border border-blue-200 bg-blue-50 px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-100">Yeniden İmzala</button>
-                    {!isVoided && <button type="button" onClick={() => { setVoidingConsent(consent); setVoidReason(""); }} className="rounded border border-red-200 bg-red-50 px-2 py-1 text-xs font-semibold text-red-700 hover:bg-red-100">İptal Et</button>}
-                  </div>
-                </div>
-                <p className="mt-2 line-clamp-2 text-xs text-slate-500">{consent.body}</p>
-                {isVoided && <p className="mt-2 text-xs font-semibold text-red-700">Sebep: {consent.voidReason || "-"}</p>}
-              </div>
-            );
-            })
+          {templates.length > 1 && (
+            <FormField label="Onam metni" htmlFor="consent-template">
+              <Select id="consent-template" value={selectedTemplate?.id || ""} onChange={(event) => setSelectedTemplateId(event.target.value)}>
+                {templates.map((template) => <option key={template.id} value={template.id}>{template.title}</option>)}
+              </Select>
+            </FormField>
           )}
-        </div>
-      </div>
-      {voidingConsent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" {...backdropClose(() => setVoidingConsent(null))}>
-          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
-            <h3 className="text-base font-black text-slate-900">İmzalı Onamı İptal Et</h3>
-            <p className="mt-1 text-sm text-slate-500">İmzalı belge değiştirilmeyecek; denetim için iptal sebebiyle arşivlenecek. Ardından yeni imza alabilirsiniz.</p>
-            <div className="mt-4 rounded-lg bg-slate-50 p-3 text-sm font-semibold text-slate-700">{voidingConsent.title}</div>
-            <label className="mt-4 block text-xs font-semibold text-slate-600">İptal Sebebi</label>
-            <textarea aria-label={"İptal Sebebi"} value={voidReason} onChange={(event) => setVoidReason(event.target.value)} rows={3} className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400" placeholder="Örn. Hasta imzayı yanlış attı, yeniden imza alınacak." />
-            <div className="mt-4 flex gap-2">
-              <button onClick={() => setVoidingConsent(null)} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">Vazgeç</button>
-              <button onClick={() => void voidConsent()} disabled={voiding || voidReason.trim().length < 3} className="flex-1 rounded-lg bg-red-600 px-3 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50">{voiding ? "İptal ediliyor..." : "İptal Et"}</button>
+          <div className="rounded-lg border border-slate-200 bg-slate-50">
+            <p className="border-b border-slate-200 px-3 py-2 text-sm font-semibold text-slate-800">
+              {selectedTemplate?.title || "Onam metni"}
+              <span className="ml-2 text-xs font-normal text-slate-500">{CATEGORY_LABELS[selectedTemplate?.category || ""] || ""}</span>
+            </p>
+            <p className="max-h-56 overflow-auto whitespace-pre-wrap px-3 py-2 text-sm leading-relaxed text-slate-700">
+              {loading && !selectedTemplate ? "Onam metni yükleniyor…" : selectedTemplate?.body || "Onam şablonu bulunamadı. Ayarlar'dan onam şablonu ekleyin."}
+            </p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField label="İmzalayan" htmlFor="consent-signer" required hint="Hasta değilse veli / vasinin adı.">
+              <Input id="consent-signer" value={signerName} onChange={(event) => setSignerName(event.target.value)} />
+            </FormField>
+            <FormField label="TC / kimlik no" htmlFor="consent-identity">
+              <Input id="consent-identity" inputMode="numeric" value={signerIdentityNo} onChange={(event) => setSignerIdentityNo(event.target.value.replace(/\D/g, "").slice(0, 11))} className="font-mono" />
+            </FormField>
+          </div>
+          <div>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <span className="text-xs font-bold text-slate-800">İmza alanı</span>
+              <Button variant="ghost" size="sm" icon={Eraser} onClick={clearSignature}>İmzayı temizle</Button>
             </div>
+            <canvas ref={canvasRef} aria-label="Hastanın imza alanı" className="h-44 w-full touch-none rounded-lg border-2 border-dashed border-slate-300 bg-white" />
+            <p className="mt-1 text-xs text-slate-500">Parmakla veya kalemle imzalatın. Yanlış olursa “İmzayı temizle”.</p>
+          </div>
+          <div className="flex justify-end">
+            <Button onClick={() => void saveConsent()} loading={saving} disabled={!selectedTemplate || !signerName.trim()}>İmzalı onamı kaydet</Button>
           </div>
         </div>
       )}
-    </div>
+
+      <ListTable
+        header={<h3 className="border-b border-slate-100 px-4 py-2.5 text-sm font-bold text-slate-800">İmzalı onamlar</h3>}
+        columns={consentColumns}
+        rows={consents}
+        rowKey={(consent) => consent.id}
+        loading={loading && consents.length === 0}
+        skeletonRows={2}
+        rowClassName={(consent) => (consent.status === "IPTAL" ? "opacity-70" : "")}
+        emptyText="Henüz imzalı onam yok"
+        mobileCard={(consent) => (
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-slate-800">{consent.title}</p>
+              <p className="text-xs text-slate-500">{formatDate(consent.signedAt)} · {consent.signerName}{consent.status === "IPTAL" ? " · İptal edildi" : ""}</p>
+            </div>
+            {consentActions(consent)}
+          </div>
+        )}
+      />
+
+      <Modal
+        open={Boolean(voidingConsent)}
+        onClose={() => { if (!voiding) setVoidingConsent(null); }}
+        title="İmzalı onamı iptal et"
+        description="İmzalı belge değiştirilmez; iptal sebebiyle arşivde saklanır. Ardından yeni imza alabilirsiniz."
+        size="md"
+        footer={(
+          <>
+            <Button variant="secondary" onClick={() => setVoidingConsent(null)} disabled={voiding}>Vazgeç</Button>
+            <Button variant="danger" onClick={() => void voidConsent()} loading={voiding} disabled={voidReason.trim().length < 3}>Onamı iptal et</Button>
+          </>
+        )}
+      >
+        {voidingConsent && (
+          <div className="space-y-3">
+            <p className="rounded-lg bg-slate-50 px-3 py-2 text-sm font-semibold text-slate-700">{voidingConsent.title}</p>
+            <FormField label="İptal sebebi" htmlFor="consent-void-reason" required hint="En az 3 harf.">
+              <Textarea id="consent-void-reason" rows={3} value={voidReason} onChange={(event) => setVoidReason(event.target.value)} placeholder="Örn. hasta imzayı yanlış attı, yeniden imza alınacak." />
+            </FormField>
+          </div>
+        )}
+      </Modal>
+    </section>
   );
 }

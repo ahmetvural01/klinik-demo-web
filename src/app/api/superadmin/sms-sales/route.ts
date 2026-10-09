@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
+import { turkeyDateKey, turkeyDayRangeUtc } from "@/lib/tz";
 
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("superadmin");
@@ -19,7 +20,7 @@ export async function POST(request: NextRequest) {
   };
 
   if (!body.institutionId || !body.smsPackageId) {
-    return NextResponse.json({ message: "Klinik ve paket secimi zorunlu" }, { status: 400 });
+    return NextResponse.json({ message: "Klinik ve paket seçimi zorunlu" }, { status: 400 });
   }
 
   const quantity = Number(body.quantity ?? 1);
@@ -38,13 +39,14 @@ export async function POST(request: NextRequest) {
   ]);
 
   if (!institution || !smsPackage || !institution.isActive || !smsPackage.isActive) {
-    return NextResponse.json({ message: "Klinik veya paket bulunamadi" }, { status: 404 });
+    return NextResponse.json({ message: "Klinik kapalı ya da paket pasif; satış yapılamaz" }, { status: 404 });
   }
 
   const smsToAdd = smsPackage.smsCount * quantity;
   const totalPrice = Number(smsPackage.price) * quantity;
-  const dueDate = new Date();
-  dueDate.setDate(dueDate.getDate() + dueDays);
+  // Vade, seçilen günün Türkiye saatiyle sonu: klinik vade gününün tamamında
+  // ödeme yapabilir (önceden saatiyle birlikte "şimdi + N gün" yazılıyordu).
+  const dueDate = turkeyDayRangeUtc(turkeyDateKey(new Date(Date.now() + dueDays * 86_400_000))).end;
 
   const invoiceNo = `INV-${Date.now()}-${randomUUID().slice(0, 8).toUpperCase()}`;
 
@@ -120,7 +122,7 @@ export async function POST(request: NextRequest) {
     if (msg.startsWith("INSUFFICIENT_STOCK:")) {
       const current = msg.split(":")[1];
       return NextResponse.json({
-        message: `Platform SMS stogu yetersiz. Gerekli: ${smsToAdd}, Mevcut: ${current}`,
+        message: `Platform SMS stoğu yetersiz. Gerekli: ${smsToAdd.toLocaleString("tr-TR")}, stokta: ${Number(current).toLocaleString("tr-TR")}. Önce SMS Yönetimi › Stok'tan stok ekleyin.`,
       }, { status: 400 });
     }
     if (msg === "SALE_TARGET_INACTIVE") {
@@ -135,11 +137,11 @@ export async function POST(request: NextRequest) {
   await writeAudit(
     auth.user.id,
     "SMS_PACKAGE_SALE",
-    `${institution.name} icin ${smsToAdd} SMS satildi. Paket: ${smsPackage.name}, Adet: ${quantity}, Tutar: ${totalPrice}`
+    `${institution.name} için ${smsToAdd} SMS satıldı. Paket: ${smsPackage.name}, Adet: ${quantity}, Tutar: ${totalPrice.toLocaleString("tr-TR")} TL`
   );
 
   return NextResponse.json({
-    message: `${institution.name} klinigine ${smsToAdd} SMS kredisi tanimlandi`,
+    message: `${institution.name} kliniğine ${smsToAdd} SMS kredisi tanımlandı`,
     platformAvailableBalance: result.updatedWallet.availableBalance,
     institution: {
       id: result.updatedInstitution.id,

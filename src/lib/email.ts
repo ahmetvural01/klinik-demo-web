@@ -72,7 +72,7 @@ export function buildInvoiceReminderHtml(params: {
     ? `<span style="color:#dc2626">⚠ ${Math.abs(daysLeft)} gün gecikmiş</span>`
     : `<span style="color:#d97706">⏱ ${daysLeft} gün kaldı</span>`;
 
-  const dueDateText = dueDate ? new Date(dueDate).toLocaleDateString("tr-TR") : "—";
+  const dueDateText = dueDate ? new Date(dueDate).toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul" }) : "—";
 
   return `
 <!DOCTYPE html>

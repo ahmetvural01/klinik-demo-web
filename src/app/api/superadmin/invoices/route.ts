@@ -3,6 +3,8 @@ import { randomUUID } from "crypto";
 import { invalidateInstitutionCache, requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { syncInstitutionPaymentGate } from "@/lib/billing";
+import { isValidDateKey, turkeyDayRangeUtc } from "@/lib/tz";
+import { deriveInvoiceStatus, summarizeInvoices } from "@/components/superadmin/invoice-status";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth("superadmin");
@@ -14,20 +16,21 @@ export async function GET(request: NextRequest) {
 
   const { searchParams } = new URL(request.url);
   const status = searchParams.get("status") || "";
-  const validStatuses = new Set(["PENDING", "PAID", "OVERDUE", "CANCELLED"]);
+  // "OPEN" = ödenmemiş ve iptal edilmemiş (bekleyen + gecikmiş): iş kuyruğu.
+  const validStatuses = new Set(["OPEN", "PENDING", "PAID", "OVERDUE", "CANCELLED"]);
   if (status && !validStatuses.has(status)) {
     return NextResponse.json({ message: "Geçersiz fatura durumu" }, { status: 400 });
   }
   const institutionId = searchParams.get("institutionId") || "";
   const q = (searchParams.get("q") || "").trim();
-  // "status" filtresi burada UYGULANMAZ — ham DB durumuna göre filtrelemek,
-  // vadesi geçmiş ama henüz DB'de "OVERDUE" işaretlenmemiş (hâlâ "PENDING")
-  // faturaları "Gecikti" filtresinden tamamen gizliyordu (bkz. denetim
-  // raporu). Bunun yerine tüm kayıtlar çekilip aşağıda canlı türetilmiş
-  // duruma göre filtrelenir — summary de aynı canlı duruma göre, filtreden
-  // BAĞIMSIZ tam veri setinden hesaplanır.
+  // Durum filtresi veritabanında DEĞİL, canlı türetilmiş duruma göre uygulanır:
+  // vadesi geçmiş ama veritabanında hâlâ "PENDING" duran fatura "Gecikti"
+  // sayılır (bkz. components/superadmin/invoice-status.ts). Özet, arama
+  // metninden ve durum filtresinden BAĞIMSIZ hesaplanır; iptal edilen fatura
+  // hiçbir borç toplamına girmez.
+  const scopeWhere = institutionId ? { institutionId } : {};
   const where = {
-    ...(institutionId ? { institutionId } : {}),
+    ...scopeWhere,
     ...(q
       ? {
           OR: [
@@ -39,32 +42,34 @@ export async function GET(request: NextRequest) {
       : {}),
   };
 
-  const invoices = await prisma.invoice.findMany({
-    where,
-    include: {
-      institution: { select: { id: true, name: true } },
-    },
-    orderBy: { createdAt: "desc" },
-  });
+  const [invoices, scopeAll] = await Promise.all([
+    prisma.invoice.findMany({
+      where,
+      include: {
+        institution: { select: { id: true, name: true, subscriptionPlan: true, billingCycle: true } },
+        reminders: { select: { sentAt: true, channel: true, status: true }, orderBy: { sentAt: "desc" }, take: 1 },
+        _count: { select: { reminders: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    }),
+    q ? prisma.invoice.findMany({ where: scopeWhere, select: { status: true, amount: true, dueDate: true, paidAt: true } }) : Promise.resolve(null),
+  ]);
 
   const now = new Date();
-  const normalized = invoices.map((inv) => {
-    if (inv.status === "PENDING" && inv.dueDate && inv.dueDate < now) {
-      return { ...inv, status: "OVERDUE" as const };
-    }
-    return inv;
-  });
+  const normalized = invoices.map(({ reminders, _count, ...inv }) => ({
+    ...inv,
+    // Prisma Decimal JSON'da metin olarak gider; ekran sayı bekler.
+    amount: Number(inv.amount),
+    dbStatus: inv.status,
+    status: deriveInvoiceStatus(inv, now),
+    lastReminderAt: reminders[0]?.sentAt ?? null,
+    reminderCount: _count.reminders,
+  }));
 
-  const summary = {
-    total: normalized.length,
-    pending: normalized.filter((i) => i.status === "PENDING").length,
-    overdue: normalized.filter((i) => i.status === "OVERDUE").length,
-    paid: normalized.filter((i) => i.status === "PAID").length,
-    totalAmount: normalized.reduce((s, i) => s + Number(i.amount), 0),
-    unpaidAmount: normalized.filter((i) => i.status !== "PAID").reduce((s, i) => s + Number(i.amount), 0),
-  };
-
-  const filtered = status ? normalized.filter((i) => i.status === status) : normalized;
+  const summary = summarizeInvoices(scopeAll ?? invoices, now);
+  const filtered = status === "OPEN"
+    ? normalized.filter((i) => i.status === "PENDING" || i.status === "OVERDUE")
+    : status ? normalized.filter((i) => i.status === status) : normalized;
 
   return NextResponse.json({ invoices: filtered, summary });
 }
@@ -86,7 +91,12 @@ export async function POST(request: NextRequest) {
   const amount = Number(body.amount);
   const status = body.status ?? "PENDING";
   const validStatuses = new Set(["PENDING", "PAID", "OVERDUE", "CANCELLED"]);
-  const dueDate = body.dueDate ? new Date(body.dueDate) : null;
+  // "YYYY-MM-DD" gelirse vade, o günün Türkiye saatiyle SONU olarak yazılır:
+  // klinik vade gününün tamamında ödeme yapabilir (önceden gün başı UTC
+  // yazıldığı için fatura vade günü sabah 03:00'te "Gecikti" oluyordu).
+  const dueDate = typeof body.dueDate === "string" && isValidDateKey(body.dueDate)
+    ? turkeyDayRangeUtc(body.dueDate).end
+    : body.dueDate ? new Date(body.dueDate) : null;
 
   if (!institutionId) {
     return NextResponse.json({ message: "Klinik seçimi zorunlu" }, { status: 400 });
@@ -143,6 +153,6 @@ export async function POST(request: NextRequest) {
     invalidateInstitutionCache(invoice.institutionId);
   }
 
-  await writeAudit(auth.user.id, "SUPERADMIN_INVOICE_CREATE", `${institution.name} için ${invoice.invoiceNo} oluşturuldu: ₺${Number(invoice.amount).toLocaleString("tr-TR")}`);
+  await writeAudit(auth.user.id, "SUPERADMIN_INVOICE_CREATE", `${institution.name} için ${invoice.invoiceNo} kesildi: ₺${Number(invoice.amount).toLocaleString("tr-TR")}${invoice.dueDate ? `, vade ${invoice.dueDate.toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul" })}` : ""}${description ? ` (${description.slice(0, 80)})` : ""}`);
   return NextResponse.json(invoice);
 }

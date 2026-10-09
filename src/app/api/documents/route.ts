@@ -4,6 +4,7 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { can } from "@/lib/rbac";
 import type { DocumentCategory, Role } from "@prisma/client";
 import { deleteDocumentFile, DocumentUploadError, isAllowedDocumentFile, saveDocumentFile } from "@/lib/document-storage";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 function permissionForCategory(category: string, action: "read" | "write" | "delete") {
   return category === "BELGE" ? `documents:${action}` : `xray:${action}`;
@@ -17,6 +18,10 @@ export async function GET(req: NextRequest) {
   if (!canRead) {
     return NextResponse.json({ error: "Bu işlem için yetkiniz yok." }, { status: 403 });
   }
+  // Hasta dosyasının kendisi yalnız aktif şubedeki hastayı açar; belgeleri de
+  // aynı şube sınırıyla okunur (önceden yalnız kurum kontrol ediliyordu).
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
   const patientId = searchParams.get("patientId");
@@ -28,6 +33,7 @@ export async function GET(req: NextRequest) {
         id: patientId,
         archivedAt: null,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        homeBranchId: branch.branchId,
       },
       select: { id: true },
     });
@@ -41,7 +47,8 @@ export async function GET(req: NextRequest) {
     ];
 
     const documents = await prisma.document.findMany({
-      where: { patientId, category: { in: allowedCategories } },
+      // Arşivlenen (hasta dosyasından kaldırılan) belgeler listede görünmez.
+      where: { patientId, archivedAt: null, category: { in: allowedCategories } },
       orderBy: { createdAt: "desc" },
       include: { uploadedBy: { select: { fullName: true } } },
     });
@@ -59,6 +66,8 @@ export async function POST(req: NextRequest) {
   if (!auth.user.institutionId) {
     return NextResponse.json({ error: "Belge yüklemek için kurum bağlamı zorunlu" }, { status: 403 });
   }
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   try {
     const formData = await req.formData();
@@ -89,6 +98,7 @@ export async function POST(req: NextRequest) {
         id: patientId,
         archivedAt: null,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        homeBranchId: branch.branchId,
       },
       select: { id: true },
     });

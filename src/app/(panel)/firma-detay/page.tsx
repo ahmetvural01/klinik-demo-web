@@ -1,52 +1,80 @@
 "use client";
-import { useState, useEffect, useCallback, useRef, Suspense } from "react";
-import Link from "next/link";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import type { ColumnDef } from "@tanstack/react-table";
+import { Copy, Eye, FlaskConical, Pencil, Plus, ShoppingCart, Trash2, Wallet, XCircle } from "lucide-react";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
-import { ProfessionalDataTable } from "@/components/ui/ProfessionalDataTable";
-import { Button } from "@/components/ui/Button";
+import { formatCurrency, formatPhoneNumber } from "@/lib/format";
+import { stripSystemTags } from "@/lib/format-text";
+import { Button, IconButton } from "@/components/ui/Button";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Tabs, useTabParam } from "@/components/ui/Tabs";
+import { Toolbar, ActiveFilters } from "@/components/ui/Toolbar";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
-import { ModuleIcon } from "@/components/ui/ModuleIcon";
-import { FormField } from "@/components/ui/FormField";
+import { Switch } from "@/components/ui/Switch";
+import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { Input, Select, Textarea } from "@/components/ui/Input";
+import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
+import { DateText, Money } from "@/components/ui/Money";
 import { usePermissions } from "@/components/auth/PermissionProvider";
+import { paymentMethodLabel } from "@/components/firma/FirmaPaymentModal";
+import { FIRMA_KATEGORILERI, telHref } from "@/components/firma/firma-shared";
 import {
-  usePurchaseModals, fmt, fmtDate, formInput,
+  usePurchaseModals, summarizeLines,
   type StockItem, type Purchase,
 } from "../firma/purchase-shared";
 
 type FirmaKontakt = {
-  id: string; ad: string; unvan?: string; email?: string; telefon?: string;
-  rol?: string; isPrimary: boolean; isActive: boolean;
+  id: string; ad: string; unvan?: string | null; email?: string | null; telefon?: string | null;
+  rol?: string | null; isPrimary: boolean; isActive: boolean;
 };
 
 type Firma = {
-  id: string; name: string; phone?: string; iban?: string; ibanName?: string;
-  notes?: string; kategori: string; paymentTerms: string; vendorScore: number;
+  id: string; name: string; phone?: string | null; iban?: string | null; ibanName?: string | null;
+  notes?: string | null; kategori: string; paymentTerms?: string | null;
   isActive: boolean; createdAt: string;
   borc: number; odenen: number; bakiye: number;
-  toplamKontakt: number;
+  kontaktler?: FirmaKontakt[];
 };
 
 type Islem = {
-  id: string; firmaId: string; tarih: string; islemTipi: string;
-  urunHizmet?: string; aciklama?: string; tutar: number;
-  faturaNo?: string; yontem?: string; kdvOrani: number;
+  id: string; firmaId: string; tarih: string; islemTipi: "ALIM" | "HIZMET" | "ODEME";
+  urunHizmet?: string | null; aciklama?: string | null; tutar: number | string;
+  faturaNo?: string | null; yontem?: string | null; kdvOrani: number;
   status: string; cumBakiye?: number;
+  sourceType?: string | null; sourceId?: string | null;
+  purchase?: { id: string; items: { productName: string; quantity: number; unit: string }[] } | null;
 };
 
 type Ekstre = { islemler: Islem[]; topBorc: number; topOdeme: number; netBakiye: number };
 
-const FIRMA_KATEGORILERI: Record<string, string> = {
-  TEDARICI: "Tedarikçi", HIZMET_SAGLAYICI: "Hizmet Sağlayıcı", LAB: "Laboratuvar",
-  KONTRAKTOR: "Yüklenici", BANK: "Banka", DIGER: "Diğer"
+const ISLEM_TIPI: Record<Islem["islemTipi"], { label: string; tone: "neutral" | "success" }> = {
+  ALIM: { label: "Alım", tone: "neutral" },
+  HIZMET: { label: "Hizmet", tone: "neutral" },
+  ODEME: { label: "Ödeme", tone: "success" },
 };
-const ISLEM_TIPI: Record<string, string> = { ALIM: "Alım", HIZMET: "Hizmet", ODEME: "Ödeme" };
-const TIPI_TONE: Record<string, "critical" | "warning" | "success"> = {
-  ALIM: "critical", HIZMET: "warning", ODEME: "success"
-};
+
+const TAB_KEYS = ["hareketler", "siparisler", "yetkililer"] as const;
+type DetailTab = typeof TAB_KEYS[number];
+const PAGE_SIZE = 20;
+
+const EMPTY_KONTAKT = { ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false };
+
+const isLabIslem = (islem: Islem) => islem.sourceType === "LAB_INVOICE" || String(islem.aciklama || "").includes("[SISTEM:LAB_FATURA:");
+/** Ödeme bir satın almayla birlikte girildiyse o satın almanın kimliği. */
+const linkedPurchaseId = (islem: Islem) => islem.purchase?.id || (islem.sourceType === "PURCHASE" || islem.sourceType === "PURCHASE_PAYMENT" ? islem.sourceId || null : null);
+
+function islemDescription(islem: Islem): string {
+  if (islem.purchase?.items?.length) return summarizeLines(islem.purchase.items, 3);
+  const text = stripSystemTags(islem.aciklama) || stripSystemTags(islem.urunHizmet);
+  if (islem.islemTipi === "ODEME") {
+    const method = paymentMethodLabel(islem.yontem);
+    return [method, text && text !== "Satın alma ödemesi" ? text : islem.sourceType === "PURCHASE_PAYMENT" ? "Satın almayla birlikte ödendi" : ""].filter(Boolean).join(" · ");
+  }
+  return text || stripSystemTags(islem.urunHizmet) || "";
+}
 
 function FirmaDetayContent() {
   const searchParams = useSearchParams();
@@ -54,652 +82,682 @@ function FirmaDetayContent() {
   const { can } = usePermissions();
   const canWriteFinance = can("finance:write");
   const canWriteLab = can("lab:write");
+  const canPurchase = canWriteFinance && can("stock:write");
 
+  const [tab, setTab] = useTabParam<DetailTab>(TAB_KEYS, "hareketler");
   const [firma, setFirma] = useState<Firma | null>(null);
+  const [firmaLoading, setFirmaLoading] = useState(true);
+  const [firmaError, setFirmaError] = useState<string | null>(null);
   const [ekstre, setEkstre] = useState<Ekstre | null>(null);
-  const [kontaktler, setKontaktler] = useState<FirmaKontakt[]>([]);
+  const [ekstreError, setEkstreError] = useState<string | null>(null);
+  const [orders, setOrders] = useState<Purchase[]>([]);
+  const [ordersLoaded, setOrdersLoaded] = useState(false);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
   const [stockItems, setStockItems] = useState<StockItem[]>([]);
-  const [firmaPurchases, setFirmaPurchases] = useState<Purchase[]>([]);
   const [ekstreTipi, setEkstreTipi] = useState("");
   const [ekstreFrom, setEkstreFrom] = useState("");
   const [ekstreTo, setEkstreTo] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
   const firmaLoadRef = useRef(0);
   const ekstreLoadRef = useRef(0);
-  const kontaktLoadRef = useRef(0);
-  const stockLoadRef = useRef(0);
-  const purchaseLoadRef = useRef(0);
-
-  const showToast = useCallback((type: "success" | "error" | "info", text: string) => {
-    showToastSafe({ message: text, type });
-  }, []);
+  const orderLoadRef = useRef(0);
 
   const loadFirma = useCallback(async () => {
-    if (!id) { setLoading(false); return; }
+    if (!id) { setFirmaLoading(false); setFirmaError("Firma seçilmedi."); return; }
     const sequence = ++firmaLoadRef.current;
-    setLoadError(null);
+    setFirmaError(null);
     try {
-      const r = await fetch("/api/firma", { cache: "no-store" });
-      const d = await r.json();
-      if (!r.ok) throw new Error();
+      // Tek firma uç noktası pasif firmaları da döndürür; pasife alınan firma
+      // "bulunamadı" olmaz, "Aktif et" düğmesi ve kalan borcu görünür kalır.
+      const response = await fetch(`/api/firma/${encodeURIComponent(id)}`, { cache: "no-store" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(response.status === 404 ? "Firma bulunamadı. Silinmiş ya da başka şubeye ait olabilir." : body?.error || "Firma yüklenemedi.");
       if (sequence !== firmaLoadRef.current) return;
-      const rows: Firma[] = Array.isArray(d) ? d : [];
-      const found = rows.find(f => f.id === id) || null;
-      setFirma(found);
-      if (!found) setLoadError("Firma bulunamadı");
-    } catch {
-      if (sequence === firmaLoadRef.current) setLoadError("Firma yüklenemedi");
+      setFirma(body as Firma);
+    } catch (error) {
+      if (sequence === firmaLoadRef.current) setFirmaError(error instanceof Error ? error.message : "Firma yüklenemedi.");
     } finally {
-      if (sequence === firmaLoadRef.current) setLoading(false);
+      if (sequence === firmaLoadRef.current) setFirmaLoading(false);
     }
   }, [id]);
 
   const loadEkstre = useCallback(async () => {
     if (!id) return;
     const sequence = ++ekstreLoadRef.current;
+    setEkstreError(null);
     try {
-      const r = await fetch(`/api/firma/${id}/islemler`, { cache: "no-store" });
-      const d = await r.json();
-      if (!r.ok) throw new Error(d?.message);
+      const response = await fetch(`/api/firma/${encodeURIComponent(id)}/islemler`, { cache: "no-store" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.message || body?.error || "Hesap hareketleri yüklenemedi.");
       if (sequence !== ekstreLoadRef.current) return;
-      setEkstre(d);
-    } catch {
-      if (sequence === ekstreLoadRef.current) showToast("error", "Firma ekstresi güncellenemedi; son başarılı kayıtlar korunuyor.");
+      setEkstre(body as Ekstre);
+    } catch (error) {
+      if (sequence === ekstreLoadRef.current) setEkstreError(error instanceof Error ? error.message : "Hesap hareketleri yüklenemedi.");
     }
-  }, [id, showToast]);
+  }, [id]);
 
-  const loadKontaktler = useCallback(async () => {
+  const loadOrders = useCallback(async () => {
     if (!id) return;
-    const sequence = ++kontaktLoadRef.current;
+    const sequence = ++orderLoadRef.current;
+    setOrdersError(null);
     try {
-      const r = await fetch(`/api/firma/${id}/kontaktler`, { cache: "no-store" });
-      const d = await r.json().catch(() => null);
-      if (!r.ok) throw new Error();
-      if (sequence !== kontaktLoadRef.current) return;
-      setKontaktler(Array.isArray(d) ? d : []);
-    } catch { if (sequence === kontaktLoadRef.current) showToast("error", "Firma iletişim bilgileri güncellenemedi."); }
-  }, [id, showToast]);
+      const response = await fetch(`/api/purchases?firmaId=${encodeURIComponent(id)}&receiptStatus=SIPARIS_VERILDI`, { cache: "no-store" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.message || "Siparişler yüklenemedi.");
+      if (sequence !== orderLoadRef.current) return;
+      setOrders(Array.isArray(body) ? body.filter((row: Purchase) => row.receiptStatus === "SIPARIS_VERILDI") : []);
+      setOrdersLoaded(true);
+    } catch (error) {
+      if (sequence === orderLoadRef.current) setOrdersError(error instanceof Error ? error.message : "Siparişler yüklenemedi.");
+    }
+  }, [id]);
 
   const loadStockItems = useCallback(async () => {
-    const sequence = ++stockLoadRef.current;
     try {
-      const r = await fetch("/api/stock", { cache: "no-store" });
-      const d = await r.json().catch(() => null);
-      if (!r.ok) throw new Error();
-      if (sequence !== stockLoadRef.current) return;
-      const rows = Array.isArray(d) ? d : [];
-      setStockItems(rows);
-    } catch { if (sequence === stockLoadRef.current) showToast("error", "Stok seçenekleri güncellenemedi."); }
-  }, [showToast]);
-
-  const loadFirmaPurchases = useCallback(async () => {
-    if (!id) return;
-    const sequence = ++purchaseLoadRef.current;
-    try {
-      const r = await fetch(`/api/purchases?firmaId=${id}`, { cache: "no-store" });
-      const d = await r.json().catch(() => null);
-      if (!r.ok) throw new Error();
-      if (sequence !== purchaseLoadRef.current) return;
-      setFirmaPurchases(Array.isArray(d) ? d : []);
-    } catch { if (sequence === purchaseLoadRef.current) showToast("error", "Satın alma geçmişi güncellenemedi."); }
-  }, [id, showToast]);
+      const response = await fetch("/api/stock", { cache: "no-store" });
+      const body = await response.json().catch(() => null);
+      if (response.ok && Array.isArray(body)) setStockItems(body);
+    } catch {
+      // Yalnız satın alma formundaki ürün önerileri için.
+    }
+  }, []);
 
   const refreshAll = useCallback(() => {
-    void loadFirma(); void loadEkstre(); void loadKontaktler(); void loadStockItems(); void loadFirmaPurchases();
-  }, [loadFirma, loadEkstre, loadKontaktler, loadStockItems, loadFirmaPurchases]);
+    void loadFirma(); void loadEkstre(); void loadOrders(); void loadStockItems();
+  }, [loadFirma, loadEkstre, loadOrders, loadStockItems]);
 
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const onRealtime = () => { if (timer) clearTimeout(timer); timer = setTimeout(refreshAll, 150); };
-    window.addEventListener("ks:realtime-sync", onRealtime);
-    return () => { if (timer) clearTimeout(timer); window.removeEventListener("ks:realtime-sync", onRealtime); };
+    const refresh = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(refreshAll, 300);
+    };
+    window.addEventListener("ks:realtime-sync", refresh);
+    window.addEventListener("focus", refresh);
+    return () => { if (timer) clearTimeout(timer); window.removeEventListener("ks:realtime-sync", refresh); window.removeEventListener("focus", refresh); };
   }, [refreshAll]);
 
+  useEffect(() => { setPage(1); }, [ekstreTipi, ekstreFrom, ekstreTo]);
+
   const isLabFirma = firma?.kategori === "LAB";
+  const kontaktler = useMemo(() => firma?.kontaktler || [], [firma]);
 
   const purchaseManager = usePurchaseModals({
     stockItems,
-    firmas: firma && !isLabFirma ? [{ id: firma.id, name: firma.name }] : [],
-    showToast,
+    firmas: firma && !isLabFirma && firma.isActive ? [{ id: firma.id, name: firma.name, bakiye: firma.bakiye }] : [],
     currentFirmaId: firma?.id,
-    onChanged: async () => { await refreshAll(); },
-    canWrite: canWriteFinance,
+    onChanged: async () => { refreshAll(); },
+    canWrite: canPurchase,
   });
 
-  // ── Firma Düzenle modal ───────────────────────────────────────────────────
+  // ── Firma düzenle / pasife al ───────────────────────────────────────────
   const [showEditFirma, setShowEditFirma] = useState(false);
-  const [editForm, setEditForm] = useState({
-    name: "", phone: "", iban: "", ibanName: "", notes: "", kategori: "TEDARICI", paymentTerms: "NET_30"
-  });
-  const editFirmaSnapshotRef = useRef("");
+  const [editForm, setEditForm] = useState({ name: "", phone: "", iban: "", ibanName: "", notes: "", kategori: "TEDARICI" });
+  const [editError, setEditError] = useState<string | null>(null);
+  const [editNameError, setEditNameError] = useState<string | undefined>();
+  const [savingFirma, setSavingFirma] = useState(false);
+
   const openEditFirma = () => {
     if (!firma) return;
-    const next = {
+    setEditForm({
       name: firma.name, phone: firma.phone || "", iban: firma.iban || "", ibanName: firma.ibanName || "",
-      notes: firma.notes || "", kategori: firma.kategori, paymentTerms: firma.paymentTerms,
-    };
-    setEditForm(next);
-    editFirmaSnapshotRef.current = JSON.stringify(next);
+      notes: firma.notes || "", kategori: firma.kategori,
+    });
+    setEditError(null);
+    setEditNameError(undefined);
     setShowEditFirma(true);
   };
-  const editFirmaDirty = showEditFirma && JSON.stringify(editForm) !== editFirmaSnapshotRef.current;
-  const requestCloseEditFirma = () => {
-    setShowEditFirma(false);
-    setEditForm({ name: "", phone: "", iban: "", ibanName: "", notes: "", kategori: "TEDARICI", paymentTerms: "NET_30" });
-  };
+
   const handleEditFirma = async () => {
-    if (!firma) return;
+    if (!firma || savingFirma) return;
+    if (editForm.name.trim().length < 2) { setEditNameError("Firma adını yazın (en az 2 harf)."); return; }
+    setSavingFirma(true);
+    setEditError(null);
     try {
-      const r = await fetch(`/api/firma/${firma.id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editForm),
+      const response = await fetch(`/api/firma/${firma.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...editForm, name: editForm.name.trim(), iban: editForm.iban.replace(/\s+/g, " ").trim() }),
       });
-      if (r.ok) { setShowEditFirma(false); showToast("success", "Firma güncellendi"); await loadFirma(); }
-      else { const e = await r.json().catch(() => ({})); showToast("error", e.error || "Hata oluştu"); }
-    } catch {
-      showToast("error", "Bağlantı hatası — firma güncellenemedi. Lütfen tekrar deneyin.");
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "Firma güncellenemedi.");
+      setShowEditFirma(false);
+      showToastSafe({ title: "Firma güncellendi", message: editForm.name.trim(), type: "success", icon: "firma" });
+      await loadFirma();
+    } catch (error) {
+      setEditError(error instanceof Error ? error.message : "Bağlantı kurulamadı. Bilgiler korundu, tekrar deneyin.");
+    } finally {
+      setSavingFirma(false);
     }
   };
 
   const toggleFirmaActive = async () => {
     if (!firma) return;
     const nextActive = !firma.isActive;
-    const message = nextActive ? "Firma tekrar aktif edilsin mi?" : "Firma pasife alınsın mı? Pasif firmalar yeni alım/hizmet kaydında listelenmez.";
-    if (!(await confirmDialog({ message, danger: !nextActive, confirmText: nextActive ? "Aktif Et" : "Pasife Al" }))) return;
+    const confirmed = await confirmDialog({
+      title: nextActive ? "Firma aktif edilsin mi?" : "Firma pasife alınsın mı?",
+      message: nextActive
+        ? "Firma yeniden satın alma ve ödeme listelerinde görünür."
+        : firma.bakiye > 0
+          ? `Bu firmaya ${formatCurrency(firma.bakiye)} kalan borç var. Pasif firma yeni satın almada listelenmez; borcu Satın Alma ekranında "Pasif firmalar" filtresinde ve bu sayfada görünmeye devam eder.`
+          : "Pasif firma yeni satın almada listelenmez. Geçmiş kayıtları saklanır; istediğinizde yeniden aktif edebilirsiniz.",
+      danger: !nextActive,
+      confirmText: nextActive ? "Aktif et" : "Pasife al",
+      cancelText: "Vazgeç",
+    });
+    if (!confirmed) return;
     try {
-      const r = await fetch(`/api/firma/${firma.id}`, {
+      const response = await fetch(`/api/firma/${firma.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: nextActive }),
       });
-      if (r.ok) { showToast("success", nextActive ? "Firma aktif edildi" : "Firma pasife alındı"); await loadFirma(); }
-      else { const e = await r.json().catch(() => ({})); showToast("error", e.error || "Hata oluştu"); }
-    } catch {
-      showToast("error", "Bağlantı hatası — firma durumu değiştirilemedi. Lütfen tekrar deneyin.");
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "Firma durumu değiştirilemedi.");
+      setShowEditFirma(false);
+      showToastSafe({ title: nextActive ? "Firma aktif edildi" : "Firma pasife alındı", message: firma.name, type: "success" });
+      await loadFirma();
+    } catch (error) {
+      showToastSafe({ title: "Değiştirilemedi", message: error instanceof Error ? error.message : "Bağlantı kurulamadı.", type: "error" });
     }
   };
 
-  const cancelIslem = async (iid: string) => {
+  const cancelPayment = async (islem: Islem) => {
     if (!firma || !canWriteFinance) return;
-    if (!(await confirmDialog({ message: "Bu işlemi iptal etmek istediğinizden emin misiniz?", danger: true, confirmText: "İptal Et" }))) return;
+    const confirmed = await confirmDialog({
+      title: "Ödeme iptal edilsin mi?",
+      message: `${formatCurrency(Number(islem.tutar))} tutarındaki ödeme kaydı iptal edilir ve Muhasebe'deki “Firma Ödemesi” gideri de geri alınır. Firmanın kalan borcu bu kadar artar.`,
+      danger: true,
+      confirmText: "Ödemeyi iptal et",
+      cancelText: "Vazgeç",
+    });
+    if (!confirmed) return;
     try {
-      const r = await fetch(`/api/firma/${firma.id}/islemler/${iid}`, {
+      const response = await fetch(`/api/firma/${firma.id}/islemler/${islem.id}`, {
         method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "IPTAL" }),
       });
-      const data = await r.json().catch(() => ({}));
-      showToast(r.ok ? "success" : "error", data.message || data.error || (r.ok ? "İşlem iptal edildi" : "İşlem iptal edilemedi"));
-      await Promise.all([loadEkstre(), loadFirma(), loadStockItems()]);
-    } catch {
-      showToast("error", "Bağlantı hatası — işlem iptal edilemedi. Lütfen tekrar deneyin.");
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || "Ödeme iptal edilemedi.");
+      showToastSafe({ title: "Ödeme iptal edildi", message: data.message || "Kalan borç güncellendi.", type: "success" });
+      refreshAll();
+    } catch (error) {
+      showToastSafe({ title: "İptal edilemedi", message: error instanceof Error ? error.message : "Bağlantı kurulamadı.", type: "error" });
     }
   };
 
-  // ── Kontakt Ekle modal ────────────────────────────────────────────────────
-  const [showAddKontakt, setShowAddKontakt] = useState(false);
-  const [isSubmittingKontakt, setIsSubmittingKontakt] = useState(false);
-  const [kontaktForm, setKontaktForm] = useState({ ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false });
-  const kontaktFormDirty = Boolean(
-    kontaktForm.ad.trim() || kontaktForm.unvan.trim() || kontaktForm.email.trim() || kontaktForm.telefon.trim() || kontaktForm.rol.trim() || kontaktForm.isPrimary
-  );
-  const requestCloseAddKontakt = () => {
-    setShowAddKontakt(false);
-    setKontaktForm({ ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false });
+  // ── Yetkili kişiler ─────────────────────────────────────────────────────
+  const [kontaktModal, setKontaktModal] = useState<{ mode: "add" } | { mode: "edit"; kontakt: FirmaKontakt } | null>(null);
+  const [kontaktForm, setKontaktForm] = useState(EMPTY_KONTAKT);
+  const [kontaktError, setKontaktError] = useState<string | null>(null);
+  const [kontaktNameError, setKontaktNameError] = useState<string | undefined>();
+  const [savingKontakt, setSavingKontakt] = useState(false);
+
+  const openKontakt = (kontakt?: FirmaKontakt) => {
+    setKontaktForm(kontakt
+      ? { ad: kontakt.ad, unvan: kontakt.unvan || "", email: kontakt.email || "", telefon: kontakt.telefon || "", rol: kontakt.rol || "", isPrimary: kontakt.isPrimary }
+      : { ...EMPTY_KONTAKT, isPrimary: kontaktler.length === 0 });
+    setKontaktError(null);
+    setKontaktNameError(undefined);
+    setKontaktModal(kontakt ? { mode: "edit", kontakt } : { mode: "add" });
   };
-  const handleAddKontakt = async () => {
-    if (!firma || !kontaktForm.ad.trim()) { showToast("error", "Kontakt adı zorunlu"); return; }
-    if (isSubmittingKontakt) return;
-    setIsSubmittingKontakt(true);
+
+  const saveKontakt = async () => {
+    if (!firma || !kontaktModal || savingKontakt) return;
+    if (!kontaktForm.ad.trim()) { setKontaktNameError("Ad soyad yazın."); return; }
+    setSavingKontakt(true);
+    setKontaktError(null);
     try {
-      const r = await fetch(`/api/firma/${firma.id}/kontaktler`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(kontaktForm),
-      });
-      if (r.ok) {
-        setShowAddKontakt(false);
-        setKontaktForm({ ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false });
-        showToast("success", "Kontakt eklendi");
-        await loadKontaktler();
-      } else {
-        const e = await r.json().catch(() => ({}));
-        showToast("error", e.error || "Kontakt eklenemedi");
-      }
-    } catch {
-      showToast("error", "Bağlantı hatası — kontakt eklenemedi. Lütfen tekrar deneyin.");
+      const response = await fetch(
+        kontaktModal.mode === "edit" ? `/api/firma/${firma.id}/kontaktler/${kontaktModal.kontakt.id}` : `/api/firma/${firma.id}/kontaktler`,
+        {
+          method: kontaktModal.mode === "edit" ? "PATCH" : "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...kontaktForm, ad: kontaktForm.ad.trim() }),
+        },
+      );
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "Yetkili kişi kaydedilemedi.");
+      showToastSafe({ title: kontaktModal.mode === "edit" ? "Yetkili kişi güncellendi" : "Yetkili kişi eklendi", message: kontaktForm.ad.trim(), type: "success" });
+      setKontaktModal(null);
+      await loadFirma();
+    } catch (error) {
+      setKontaktError(error instanceof Error ? error.message : "Bağlantı kurulamadı. Bilgiler korundu, tekrar deneyin.");
     } finally {
-      setIsSubmittingKontakt(false);
+      setSavingKontakt(false);
     }
   };
 
-  const [editingKontakt, setEditingKontakt] = useState<FirmaKontakt | null>(null);
-  const [editKontaktForm, setEditKontaktForm] = useState({ ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false });
-  const [isSavingKontakt, setIsSavingKontakt] = useState(false);
-
-  const editKontaktSnapshotRef = useRef("");
-  const openEditKontakt = (k: FirmaKontakt) => {
-    setEditingKontakt(k);
-    const next = { ad: k.ad, unvan: k.unvan || "", email: k.email || "", telefon: k.telefon || "", rol: k.rol || "", isPrimary: k.isPrimary };
-    setEditKontaktForm(next);
-    editKontaktSnapshotRef.current = JSON.stringify(next);
-  };
-  const editKontaktDirty = Boolean(editingKontakt) && JSON.stringify(editKontaktForm) !== editKontaktSnapshotRef.current;
-  const requestCloseEditKontakt = () => {
-    setEditingKontakt(null);
-    setEditKontaktForm({ ad: "", unvan: "", email: "", telefon: "", rol: "", isPrimary: false });
-  };
-
-  const handleSaveKontakt = async () => {
-    if (!firma || !editingKontakt || !editKontaktForm.ad.trim()) { showToast("error", "Kontakt adı zorunlu"); return; }
-    if (isSavingKontakt) return;
-    setIsSavingKontakt(true);
-    try {
-      const r = await fetch(`/api/firma/${firma.id}/kontaktler/${editingKontakt.id}`, {
-        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(editKontaktForm),
-      });
-      if (r.ok) {
-        setEditingKontakt(null);
-        showToast("success", "Kontakt güncellendi");
-        await loadKontaktler();
-      } else {
-        const e = await r.json().catch(() => ({}));
-        showToast("error", e.error || "Kontakt güncellenemedi");
-      }
-    } catch {
-      showToast("error", "Bağlantı hatası — kontakt güncellenemedi. Lütfen tekrar deneyin.");
-    } finally {
-      setIsSavingKontakt(false);
-    }
-  };
-
-  const handleDeleteKontakt = async (k: FirmaKontakt) => {
+  const deleteKontakt = async (kontakt: FirmaKontakt) => {
     if (!firma) return;
-    if (!(await confirmDialog({ message: `${k.ad} kontaktı silinsin mi?`, danger: true, confirmText: "Sil" }))) return;
+    const confirmed = await confirmDialog({ title: "Yetkili kişi silinsin mi?", message: `${kontakt.ad} bu firmanın kişi listesinden kaldırılır.`, danger: true, confirmText: "Sil", cancelText: "Vazgeç" });
+    if (!confirmed) return;
     try {
-      const r = await fetch(`/api/firma/${firma.id}/kontaktler/${k.id}`, { method: "DELETE" });
-      if (r.ok) {
-        showToast("success", "Kontakt silindi");
-        await loadKontaktler();
-      } else {
-        showToast("error", "Kontakt silinemedi");
-      }
-    } catch {
-      showToast("error", "Bağlantı hatası — kontakt silinemedi. Lütfen tekrar deneyin.");
+      const response = await fetch(`/api/firma/${firma.id}/kontaktler/${kontakt.id}`, { method: "DELETE" });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "Yetkili kişi silinemedi.");
+      showToastSafe({ title: "Yetkili kişi silindi", message: kontakt.ad, type: "success" });
+      await loadFirma();
+    } catch (error) {
+      showToastSafe({ title: "Silinemedi", message: error instanceof Error ? error.message : "Bağlantı kurulamadı.", type: "error" });
     }
   };
 
-  const purchaseByIslemId = new Map(firmaPurchases.map(p => [p.firmaIslemId, p]));
+  const copyIban = async () => {
+    if (!firma?.iban) return;
+    try {
+      await navigator.clipboard.writeText(firma.iban.replace(/\s+/g, ""));
+      showToastSafe({ title: "IBAN kopyalandı", message: firma.iban, type: "success" });
+    } catch {
+      showToastSafe({ title: "Kopyalanamadı", message: "IBAN'ı seçip elle kopyalayın.", type: "error" });
+    }
+  };
 
-  const ekstreColumns: ColumnDef<Islem, unknown>[] = [
-    { accessorKey: "tarih", header: "Tarih", cell: ({ row }) => <span className="whitespace-nowrap">{fmtDate(row.original.tarih)}</span> },
+  // ── Hesap hareketleri (yeniden eskiye) ──────────────────────────────────
+  const filtersActive = Boolean(ekstreTipi || ekstreFrom || ekstreTo);
+  const islemler = useMemo(() => {
+    const rows = (ekstre?.islemler || []).filter((islem) => {
+      if (ekstreTipi && islem.islemTipi !== ekstreTipi) return false;
+      const day = islem.tarih.substring(0, 10);
+      if (ekstreFrom && day < ekstreFrom) return false;
+      if (ekstreTo && day > ekstreTo) return false;
+      return true;
+    });
+    return [...rows].reverse();
+  }, [ekstre, ekstreTipi, ekstreFrom, ekstreTo]);
+  const pageCount = Math.max(1, Math.ceil(islemler.length / PAGE_SIZE));
+  const pageRows = islemler.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  const islemActions = (islem: Islem) => {
+    const purchaseId = islem.islemTipi === "ALIM" ? linkedPurchaseId(islem) : null;
+    if (purchaseId) {
+      return <IconButton icon={Eye} title="Satın alma detayını aç" size="sm" onClick={() => void purchaseManager.openPurchaseDetail(purchaseId)} />;
+    }
+    if (isLabIslem(islem)) {
+      return <IconButton icon={FlaskConical} title="Laboratuvar işlerine git (iptal oradan yapılır)" size="sm" href="/lab" />;
+    }
+    if (islem.islemTipi === "ODEME" && canWriteFinance) {
+      return <IconButton icon={XCircle} title="Ödemeyi iptal et" tone="danger" size="sm" onClick={() => void cancelPayment(islem)} />;
+    }
+    return null;
+  };
+
+  const islemColumns: ListTableColumn<Islem>[] = [
+    { key: "tarih", header: "Tarih", render: (islem) => <DateText value={islem.tarih} className="whitespace-nowrap text-slate-600" /> },
+    { key: "tip", header: "İşlem", render: (islem) => <Badge tone={ISLEM_TIPI[islem.islemTipi]?.tone || "neutral"}>{ISLEM_TIPI[islem.islemTipi]?.label || islem.islemTipi}</Badge> },
     {
-      accessorKey: "islemTipi", header: "Tip",
-      cell: ({ row }) => <Badge tone={TIPI_TONE[row.original.islemTipi]}>{ISLEM_TIPI[row.original.islemTipi]}</Badge>,
-    },
-    {
-      id: "detail", accessorFn: (item) => item.urunHizmet || item.aciklama || "", header: "Ürün/Hizmet",
-      cell: ({ row }) => <span className="block max-w-[180px] truncate text-slate-600">{row.original.urunHizmet || row.original.aciklama || "-"}</span>,
-    },
-    { accessorKey: "faturaNo", header: "Fatura", cell: ({ row }) => <span className="text-slate-400">{row.original.faturaNo || "-"}</span> },
-    {
-      accessorKey: "tutar", header: "Tutar",
-      cell: ({ row }) => (
-        <span className={`block text-right font-semibold ${row.original.islemTipi === "ODEME" ? "text-emerald-700" : "text-red-700"}`}>
-          {row.original.islemTipi === "ODEME" ? "-" : ""}{fmt(Number(row.original.tutar))}
-        </span>
-      ),
-    },
-    { accessorKey: "cumBakiye", header: "Bakiye", cell: ({ row }) => <span className="block text-right font-semibold text-slate-600">{fmt(row.original.cumBakiye || 0)}</span> },
-    {
-      id: "actions", header: "", enableSorting: false,
-      cell: ({ row }) => {
-        const purchase = purchaseByIslemId.get(row.original.id);
-        if (purchase) {
-          return (
-            <div className="flex justify-end gap-1">
-              <Button size="sm" variant="secondary" onClick={() => purchaseManager.openPurchaseDetail(purchase.id)}>Detay</Button>
-            </div>
-          );
-        }
-        return canWriteFinance
-          ? <Button size="sm" variant="danger" onClick={() => cancelIslem(row.original.id)}>İptal</Button>
-          : null;
+      key: "aciklama",
+      header: "Açıklama",
+      cellClassName: "max-w-[300px]",
+      render: (islem) => {
+        const text = islemDescription(islem);
+        return text ? <span className="block truncate text-slate-700" title={text}>{text}</span> : <EmptyValue />;
       },
+    },
+    { key: "fatura", header: "Fatura no", render: (islem) => islem.faturaNo ? <span className="text-slate-600">{islem.faturaNo}</span> : <EmptyValue /> },
+    {
+      key: "tutar",
+      header: "Tutar",
+      align: "right",
+      render: (islem) => islem.islemTipi === "ODEME"
+        ? <span className="whitespace-nowrap font-semibold tabular-nums text-emerald-700">−{formatCurrency(Number(islem.tutar))}</span>
+        : <Money value={Number(islem.tutar)} className="font-semibold text-slate-900" />,
+    },
+    ...(!filtersActive ? [{
+      key: "bakiye",
+      header: "Kalan",
+      align: "right" as const,
+      render: (islem: Islem) => <Money value={islem.cumBakiye ?? 0} className="text-slate-500" />,
+    }] : []),
+    { key: "actions", header: "", align: "right", render: islemActions },
+  ];
+
+  const orderColumns: ListTableColumn<Purchase>[] = [
+    { key: "tarih", header: "Sipariş tarihi", render: (order) => <DateText value={order.tarih} className="whitespace-nowrap" /> },
+    { key: "urunler", header: "Ürünler", cellClassName: "max-w-[340px]", render: (order) => <span className="block truncate text-slate-700">{summarizeLines(order.lines, 3) || `${order._count?.items ?? 0} kalem`}</span> },
+    { key: "fatura", header: "Fatura no", render: (order) => order.faturaNo || <EmptyValue /> },
+    { key: "tutar", header: "Tutar", align: "right", render: (order) => <Money value={order.total ?? null} className="text-slate-700" /> },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      render: (order) => canPurchase ? <Button size="sm" variant="secondary" onClick={() => void purchaseManager.openReceivePurchase(order.id)}>Teslim al</Button> : null,
     },
   ];
 
-  if (loading) return (
-    <section className="space-y-4 rounded-xl border border-slate-100 bg-white p-6 shadow-sm">
-      <div className="h-6 w-40 animate-pulse rounded bg-slate-100" />
-      <div className="grid gap-3 md:grid-cols-4">
-        <div className="h-20 animate-pulse rounded-lg bg-slate-50" />
-        <div className="h-20 animate-pulse rounded-lg bg-slate-50" />
-        <div className="h-20 animate-pulse rounded-lg bg-slate-50" />
-        <div className="h-20 animate-pulse rounded-lg bg-slate-50" />
-      </div>
-      <div className="h-56 animate-pulse rounded-lg bg-slate-50" />
-    </section>
-  );
+  const kontaktColumns: ListTableColumn<FirmaKontakt>[] = [
+    {
+      key: "ad",
+      header: "Ad soyad",
+      render: (kontakt) => (
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-slate-900">{kontakt.ad}</span>
+            {kontakt.isPrimary && <Badge tone="info">Ana kişi</Badge>}
+          </div>
+          {(kontakt.unvan || kontakt.rol) && <p className="text-xs text-slate-500">{[kontakt.unvan, kontakt.rol].filter(Boolean).join(" · ")}</p>}
+        </div>
+      ),
+    },
+    { key: "telefon", header: "Telefon", render: (kontakt) => kontakt.telefon ? <a href={telHref(kontakt.telefon)} className="whitespace-nowrap text-slate-700 hover:text-primary">{formatPhoneNumber(kontakt.telefon)}</a> : <EmptyValue /> },
+    { key: "email", header: "E-posta", render: (kontakt) => kontakt.email ? <a href={`mailto:${kontakt.email}`} className="text-slate-700 hover:text-primary">{kontakt.email}</a> : <EmptyValue /> },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      render: (kontakt) => canWriteFinance ? (
+        <div className="flex justify-end gap-1.5">
+          <IconButton icon={Pencil} title={`${kontakt.ad} bilgilerini düzenle`} size="sm" onClick={() => openKontakt(kontakt)} />
+          <IconButton icon={Trash2} title={`${kontakt.ad} kişisini sil`} tone="danger" size="sm" onClick={() => void deleteKontakt(kontakt)} />
+        </div>
+      ) : null,
+    },
+  ];
 
-  if (!firma) return (
-    <section className="rounded-xl border border-slate-100 bg-white p-6 shadow-sm">
-      <p>{loadError || "Firma bulunamadı"}. <Link href="/firma" className="text-primary underline">Geri Dön</Link></p>
-    </section>
-  );
+  if (firmaLoading && !firma) {
+    return (
+      <div className="space-y-3 pt-4" aria-busy="true" aria-label="Yükleniyor">
+        <div className="h-12 w-72 animate-pulse rounded-lg bg-slate-100" />
+        <div className="h-10 animate-pulse rounded-lg bg-slate-100" />
+        <div className="h-64 animate-pulse rounded-lg bg-slate-100" />
+      </div>
+    );
+  }
+
+  if (!firma) {
+    return (
+      <div className="space-y-3">
+        <PageHeader icon="firma" title="Firma" back={{ href: "/firma", label: "Satın Alma" }} />
+        <LoadErrorState message={firmaError || "Firma bulunamadı."} onRetry={id ? () => { setFirmaLoading(true); void loadFirma(); } : undefined} />
+      </div>
+    );
+  }
+
+  const ekstreFilters = [
+    ...(ekstreTipi ? [{ key: "tip", label: `İşlem: ${ISLEM_TIPI[ekstreTipi as Islem["islemTipi"]]?.label}`, onRemove: () => setEkstreTipi("") }] : []),
+    ...(ekstreFrom ? [{ key: "from", label: `Başlangıç: ${ekstreFrom.split("-").reverse().join(".")}`, onRemove: () => setEkstreFrom("") }] : []),
+    ...(ekstreTo ? [{ key: "to", label: `Bitiş: ${ekstreTo.split("-").reverse().join(".")}`, onRemove: () => setEkstreTo("") }] : []),
+  ];
+
+  const newPurchaseButton = (primary: boolean) => {
+    if (!firma.isActive) return null;
+    if (isLabFirma) {
+      return canWriteLab ? <Button variant={primary ? "primary" : "secondary"} icon={FlaskConical} href={`/lab?yeni=1&labName=${encodeURIComponent(firma.name)}`}>Yeni Lab İşi</Button> : null;
+    }
+    return canPurchase ? <Button variant={primary ? "primary" : "secondary"} icon={ShoppingCart} onClick={() => purchaseManager.openAddPurchase(firma.id)}>Yeni Satın Alma</Button> : null;
+  };
+  const canPay = canWriteFinance && firma.bakiye > 0;
 
   return (
-    <section className="space-y-4">
-      {/* Header */}
-      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 flex-1 items-start gap-3">
-          <ModuleIcon module="firma" size="lg" />
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-lg font-black text-slate-900">{firma.name}</h1>
-              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-bold text-slate-600">{FIRMA_KATEGORILERI[firma.kategori] || firma.kategori}</span>
-              {firma.isActive ? (
-                <Badge tone="success">Aktif</Badge>
-              ) : (
-                <Badge tone="critical">Pasif</Badge>
-              )}
-            </div>
-            <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
-              {firma.phone && <span>Tel: {firma.phone}</span>}
-              {firma.iban && <span>IBAN: {firma.iban}{firma.ibanName ? ` (${firma.ibanName})` : ""}</span>}
-            </div>
-            {firma.notes && <p className="mt-2 text-sm italic text-slate-500">{firma.notes}</p>}
-          </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button variant="secondary" href="/firma">Tedarikçi Listesi</Button>
-            {canWriteFinance && <Button variant="secondary" onClick={openEditFirma}>Düzenle</Button>}
-            {canWriteFinance && <Button variant={firma.isActive ? "secondary" : "primary"} onClick={() => void toggleFirmaActive()}>
-              {firma.isActive ? "Pasife Al" : "Aktif Et"}
-            </Button>}
-            {isLabFirma && canWriteLab ? (
-              <Button variant="primary" href={`/lab?new=1&labName=${encodeURIComponent(firma.name)}`}>Laboratuvar İşi Oluştur</Button>
-            ) : !isLabFirma && canWriteFinance ? (
-              <Button variant="danger" onClick={() => purchaseManager.openAddPurchase(firma.id)}>Malzeme Alımı</Button>
-            ) : null}
-          </div>
-        </div>
+    <div className="space-y-3">
+      <PageHeader
+        icon="firma"
+        title={firma.name}
+        back={{ href: "/firma", label: "Satın Alma" }}
+        description={(
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span>{FIRMA_KATEGORILERI[firma.kategori] || firma.kategori}</span>
+            {!firma.isActive && <Badge tone="neutral">Pasif</Badge>}
+            {firma.phone && <>· <a href={telHref(firma.phone)} className="font-medium text-slate-700 hover:text-primary">{formatPhoneNumber(firma.phone)}</a></>}
+          </span>
+        )}
+        stats={[
+          { label: "Toplam alım", value: formatCurrency(firma.borc) },
+          { label: "Ödenen", value: formatCurrency(firma.odenen), color: "text-emerald-700" },
+          { label: "Kalan borç", value: formatCurrency(firma.bakiye), color: firma.bakiye > 0 ? "text-red-700" : "text-slate-800" },
+        ]}
+        actions={(
+          <>
+            {canWriteFinance && <Button variant="secondary" icon={Pencil} onClick={openEditFirma}>Düzenle</Button>}
+            {newPurchaseButton(!canPay)}
+            {canPay && <Button icon={Wallet} onClick={() => void purchaseManager.openFirmaPayment(firma.id)}>Ödeme Yap</Button>}
+          </>
+        )}
+      />
 
-        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-            <p className="text-xs font-bold uppercase text-slate-500">Toplam Borç</p>
-            <p className="mt-1 text-lg font-black text-red-700">{fmt(firma.borc)}</p>
-          </div>
-          <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-            <p className="text-xs font-bold uppercase text-slate-500">Ödenen</p>
-            <p className="mt-1 text-lg font-black text-emerald-700">{fmt(firma.odenen)}</p>
-          </div>
-          <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-2">
-            <p className="text-xs font-bold uppercase text-slate-500">Net Kalan</p>
-            <p className="mt-1 text-lg font-black text-amber-700">{fmt(firma.bakiye)}</p>
-          </div>
+      {!firma.isActive && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
+          <span>Bu firma pasif: yeni satın almada listelenmez. Geçmiş ve kalan borç burada görünür.</span>
+          {canWriteFinance && <Button size="sm" variant="secondary" onClick={() => void toggleFirmaActive()}>Aktif et</Button>}
         </div>
-      </div>
+      )}
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="space-y-4">
-          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-            <h3 className="mb-3 text-sm font-black text-slate-900">Firma Bilgileri</h3>
-            <dl className="space-y-2 text-sm">
-              {[
-                ["Firma Adı", firma.name],
-                ["Kategori", FIRMA_KATEGORILERI[firma.kategori] || firma.kategori],
-                ["Telefon", firma.phone || "-"],
-                ["IBAN", firma.iban || "-"],
-                ["IBAN Hesap Sahibi", firma.ibanName || "-"],
-              ].map(([label, value]) => (
-                <div key={label} className="flex justify-between border-b border-slate-50 pb-1.5">
-                  <dt className="text-slate-500">{label}</dt>
-                  <dd className="font-semibold text-slate-800">{value}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-          {isLabFirma ? (
-            <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4 shadow-sm">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-black text-slate-900">Laboratuvar İşleri</h3>
-                  <p className="mt-1 text-sm text-slate-600">
-                    Bu firma laboratuvar olarak çalışır. Malzeme siparişi açılmaz; lab işi ve faturası Laboratuvar ekranından kaydedilir, tutarlar aşağıdaki hesap ekstresine hizmet borcu olarak düşer.
-                  </p>
-                </div>
-                {canWriteLab && <Button size="sm" variant="primary" href={`/lab?new=1&labName=${encodeURIComponent(firma.name)}`}>Laboratuvar İşi Oluştur</Button>}
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <h3 className="text-sm font-black text-slate-900">Satın Alımlar</h3>
-                {canWriteFinance && <Button size="sm" variant="danger" onClick={() => purchaseManager.openAddPurchase(firma.id)}>Yeni Satın Alma</Button>}
-              </div>
-              {firmaPurchases.length === 0 ? (
-                <p className="py-6 text-center text-sm text-slate-400">Henüz satın alma kaydı yok</p>
-              ) : (
-                <div className="space-y-2">
-                  {firmaPurchases.map(p => (
-                    <button key={p.id} onClick={() => purchaseManager.openPurchaseDetail(p.id)}
-                      className="flex w-full items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-left hover:bg-slate-50">
-                      <span>
-                        <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-800">
-                          {fmtDate(p.tarih)} · {p._count?.items ?? p.items?.length ?? 0} kalem
-                          <span className={`rounded-full px-2 py-0.5 text-[11px] font-bold ${
-                            p.receiptStatus === "SIPARIS_VERILDI"
-                              ? "bg-amber-100 text-amber-700"
-                              : "bg-emerald-100 text-emerald-700"
-                          }`}>
-                            {p.receiptStatus === "SIPARIS_VERILDI" ? "Teslimat bekliyor" : "Teslim alındı"}
-                          </span>
-                        </span>
-                        {p.faturaNo && <span className="block text-xs text-slate-400">Fatura: {p.faturaNo}</span>}
-                      </span>
-                      <span className="text-sm font-bold text-red-700">
-                        {fmt(Number(
-                          p.total
-                          || p.firmaIslem?.tutar
-                          || (p.items || []).reduce((sum, item) => sum + Number(item.lineTotal || 0), 0),
-                        ))}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+      {(firma.iban || firma.notes) && (
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-slate-200 bg-[rgb(var(--app-surface))] px-4 py-3 text-sm">
+          {firma.iban && (
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="text-slate-500">IBAN</span>
+              <span className="truncate font-mono font-medium text-slate-800">{firma.iban}</span>
+              {firma.ibanName && <span className="text-slate-500">({firma.ibanName})</span>}
+              <IconButton icon={Copy} title="IBAN'ı kopyala" size="sm" onClick={() => void copyIban()} />
+            </span>
           )}
+          {firma.notes && <span className="min-w-0 text-slate-600">{firma.notes}</span>}
         </div>
+      )}
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-sm font-black text-slate-900">Kontaklar</h3>
-            {canWriteFinance && <Button size="sm" onClick={() => setShowAddKontakt(true)}>Kontakt Ekle</Button>}
-          </div>
-          {kontaktler.length === 0 ? (
-            <div className="py-10 text-center text-sm text-slate-500">Henüz kontakt eklenmemiş</div>
-          ) : (
-            <div className="space-y-2">
-              {kontaktler.map(k => (
-                <div key={k.id} className="rounded-xl border border-slate-100 p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="font-bold text-slate-800">{k.ad}</p>
-                      {k.isPrimary && <Badge tone="info">Ana Kontakt</Badge>}
-                      {k.unvan && <span className="text-sm text-slate-500">{k.unvan}</span>}
-                    </div>
-                    {canWriteFinance && <div className="flex items-center gap-1">
-                      <button onClick={() => openEditKontakt(k)} className="rounded-lg border border-slate-200 px-2 py-1 text-xs font-semibold text-slate-600 hover:bg-slate-50">Düzenle</button>
-                      <button onClick={() => void handleDeleteKontakt(k)} className="rounded-lg border border-red-200 px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50">Sil</button>
-                    </div>}
-                  </div>
-                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-500">
-                    {k.telefon && <span>Tel: {k.telefon}</span>}
-                    {k.email && <span>E-posta: {k.email}</span>}
-                    {k.rol && <span>Rol: {k.rol}</span>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+      {isLabFirma && (
+        <p className="text-sm text-slate-600">
+          Bu firma laboratuvar olarak çalışır: işler ve faturaları Laboratuvar ekranından girilir, tutarları aşağıdaki hesap hareketlerine hizmet borcu olarak düşer.
+        </p>
+      )}
 
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 bg-slate-50 px-4 py-2">
-            <span className="text-sm font-bold text-slate-700">Hesap Ekstresi</span>
-            <div className="flex flex-wrap items-center gap-2">
-              <select value={ekstreTipi} onChange={e => setEkstreTipi(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:border-primary focus:outline-none">
-                <option value="">Tüm işlem tipleri</option>
+      <Tabs<DetailTab>
+        ariaLabel="Firma bölümleri"
+        value={tab}
+        onChange={setTab}
+        items={[
+          { key: "hareketler", label: "Hesap hareketleri" },
+          ...(isLabFirma && orders.length === 0 ? [] : [{ key: "siparisler" as const, label: "Bekleyen siparişler", count: orders.length, countTone: "warning" as const }]),
+          { key: "yetkililer", label: "Yetkili kişiler", count: kontaktler.length },
+        ]}
+      />
+
+      {tab === "hareketler" && (
+        <>
+          <Toolbar>
+            <div className="sm:w-44">
+              <Select aria-label="İşlem türü" value={ekstreTipi} onChange={(event) => setEkstreTipi(event.target.value)}>
+                <option value="">Tüm işlemler</option>
                 <option value="ALIM">Alım</option>
                 <option value="HIZMET">Hizmet</option>
                 <option value="ODEME">Ödeme</option>
-              </select>
-              <input type="date" value={ekstreFrom} onChange={e => setEkstreFrom(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:border-primary focus:outline-none" />
-              <span className="text-xs text-slate-400">—</span>
-              <input type="date" value={ekstreTo} onChange={e => setEkstreTo(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs focus:border-primary focus:outline-none" />
-              {(ekstreTipi || ekstreFrom || ekstreTo) && (
-                <button type="button" onClick={() => { setEkstreTipi(""); setEkstreFrom(""); setEkstreTo(""); }} className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-500 hover:bg-slate-50">
-                  Temizle
-                </button>
+              </Select>
+            </div>
+            <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+              <span className="w-16 shrink-0 sm:w-auto">Başlangıç</span>
+              <span className="min-w-0 flex-1 sm:w-40 sm:flex-none"><Input type="date" value={ekstreFrom} onChange={(event) => setEkstreFrom(event.target.value)} /></span>
+            </label>
+            <label className="flex items-center gap-2 text-xs font-semibold text-slate-600">
+              <span className="w-16 shrink-0 sm:w-auto">Bitiş</span>
+              <span className="min-w-0 flex-1 sm:w-40 sm:flex-none"><Input type="date" value={ekstreTo} onChange={(event) => setEkstreTo(event.target.value)} /></span>
+            </label>
+          </Toolbar>
+          <ActiveFilters filters={ekstreFilters} onClearAll={() => { setEkstreTipi(""); setEkstreFrom(""); setEkstreTo(""); }} />
+          {filtersActive && <p className="text-xs text-slate-500">Filtre açıkken “Kalan” sütunu gizlenir; firmanın güncel kalan borcu başlıkta.</p>}
+          <ListTable<Islem>
+            columns={islemColumns}
+            rows={pageRows}
+            rowKey={(islem) => islem.id}
+            loading={!ekstre && !ekstreError}
+            error={ekstreError}
+            onRetry={() => void loadEkstre()}
+            emptyText={filtersActive ? "Bu filtreye uyan işlem yok" : "Henüz alım, hizmet veya ödeme yok"}
+            emptyDescription={filtersActive ? undefined : isLabFirma ? "Laboratuvar faturaları girildikçe burada görünür." : "Faturayı “Yeni Satın Alma” ile girin; ödemeleri “Ödeme Yap” ile kaydedin."}
+            onRowClick={(islem) => {
+              const purchaseId = islem.islemTipi === "ALIM" ? linkedPurchaseId(islem) : null;
+              if (purchaseId) void purchaseManager.openPurchaseDetail(purchaseId);
+            }}
+            getRowAriaLabel={(islem) => `${ISLEM_TIPI[islem.islemTipi]?.label || "İşlem"} ${formatCurrency(Number(islem.tutar))}`}
+            pager={islemler.length > PAGE_SIZE ? { page, pageCount, pageSize: PAGE_SIZE, total: islemler.length, onPageChange: setPage } : undefined}
+            mobileCard={(islem) => (
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <Badge tone={ISLEM_TIPI[islem.islemTipi]?.tone || "neutral"}>{ISLEM_TIPI[islem.islemTipi]?.label}</Badge>
+                    <DateText value={islem.tarih} className="text-xs text-slate-500" />
+                  </div>
+                  <p className="mt-1 truncate text-sm text-slate-700">{islemDescription(islem) || (islem.faturaNo ? `Fatura ${islem.faturaNo}` : "")}</p>
+                </div>
+                <div className="flex shrink-0 flex-col items-end gap-1">
+                  {islem.islemTipi === "ODEME"
+                    ? <span className="font-semibold tabular-nums text-emerald-700">−{formatCurrency(Number(islem.tutar))}</span>
+                    : <Money value={Number(islem.tutar)} className="font-semibold" />}
+                  {islemActions(islem)}
+                </div>
+              </div>
+            )}
+          />
+        </>
+      )}
+
+      {tab === "siparisler" && (
+        <ListTable<Purchase>
+          columns={orderColumns}
+          rows={orders}
+          rowKey={(order) => order.id}
+          loading={!ordersLoaded && !ordersError}
+          error={ordersError}
+          onRetry={() => void loadOrders()}
+          emptyText="Teslimat bekleyen sipariş yok"
+          emptyDescription="“Yeni Satın Alma”da “Yalnız sipariş verildi” seçilen kayıtlar ürünler gelene kadar burada bekler."
+          onRowClick={(order) => void purchaseManager.openPurchaseDetail(order.id)}
+          getRowAriaLabel={(order) => `${formatCurrency(Number(order.total || 0))} tutarlı siparişi aç`}
+          mobileCard={(order) => (
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-900">{summarizeLines(order.lines) || `${order._count?.items ?? 0} kalem`}</p>
+                <p className="text-xs text-slate-500"><DateText value={order.tarih} /> · {formatCurrency(Number(order.total || 0))}</p>
+              </div>
+              {canPurchase && <Button size="sm" variant="secondary" onClick={() => void purchaseManager.openReceivePurchase(order.id)}>Teslim al</Button>}
+            </div>
+          )}
+        />
+      )}
+
+      {tab === "yetkililer" && (
+        <ListTable<FirmaKontakt>
+          columns={kontaktColumns}
+          rows={kontaktler}
+          rowKey={(kontakt) => kontakt.id}
+          emptyText="Henüz yetkili kişi yok"
+          emptyDescription="Sipariş verdiğiniz ya da fatura sorduğunuz kişiyi ekleyin."
+          emptyAction={canWriteFinance ? <Button size="sm" icon={Plus} onClick={() => openKontakt()}>Yetkili Kişi Ekle</Button> : undefined}
+          header={canWriteFinance && kontaktler.length > 0 ? (
+            <div className="flex justify-end border-b border-slate-100 px-3 py-2">
+              <Button size="sm" variant="secondary" icon={Plus} onClick={() => openKontakt()}>Yetkili Kişi Ekle</Button>
+            </div>
+          ) : undefined}
+          mobileCard={(kontakt) => (
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-900">{kontakt.ad}{kontakt.isPrimary ? " · Ana kişi" : ""}</p>
+                <p className="text-xs text-slate-500">{[kontakt.unvan, kontakt.rol].filter(Boolean).join(" · ")}</p>
+                {kontakt.telefon && <a href={telHref(kontakt.telefon)} className="text-sm text-primary">{formatPhoneNumber(kontakt.telefon)}</a>}
+              </div>
+              {canWriteFinance && (
+                <div className="flex shrink-0 gap-1.5">
+                  <IconButton icon={Pencil} title={`${kontakt.ad} bilgilerini düzenle`} size="sm" onClick={() => openKontakt(kontakt)} />
+                  <IconButton icon={Trash2} title={`${kontakt.ad} kişisini sil`} tone="danger" size="sm" onClick={() => void deleteKontakt(kontakt)} />
+                </div>
               )}
             </div>
-          </div>
-          {!ekstre || ekstre.islemler.length === 0 ? (
-            <div className="py-10 text-center text-sm text-slate-500">Henüz alım, hizmet veya ödeme işlemi yok</div>
-          ) : (
-            (() => {
-              const filteredIslemler = ekstre.islemler.filter((i) => {
-                if (ekstreTipi && i.islemTipi !== ekstreTipi) return false;
-                const day = i.tarih.substring(0, 10);
-                if (ekstreFrom && day < ekstreFrom) return false;
-                if (ekstreTo && day > ekstreTo) return false;
-                return true;
-              });
-              return filteredIslemler.length === 0 ? (
-                <div className="py-10 text-center text-sm text-slate-500">Filtreyle eşleşen işlem yok</div>
-              ) : (
-                <ProfessionalDataTable data={filteredIslemler} columns={ekstreColumns} emptyText="Henüz alım, hizmet veya ödeme işlemi yok" pageSize={12} />
-              );
-            })()
           )}
-        </div>
+        />
+      )}
 
-      {/* Modal: Firma Düzenle */}
       <Modal
         module="firma"
         open={showEditFirma}
-        onClose={() => void requestCloseEditFirma()}
-        isDirty={editFirmaDirty}
-        title="Firma Bilgilerini Düzenle"
-        footer={
+        onClose={() => setShowEditFirma(false)}
+        title="Firmayı düzenle"
+        footer={(
           <>
-            <Button variant="secondary" onClick={() => void requestCloseEditFirma()}>Vazgeç</Button>
-            <Button onClick={handleEditFirma}>Güncelle</Button>
+            {firma.isActive && (
+              <Button variant="ghost" className="mr-auto !text-red-700 hover:!bg-red-50" onClick={() => void toggleFirmaActive()} disabled={savingFirma}>
+                Pasife al
+              </Button>
+            )}
+            <Button variant="secondary" onClick={() => setShowEditFirma(false)} disabled={savingFirma}>Vazgeç</Button>
+            <Button onClick={() => void handleEditFirma()} loading={savingFirma}>Kaydet</Button>
           </>
-        }
+        )}
       >
         <div className="space-y-4">
-          {[
-            { key: "name", label: "Firma Adı", required: true }, { key: "phone", label: "Telefon" },
-            { key: "iban", label: "IBAN" }, { key: "ibanName", label: "IBAN Hesap Sahibi" },
-          ].map(f => (
-            <FormField key={f.key} label={f.label} required={f.required}>
-              <input value={(editForm as Record<string, string>)[f.key]} onChange={e => setEditForm({ ...editForm, [f.key]: e.target.value })} className={formInput} />
+          <FormErrorBanner message={editError} />
+          <FormField label="Firma Adı" htmlFor="firma-edit-name" required error={editNameError}>
+            <Input id="firma-edit-name" value={editForm.name} onChange={(event) => { setEditForm((form) => ({ ...form, name: event.target.value })); setEditNameError(undefined); }} />
+          </FormField>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField label="Firma türü" htmlFor="firma-edit-kategori" required>
+              <Select id="firma-edit-kategori" value={editForm.kategori} onChange={(event) => setEditForm((form) => ({ ...form, kategori: event.target.value }))}>
+                {Object.entries(FIRMA_KATEGORILERI).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+              </Select>
             </FormField>
-          ))}
-          <FormField label="Firma Türü" required>
-            <select value={editForm.kategori} onChange={e => setEditForm({ ...editForm, kategori: e.target.value })} className={formInput}>
-              {Object.entries(FIRMA_KATEGORILERI).map(([key, label]) => (
-                <option key={key} value={key}>{label}</option>
-              ))}
-            </select>
-          </FormField>
-          <FormField label="Notlar">
-            <textarea value={editForm.notes} onChange={e => setEditForm({ ...editForm, notes: e.target.value })} rows={3} className={formInput} />
+            <FormField label="Telefon" htmlFor="firma-edit-phone">
+              <Input id="firma-edit-phone" type="tel" inputMode="tel" value={editForm.phone} onChange={(event) => setEditForm((form) => ({ ...form, phone: event.target.value }))} />
+            </FormField>
+            <FormField label="IBAN" htmlFor="firma-edit-iban">
+              <Input id="firma-edit-iban" value={editForm.iban} onChange={(event) => setEditForm((form) => ({ ...form, iban: event.target.value.toUpperCase() }))} className="font-mono" />
+            </FormField>
+            <FormField label="IBAN hesap sahibi" htmlFor="firma-edit-iban-name">
+              <Input id="firma-edit-iban-name" value={editForm.ibanName} onChange={(event) => setEditForm((form) => ({ ...form, ibanName: event.target.value }))} />
+            </FormField>
+          </div>
+          <FormField label="Notlar" htmlFor="firma-edit-notes">
+            <Textarea id="firma-edit-notes" value={editForm.notes} onChange={(event) => setEditForm((form) => ({ ...form, notes: event.target.value }))} rows={2} />
           </FormField>
         </div>
       </Modal>
 
       <Modal
         module="firma"
-        open={showAddKontakt}
-        onClose={() => void requestCloseAddKontakt()}
-        isDirty={kontaktFormDirty}
-        title="Kontakt Ekle"
-        footer={
+        open={Boolean(kontaktModal)}
+        onClose={() => setKontaktModal(null)}
+        title={kontaktModal?.mode === "edit" ? "Yetkili kişiyi düzenle" : "Yetkili kişi ekle"}
+        footer={(
           <>
-            <Button variant="secondary" onClick={() => void requestCloseAddKontakt()}>Vazgeç</Button>
-            <Button onClick={handleAddKontakt} loading={isSubmittingKontakt}>Kaydet</Button>
+            <Button variant="secondary" onClick={() => setKontaktModal(null)} disabled={savingKontakt}>Vazgeç</Button>
+            <Button onClick={() => void saveKontakt()} loading={savingKontakt}>Kaydet</Button>
           </>
-        }
+        )}
       >
         <div className="space-y-4">
-          <FormField label="Ad Soyad" required>
-            <input value={kontaktForm.ad} onChange={e => setKontaktForm({ ...kontaktForm, ad: e.target.value })} className={formInput} />
+          <FormErrorBanner message={kontaktError} />
+          <FormField label="Ad soyad" htmlFor="kontakt-ad" required error={kontaktNameError}>
+            <Input id="kontakt-ad" value={kontaktForm.ad} onChange={(event) => { setKontaktForm((form) => ({ ...form, ad: event.target.value })); setKontaktNameError(undefined); }} data-autofocus />
           </FormField>
-          <FormField label="Unvan">
-            <input value={kontaktForm.unvan} onChange={e => setKontaktForm({ ...kontaktForm, unvan: e.target.value })} className={formInput} />
-          </FormField>
-          <FormField label="Telefon">
-            <input value={kontaktForm.telefon} onChange={e => setKontaktForm({ ...kontaktForm, telefon: e.target.value })} className={formInput} />
-          </FormField>
-          <FormField label="E-posta">
-            <input value={kontaktForm.email} onChange={e => setKontaktForm({ ...kontaktForm, email: e.target.value })} className={formInput} />
-          </FormField>
-          <FormField label="Rol">
-            <input value={kontaktForm.rol} onChange={e => setKontaktForm({ ...kontaktForm, rol: e.target.value })} className={formInput} />
-          </FormField>
-          <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-            <input type="checkbox" checked={kontaktForm.isPrimary} onChange={e => setKontaktForm({ ...kontaktForm, isPrimary: e.target.checked })} />
-            Ana kontakt olarak işaretle
-          </label>
-        </div>
-      </Modal>
-
-      <Modal
-        module="firma"
-        open={Boolean(editingKontakt)}
-        onClose={() => void requestCloseEditKontakt()}
-        isDirty={editKontaktDirty}
-        title="Kontaktı Düzenle"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => void requestCloseEditKontakt()}>Vazgeç</Button>
-            <Button onClick={handleSaveKontakt} loading={isSavingKontakt}>Kaydet</Button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <FormField label="Ad Soyad" required>
-            <input value={editKontaktForm.ad} onChange={e => setEditKontaktForm({ ...editKontaktForm, ad: e.target.value })} className={formInput} />
-          </FormField>
-          <FormField label="Unvan">
-            <input value={editKontaktForm.unvan} onChange={e => setEditKontaktForm({ ...editKontaktForm, unvan: e.target.value })} className={formInput} />
-          </FormField>
-          <FormField label="Telefon">
-            <input value={editKontaktForm.telefon} onChange={e => setEditKontaktForm({ ...editKontaktForm, telefon: e.target.value })} className={formInput} />
-          </FormField>
-          <FormField label="E-posta">
-            <input value={editKontaktForm.email} onChange={e => setEditKontaktForm({ ...editKontaktForm, email: e.target.value })} className={formInput} />
-          </FormField>
-          <FormField label="Rol">
-            <input value={editKontaktForm.rol} onChange={e => setEditKontaktForm({ ...editKontaktForm, rol: e.target.value })} className={formInput} />
-          </FormField>
-          <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-            <input type="checkbox" checked={editKontaktForm.isPrimary} onChange={e => setEditKontaktForm({ ...editKontaktForm, isPrimary: e.target.checked })} />
-            Ana kontakt olarak işaretle
-          </label>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <FormField label="Unvan" htmlFor="kontakt-unvan">
+              <Input id="kontakt-unvan" value={kontaktForm.unvan} onChange={(event) => setKontaktForm((form) => ({ ...form, unvan: event.target.value }))} placeholder="Ör. Satış temsilcisi" />
+            </FormField>
+            <FormField label="Sorumlu olduğu iş" htmlFor="kontakt-rol">
+              <Input id="kontakt-rol" value={kontaktForm.rol} onChange={(event) => setKontaktForm((form) => ({ ...form, rol: event.target.value }))} placeholder="Ör. sipariş, fatura" />
+            </FormField>
+            <FormField label="Telefon" htmlFor="kontakt-telefon">
+              <Input id="kontakt-telefon" type="tel" inputMode="tel" value={kontaktForm.telefon} onChange={(event) => setKontaktForm((form) => ({ ...form, telefon: event.target.value }))} />
+            </FormField>
+            <FormField label="E-posta" htmlFor="kontakt-email">
+              <Input id="kontakt-email" type="email" value={kontaktForm.email} onChange={(event) => setKontaktForm((form) => ({ ...form, email: event.target.value }))} />
+            </FormField>
+          </div>
+          <Switch
+            checked={kontaktForm.isPrimary}
+            onChange={(checked) => setKontaktForm((form) => ({ ...form, isPrimary: checked }))}
+            label="Ana iletişim kişisi yap"
+            description="Satın Alma listesinde firmanın yanında bu kişi görünür."
+          />
         </div>
       </Modal>
 
       {purchaseManager.modals}
-    </section>
+    </div>
   );
 }
 
 export default function FirmaDetayPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-sm text-slate-400">Yükleniyor…</div>}>
+    <Suspense fallback={null}>
       <FirmaDetayContent />
     </Suspense>
   );

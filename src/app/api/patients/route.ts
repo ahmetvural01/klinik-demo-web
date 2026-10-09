@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { formatZodError, patientSchema } from "@/lib/validators";
-import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
+import { hasEffectivePermission, requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 import { sendSmsConsentRequest } from "@/lib/sms-consent";
 import { listPatientIdsForDerivedBucket } from "@/lib/sms-consent-stats";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { buildPatientSearchWhere } from "@/lib/patient-search";
+import { loadPatientListExtras } from "@/lib/patient-list-extras";
 
 const SMS_CONSENT_FILTERS = new Set(["ENABLED", "DISABLED", "PENDING", "EXPIRED", "SEND_FAILED"]);
 
@@ -38,6 +40,10 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
     const smsConsentParam = (request.nextUrl.searchParams.get("smsConsent") || "").trim().toUpperCase();
     const smsConsentFilter = SMS_CONSENT_FILTERS.has(smsConsentParam) ? smsConsentParam : "";
     const includeSummary = request.nextUrl.searchParams.get("summary") !== "false";
+    // Hasta listesi ekranı (extras=1) satırda son ziyaret, sonraki randevu ve
+    // kalan bakiyeyi gösterir; hasta seçiciler gibi diğer çağıranlar bunu
+    // istemez, gereksiz sorgu çalışmaz.
+    const includeExtras = request.nextUrl.searchParams.get("extras") === "1";
 
     const tenantWhere: Prisma.PatientWhereInput = {
       archivedAt: null,
@@ -56,16 +62,12 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
       // "referans eden kişi" alanlarını kapsar — ayrı filtre kutularına gerek
       // kalmadan "mehmet gül" yazınca hem o isimli hastalar hem de Mehmet
       // Gül'ün yönlendirdiği hastalar bulunur (bkz. kullanıcı geri bildirimi).
-      filters.push({
-        OR: [
-          { fullName: { contains: q, mode: "insensitive" } },
-          { tcNo: { contains: q, mode: "insensitive" } },
-          { phone: { contains: q, mode: "insensitive" } },
-          { profession: { contains: q, mode: "insensitive" } },
-          { insurance: { contains: q, mode: "insensitive" } },
-          { referrer: { contains: q, mode: "insensitive" } },
-        ],
-      });
+      // Telefon "0555 100 01 01" gibi yazıldığında ve Türkçe harf farkında
+      // ("Ayse"/"Ayşe") da hasta bulunur (bkz. src/lib/patient-search.ts).
+      filters.push(await buildPatientSearchWhere(q, {
+        institutionId: auth.user.institutionId ?? null,
+        branchId: activeBranch.branchId,
+      }));
     }
     if (doctorId) {
       filters.push({
@@ -151,8 +153,40 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
     }));
     const masked = hidePhone ? listed.map((p) => ({ ...p, phone: "***", tcNo: p.tcNo ? "***" : p.tcNo })) : listed;
 
+    // Son ziyaret / sonraki randevu yalnız randevu okuma, bakiye yalnız tahsilat
+    // ve tedavi okuma yetkisi olan rollere gönderilir — liste, hasta
+    // dosyasında görmeyeceği bir bilgiyi kimseye açmaz.
+    let withExtras: Array<(typeof masked)[number] & {
+      lastVisitAt?: string | null;
+      nextAppointment?: { startAt: string; doctorName: string | null } | null;
+      balance?: number | null;
+    }> = masked;
+    if (includeExtras && masked.length > 0) {
+      const [canReadAppointments, canReadPayments, canReadExaminations] = await Promise.all([
+        hasEffectivePermission(auth.user, "appointments:read"),
+        hasEffectivePermission(auth.user, "payments:read"),
+        hasEffectivePermission(auth.user, "examinations:read"),
+      ]);
+      const extras = await loadPatientListExtras({
+        institutionId: auth.user.institutionId ?? null,
+        branchId: activeBranch.branchId,
+        patients: patients.map((patient) => ({ id: patient.id, discountRate: patient.discountRate })),
+        includeVisits: canReadAppointments,
+        includeBalance: canReadPayments && canReadExaminations,
+      });
+      withExtras = masked.map((patient) => {
+        const extra = extras.get(patient.id);
+        return {
+          ...patient,
+          lastVisitAt: canReadAppointments ? extra?.lastVisitAt ?? null : undefined,
+          nextAppointment: canReadAppointments ? extra?.nextAppointment ?? null : undefined,
+          balance: canReadPayments && canReadExaminations ? extra?.balance ?? 0 : undefined,
+        };
+      });
+    }
+
     return NextResponse.json({
-      patients: masked,
+      patients: withExtras,
       total,
       skip,
       take,
@@ -160,10 +194,10 @@ export const GET = withApiTiming("patients", async function GET(request: NextReq
       pageCount: Math.max(1, Math.ceil(total / take)),
       sortBy,
       sortDir,
-      summary: {
-        total: summaryTotal,
-        newThisMonth: summaryNewThisMonth,
-      },
+      // Özet yalnız istendiğinde gönderilir: önceden summary=false isteğinde
+      // de {total:0,newThisMonth:0} dönüyor, ekrandaki sayılar filtre ya da
+      // sayfa değişince 0'a düşüyordu (bkz. denetim HL-10).
+      ...(includeSummary ? { summary: { total: summaryTotal, newThisMonth: summaryNewThisMonth } } : {}),
     });
   } catch (error) {
     console.error("GET /api/patients failed:", error);
@@ -198,7 +232,8 @@ export async function POST(request: NextRequest) {
         homeBranchId: activeBranch.branchId,
         birthDate: parsed.data.birthDate ? new Date(parsed.data.birthDate) : null,
         whatsappOptInAt: whatsappConsent ? new Date() : null,
-        whatsappOptOutAt: null,
+        // Kayıtta açıkça kapatılmışsa hasta WhatsApp mesajı istemiyor demektir.
+        whatsappOptOutAt: whatsappConsent ? null : new Date(),
         communicationConsentSource: whatsappConsent
           ? parsed.data.communicationConsentSource || "Hasta kayıt formu"
           : null,

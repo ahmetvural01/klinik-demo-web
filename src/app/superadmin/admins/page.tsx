@@ -1,218 +1,216 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Edit3, PlusCircle } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { useCallback, useEffect, useState } from "react";
+import { Plus, UserCheck, UserX, Wand2 } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Button, IconButton } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
-import { FormField } from "@/components/ui/FormField";
-import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { Input } from "@/components/ui/Input";
+import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
+import { dateTime, shortDate } from "@/components/superadmin/sa-format";
+import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
 type Admin = {
   id: string;
   fullName: string;
-  identityNo: string;
-  email?: string | null;
+  identityNoMasked: string | null;
+  email: string | null;
   isActive: boolean;
   createdAt: string;
+  twoFactorEnabled: boolean;
+  lastLoginAt: string | null;
+  isSelf: boolean;
 };
 
-const inputClass = "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
+const EMPTY = { fullName: "", identityNo: "", email: "", password: "" };
 
+function generatePassword(): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+  const values = new Uint32Array(12);
+  crypto.getRandomValues(values);
+  return Array.from(values, (value) => alphabet[value % alphabet.length]).join("");
+}
+
+/**
+ * Platform yöneticileri — bu paneli kullanabilen hesaplar. Her satırda sabit
+ * "Tam erişim" rozeti (bilgi değeri yoktu) yerine son giriş ve iki adımlı
+ * doğrulama durumu; pasife alma satırdan, onaylı. TC kimlik no maskeli.
+ */
 export default function AdminsPage() {
   const [admins, setAdmins] = useState<Admin[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selected, setSelected] = useState<Admin | null>(null);
-  const [editIsActive, setEditIsActive] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState(EMPTY);
+  const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [showCreate, setShowCreate] = useState(false);
-  const [createForm, setCreateForm] = useState({ fullName: "", identityNo: "", email: "", password: "" });
-  const [creating, setCreating] = useState(false);
 
-  const load = async () => {
+  const reload = useCallback(() => setReloadKey((value) => value + 1), []);
+
+  useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
+    setLoadError(null);
+    saGet<Admin[]>("/api/superadmin/admins", "Platform yöneticileri yüklenemedi.", controller.signal)
+      .then((data) => setAdmins(Array.isArray(data) ? data : []))
+      .catch((error) => {
+        if (!isAbort(error)) setLoadError(errorMessage(error, "Platform yöneticileri yüklenemedi."));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [reloadKey]);
+
+  const toggleActive = async (admin: Admin) => {
+    const deactivating = admin.isActive;
+    const ok = await confirmDialog(deactivating ? {
+      title: "Yönetici pasife alınsın mı?",
+      message: `${admin.fullName} artık platform yönetimine giremez; açık oturumu da kapanır.${admin.isSelf ? " Bu sizin hesabınız: hemen çıkış yapmış olursunuz." : ""}`,
+      confirmText: "Pasife al",
+      cancelText: "Vazgeç",
+      danger: true,
+    } : {
+      title: "Yönetici yeniden aktif edilsin mi?",
+      message: `${admin.fullName} platform yönetimine yeniden girebilir.`,
+      confirmText: "Aktif et",
+      cancelText: "Vazgeç",
+    });
+    if (!ok) return;
+    setBusyId(admin.id);
     try {
-      const response = await fetch("/api/superadmin/admins", { cache: "no-store" });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.message || "Sistem yöneticileri yüklenemedi.");
-      setAdmins(Array.isArray(data) ? data : data?.admins ?? []);
+      await saSend(`/api/superadmin/admins/${admin.id}`, "PATCH", { isActive: !admin.isActive }, "Yönetici güncellenemedi.");
+      showToastSafe({ type: "success", message: deactivating ? `${admin.fullName} pasife alındı.` : `${admin.fullName} yeniden aktif.`, icon: "person" });
+      reload();
     } catch (error) {
-      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "Sistem yöneticileri yüklenemedi.", type: "error" });
+      showToastSafe({ type: "error", message: errorMessage(error, "Yönetici güncellenemedi.") });
     } finally {
-      setLoading(false);
+      setBusyId(null);
     }
   };
 
-  useEffect(() => { void load(); }, []);
-
-  const openEdit = (admin: Admin) => {
-    setSelected(admin);
-    setEditIsActive(admin.isActive);
-  };
-
-  const handleSave = async () => {
-    if (!selected) return;
+  const create = async () => {
+    if (!form.fullName.trim()) return setFormError("Ad soyad yazın.");
+    if (!/^\d{11}$/.test(form.identityNo.trim())) return setFormError("TC kimlik numarası 11 rakam olmalı.");
+    if (form.email.trim() && !/^\S+@\S+\.\S+$/.test(form.email.trim())) return setFormError("Geçerli bir e-posta yazın.");
+    if (form.password.length < 8 || form.password.length > 72) return setFormError("Şifre 8-72 karakter olmalı.");
     setSaving(true);
+    setFormError(null);
     try {
-      const res = await fetch(`/api/superadmin/admins/${selected.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive: editIsActive }),
-      });
-      if (!res.ok) throw new Error("Kaydedilemedi");
-      showToastSafe({ title: "Kaydedildi", message: "Admin bilgileri güncellendi", type: "success", icon: "settings" });
-      setSelected(null);
-      load();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
-      showToastSafe({ title: "Hata", message: msg, type: "error" });
+      await saSend("/api/superadmin/admins", "POST", {
+        fullName: form.fullName.trim(),
+        identityNo: form.identityNo.trim(),
+        email: form.email.trim() || undefined,
+        password: form.password,
+      }, "Yönetici eklenemedi.");
+      showToastSafe({ type: "success", message: `${form.fullName.trim()} platform yöneticisi olarak eklendi. Giriş bilgisini kendisine iletin.`, icon: "person" });
+      setForm(EMPTY);
+      setOpen(false);
+      reload();
+    } catch (error) {
+      setFormError(errorMessage(error, "Yönetici eklenemedi."));
     } finally {
       setSaving(false);
     }
   };
 
-  const submitCreate = async () => {
-    if (!createForm.fullName.trim() || !createForm.identityNo.trim() || createForm.password.length < 8 || createForm.password.length > 72) {
-      showToastSafe({ title: "Eksik alan", message: "Ad soyad, TC ve 8-72 karakter uzunluğunda şifre zorunlu", type: "error" });
-      return;
-    }
-    setCreating(true);
-    try {
-      const res = await fetch("/api/superadmin/admins", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fullName: createForm.fullName.trim(),
-          identityNo: createForm.identityNo.trim(),
-          email: createForm.email.trim() || undefined,
-          password: createForm.password,
-        }),
-      });
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.message || "Oluşturulamadı");
-      showToastSafe({ title: "Oluşturuldu", message: `${d.fullName} admin olarak eklendi`, type: "success", icon: "person" });
-      setShowCreate(false);
-      setCreateForm({ fullName: "", identityNo: "", email: "", password: "" });
-      load();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
-      showToastSafe({ title: "Hata", message: msg, type: "error" });
-    } finally {
-      setCreating(false);
-    }
-  };
+  const statusBadge = (admin: Admin) => <Badge tone={admin.isActive ? "success" : "neutral"}>{admin.isActive ? "Aktif" : "Pasif"}</Badge>;
+  const twoFactor = (admin: Admin) => (admin.twoFactorEnabled ? <Badge tone="success">Açık</Badge> : <Badge tone="warning">Kapalı</Badge>);
+  const action = (admin: Admin) => (
+    <IconButton
+      icon={admin.isActive ? UserX : UserCheck}
+      title={admin.isActive ? "Pasife al" : "Yeniden aktif et"}
+      tone={admin.isActive ? "danger" : "primary"}
+      size="sm"
+      disabled={busyId === admin.id}
+      onClick={() => void toggleActive(admin)}
+    />
+  );
 
   const columns: ListTableColumn<Admin>[] = [
     {
-      key: "fullName",
-      header: "Ad Soyad",
-      render: (a) => <span className="font-bold text-slate-900">{a.fullName}</span>,
-    },
-    {
-      key: "identityNo",
-      header: "TC Kimlik",
-      render: (a) => <span className="font-mono text-slate-600">{a.identityNo}</span>,
-    },
-    {
-      key: "access",
-      header: "Erişim",
-      render: () => <Badge tone="info">Tam erişim</Badge>,
-    },
-    {
-      key: "isActive",
-      header: "Durum",
-      render: (a) => <Badge tone={a.isActive ? "success" : "neutral"}>{a.isActive ? "Aktif" : "Pasif"}</Badge>,
-    },
-    {
-      key: "createdAt",
-      header: "Kayıt",
-      render: (a) => <span className="text-slate-500">{new Date(a.createdAt).toLocaleDateString("tr-TR")}</span>,
-    },
-    {
-      key: "actions",
-      header: "İşlem",
-      render: (a) => (
-        <Button size="sm" variant="secondary" icon={Edit3} onClick={() => openEdit(a)}>
-          Hesabı Düzenle
-        </Button>
+      key: "name",
+      header: "Ad soyad",
+      render: (admin) => (
+        <div>
+          <p className="font-semibold text-slate-900">{admin.fullName}{admin.isSelf && <span className="ml-1.5 text-xs font-normal text-slate-500">(siz)</span>}</p>
+          <p className="text-xs text-slate-500">{[admin.identityNoMasked, admin.email].filter(Boolean).join(" · ")}</p>
+        </div>
       ),
     },
+    { key: "lastLogin", header: "Son giriş", render: (admin) => dateTime(admin.lastLoginAt) || <EmptyValue /> },
+    { key: "twoFactor", header: "İki adımlı doğrulama", render: twoFactor },
+    { key: "status", header: "Durum", render: statusBadge },
+    { key: "createdAt", header: "Eklenme", render: (admin) => shortDate(admin.createdAt) || <EmptyValue /> },
+    { key: "actions", header: "", align: "right", render: action },
   ];
 
   return (
-    <section className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-black text-slate-900">Admin Yetkileri</h1>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{admins.length} admin</span>
-        </div>
-        <Button icon={PlusCircle} size="sm" onClick={() => setShowCreate(true)}>Yeni Admin</Button>
-      </div>
+    <section className="space-y-4">
+      <PageHeader
+        icon="person"
+        title="Platform Yöneticileri"
+        description="Bu paneli kullanabilen hesaplar. Her yönetici tüm bölümlere erişir."
+        actions={<Button icon={Plus} onClick={() => { setFormError(null); setOpen(true); }}>Yeni yönetici</Button>}
+      />
 
-      <ListTable
+      <ListTable<Admin>
         columns={columns}
         rows={admins}
-        rowKey={(a) => a.id}
+        rowKey={(admin) => admin.id}
         loading={loading}
-        emptyText="Admin bulunamadı"
+        error={loadError}
+        onRetry={reload}
+        rowClassName={(admin) => (admin.isActive ? "" : "opacity-60")}
+        emptyText="Platform yöneticisi yok"
+        mobileCard={(admin) => (
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 space-y-1">
+              <p className="font-semibold text-slate-900">{admin.fullName}{admin.isSelf ? " (siz)" : ""}</p>
+              <p className="text-xs text-slate-500">Son giriş: {dateTime(admin.lastLoginAt) || "—"}</p>
+              <div className="flex flex-wrap items-center gap-1.5">{statusBadge(admin)}<span className="text-xs text-slate-500">İki adımlı:</span>{twoFactor(admin)}</div>
+            </div>
+            {action(admin)}
+          </div>
+        )}
       />
 
       <Modal
-        open={!!selected}
-        onClose={() => setSelected(null)}
-        title="Admin Hesabı"
-        description={selected?.fullName}
-        size="lg"
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Yeni platform yöneticisi"
+        description="Bu kişi tüm klinikleri, faturaları ve platform ayarlarını yönetebilir."
+        size="md"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setSelected(null)}>İptal</Button>
-            <Button onClick={handleSave} loading={saving}>Kaydet</Button>
+            <Button variant="secondary" onClick={() => setOpen(false)}>Vazgeç</Button>
+            <Button loading={saving} onClick={() => void create()}>Kaydet</Button>
           </>
         }
       >
-        <div className="space-y-4">
-          <p className="text-sm text-slate-600">Platform yöneticileri tüm sistem yönetimi işlevlerine erişir.</p>
-          <label className="flex cursor-pointer items-center gap-2">
-            <input
-              type="checkbox"
-              checked={editIsActive}
-              onChange={(e) => setEditIsActive(e.target.checked)}
-              className="rounded border-slate-300 text-primary focus:ring-primary/30"
-            />
-            <span className="text-sm text-slate-700">Hesap aktif</span>
-          </label>
-        </div>
-      </Modal>
-
-      <Modal
-        open={showCreate}
-        onClose={() => setShowCreate(false)}
-        title="Yeni Admin Ekle"
-        size="lg"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setShowCreate(false)}>İptal</Button>
-            <Button loading={creating} onClick={submitCreate}>Oluştur</Button>
-          </>
-        }
-      >
-        <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <FormField label="Ad Soyad" required>
-              <input className={inputClass} value={createForm.fullName} onChange={(e) => setCreateForm({ ...createForm, fullName: e.target.value })} />
-            </FormField>
-            <FormField label="TC Kimlik No" required>
-              <input className={inputClass} value={createForm.identityNo} onChange={(e) => setCreateForm({ ...createForm, identityNo: e.target.value })} />
-            </FormField>
-            <FormField label="E-posta">
-              <input className={inputClass} value={createForm.email} onChange={(e) => setCreateForm({ ...createForm, email: e.target.value })} />
-            </FormField>
-            <FormField label="Şifre" required hint="8-72 karakter">
-              <input type="password" className={inputClass} value={createForm.password} onChange={(e) => setCreateForm({ ...createForm, password: e.target.value })} />
-            </FormField>
-          </div>
-          <p className="text-xs text-slate-500">Yeni hesap platform yönetimi işlevlerinin tamamına erişir.</p>
+        <div className="space-y-3">
+          <FormErrorBanner message={formError} />
+          <FormField label="Ad soyad" htmlFor="admin-name" required>
+            <Input id="admin-name" value={form.fullName} onChange={(event) => setForm((current) => ({ ...current, fullName: event.target.value }))} />
+          </FormField>
+          <FormField label="TC kimlik no" htmlFor="admin-tc" required hint="Girişte kullanılır">
+            <Input id="admin-tc" inputMode="numeric" maxLength={11} value={form.identityNo} onChange={(event) => setForm((current) => ({ ...current, identityNo: event.target.value.replace(/\D/g, "") }))} />
+          </FormField>
+          <FormField label="E-posta" htmlFor="admin-email">
+            <Input id="admin-email" type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} />
+          </FormField>
+          <FormField label="Geçici şifre" htmlFor="admin-password" required hint="En az 8 karakter. Kişiye güvenli yoldan iletin.">
+            <div className="flex gap-1.5">
+              <Input id="admin-password" value={form.password} autoComplete="new-password" onChange={(event) => setForm((current) => ({ ...current, password: event.target.value }))} />
+              <IconButton icon={Wand2} title="Şifre üret" onClick={() => setForm((current) => ({ ...current, password: generatePassword() }))} />
+            </div>
+          </FormField>
         </div>
       </Modal>
     </section>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { APPOINTMENT_TREATMENT_OPTIONS } from "@/lib/appointment-follow-up";
+import { treatmentNoteMatch } from "./treatment-usage";
 
 function slugify(label: string, existing: Set<string>): string {
   const base = label
@@ -49,7 +50,13 @@ export async function GET() {
       });
     }
 
-    return NextResponse.json(types);
+    // Her türün kaç randevuda kullanıldığı: Ayarlar ekranı yalnız hiç
+    // kullanılmamış türü silmeye izin verir, kullanılanı pasife alır.
+    const institutionId = auth.user.institutionId;
+    const usage = await Promise.all(types.map((type) => prisma.appointment.count({
+      where: { institutionId, OR: treatmentNoteMatch(type.value) },
+    })));
+    return NextResponse.json(types.map((type, index) => ({ ...type, appointmentCount: usage[index] })));
   } catch (error) {
     console.error("[treatment-types GET] fallback:", error);
     return NextResponse.json({ message: "Tedavi türleri yüklenemedi." }, { status: 503 });

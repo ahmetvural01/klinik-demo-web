@@ -3,8 +3,11 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { clinicTaskCreateSchema } from "@/lib/validators";
 import { can } from "@/lib/rbac";
-import type { Role } from "@prisma/client";
+import type { ClinicTaskStatus, Role } from "@prisma/client";
 import { hasBranchPermission, requireActiveBranch } from "@/lib/branch-context";
+
+const TASK_STATUSES = new Set<string>(["ACIK", "BEKLEMEDE", "TAMAMLANDI", "IPTAL"]);
+const isTaskStatus = (value: string): value is ClinicTaskStatus => TASK_STATUSES.has(value);
 
 export async function GET(request: NextRequest) {
   try {
@@ -24,7 +27,11 @@ export async function GET(request: NextRequest) {
     const status = sp.get("status") || undefined;
     const q = (sp.get("q") || "").trim();
     const take = Math.max(1, Math.min(500, Number(sp.get("take") || 100) || 100));
-    if (!["", "mine", "all"].includes(requestedScope)) {
+    // "mine": bana atananlar (uyarı zili bunu sayar). "involved": bana atanan
+    // YA DA benim açtığım görevler — Görevler sayfasındaki "Benim işlerim".
+    // Önceden kimseye atanmadan açılan görev, açan kişi dahil kimsenin
+    // listesinde görünmüyordu (bkz. denetim HL-05).
+    if (!["", "mine", "involved", "all"].includes(requestedScope)) {
       return NextResponse.json({ message: "Geçersiz görev kapsamı" }, { status: 400 });
     }
     if ((patientId && patientId.length > 100) || (assignedToId && assignedToId.length > 100) || q.length > 200) {
@@ -36,7 +43,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ message: "Tüm kurum görevlerini görüntüleme yetkiniz yok" }, { status: 403 });
     }
     const scope = requestedScope || (canReadAll ? "all" : "mine");
-    if (status && !new Set(["ACIK", "BEKLEMEDE", "TAMAMLANDI", "IPTAL"]).has(status)) {
+    // Durum tek değer ya da virgülle birden çok değer olabilir ("ACIK,BEKLEMEDE"
+    // = yapılacak işler; hasta dosyasında "Beklet" denen görev de burada görünür).
+    const statusValues = status ? status.split(",").map((value) => value.trim()).filter(Boolean) : [];
+    if (statusValues.some((value) => !isTaskStatus(value))) {
       return NextResponse.json({ message: "Geçersiz görev durumu" }, { status: 400 });
     }
 
@@ -52,6 +62,13 @@ export async function GET(request: NextRequest) {
               { assignees: { some: { userId: auth.user.id } } },
             ],
           }] : []),
+          ...(scope === "involved" ? [{
+            OR: [
+              { assignedToId: auth.user.id },
+              { assignees: { some: { userId: auth.user.id } } },
+              { createdById: auth.user.id },
+            ],
+          }] : []),
           ...(assignedToId ? [{
             OR: [
               { assignedToId },
@@ -59,7 +76,7 @@ export async function GET(request: NextRequest) {
             ],
           }] : []),
         ],
-        status: status as any,
+        status: statusValues.length > 0 ? { in: statusValues.filter(isTaskStatus) } : undefined,
         OR: q
           ? [
               { title: { contains: q, mode: "insensitive" } },

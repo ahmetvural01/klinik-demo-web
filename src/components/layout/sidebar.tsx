@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Code2,
   ChevronDown,
@@ -15,9 +15,7 @@ import { useEscapeClose } from "@/lib/use-modal-dismiss";
 import { parseRolePreview, ROLE_PREVIEW_COOKIE, ROLE_PREVIEW_STORAGE } from "@/lib/role-preview";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { scopedStorageKey } from "@/lib/scoped-client-storage";
-import { hasAnyPanelPermission, hasPanelPermission } from "@/lib/panel-permissions";
-import { clientMutation } from "@/lib/client-mutation";
-import { showToastSafe } from "@/lib/toast-client";
+import { hasPanelPermission } from "@/lib/panel-permissions";
 
 const NAV_LABEL_BASE =
   "min-w-0 overflow-hidden whitespace-nowrap text-left tracking-normal transition-all duration-150 ease-out";
@@ -28,70 +26,76 @@ const NAV_ITEM_OPEN = "grid grid-cols-[36px_minmax(0,1fr)_auto] items-center gap
 
 const NAV_ITEM_CLOSED = "grid grid-cols-[36px] items-center justify-items-center";
 
-const ROLE_LABELS: Record<string, string> = {
-  YONETICI:  "Klinik yöneticisi",
-  DOKTOR:    "Doktor",
-  ASISTAN:   "Asistan",
-  BANKO:     "Banko",
-  MUHASEBE:  "Muhasebe",
-  SUPERADMIN:"Platform yöneticisi",
-};
-
 type NavItem = { href: string; label: string; icon: string; badge?: string };
 type NavGroup = { label: string; items: NavItem[] };
 
 // Menü ile API aynı dinamik izin matrisinden beslenir. Bir rolün izni
 // süperadmin panelinden değiştirildiğinde burada ayrıca rol adı güncellenmez.
-function buildNavGroups(permissions: string[]): NavGroup[] {
+// Gruplar günlük kullanım sıklığına göre: en üstte her gün açılan üç ekran
+// (başlıksız), ardından takip işleri, para, stok ve yönetim. Profil, destek ve
+// çıkış sağ üstteki hesap menüsündedir (aynı bilgi iki yerde durmasın).
+function buildNavGroups(permissions: string[], features: { whatsapp: boolean }): NavGroup[] {
   const can = (permission: string) => hasPanelPermission(permissions, permission);
-  const canAny = (...required: string[]) => hasAnyPanelPermission(permissions, required);
   const groups: NavGroup[] = [
-    { label: "Bugün", items: can("dashboard:read") ? [{ href: "/anasayfa", label: "Anasayfa", icon: "home" }] : [] },
     {
-      label: "Klinik",
+      label: "",
       items: [
+        ...(can("dashboard:read") ? [{ href: "/anasayfa", label: "Anasayfa", icon: "home" }] : []),
         ...(can("appointments:read") ? [{ href: "/randevu", label: "Randevular", icon: "calendar" }] : []),
         ...(can("patients:read") ? [{ href: "/hasta", label: "Hastalar", icon: "users" }] : []),
-        ...(can("clinictasks:read") ? [{ href: "/gorevler", label: "Görev Merkezi", icon: "clipboard" }] : []),
-        ...(can("hastatracking:read") ? [{ href: "/hasta-takip", label: "Hasta Takip", icon: "follow" }] : []),
-        ...(canAny("sms:read", "whatsapp:read") ? [{ href: "/sms", label: "İletişim Merkezi", icon: "sms" }] : []),
       ],
     },
-    { label: "Tedavi", items: can("lab:read") ? [{ href: "/lab", label: "Laboratuvar", icon: "flask" }] : [] },
     {
-      label: "Finans ve raporlar",
+      label: "Takip",
       items: [
-        ...(can("finance:center") ? [{ href: "/muhasebe", label: "Muhasebe Merkezi", icon: "finance" }] : []),
-        ...(can("earnings:read") ? [{ href: "/finans", label: "Doktor Hakedişim", icon: "hakediş" }] : []),
-        ...(can("reports:read") ? [{ href: "/rapor", label: "Raporlar", icon: "rapor" }] : []),
+        ...(can("clinictasks:read") ? [{ href: "/gorevler", label: "Görevler", icon: "clipboard" }] : []),
+        ...(can("hastatracking:read") ? [{ href: "/hasta-takip", label: "Hasta Takip", icon: "follow" }] : []),
+        ...(can("lab:read") ? [{ href: "/lab", label: "Laboratuvar", icon: "flask" }] : []),
+        // WhatsApp özelliği kapalı klinikte yalnız whatsapp:read yetkisi olan
+        // rol İletişim'te işe yarar bir şey bulamıyordu.
+        ...(can("sms:read") || (can("whatsapp:read") && features.whatsapp) ? [{ href: "/sms", label: "İletişim", icon: "sms" }] : []),
       ],
     },
     {
-      label: "Stok ve tedarik",
+      label: "Finans",
+      items: [
+        ...(can("finance:center") ? [{ href: "/muhasebe", label: "Muhasebe", icon: "finance" }] : []),
+        // Muhasebe'ye erişen kullanıcı hakedişi zaten Muhasebe > Hakediş
+        // sekmesinde görür; ayrı menü öğesi yalnız muhasebe yetkisi olmayan
+        // (kendi hakedişini gören) hekime gösterilir.
+        ...(can("earnings:read") && !can("finance:center") ? [{ href: "/finans", label: "Hakedişim", icon: "hakediş" }] : []),
+        ...(can("reports:read") ? [{ href: "/rapor", label: "Raporlar", icon: "rapor" }] : []),
+        // Fiyat listesi normalde Ayarlar içinde; ayar yetkisi olmayan ama
+        // fiyatlara bakan/düzenleyen rol (ör. Muhasebe) menüden ulaşabilsin.
+        ...(can("prices:read") && !can("settings:read") ? [{ href: "/fiyat", label: "Fiyat Listesi", icon: "finance" }] : []),
+      ],
+    },
+    {
+      label: "Stok",
       items: [
         ...(can("stock:read") ? [{ href: "/stok", label: "Stok", icon: "box" }] : []),
-        ...(can("finance:read") ? [{ href: "/firma", label: "Satın Alma & Tedarikçiler", icon: "firma" }] : []),
+        ...(can("finance:read") ? [{ href: "/firma", label: "Satın Alma", icon: "firma" }] : []),
       ],
     },
     {
       label: "Yönetim",
       items: [
         ...(can("staff:read") ? [{ href: "/personel", label: "Personel", icon: "person" }] : []),
-        ...(can("audit:read") ? [{ href: "/sistem-izleme", label: "Sistem İzleme", icon: "chart" }] : []),
-        ...(can("settings:read") ? [{ href: "/ayar", label: "Sistem Ayarları", icon: "settings" }] : []),
-      ],
-    },
-    {
-      label: "Kişisel",
-      items: [
-        ...(can("profile:read") ? [{ href: "/profil", label: "Profilim", icon: "profile" }] : []),
+        ...(can("settings:read") ? [{ href: "/ayar", label: "Ayarlar", icon: "settings" }] : []),
         ...(can("audit:read") ? [{ href: "/log", label: "İşlem Kayıtları", icon: "log" }] : []),
-        ...(can("support:read") ? [{ href: "/destek", label: "Destek", icon: "support" }] : []),
+        ...(can("audit:read") ? [{ href: "/sistem-izleme", label: "Sistem Durumu", icon: "chart" }] : []),
       ],
     },
   ];
   return groups.filter((group) => group.items.length > 0);
 }
+
+const ACTIVE_FOR: Record<string, string[]> = {
+  "/hasta": ["/hasta-detay", "/tedavi-plani", "/recete"],
+  "/firma": ["/firma-detay"],
+  "/personel": ["/personel-ekle"],
+  "/muhasebe": ["/kasa", "/gider", "/taksit"],
+};
 
 const PREVIEW_ROLES = [
   { key: "YONETICI",  label: "Yönetici",  color: "bg-violet-600" },
@@ -101,8 +105,8 @@ const PREVIEW_ROLES = [
   { key: "MUHASEBE",  label: "Muhasebe",  color: "bg-rose-600" },
 ];
 
-export function Sidebar({ user }: { user: { fullName: string; role: string; photoUrl?: string | null } }) {
-  const { permissions, scopeKey } = usePermissions();
+export function Sidebar({ user, initialBrandName = "" }: { user: { fullName: string; role: string; photoUrl?: string | null }; initialBrandName?: string }) {
+  const { permissions, scopeKey, hasFeature } = usePermissions();
   const unreadStorageKey = scopedStorageKey("clinic-unread-messages", scopeKey);
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -110,12 +114,32 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   const [messageUnread, setMessageUnread] = useState(0);
   const [desktopHovered, setDesktopHovered] = useState(false);
   const [desktopPinned, setDesktopPinned] = useState(true);
-  const [loggingOut, setLoggingOut] = useState(false);
+  const pinnedStorageKey = scopedStorageKey("sidebar-pinned", scopeKey);
+  const desktopNavRef = useRef<HTMLElement>(null);
+  // Kısa ekranda alttaki menü öğeleri görünmüyordu; o sayfadayken seçili öğe
+  // görünür alana kaydırılır.
+  useEffect(() => {
+    const active = desktopNavRef.current?.querySelector<HTMLElement>('[aria-current="page"]');
+    active?.scrollIntoView({ block: "nearest" });
+  }, [pathname]);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(pinnedStorageKey) === "0") setDesktopPinned(false);
+    } catch {
+      // depolama kapalıysa varsayılan (açık menü) kalır
+    }
+  }, [pinnedStorageKey]);
+  const changePinned = (next: boolean) => {
+    setDesktopPinned(next);
+    try { localStorage.setItem(pinnedStorageKey, next ? "1" : "0"); } catch { /* yoksay */ }
+  };
   const [mobileOpen, setMobileOpen] = useState(false);
   useEscapeClose(() => setMobileOpen(false), mobileOpen);
   const [previewRole, setPreviewRole] = useState<string | null>(null);
   const [rolePickerOpen, setRolePickerOpen] = useState(false);
-  const [brand, setBrand] = useState({ name: "Klinik Paneli", logoUrl: "" });
+  // Klinik adı sunucudan gelir: açılışta önce "Klinik Paneli" yazıp sonra
+  // gerçek ada dönen yanıp sönme olmasın. Logo ayarlardan ayrıca yüklenir.
+  const [brand, setBrand] = useState({ name: initialBrandName || "Klinik Paneli", logoUrl: "" });
 
   const isSuperAdmin = user.role === "SUPERADMIN";
 
@@ -194,10 +218,9 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   };
 
   const userRole = user.role;
-  const userName = user.fullName;
   // SuperAdmin ise seçili preview rolü, yoksa gerçek rol
   const effectiveRole = (isSuperAdmin && previewRole) ? previewRole : userRole;
-  const navGroups = buildNavGroups(permissions);
+  const navGroups = buildNavGroups(permissions, { whatsapp: hasFeature("whatsapp") });
   const alerts = usePanelAlerts(effectiveRole, permissions, scopeKey);
 
   const activePreview = PREVIEW_ROLES.find(r => r.key === previewRole);
@@ -221,6 +244,9 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   const isActive = (href: string) => {
     const [path, query] = href.split("?");
     if (path === "/anasayfa") return pathname === "/anasayfa";
+    // Detay/alt sayfalar ait oldukları menü öğesini aktif gösterir (ör. hasta
+    // dosyası açıkken "Hastalar"); önceden hiçbir öğe seçili görünmüyordu.
+    if (ACTIVE_FOR[path]?.some((prefix) => pathname === prefix || pathname.startsWith(prefix + "/"))) return true;
     if (query) {
       const params = new URLSearchParams(query);
       const tab = params.get("tab");
@@ -240,18 +266,6 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
 
   const collapsed = !desktopPinned && !desktopHovered && !rolePickerOpen;
   const w = collapsed ? "w-[72px]" : "w-[264px]";
-
-  const handleLogout = async () => {
-    if (loggingOut) return;
-    setLoggingOut(true);
-    try {
-      await clientMutation("/api/auth/logout", { method: "POST" }, "Oturum kapatılamadı.");
-      window.location.href = "/giris";
-    } catch (error) {
-      showToastSafe({ type: "error", message: error instanceof Error ? error.message : "Oturum kapatılamadı." });
-      setLoggingOut(false);
-    }
-  };
 
   useEffect(() => {
     setMobileOpen(false);
@@ -278,25 +292,6 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                   <X className="h-4 w-4" />
                 </button>
               </div>
-
-              {userName && (
-                <div className="mb-3 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                  {user.photoUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={user.photoUrl} alt={userName} className="h-9 w-9 shrink-0 rounded-full object-cover" />
-                  ) : (
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-bold text-white">
-                      {userName.charAt(0).toUpperCase()}
-                    </div>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-semibold text-slate-900">{userName}</p>
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                      {activePreview ? activePreview.label : (ROLE_LABELS[userRole] ?? userRole)}
-                    </p>
-                  </div>
-                </div>
-              )}
 
               {isSuperAdmin && (
                 <div className="relative mb-2" data-role-preview-root>
@@ -354,8 +349,8 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
 
               <nav aria-label="Klinik menüsü" className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 pb-3 [-webkit-overflow-scrolling:touch]">
                 {navGroups.map((group) => (
-                  <div key={group.label} className="border-t border-slate-100 pt-2 first:border-t-0 first:pt-0">
-                    <p className="px-3 pb-1.5 text-[11px] font-semibold text-slate-500">{group.label}</p>
+                  <div key={group.label || "ana"} className="border-t border-slate-100 pt-2 first:border-t-0 first:pt-0">
+                    {group.label && <p className="px-3 pb-1.5 text-xs font-semibold text-slate-500">{group.label}</p>}
                     <div className="flex flex-col gap-1">
                       {group.items.map((it) => {
                         const active = isActive(it.href);
@@ -370,18 +365,6 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
                   </div>
                 ))}
               </nav>
-
-              <div className="shrink-0 border-t border-slate-100 p-3">
-                <button
-                  type="button"
-                  disabled={loggingOut}
-                  onClick={handleLogout}
-                  className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-500 transition hover:bg-red-50 hover:text-red-600"
-                >
-                  <ModuleIcon module="logout" size="sm" />
-                  <span>Oturumu Kapat</span>
-                </button>
-              </div>
             </div>
           </div>
         </div>
@@ -408,35 +391,10 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
           <BrandMark />
           {!collapsed && <p className="max-w-[165px] truncate text-[13px] font-black tracking-tight text-slate-900">{brand.name}</p>}
         </div>
-        {!collapsed && <button type="button" aria-label={desktopPinned ? "Menüyü daralt" : "Menüyü açık tut"} aria-pressed={desktopPinned} onClick={() => { setDesktopPinned(prev => !prev); setDesktopHovered(false); }} className="shrink-0 rounded-lg p-2 text-slate-500 hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-primary">
+        {!collapsed && <button type="button" aria-label={desktopPinned ? "Menüyü daralt" : "Menüyü açık tut"} aria-pressed={desktopPinned} onClick={() => { changePinned(!desktopPinned); setDesktopHovered(false); }} className="shrink-0 rounded-lg p-2 text-slate-500 hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-primary">
           <ChevronDown className={`h-4 w-4 ${desktopPinned ? "rotate-90" : "-rotate-90"}`} />
         </button>}
       </div>
-
-      {/* Kullanıcı kartı — ikon tile'larıyla aynı "porselen" yüzey dili
-          (ince üst highlight + düşük yoğunluklu iç gölge) — önceden düz
-          tek renk bir kutuydu, yeni ikon sisteminden görsel olarak
-          kopuktu (bkz. kullanıcı geri bildirimi). */}
-      {userName && (
-        <div className={`ui-sidebar-card mx-2 mb-3 flex h-14 items-center rounded-xl ${collapsed ? "justify-center px-0" : "gap-3 pl-[10px] pr-3"}`}>
-          {user.photoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={user.photoUrl} alt={userName} className="h-9 w-9 shrink-0 rounded-full object-cover ring-2 ring-white" />
-          ) : (
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary-strong text-sm font-bold text-white shadow-[0_2px_6px_rgb(var(--app-primary)/0.3)]">
-              {userName.charAt(0).toUpperCase()}
-            </div>
-          )}
-          {!collapsed && (
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-slate-900">{userName}</p>
-              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                {activePreview ? activePreview.label : (ROLE_LABELS[userRole] ?? userRole)}
-              </p>
-            </div>
-          )}
-        </div>
-      )}
 
       {/* ── Rol Görünümü (sadece SUPERADMIN) ─────────────────────────────── */}
       {isSuperAdmin && (
@@ -544,11 +502,11 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
       )}
 
       {/* Nav */}
-      <nav aria-label="Klinik menüsü" className="flex-1 overflow-y-auto px-2 pb-2">
+      <nav ref={desktopNavRef} aria-label="Klinik menüsü" className="flex-1 overflow-y-auto px-2 pb-2">
         {navGroups.map((group, gi) => {
           return (
-          <div key={group.label} className={gi > 0 ? "mt-1.5 border-t border-slate-100 pt-1.5" : ""}>
-            {!collapsed && <p className="px-3 pb-1.5 pt-1 text-[11px] font-semibold text-slate-500">{group.label}</p>}
+          <div key={group.label || "ana"} className={gi > 0 ? "mt-1.5 border-t border-slate-100 pt-1.5" : ""}>
+            {!collapsed && group.label && <p className="px-3 pb-1.5 pt-1 text-xs font-semibold text-slate-500">{group.label}</p>}
             {group.items.map((item) => {
               const active = isActive(item.href);
               const badge = dynamicBadge(item.href) || (item.badge ? parseInt(item.badge) : 0);
@@ -601,26 +559,6 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
         })}
       </nav>
 
-      {/* Logout */}
-      <div className="border-t border-slate-100 p-2">
-        <div className="relative group">
-          <button
-              type="button"
-              disabled={loggingOut}
-              onClick={handleLogout}
-            aria-label={collapsed ? "Oturumu Kapat" : undefined}
-            className={`grid h-11 w-full rounded-lg px-3 text-slate-500 transition active:scale-[0.98] active:duration-75 hover:bg-red-50 hover:text-red-600 ${collapsed ? "grid-cols-[36px] justify-items-center" : "grid-cols-[36px_minmax(0,1fr)] gap-x-3 text-sm font-bold"}`}
-          >
-            <ModuleIcon module="logout" size="sm" className="text-red-500 group-hover:bg-red-50" />
-            {!collapsed && <span className={`${NAV_LABEL_BASE} ${NAV_LABEL_OPEN} text-left`}>Oturumu Kapat</span>}
-          </button>
-          {collapsed && (
-            <div className="pointer-events-none absolute left-full top-1/2 z-50 ml-2 -translate-y-1/2 whitespace-nowrap rounded-md bg-slate-800 px-2.5 py-1 text-[12px] font-medium text-slate-100 opacity-0 shadow-lg transition-opacity group-hover:opacity-100">
-              Oturumu Kapat
-            </div>
-          )}
-        </div>
-      </div>
     </aside>
     </div>
   </div>

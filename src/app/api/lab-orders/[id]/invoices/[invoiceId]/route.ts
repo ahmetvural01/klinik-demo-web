@@ -10,6 +10,7 @@ import { formatZodError, labInvoiceUpdateSchema } from "@/lib/validators";
 import { rebuildFirmaPaymentAllocations } from "@/lib/firma-payment-allocation";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { BusinessRuleError, publicErrorResponse } from "@/lib/public-error";
+import { assertDebtReductionAllowed } from "@/app/api/lab-orders/lab-order-api";
 
 type RouteParams = { params: Promise<{ id: string; invoiceId: string }> };
 
@@ -81,40 +82,6 @@ async function updateOrderInvoiceSummary(tx: any, orderId: string) {
   });
 }
 
-async function assertDebtReductionAllowed(tx: any, invoice: any, nextAmount: number) {
-  const reduction = Math.max(0, Number(invoice.amount) - nextAmount);
-  if (reduction <= 0) return;
-
-  const source = await tx.firmaIslem.findFirst({
-    where: {
-      status: "AKTIF",
-      branchId: invoice.labOrder.branchId,
-      aciklama: { contains: labSourceToken({ labInvoiceId: invoice.id }) },
-    },
-    select: { firmaId: true },
-  });
-  const firmaId = source?.firmaId || invoice.labOrder.firmaId;
-  if (!firmaId) return;
-
-  await tx.$queryRaw`SELECT "id" FROM "Firma" WHERE "id" = ${firmaId} FOR UPDATE`;
-  const rows = await tx.firmaIslem.groupBy({
-    by: ["islemTipi"],
-    where: { firmaId, branchId: invoice.labOrder.branchId, status: "AKTIF" },
-    _sum: { tutar: true },
-  });
-  const balance = Math.round(rows.reduce((sum: number, row: any) => {
-    const amount = Number(row._sum.tutar || 0);
-    return sum + (row.islemTipi === "ODEME" ? -amount : amount);
-  }, 0) * 100) / 100;
-
-  if (balance - reduction < 0) {
-    throw new BusinessRuleError(
-      "Bu düzeltme firma bakiyesini eksiye düşürür. Önce bu faturaya ilişkin firma ödemesini düzeltin veya iptal edin.",
-      409,
-    );
-  }
-}
-
 export async function PATCH(req: NextRequest, props: RouteParams) {
   const params = await props.params;
   const auth = await requireAuth("lab:write");
@@ -123,7 +90,7 @@ export async function PATCH(req: NextRequest, props: RouteParams) {
   if (!branch.ok || !auth.user.institutionId) return NextResponse.json({ error: branch.ok ? "Kurum bağlamı zorunlu" : branch.message }, { status: 403 });
 
   const invoice = await loadInvoice(params.id, params.invoiceId, auth.user.institutionId, branch.branchId);
-  if (!invoice) return NextResponse.json({ error: "Laboratuvar faturası bulunamadı" }, { status: 404 });
+  if (!invoice) return NextResponse.json({ error: "Lab faturası bulunamadı" }, { status: 404 });
 
   const parsed = labInvoiceUpdateSchema.safeParse(await req.json());
   if (!parsed.success) {
@@ -242,7 +209,7 @@ export async function DELETE(_req: NextRequest, props: RouteParams) {
   if (!branch.ok || !auth.user.institutionId) return NextResponse.json({ error: branch.ok ? "Kurum bağlamı zorunlu" : branch.message }, { status: 403 });
 
   const invoice = await loadInvoice(params.id, params.invoiceId, auth.user.institutionId, branch.branchId);
-  if (!invoice) return NextResponse.json({ error: "Laboratuvar faturası bulunamadı" }, { status: 404 });
+  if (!invoice) return NextResponse.json({ error: "Lab faturası bulunamadı" }, { status: 404 });
 
   try {
     const fresh = await (prisma as any).$transaction(async (tx: any) => {
@@ -263,6 +230,17 @@ export async function DELETE(_req: NextRequest, props: RouteParams) {
         },
       });
       if (!currentInvoice) throw new Error("LAB_INVOICE_CHANGED");
+      // "Faturasız hastaya takılmaz" kuralı arkadan delinmesin: takılmış işin
+      // son faturası iptal edilemez (tutar düzeltilebilir ya da iş iptal edilir).
+      if (currentInvoice.labOrder.status === "HASTAYA_TAKILDI") {
+        const activeCount = await tx.labOrderInvoice.count({ where: { labOrderId: params.id, status: "ACTIVE" } });
+        if (activeCount <= 1) {
+          throw new BusinessRuleError(
+            "Hastaya takılmış işin tek faturası iptal edilemez. Tutar yanlışsa “Faturayı düzenle” ile düzeltin; laboratuvar ücreti tamamen geri aldıysa işi iptal edin.",
+            409,
+          );
+        }
+      }
       await assertDebtReductionAllowed(tx, currentInvoice, 0);
       await reverseLabInvoiceFirmaIntegration(tx, auth.user.id, { labInvoiceId: currentInvoice.id, branchId: branch.branchId });
       await tx.labOrderInvoice.update({

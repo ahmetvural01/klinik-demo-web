@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { patientFollowUpCreateSchema } from "@/lib/validators";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { FOLLOW_UP_INCLUDE, maskFollowUpPhone } from "./follow-up-include";
 
 export async function GET(request: NextRequest) {
   try {
@@ -34,13 +36,19 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ message: "Geçersiz takip durumu" }, { status: 400 });
     }
 
-    const whereClauses: any[] = [];
+    const whereClauses: Prisma.PatientFollowUpWhereInput[] = [];
     if (from || to) {
+      const range = { gte: fromDate || undefined, lte: toDate || undefined };
+      // Açık (yapılmamış) takip tarih aralığına bakılmadan her zaman gelir:
+      // önceden "Son 30 gün" seçilince 2 aydır geciken açık takipler listeden
+      // ve sayaçtan kayboluyordu (bkz. denetim HL-03). Aralık yalnız kapalı
+      // takiplere (açılış ya da kapanış tarihi) uygulanır.
       whereClauses.push({
-        createdAt: {
-          gte: fromDate || undefined,
-          lte: toDate || undefined,
-        },
+        OR: [
+          { status: "ACIK" },
+          { createdAt: range },
+          { closedAt: range },
+        ],
       });
     }
     if (doctorId) whereClauses.push({ doctorId });
@@ -50,7 +58,9 @@ export async function GET(request: NextRequest) {
       // Hasta takibinin sahibi hastadır. Oluşturan personel veya doktorun
       // kurumu üzerinden OR kapsamı kurmak, hatalı eski bir bağlantıda başka
       // kliniğin hasta iletişim bilgisini görünür hale getirebilirdi.
-      whereClauses.push({ patient: { institutionId: auth.user.institutionId, homeBranchId: branch.branchId } });
+      // Arşivlenmiş hastanın takibi listede "Gecikti" olarak kalıyor, dosyası
+      // açılamıyordu (denetim HL-V05). Arşivden çıkarılınca takipleri geri görünür.
+      whereClauses.push({ patient: { institutionId: auth.user.institutionId, homeBranchId: branch.branchId, archivedAt: null } });
     }
     if (q) {
       whereClauses.push({
@@ -65,32 +75,13 @@ export async function GET(request: NextRequest) {
 
     const items = await prisma.patientFollowUp.findMany({
       where: whereClauses.length > 0 ? { AND: whereClauses } : undefined,
-      include: {
-        patient: { select: { id: true, fullName: true, phone: true, whatsappOptInAt: true, whatsappOptOutAt: true } },
-        appointment: {
-          select: {
-            id: true,
-            startAt: true,
-            endAt: true,
-            status: true,
-            doctor: { select: { id: true, fullName: true } },
-          },
-        },
-        assignedDoctor: { select: { id: true, fullName: true } },
-        createdBy: { select: { id: true, fullName: true } },
-        labOrder: { select: { id: true, labName: true, labType: true } },
-      },
+      include: FOLLOW_UP_INCLUDE,
       orderBy: [{ status: "asc" }, { nextActionAt: "asc" }, { createdAt: "desc" }],
       take: 500,
     });
 
     const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
-    const result = hidePhone
-      ? items.map((item) => ({
-          ...item,
-          patient: item.patient ? { ...item.patient, phone: null } : item.patient,
-        }))
-      : items;
+    const result = items.map((item) => maskFollowUpPhone(item, hidePhone));
 
     return NextResponse.json(result);
   } catch (error) {
@@ -189,26 +180,15 @@ export async function POST(request: NextRequest) {
         nextActionAt: parsed.data.nextActionAt ? new Date(parsed.data.nextActionAt) : null,
         status: "ACIK",
       },
-      include: {
-        patient: { select: { id: true, fullName: true, phone: true, whatsappOptInAt: true, whatsappOptOutAt: true } },
-        appointment: {
-          select: {
-            id: true,
-            startAt: true,
-            endAt: true,
-            status: true,
-            doctor: { select: { id: true, fullName: true } },
-          },
-        },
-        assignedDoctor: { select: { id: true, fullName: true } },
-        createdBy: { select: { id: true, fullName: true } },
-      },
+      include: FOLLOW_UP_INCLUDE,
     });
   } catch (error) {
     console.error("[patient-follow-ups POST create] fallback:", error);
     return NextResponse.json({ message: "Takip kaydı oluşturulamadı" }, { status: 503 });
   }
 
-  await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_CREATE", `${patient.fullName} için manuel takip oluşturuldu`);
-  return NextResponse.json(followUp, { status: 201 });
+  await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_CREATE", `${patient.fullName} için takip oluşturuldu`);
+  // Liste (GET) gibi oluşturma yanıtı da telefon görme yetkisine uyar.
+  const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
+  return NextResponse.json(maskFollowUpPhone(followUp, hidePhone), { status: 201 });
 }

@@ -1,291 +1,220 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { AlertTriangle, Activity, Building2, CalendarDays, FileWarning, MessageSquare, Stethoscope, Users, Wallet } from "lucide-react";
-import { cachedGet } from "@/lib/client-cache";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { CheckCircle2, Plus } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { CountUp } from "@/components/ui/CountUp";
-import { Spinner } from "@/components/ui/Spinner";
+import { AlertCard, StatsCard } from "@/components/ui/Premium";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
+import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
+import { EmptyValue } from "@/components/ui/ListTable";
+import { roleLabel } from "@/lib/staff-roles";
+import type { InvoiceSummary } from "@/components/superadmin/invoice-status";
+import { auditActionLabel, planLabel } from "@/components/superadmin/sa-labels";
+import { count, dateTime, money, shortDate } from "@/components/superadmin/sa-format";
+import { errorMessage, isAbort, saGet } from "@/components/superadmin/sa-fetch";
 
 type Dashboard = {
   totalInstitutions: number;
   activeInstitutions: number;
-  suspendedInstitutions: number;
-  totalSmsBalance: number;
-  platformSmsStock: number;
-  totalRevenue: number;
-  pendingInvoices: number;
-  overdueInvoices: number;
-  unpaidAmount: number;
+  blockedInstitutions: number;
+  demoEndingSoon: number;
+  lowSmsThreshold: number;
+  lowSmsCount: number;
   lowSmsInstitutions: { id: string; name: string; smsBalance: number }[];
-  recentInstitutions: { id: string; name: string; subscriptionPlan: string; createdAt: string }[];
-  recentTransactions: {
-    id: string;
-    institution: string;
-    smsCount: number;
-    amount: number;
-    createdAt: string;
-  }[];
-  planDistribution: { plan: string; count: number }[];
-  systemStats: SystemStats;
-  systemMetrics: SystemMetrics;
-};
-
-type SystemStats = {
-  totalPatients: number;
-  totalAppointments: number;
-  totalExaminations: number;
-  totalStaff: number;
+  platformSmsStock: number;
+  totalSmsBalance: number;
+  invoices: InvoiceSummary;
+  openSupport: number;
+  recentInstitutions: { id: string; name: string; subscriptionPlan: string; billingCycle: string; createdAt: string }[];
+  recentTransactions: { id: string; institutionId: string; institution: string; smsCount: number; amount: number; createdAt: string }[];
   latestLogs: {
     id: string;
     action: string;
-    detail: string;
+    detail: string | null;
     createdAt: string;
-    user: { fullName: string; role: string };
+    isGhost: boolean;
+    actorRole: string | null;
+    user: { fullName: string; role: string; institution: { id: string; name: string } | null } | null;
   }[];
 };
 
-type SystemMetrics = {
-  counters: Record<string, number>;
-  timers: Record<string, { count: number; avgMs: number; minMs: number; maxMs: number }>;
-  generatedAt: string;
-};
-
+/**
+ * Kontrol Paneli — "bugün neyle ilgilenmeliyim?" sorusunun cevabı en üstte:
+ * gecikmiş fatura, erişimi kısıtlı klinik, yanıt bekleyen destek, biten demo,
+ * azalan SMS. Her kart ilgili filtreli listeye götürür. Altında yalnız karar
+ * verdiren dört sayı (aktif klinik, bu ay tahsilat, açık alacak, SMS stoğu).
+ * Önceden platform geneli hasta/randevu sayıları, ham sistem sayaçları ve plan
+ * kodları ilk ekranı kaplıyor, asıl yapılacaklar en altta kalıyordu.
+ */
 export default function SuperadminPanelPage() {
   const [data, setData] = useState<Dashboard | null>(null);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
+  const [reloadKey, setReloadKey] = useState(0);
 
-  useEffect(() => {
-    const run = async () => {
-      const meData = await cachedGet<{ role?: string } | null>("/api/auth/me?surface=superadmin", 60_000);
-      if (!meData) {
-        router.replace("/superadmin");
-        return;
-      }
-      if (meData.role !== "SUPERADMIN") {
-        router.replace("/superadmin");
-        return;
-      }
-      const dashboardRes = await fetch("/api/superadmin/dashboard", { cache: "no-store" });
-
-      if (!dashboardRes.ok) {
-        setError("Dashboard verisi alınamadı");
-        setLoading(false);
-        return;
-      }
-
-      setData(await dashboardRes.json() as Dashboard);
-
-      setLoading(false);
-    };
-    void run();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const load = useCallback((signal?: AbortSignal) => {
+    setError(null);
+    saGet<Dashboard>("/api/superadmin/dashboard", "Kontrol paneli yüklenemedi.", signal)
+      .then(setData)
+      .catch((failure) => {
+        if (!isAbort(failure)) setError(errorMessage(failure, "Kontrol paneli yüklenemedi."));
+      });
   }, []);
 
-  if (loading) {
+  useEffect(() => {
+    const controller = new AbortController();
+    load(controller.signal);
+    return () => controller.abort();
+  }, [load, reloadKey]);
+
+  const header = (
+    <PageHeader
+      icon="chart"
+      title="Kontrol Paneli"
+      description="Bugün ilgilenmeniz gerekenler ve platformun özeti."
+      actions={<Button icon={Plus} href="/superadmin/institutions?yeni=1">Yeni klinik</Button>}
+    />
+  );
+
+  if (error && !data) {
     return (
-      <div className="flex h-64 items-center justify-center">
-        <Spinner className="h-8 w-8 text-primary" />
-      </div>
+      <section className="space-y-4">
+        {header}
+        <LoadErrorState message={error} onRetry={() => setReloadKey((value) => value + 1)} />
+      </section>
     );
   }
 
-  if (error || !data) {
+  if (!data) {
     return (
-      <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">
-        {error || "Veri yüklenemedi"}
-      </div>
+      <section className="space-y-4">
+        {header}
+        <div className="ui-surface overflow-hidden"><ListRowSkeleton rows={4} /></div>
+      </section>
     );
   }
 
-  const hasAttention = data.lowSmsInstitutions.length > 0 || data.overdueInvoices > 0 || data.suspendedInstitutions > 0;
-  const stats = data.systemStats;
-  const metrics = data.systemMetrics;
-  const totalPatients = stats?.totalPatients ?? 0;
-  const totalAppointments = stats?.totalAppointments ?? 0;
-  const totalExaminations = stats?.totalExaminations ?? 0;
-  const totalStaff = stats?.totalStaff ?? 0;
-
-  const metricCards = [
-    { label: "Toplam Hasta", value: totalPatients, icon: Users, tone: "bg-primary/10 text-primary" },
-    { label: "Toplam Randevu", value: totalAppointments, icon: CalendarDays, tone: "bg-sky-50 text-sky-600" },
-    { label: "Aktif Personel", value: totalStaff, icon: Activity, tone: "bg-emerald-50 text-emerald-600" },
-    { label: "Muayene Sayısı", value: totalExaminations, icon: Stethoscope, tone: "bg-violet-50 text-violet-600" },
-  ];
+  const inv = data.invoices;
+  const todo: { key: string; title: string; description: string; href: string; tone: "critical" | "warning" | "info" }[] = [];
+  if (inv.overdueCount > 0) {
+    todo.push({ key: "overdue", title: `${count(inv.overdueCount)} gecikmiş fatura · ${money(inv.overdueAmount)}`, description: "Vadesi geçti; tahsil edilmezse klinik kayıt ekleyemez.", href: "/superadmin/invoices?status=OVERDUE", tone: "critical" });
+  }
+  if (data.blockedInstitutions > 0) {
+    todo.push({ key: "blocked", title: `${count(data.blockedInstitutions)} klinik kısıtlı veya kilitli`, description: "Askıda, salt okunur, kısıtlı ya da ödeme kilidinde olan klinikler.", href: "/superadmin/institutions?durum=sorunlu", tone: "critical" });
+  }
+  if (data.openSupport > 0) {
+    todo.push({ key: "support", title: `${count(data.openSupport)} destek talebi yanıt bekliyor`, description: "Kliniklerin sorularını yanıtlayın.", href: "/superadmin/support", tone: "warning" });
+  }
+  if (data.demoEndingSoon > 0) {
+    todo.push({ key: "demo", title: `${count(data.demoEndingSoon)} demo 7 gün içinde bitiyor`, description: "Satışa dönüştürmek için klinikle görüşün.", href: "/superadmin/institutions?durum=demo", tone: "warning" });
+  }
+  if (data.lowSmsCount > 0) {
+    const names = data.lowSmsInstitutions.slice(0, 3).map((item) => `${item.name} (${count(item.smsBalance)})`).join(", ");
+    todo.push({ key: "sms", title: `${count(data.lowSmsCount)} klinikte SMS ${data.lowSmsThreshold}'nin altında`, description: names, href: "/superadmin/institutions?durum=sms-az", tone: "info" });
+  }
+  if (data.platformSmsStock <= 0) {
+    todo.push({ key: "stock", title: "Platform SMS stoğu bitti", description: "Stok eklenmeden kliniklere SMS paketi satılamaz.", href: "/superadmin/sms?tab=stok", tone: "warning" });
+  }
 
   return (
-    <section className="space-y-6">
-      <div className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <h1 className="text-lg font-black text-slate-900">Sistem Kontrol Paneli</h1>
-        <p className="mt-0.5 text-xs text-slate-500">Şu anki durum — geçmişe dönük analiz için Raporlar sayfasına bakın.</p>
-      </div>
+    <section className="space-y-5">
+      {header}
 
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        <article className="ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "0ms" }}>
-          <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><Building2 className="h-4 w-4" /></span>
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam Klinik</p>
-          <p className="mt-1 text-2xl font-black text-slate-900"><CountUp value={data.totalInstitutions} /></p>
-          <p className="mt-1 text-xs font-semibold text-slate-500">
-            <span className="text-emerald-600">{data.activeInstitutions} aktif</span>
-            {data.suspendedInstitutions > 0 && <span className={`text-amber-600 ${data.suspendedInstitutions > 0 ? "ui-badge-pulse" : ""}`}> · {data.suspendedInstitutions} askıda</span>}
+      <div>
+        <h2 className="mb-2 text-sm font-bold text-slate-900">Bugün ilgilenilecekler</h2>
+        {todo.length === 0 ? (
+          <p className="ui-surface flex items-center gap-2 px-4 py-3 text-sm font-semibold text-emerald-700">
+            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+            Bekleyen iş yok: gecikmiş fatura, kısıtlı klinik veya yanıt bekleyen talep bulunmuyor.
           </p>
-        </article>
-
-        <article className="ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "40ms" }}>
-          <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-600"><FileWarning className="h-4 w-4" /></span>
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Bekleyen Fatura</p>
-          <p className="mt-1 text-2xl font-black text-slate-900"><CountUp value={data.pendingInvoices} /></p>
-          <p className={`mt-1 text-xs font-semibold text-red-600 ${data.overdueInvoices > 0 ? "ui-badge-pulse" : ""}`}>{data.overdueInvoices} gecikmiş</p>
-        </article>
-
-        <article className="ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "80ms" }}>
-          <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"><MessageSquare className="h-4 w-4" /></span>
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Platform SMS Stoku</p>
-          <p className="mt-1 text-2xl font-black text-slate-900"><CountUp value={data.platformSmsStock} /></p>
-          <p className="mt-1 text-xs font-semibold text-slate-500">Kliniklere ayrılan: {data.totalSmsBalance.toLocaleString("tr-TR")}</p>
-        </article>
-
-        <article className="ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: "120ms" }}>
-          <span className="mb-2 flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-600"><Wallet className="h-4 w-4" /></span>
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Toplam Gelir</p>
-          <p className="mt-1 text-2xl font-black text-emerald-600"><CountUp value={data.totalRevenue} formatter={(n) => `₺${n.toLocaleString("tr-TR")}`} /></p>
-          {data.unpaidAmount > 0 && <p className="mt-1 text-xs font-semibold text-red-600">₺{data.unpaidAmount.toLocaleString("tr-TR")} tahsil edilmedi</p>}
-        </article>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-        {metricCards.map((card, idx) => {
-          const Icon = card.icon;
-          return (
-            <article key={card.label} className="ui-kpi-in rounded-2xl border border-slate-100 bg-white p-5 shadow-sm" style={{ ["--row-delay" as string]: `${idx * 40}ms` }}>
-              <span className={`mb-2 flex h-8 w-8 items-center justify-center rounded-lg ${card.tone}`}><Icon className="h-4 w-4" /></span>
-              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{card.label}</p>
-              <p className="mt-1 text-2xl font-black text-slate-900"><CountUp value={card.value} /></p>
-            </article>
-          );
-        })}
-      </div>
-
-      {metrics && (
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-          <div className="mb-3 flex items-center gap-2">
-            <Activity className="h-4 w-4 text-primary" />
-            <h3 className="text-sm font-black text-slate-900">Sistem Sayaçları</h3>
-            <span className="text-xs text-slate-400">{new Date(metrics.generatedAt).toLocaleString("tr-TR")}</span>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(metrics.counters).map(([key, value]) => (
-              <Badge key={key} tone="neutral">{key}: {value}</Badge>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {todo.map((item) => (
+              <AlertCard key={item.key} title={item.title} description={item.description} href={item.href} tone={item.tone} />
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {data.planDistribution.length > 0 && (
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-          <h3 className="text-sm font-black text-slate-900">Plan Dağılımı</h3>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {data.planDistribution.map((item) => (
-              <Badge key={item.plan} tone="info">{item.plan}: {item.count}</Badge>
-            ))}
-          </div>
-        </div>
-      )}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <StatsCard label="Aktif klinik" value={count(data.activeInstitutions)} description={`Toplam ${count(data.totalInstitutions)} klinik`} href="/superadmin/institutions" />
+        <StatsCard label="Bu ay tahsil edilen" value={money(inv.paidThisMonthAmount)} description={`${count(inv.paidThisMonthCount)} fatura`} tone="success" href="/superadmin/invoices?status=PAID" />
+        <StatsCard label="Açık alacak" value={money(inv.openAmount)} description={`${count(inv.openCount)} fatura · ${count(inv.overdueCount)} gecikmiş`} tone={inv.overdueCount > 0 ? "critical" : "neutral"} href="/superadmin/invoices" />
+        <StatsCard label="Platform SMS stoğu" value={count(data.platformSmsStock)} description={`Kliniklerde ${count(data.totalSmsBalance)} SMS`} tone={data.platformSmsStock <= 0 ? "warning" : "neutral"} href="/superadmin/sms?tab=stok" />
+      </div>
 
-      {hasAttention && (
-        <div className="space-y-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-          <div className="flex items-center gap-2">
-            <AlertTriangle className="h-4 w-4 text-amber-600" />
-            <h3 className="text-sm font-black text-amber-900">Dikkat Gerektirenler</h3>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="ui-surface overflow-hidden lg:col-span-2">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
+            <h2 className="text-sm font-bold text-slate-900">Son işlemler</h2>
+            <Link href="/superadmin/audit" className="text-xs font-semibold text-primary hover:underline">Denetim Günlüğü</Link>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {data.suspendedInstitutions > 0 && (
-              <Badge tone="warning">{data.suspendedInstitutions} klinik hizmeti kısıtlı/askıda</Badge>
-            )}
-            {data.overdueInvoices > 0 && (
-              <Badge tone="critical">{data.overdueInvoices} fatura gecikmiş (₺{data.unpaidAmount.toLocaleString("tr-TR")})</Badge>
-            )}
-          </div>
-          {data.lowSmsInstitutions.length > 0 && (
-            <div>
-              <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-amber-700">SMS Kredisi Az Olan Klinikler</p>
-              <div className="flex flex-wrap gap-1.5">
-                {data.lowSmsInstitutions.map((i) => (
-                  <a
-                    key={i.id}
-                    href={`/superadmin/institutions/${i.id}`}
-                    className="rounded-full border border-amber-200 bg-white px-3 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
-                    title="Kredi eklemek için kurum sayfasına git"
-                  >
-                    {i.name}: {i.smsBalance} SMS
-                  </a>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      <div className="space-y-2">
-        <h3 className="text-sm font-black text-slate-900">Son Sistem Hareketleri</h3>
-        <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-          {stats?.latestLogs?.length ? (
-            <div className="divide-y divide-slate-100">
-              {stats.latestLogs.map((log) => (
-                <div key={log.id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm">
-                  <div>
-                    <p className="font-bold text-slate-900">{log.action}</p>
-                    <p className="text-xs text-slate-500">{log.detail}</p>
-                  </div>
-                  <div className="text-right text-xs text-slate-500">
-                    <p>{log.user.fullName} · {log.user.role}</p>
-                    <p>{new Date(log.createdAt).toLocaleString("tr-TR")}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+          {data.latestLogs.length === 0 ? (
+            <p className="px-4 py-8 text-center text-sm text-slate-500">Henüz işlem yok.</p>
           ) : (
-            <p className="px-4 py-8 text-center text-sm text-slate-400">Kayıt yok</p>
+            <ul className="divide-y divide-slate-100">
+              {data.latestLogs.map((log) => (
+                <li key={log.id} className="px-4 py-2.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
+                    <p className="text-sm font-semibold text-slate-900">{auditActionLabel(log.action, log.detail)}</p>
+                    <span className="text-xs text-slate-500">{dateTime(log.createdAt)}</span>
+                  </div>
+                  {log.detail && <p className="line-clamp-1 text-xs text-slate-600">{log.detail}</p>}
+                  <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                    <span>{log.user?.fullName || "Sistem"}{log.user ? ` · ${roleLabel(log.user.role)}` : ""}</span>
+                    {log.user?.institution && (
+                      <Link href={`/superadmin/institutions/${log.user.institution.id}`} className="font-semibold text-primary hover:underline">{log.user.institution.name}</Link>
+                    )}
+                    {log.isGhost && <Badge tone="warning">Gizli giriş</Badge>}
+                  </p>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
-      </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="space-y-2">
-          <h3 className="text-sm font-black text-slate-900">Son Kaydolan Klinikler</h3>
-          <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+        <div className="space-y-4">
+          <div className="ui-surface overflow-hidden">
+            <h2 className="border-b border-slate-100 px-4 py-3 text-sm font-bold text-slate-900">Son açılan klinikler</h2>
             {data.recentInstitutions.length === 0 ? (
-              <p className="px-4 py-8 text-center text-sm text-slate-400">Kayıt yok</p>
+              <p className="px-4 py-6 text-center text-sm text-slate-500">Henüz klinik yok.</p>
             ) : (
-              <div className="divide-y divide-slate-100">
-                {data.recentInstitutions.map((i) => (
-                  <div key={i.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
-                    <span className="font-bold text-slate-900">{i.name}</span>
-                    <span className="text-xs text-slate-500">{new Date(i.createdAt).toLocaleDateString("tr-TR")}</span>
-                  </div>
+              <ul className="divide-y divide-slate-100">
+                {data.recentInstitutions.map((item) => (
+                  <li key={item.id}>
+                    <Link href={`/superadmin/institutions/${item.id}`} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm hover:bg-slate-50">
+                      <span className="min-w-0">
+                        <span className="block truncate font-semibold text-slate-900">{item.name}</span>
+                        <span className="text-xs text-slate-500">{planLabel(item.subscriptionPlan, item.billingCycle)}</span>
+                      </span>
+                      <span className="shrink-0 text-xs text-slate-500">{shortDate(item.createdAt) || <EmptyValue />}</span>
+                    </Link>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
           </div>
-        </div>
 
-        <div className="space-y-2">
-          <h3 className="text-sm font-black text-slate-900">Son SMS Satışları</h3>
-          <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
+          <div className="ui-surface overflow-hidden">
+            <h2 className="border-b border-slate-100 px-4 py-3 text-sm font-bold text-slate-900">Son SMS satışları</h2>
             {data.recentTransactions.length === 0 ? (
-              <p className="px-4 py-8 text-center text-sm text-slate-400">İşlem yok</p>
+              <p className="px-4 py-6 text-center text-sm text-slate-500">Henüz SMS satışı yok. Satış, klinik dosyasındaki SMS bölümünden yapılır.</p>
             ) : (
-              <div className="divide-y divide-slate-100">
-                {data.recentTransactions.map((t) => (
-                  <div key={t.id} className="flex items-center justify-between px-4 py-2.5 text-sm">
-                    <span className="font-bold text-slate-900">{t.institution}</span>
-                    <span className="text-xs text-slate-500">{t.smsCount.toLocaleString("tr-TR")} SMS · ₺{t.amount.toLocaleString("tr-TR")}</span>
-                  </div>
+              <ul className="divide-y divide-slate-100">
+                {data.recentTransactions.map((item) => (
+                  <li key={item.id}>
+                    <Link href={`/superadmin/institutions/${item.institutionId}?tab=sms`} className="flex items-center justify-between gap-2 px-4 py-2.5 text-sm hover:bg-slate-50">
+                      <span className="min-w-0">
+                        <span className="block truncate font-semibold text-slate-900">{item.institution}</span>
+                        <span className="text-xs text-slate-500">{shortDate(item.createdAt)}</span>
+                      </span>
+                      <span className="shrink-0 text-right text-xs text-slate-600">{count(item.smsCount)} SMS<br />{money(item.amount)}</span>
+                    </Link>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
           </div>
         </div>

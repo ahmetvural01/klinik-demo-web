@@ -62,7 +62,6 @@ export function Button({
   if (href && !disabled && !loading) {
     return (
       <Link href={href} className={classes}>
-        <span className="ui-button-premium-shine" aria-hidden="true" />
         {iconEl && iconPosition === "left" && iconEl}
         {children}
         {iconEl && iconPosition === "right" && iconEl}
@@ -77,7 +76,6 @@ export function Button({
       className={classes}
       {...rest}
     >
-      <span className="ui-button-premium-shine" aria-hidden="true" />
       {iconEl && iconPosition === "left" && iconEl}
       {children}
       {iconEl && iconPosition === "right" && iconEl}

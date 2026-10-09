@@ -40,7 +40,9 @@ export function renderCommunicationTemplate(
   fallback: string,
 ): CommunicationTemplateResult {
   const smsSource = template?.content?.trim() || fallback;
-  const whatsappSource = template?.whatsappContent?.trim() || smsSource;
+  // Her mesajın TEK metni var: ekranda gösterilen ve düzenlenen metin WhatsApp'tan
+  // da aynen gider (ayrı, gizli bir WhatsApp metni kullanıcıyı yanıltıyordu).
+  const whatsappSource = smsSource;
   return {
     smsMessage: render(smsSource, variables),
     whatsappMessage: render(whatsappSource, variables),

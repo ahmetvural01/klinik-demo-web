@@ -1,24 +1,17 @@
 export default function Loading() {
   return (
-    <div className="space-y-4" aria-busy="true" aria-label="Yükleniyor">
-      <div className="flex flex-wrap gap-2">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <div key={i} className="h-8 w-28 animate-pulse rounded-lg bg-slate-100" style={{ animationDelay: `${i * 40}ms` }} />
-        ))}
+    <div className="space-y-4 pt-4" aria-busy="true" aria-label="İletişim yükleniyor">
+      <div className="flex items-center gap-3">
+        <div className="ui-skeleton-shimmer h-10 w-10 rounded-lg bg-slate-100" />
+        <div className="space-y-2">
+          <div className="ui-skeleton-shimmer h-5 w-32 rounded bg-slate-100" />
+          <div className="ui-skeleton-shimmer h-3 w-72 max-w-full rounded bg-slate-100" />
+        </div>
       </div>
-      <div className="h-14 animate-pulse rounded-2xl border border-slate-100 bg-white" />
-      <div className="grid gap-3 sm:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="h-16 animate-pulse rounded-xl border border-slate-100 bg-white" style={{ animationDelay: `${i * 40}ms` }} />
-        ))}
-      </div>
-      <div className="overflow-hidden rounded-xl border bg-white">
-        <div className="h-9 border-b bg-gray-100" />
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="h-10 border-b border-slate-50 px-4 py-2">
-            <div className="h-4 w-full animate-pulse rounded bg-slate-100" style={{ animationDelay: `${i * 30}ms` }} />
-          </div>
-        ))}
+      <div className="ui-skeleton-shimmer h-10 w-full max-w-xl rounded-lg bg-slate-100" />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="ui-skeleton-shimmer h-64 rounded-xl border border-slate-100 bg-white" />
+        <div className="ui-skeleton-shimmer h-64 rounded-xl border border-slate-100 bg-white" />
       </div>
     </div>
   );

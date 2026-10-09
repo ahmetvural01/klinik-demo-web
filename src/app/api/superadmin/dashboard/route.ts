@@ -1,10 +1,17 @@
 import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
-import { getMetricsSnapshot } from "@/lib/metrics";
+import { summarizeInvoices } from "@/components/superadmin/invoice-status";
+import { institutionState } from "@/components/superadmin/sa-labels";
 
 export const dynamic = "force-dynamic";
 
+const LOW_SMS_THRESHOLD = 50;
+const DEMO_WARNING_DAYS = 7;
+
+// Kontrol Paneli: "bugün neyle ilgilenmeliyim?" sorusunun cevabı. Fatura
+// toplamları Faturalar ve klinik dosyasıyla AYNI fonksiyondan
+// (summarizeInvoices) hesaplanır; iptal edilen fatura borca eklenmez.
 export async function GET() {
   const auth = await requireAuth("superadmin");
   if (auth.error) return auth.error;
@@ -14,82 +21,91 @@ export async function GET() {
   }
 
   const now = new Date();
+  const demoLimit = new Date(now.getTime() + DEMO_WARNING_DAYS * 86_400_000);
 
   const [
     institutions,
-    activeInstitutions,
-    suspendedInstitutions,
-    totalSmsBalanceAgg,
-    totalRevenue,
-    pendingInvoices,
-    overdueInvoices,
-    unpaidAmountAgg,
-    recentTransactions,
+    invoices,
     wallet,
-    planDistribution,
-    lowSmsInstitutions,
-    recentInstitutions,
-    totalAppointments,
-    totalExaminations,
-    totalPatients,
-    totalStaff,
+    openSupport,
+    recentTransactions,
     latestLogs,
   ] = await Promise.all([
-    prisma.institution.count(),
-    prisma.institution.count({ where: { isActive: true } }),
-    prisma.institution.count({ where: { serviceMode: { in: ["SUSPENDED", "READ_ONLY", "LIMITED"] } } }),
-    prisma.institution.aggregate({ _sum: { smsBalance: true } }),
-    prisma.invoice.aggregate({ _sum: { amount: true }, where: { status: "PAID" } }),
-    prisma.invoice.count({ where: { status: "PENDING" } }),
-    prisma.invoice.count({ where: { status: { not: "PAID" }, dueDate: { lt: now } } }),
-    prisma.invoice.aggregate({ _sum: { amount: true }, where: { status: { not: "PAID" } } }),
-    prisma.smsTransaction.findMany({
-      take: 10,
+    prisma.institution.findMany({
+      select: {
+        id: true,
+        name: true,
+        isActive: true,
+        serviceMode: true,
+        suspendedUntil: true,
+        paymentGraceUntil: true,
+        isDemo: true,
+        demoExpiresAt: true,
+        smsBalance: true,
+        subscriptionPlan: true,
+        billingCycle: true,
+        createdAt: true,
+      },
       orderBy: { createdAt: "desc" },
-      include: { smsPackage: true, institution: { select: { id: true, name: true } } },
     }),
+    prisma.invoice.findMany({ select: { status: true, amount: true, dueDate: true, paidAt: true } }),
     prisma.platformSmsWallet.findUnique({ where: { id: 1 } }),
-    prisma.institution.groupBy({ by: ["subscriptionPlan"], _count: { _all: true } }),
-    prisma.institution.findMany({
-      where: { smsBalance: { lt: 50 }, isActive: true },
-      select: { id: true, name: true, smsBalance: true },
-      orderBy: { smsBalance: "asc" },
-      take: 5,
-    }),
-    prisma.institution.findMany({
-      take: 5,
+    prisma.supportTicket.count({ where: { answer: null, status: { not: "CLOSED" } } }),
+    prisma.smsTransaction.findMany({
+      take: 6,
       orderBy: { createdAt: "desc" },
-      select: { id: true, name: true, subscriptionPlan: true, createdAt: true },
+      include: { smsPackage: { select: { smsCount: true } }, institution: { select: { id: true, name: true } } },
     }),
-    prisma.appointment.count(),
-    prisma.examination.count(),
-    prisma.patient.count({ where: { archivedAt: null } }),
-    prisma.user.count({ where: { isActive: true, role: { not: "SUPERADMIN" } } }),
+    // Giriş/çıkış kayıtları operatöre iş çıkarmaz; akışta yalnız değişiklikler.
     prisma.auditLog.findMany({
-      where: { user: { role: { not: "SUPERADMIN" } } },
-      take: 10,
+      where: { action: { notIn: ["LOGIN", "LOGOUT"] } },
+      take: 8,
       orderBy: { createdAt: "desc" },
-      include: { user: { select: { id: true, fullName: true, role: true } } },
+      select: {
+        id: true,
+        action: true,
+        detail: true,
+        createdAt: true,
+        isGhost: true,
+        actorRole: true,
+        user: { select: { fullName: true, role: true, institution: { select: { id: true, name: true } } } },
+      },
     }),
   ]);
 
+  const iso = (value: Date | null) => (value ? value.toISOString() : null);
+  const active = institutions.filter((item) => item.isActive);
+  const blocked = active.filter((item) => institutionState({
+    isActive: item.isActive,
+    serviceMode: item.serviceMode,
+    suspendedUntil: iso(item.suspendedUntil),
+    paymentGraceUntil: iso(item.paymentGraceUntil),
+    isDemo: item.isDemo,
+    demoExpiresAt: iso(item.demoExpiresAt),
+  }, now).blocked);
+  const demoEndingSoon = active.filter((item) => item.isDemo && item.demoExpiresAt && item.demoExpiresAt >= now && item.demoExpiresAt <= demoLimit);
+  const lowSms = active
+    .filter((item) => item.smsBalance < LOW_SMS_THRESHOLD)
+    .sort((a, b) => a.smsBalance - b.smsBalance);
+
   return NextResponse.json({
-    totalInstitutions: institutions,
-    activeInstitutions,
-    suspendedInstitutions,
-    totalSmsBalance: totalSmsBalanceAgg._sum.smsBalance || 0,
+    totalInstitutions: institutions.length,
+    activeInstitutions: active.length,
+    blockedInstitutions: blocked.length,
+    demoEndingSoon: demoEndingSoon.length,
+    lowSmsThreshold: LOW_SMS_THRESHOLD,
+    lowSmsCount: lowSms.length,
+    lowSmsInstitutions: lowSms.slice(0, 5).map((item) => ({ id: item.id, name: item.name, smsBalance: item.smsBalance })),
     platformSmsStock: wallet?.availableBalance ?? 0,
-    totalRevenue: Number(totalRevenue._sum.amount || 0),
-    pendingInvoices,
-    overdueInvoices,
-    unpaidAmount: Number(unpaidAmountAgg._sum.amount || 0),
-    planDistribution: planDistribution.map((p) => ({ plan: p.subscriptionPlan, count: p._count._all })),
-    lowSmsInstitutions,
-    recentInstitutions: recentInstitutions.map((i) => ({
-      id: i.id,
-      name: i.name,
-      subscriptionPlan: i.subscriptionPlan,
-      createdAt: i.createdAt.toISOString(),
+    totalSmsBalance: institutions.reduce((sum, item) => sum + item.smsBalance, 0),
+    invoices: summarizeInvoices(invoices, now),
+    openSupport,
+    recentInstitutions: institutions.slice(0, 5).map((item) => ({
+      id: item.id,
+      name: item.name,
+      subscriptionPlan: item.subscriptionPlan,
+      billingCycle: item.billingCycle,
+      createdAt: item.createdAt.toISOString(),
     })),
     recentTransactions: recentTransactions.map((t) => ({
       id: t.id,
@@ -99,13 +115,14 @@ export async function GET() {
       amount: Number(t.totalPrice),
       createdAt: t.createdAt.toISOString(),
     })),
-    systemStats: {
-      totalAppointments,
-      totalExaminations,
-      totalPatients,
-      totalStaff,
-      latestLogs,
-    },
-    systemMetrics: getMetricsSnapshot(),
+    latestLogs: latestLogs.map((log) => ({
+      id: log.id,
+      action: log.action,
+      detail: log.detail,
+      createdAt: log.createdAt.toISOString(),
+      isGhost: log.isGhost,
+      actorRole: log.actorRole,
+      user: log.user ? { fullName: log.user.fullName, role: log.user.role, institution: log.user.institution } : null,
+    })),
   });
 }

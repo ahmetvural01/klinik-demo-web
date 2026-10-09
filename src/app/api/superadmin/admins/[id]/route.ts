@@ -24,7 +24,7 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
       where: { role: "SUPERADMIN", isActive: true, id: { not: params.id } },
     });
     if (otherActiveCount === 0) {
-      return NextResponse.json({ message: "Son etkin superadmin hesabı pasifleştirilemez." }, { status: 400 });
+      return NextResponse.json({ message: "Son etkin platform yöneticisi pasife alınamaz; önce başka bir yönetici ekleyin." }, { status: 400 });
     }
   }
 

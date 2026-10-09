@@ -15,7 +15,7 @@ const MIN_HOURS_BETWEEN_REMINDERS = 20;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function fmtDate(d: Date) {
-  return d.toLocaleDateString("tr-TR");
+  return d.toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul" });
 }
 
 function startOfLocalDay(date: Date) {

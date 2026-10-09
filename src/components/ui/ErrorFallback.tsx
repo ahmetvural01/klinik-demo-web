@@ -21,8 +21,10 @@ export function ErrorFallback({ reset, critical = false, contained = false }: Er
         <p className="mx-auto mt-2 max-w-sm text-sm leading-6 text-slate-600">
           İşleminiz kaydedilmediyse değişiklik yapmadan önce sayfayı yeniden deneyin. Sorun sürerse sistem yöneticinizle iletişime geçin.
         </p>
-        <div className="mt-5 flex justify-center">
-          <Button icon={RefreshCw} onClick={reset}>Yeniden Dene</Button>
+        <div className="mt-5 flex flex-wrap justify-center gap-2">
+          <Button icon={RefreshCw} onClick={reset}>Yeniden dene</Button>
+          {/* Panel içindeki hatada kullanıcı çıkmaza düşmesin: güvenli bir başlangıç noktası. */}
+          {contained && <Button variant="secondary" href="/anasayfa">Anasayfaya dön</Button>}
         </div>
       </div>
     </div>

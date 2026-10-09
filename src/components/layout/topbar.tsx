@@ -2,6 +2,7 @@
 
 /* eslint-disable react-hooks/exhaustive-deps */
 
+import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
@@ -13,202 +14,39 @@ import {
   CalendarPlus,
   UserPlus,
   ClipboardList,
+  ClipboardPlus,
   ChevronRight,
   CheckCircle2,
   AlertCircle,
   PackageSearch,
   FlaskConical,
+  Wallet,
 } from "lucide-react";
-import type { ComponentType } from "react";
 import { getAlertPermissions, usePanelAlerts } from "@/components/layout/use-panel-alerts";
 import { cachedGet } from "@/lib/client-cache";
 import { useOutsideClickGroup } from "@/lib/use-outside-click";
 import { scopedStorageKey } from "@/lib/scoped-client-storage";
-import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
 import { Tooltip } from "@/components/ui/Tooltip";
 import { showToastSafe } from "@/lib/toast-client";
 import { UserCheck } from "lucide-react";
 import { PatientFormModal } from "@/components/patient/PatientFormModal";
-import { ModuleIcon, type ModuleKey } from "@/components/ui/ModuleIcon";
 import { Spinner } from "@/components/ui/Spinner";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { BranchSwitcher } from "@/components/layout/BranchSwitcher";
+import { CreateMenu, UserMenu } from "@/components/layout/header-menus";
+import { roleLabel } from "@/lib/staff-roles";
+import { clientMutation } from "@/lib/client-mutation";
+import { routes } from "@/lib/routes";
+import { pageTitleFor } from "@/lib/page-titles";
 
 type Props = { user: { fullName: string; role: string; photoUrl?: string | null } };
 
-const roleLabel: Record<string, string> = {
-  YONETICI:   "Yönetici",
-  DOKTOR:     "Diş Hekimi",
-  ASISTAN:    "Asistan",
-  BANKO:      "Banko Görevlisi",
-  MUHASEBE:   "Muhasebe",
-  SUPERADMIN: "Yönetici",
-};
-
-const PAGE_TITLES: Record<string, string> = {
-  "/anasayfa":      "Anasayfa",
-  "/muhasebe":      "Muhasebe Merkezi",
-  "/randevu":       "Randevular",
-  "/hasta":         "Hastalar",
-  "/hasta-ekle":    "Yeni Hasta Kaydı",
-  "/hasta-takip":   "Hasta Takip",
-  "/hasta-detay":   "Hasta Detayı",
-  "/gorevler":      "Görev Merkezi",
-  "/tedavi-plani":  "Tedavi Planları",
-  "/lab":           "Laboratuvar",
-  "/recete":        "Reçete Görüntüleme",
-  "/muayene":       "Muayene",
-  "/kasa":          "Kasa / Banka",
-  "/finans":        "Doktor Hakedişim",
-  "/taksit":        "Taksit Takibi",
-  "/gider":         "Giderler",
-  "/rapor":         "Raporlar",
-  "/firma":         "Satın Alma & Tedarikçiler",
-  "/firma-detay":   "Tedarikçi Detayı",
-  "/stok":          "Stok Yönetimi",
-  "/personel":      "Personel",
-  "/personel-ekle": "Yeni Personel",
-  "/fiyat":         "Fiyat Listesi",
-  "/sms":           "İletişim Merkezi",
-  "/sistem-izleme": "Sistem İzleme",
-  "/ayar":          "Sistem Ayarları",
-  "/log":           "İşlem Kayıtları",
-  "/profil":        "Profilim",
-  "/destek":        "Destek",
-  "/dashboard":     "Dashboard",
-};
-
-// Sidebar'daki modül ikonuyla aynı görsel kimliği sayfa başlığında da
-// göstermek için — bir modülün sidebar'da bir ikonu, sayfa içinde başka
-// (jenerik) bir ikonu olmamalı.
-const PAGE_MODULE: Record<string, ModuleKey> = {
-  "/anasayfa": "home",
-  "/dashboard": "home",
-  "/randevu": "calendar",
-  "/hasta": "users",
-  "/hasta-ekle": "users",
-  "/hasta-detay": "users",
-  "/hasta-takip": "follow",
-  "/gorevler": "clipboard",
-  "/tedavi-plani": "clipboard",
-  "/lab": "flask",
-  "/recete": "clipboard",
-  "/muhasebe": "finance",
-  "/kasa": "finance",
-  "/finans": "finance",
-  "/taksit": "finance",
-  "/gider": "finance",
-  "/rapor": "rapor",
-  "/firma": "firma",
-  "/firma-detay": "firma",
-  "/stok": "box",
-  "/personel": "person",
-  "/personel-ekle": "person",
-  "/sms": "sms",
-  "/sistem-izleme": "chart",
-  "/ayar": "settings",
-  "/log": "log",
-  "/profil": "profile",
-  "/destek": "support",
-};
-
-function moduleForPath(pathname: string): ModuleKey | null {
-  return PAGE_MODULE[pathname] ?? null;
-}
-
 type MessageLite = { id: string; userId: string; createdAt: string };
 
-type TopbarQuickAction = { href: string; label: string; icon: ComponentType<{ className?: string }> };
-type TopbarPageConfig = {
-  showDateTime: boolean;
-  showAlerts: boolean;
-  showPageTitle: boolean;
-  showSearch: boolean;
-  compact: boolean;
-  searchPlaceholder: string;
-  quickActions: TopbarQuickAction[];
-};
-
-// src/lib/role-permissions.ts'teki DEFAULT_ROLE_PERMISSIONS ile aynı gerçeği
-// yansıtır (MUHASEBE'de patients:write/appointments:write yok, DOKTOR'da
-// patients:write yok) — "Hasta Ekle"/"Randevu Oluştur" hızlı erişim butonları
-// önceden her rolde koşulsuz gösteriliyordu; tıklayan bir Muhasebe/Doktor
-// formu doldurup gönderdikten SONRA "yetkiniz yok" hatası alıyordu (bkz.
-// proje tasarım ilkesi: geçersiz/işe yaramayacak aksiyon hiç gösterilmemeli).
-function getQuickActionPermissions(can: (permission: string) => boolean) {
-  return {
-    canCreatePatient: can("patients:write"),
-    canCreateAppointment: can("appointments:write"),
-  };
-}
-
-function getTopbarConfig(pathname: string): TopbarPageConfig {
-  const base: TopbarPageConfig = {
-    showDateTime: true,
-    showAlerts: true,
-    showPageTitle: true,
-    showSearch: true,
-    compact: false,
-    searchPlaceholder: "İsim, TC veya telefon ile hasta ara...",
-    quickActions: [
-      { href: "/randevu", label: "Randevu Oluştur", icon: CalendarPlus },
-      { href: "/hasta-ekle", label: "Hasta Ekle", icon: UserPlus },
-    ],
-  };
-
-  if (pathname.startsWith("/hasta-takip")) {
-    return { ...base, quickActions: [{ href: "/gorevler", label: "Görev Merkezi", icon: ClipboardList }] };
-  }
-
-  if (pathname.startsWith("/hasta")) {
-    return { ...base, quickActions: [{ href: "/randevu", label: "Randevu Oluştur", icon: CalendarPlus }] };
-  }
-
-  if (pathname.startsWith("/randevu")) {
-    return { ...base, quickActions: [{ href: "/hasta-ekle", label: "Yeni Hasta", icon: UserPlus }] };
-  }
-
-  if (pathname.startsWith("/gorevler")) {
-    return { ...base, quickActions: [{ href: "/hasta-takip", label: "Hasta Takip", icon: ClipboardList }] };
-  }
-
-  if (pathname.startsWith("/hasta-detay")) {
-    return {
-      ...base,
-      quickActions: [
-        { href: "/randevu", label: "Randevular", icon: CalendarPlus },
-        { href: "/gorevler", label: "Görev Merkezi", icon: ClipboardList },
-      ],
-    };
-  }
-
-  if (pathname.startsWith("/lab") || pathname.startsWith("/stok") || pathname.startsWith("/muhasebe")) {
-    // Lab, diğer tüm sayfalar gibi kendi başlığını topbar'da göstermeliydi —
-    // önceden yalnızca burada gizleniyordu, bu da sayfanın kimliksiz/başlıksız
-    // görünmesine yol açıyordu (bkz. kullanıcı ekran görüntüsü geri bildirimi).
-    return {
-      ...base,
-      showSearch: pathname.startsWith("/lab") ? true : base.showSearch,
-      compact: pathname.startsWith("/lab") ? true : base.compact,
-      quickActions: [{ href: "/gorevler", label: "Görev Merkezi", icon: ClipboardList }],
-    };
-  }
-
-  return base;
-}
-
-function Clock() {
-  const [time, setTime] = useState("");
-  useEffect(() => {
-    const fmt = () =>
-      setTime(new Date().toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" }));
-    fmt();
-    const t = setInterval(fmt, 30000);
-    return () => clearInterval(t);
-  }, []);
-  return <span className="tabular-nums text-sm font-semibold text-slate-700">{time}</span>;
-}
+// Üst bar artık sayfa adını yazmaz (sayfanın kendi başlığı var — aynı ad iki
+// kez görünüyordu) ve sayfaya göre değişen hızlı düğmeler göstermez: bütün
+// ekranlarda aynı yerde aynı "Yeni" menüsü ve aynı hesap menüsü durur.
+const SEARCH_PLACEHOLDER = "Hasta ara: ad, TC veya telefon…";
 
 export function Topbar({ user }: Props) {
   const { permissions, can, scopeKey } = usePermissions();
@@ -239,29 +77,81 @@ export function Topbar({ user }: Props) {
   const alerts = usePanelAlerts(effectiveRole, permissions, scopeKey);
   const unreadStorageKey = scopedStorageKey("clinic-unread-messages", scopeKey);
   const lastSeenStorageKey = scopedStorageKey("clinic-messages-last-seen", scopeKey);
-  const { canSeeTaksit, canSeeStok, canSeeLab, canSeeWaiting, canSeeTasks } = getAlertPermissions(effectiveRole, permissions);
-  const { canCreatePatient, canCreateAppointment } = getQuickActionPermissions(can);
+  const alertPermissions = getAlertPermissions(effectiveRole, permissions);
+  const { canSeeStok, canSeeLab, canSeeWaiting, canSeeTasks } = alertPermissions;
+  // Taksit uyarısı yalnız taksit listesini (Muhasebe > Alacaklar) açabilen
+  // kullanıcıya gösterilir; önceden Doktor/Asistan "yetkiniz yok" sayfasına,
+  // Banko taksit listesi olmayan deftere düşüyordu.
+  const canSeeTaksit = alertPermissions.canSeeTaksit && can("finance:center") && can("finance:read");
+  const [loggingOut, setLoggingOut] = useState(false);
 
+  // "Yeni" menüsü: yalnız kullanıcının gerçekten kaydedebileceği işler
+  // görünür (ör. Muhasebe rolünde "Yeni hasta" yok — formu doldurduktan sonra
+  // "yetkiniz yok" almasın). Bağlantılar ilgili sayfanın formunu açar.
+  const createItems = [
+    ...(can("appointments:write") ? [{ key: "randevu", label: "Randevu", description: "Takvimde boş saate randevu ver", icon: CalendarPlus, href: "/randevu?yeni=1" }] : []),
+    ...(can("patients:write") ? [{ key: "hasta", label: "Hasta", description: "Yeni hasta dosyası aç", icon: UserPlus, onSelect: () => setShowQuickPatientCreate(true) }] : []),
+    ...(can("payments:write") && can("finance:center") ? [{ key: "tahsilat", label: "Tahsilat", description: "Hastadan ödeme al", icon: Wallet, href: "/muhasebe?islem=gelir" }] : []),
+    ...(can("clinictasks:write") ? [{ key: "gorev", label: "Görev", description: "Ekipten birine iş ata", icon: ClipboardPlus, href: "/gorevler?yeni=1" }] : []),
+    ...(can("lab:write") ? [{ key: "lab", label: "Lab işi", description: "Laboratuvara iş gönder", icon: FlaskConical, href: "/lab?yeni=1" }] : []),
+  ];
+
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await clientMutation("/api/auth/logout", { method: "POST" }, "Oturum kapatılamadı.");
+      window.location.href = "/giris";
+    } catch (error) {
+      showToastSafe({ type: "error", message: error instanceof Error ? error.message : "Oturum kapatılamadı." });
+      setLoggingOut(false);
+    }
+  };
+
+  // "Hasta geldi" bildirimi yalnız GERÇEKTEN yeni gelen hasta için çıkmalı.
+  // Önceden sayfa her yeniden yüklendiğinde (F5, şube değişimi) bekleme
+  // odasında zaten oturan herkes için bildirim tekrar çıkıyordu: ilk anda
+  // liste boş geldiği için herkes "yeni" sayılıyordu. Duyurulan randevular
+  // bu sekmede gün bazında saklanır; sekmenin ilk açılışında ise ilk 20 sn
+  // içinde gelen liste "zaten bekleyenler" kabul edilir, bildirim çıkmaz.
+  const waitingMountedAtRef = useRef(Date.now());
+  const waitingHasStoredBaselineRef = useRef(false);
   useEffect(() => {
     if (!canSeeWaiting) return;
-    const currentIds = new Set(alerts.waitingList.map((w) => w.id));
+    const dayKey = new Date().toLocaleDateString("sv-SE", { timeZone: "Europe/Istanbul" });
+    const storageKey = scopedStorageKey(`waiting-announced-${dayKey}`, scopeKey);
     if (seenWaitingIdsRef.current === null) {
-      // İlk yükleme: mevcut bekleyenler için toast göstermeden yalnızca kaydet.
-      seenWaitingIdsRef.current = currentIds;
-      return;
+      let stored: string[] | null = null;
+      try {
+        const raw = sessionStorage.getItem(storageKey);
+        stored = raw ? (JSON.parse(raw) as string[]) : null;
+      } catch {
+        stored = null;
+      }
+      waitingHasStoredBaselineRef.current = Array.isArray(stored);
+      seenWaitingIdsRef.current = new Set(Array.isArray(stored) ? stored : []);
     }
-    const previous = seenWaitingIdsRef.current;
-    const newlyArrived = alerts.waitingList.filter((w) => !previous.has(w.id));
-    newlyArrived.forEach((w) => {
-      showToastSafe({
-        type: "info",
-        title: "Hasta geldi",
-        message: `${w.patientName} geldi — Dr. ${w.doctorName} bekleniyor`,
-        duration: 6000,
+    const seen = seenWaitingIdsRef.current;
+    const newlyArrived = alerts.waitingList.filter((w) => !seen.has(w.id));
+    if (newlyArrived.length === 0) return;
+    const buildingBaseline = !waitingHasStoredBaselineRef.current && Date.now() - waitingMountedAtRef.current < 20_000;
+    if (!buildingBaseline) {
+      newlyArrived.forEach((w) => {
+        showToastSafe({
+          type: "info",
+          title: "Hasta geldi",
+          message: `${w.patientName} geldi — Dr. ${w.doctorName} bekleniyor`,
+          duration: 6000,
+        });
       });
-    });
-    seenWaitingIdsRef.current = currentIds;
-  }, [alerts.waitingList, canSeeWaiting]);
+    }
+    newlyArrived.forEach((w) => seen.add(w.id));
+    try {
+      sessionStorage.setItem(storageKey, JSON.stringify([...seen]));
+    } catch {
+      // Gizli sekme vb. depolama kapalıysa yalnız bellekteki küme kullanılır.
+    }
+  }, [alerts.waitingList, canSeeWaiting, scopeKey]);
 
   const [showAlerts, setShowAlerts] = useState(false);
   const [showWaiting, setShowWaiting] = useState(false);
@@ -272,23 +162,6 @@ export function Topbar({ user }: Props) {
   const alertRef = useRef<HTMLDivElement>(null);
   const waitingRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLDivElement>(null);
-  const today = new Date().toLocaleDateString("tr-TR", { weekday: "long", day: "numeric", month: "long" });
-  const rawPageConfig = getTopbarConfig(pathname || "");
-  const pageConfig = {
-    ...rawPageConfig,
-    quickActions: rawPageConfig.quickActions.filter((action) => {
-      if (action.href === "/hasta-ekle") return canCreatePatient;
-      if (action.href === "/randevu" && action.label !== "Randevular") return canCreateAppointment;
-      if (action.href === "/randevu") return can("appointments:read");
-      if (action.href === "/gorevler") return can("clinictasks:read");
-      if (action.href === "/hasta-takip") return can("hastatracking:read");
-      return true;
-    }),
-  };
-
-  // Sayfa başlığı
-  const pageTitle = PAGE_TITLES[pathname ?? ""] ?? "";
-  const pageModule = moduleForPath(pathname ?? "");
 
   useEffect(() => {
     if (typeof document !== "undefined") {
@@ -349,11 +222,14 @@ export function Topbar({ user }: Props) {
     };
   }, [currentUserId, lastSeenStorageKey, pathname, unreadStorageKey]);
 
+  // Tarayıcı sekmesinde sayfa adı + okunmamış mesaj sayısı (ör. "(2) Randevular · CepKlinik").
   useEffect(() => {
     if (typeof document === "undefined") return;
     const base = baseTitleRef.current || "Klinik Yönetim Paneli";
-    document.title = messageUnread > 0 ? `(${messageUnread}) ${base}` : base;
-  }, [messageUnread]);
+    const page = pageTitleFor(pathname);
+    const title = page ? `${page} · ${base}` : base;
+    document.title = messageUnread > 0 ? `(${messageUnread}) ${title}` : title;
+  }, [messageUnread, pathname]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -486,32 +362,26 @@ export function Topbar({ user }: Props) {
     if (q.trim()) router.push(`/hasta?q=${encodeURIComponent(q.trim())}`);
   };
 
-  const totalAlerts = alerts.taksit + alerts.stok + alerts.lab + alerts.tasks;
+  const totalAlerts = (canSeeTaksit ? alerts.taksit : 0) + (canSeeStok ? alerts.stok : 0) + (canSeeLab ? alerts.lab : 0) + (canSeeTasks ? alerts.tasks : 0);
   const displayName = user.fullName || "Kullanıcı";
-  const initials = displayName.split(" ").map((w: string) => w[0]).slice(0, 2).join("").toUpperCase();
-  const displayRole = roleLabel[effectiveRole] || user.role;
+  const displayRole = roleLabel(effectiveRole) || user.role;
 
   return (
     <>
-    <header className={`relative z-[160] isolate flex w-full min-w-0 shrink-0 items-center justify-between border-b border-slate-200 bg-[rgb(var(--app-surface))]/95 shadow-[0_1px_0_rgb(15_23_42/0.025),0_6px_20px_rgb(15_23_42/0.025)] backdrop-blur ${pageConfig.compact ? "min-h-14 gap-2 px-3 py-2 sm:gap-3 sm:px-4" : "min-h-16 gap-2 px-3 py-2 sm:gap-4 sm:px-5"}`}>
-      {/* Sol: Sayfa başlığı veya arama */}
-      <div className={`flex min-w-0 flex-1 items-center ${pageConfig.compact ? "gap-2" : "gap-4"}`}>
+    <header className="relative z-[160] isolate flex min-h-14 w-full min-w-0 shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-[rgb(var(--app-surface))] px-3 py-2 sm:gap-3 sm:px-4 lg:px-5">
+      {/* Sol: menü (mobil), şube, hasta arama */}
+      <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
         <button
           type="button"
           onClick={() => window.dispatchEvent(new Event("toggle-mobile-sidebar"))}
           aria-label="Menüyü aç"
-          className="mr-2 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 shadow-[var(--shadow-rest)] hover:border-slate-300 hover:bg-slate-50 md:hidden"
+          className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50 md:hidden"
         >
           <Menu className="h-4 w-4" />
         </button>
-        {pageConfig.showPageTitle && pageTitle && (
-          <span key={pathname} className="ui-page-title-in group hidden shrink-0 items-center gap-2.5 lg:flex">
-            {pageModule && <ModuleIcon module={pageModule} size="sm" />}
-            <span className="font-display text-[15px] font-bold text-slate-900">{pageTitle}</span>
-          </span>
-        )}
         <BranchSwitcher />
-        {pageConfig.showSearch && can("patients:read") && <div className="relative flex min-w-0 max-w-sm flex-1">
+        {/* Hastalar sayfasının kendi araması var; orada ikinci kutu kafa karıştırıyordu. */}
+        {can("patients:read") && pathname !== "/hasta" && <div className="relative flex min-w-0 max-w-md flex-1 sm:min-w-[280px]">
           <form onSubmit={search} className="min-w-0 w-full">
             <div ref={searchRef} className="relative flex min-h-10 items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2 shadow-[var(--shadow-rest)] transition focus-within:border-primary/35 focus-within:bg-white focus-within:ring-2 focus-within:ring-primary/12">
               <Search className="h-4 w-4 shrink-0 text-slate-400" />
@@ -520,7 +390,7 @@ export function Topbar({ user }: Props) {
                 onChange={(e) => { setQ(e.target.value); setShowSearchDropdown(true); setSelectedResultIdx(-1); }}
                 onKeyDown={handleSearchKeyDown}
                 onFocus={() => { setShowSearchDropdown(true); setSelectedResultIdx(-1); }}
-                placeholder={pageConfig.searchPlaceholder}
+                placeholder={SEARCH_PLACEHOLDER}
                 role="combobox"
                 aria-controls="search-results"
                 aria-label="Hasta ara - ad, TC no veya telefon ile"
@@ -595,37 +465,15 @@ export function Topbar({ user }: Props) {
       </div>
 
       {/* Sağ taraf */}
-      <div className={`flex shrink-0 items-center ${pageConfig.compact ? "gap-1.5 sm:gap-2" : "gap-2 sm:gap-3"}`}>
-        {/* Hızlı Erişim */}
-        {pageConfig.quickActions.length > 0 && (
-          <div className="hidden items-center gap-2 xl:flex">
-            {pageConfig.quickActions.map((action) => action.href === "/hasta-ekle" ? (
-              <Button key={action.href + action.label} type="button" onClick={() => setShowQuickPatientCreate(true)} variant="secondary" size="sm" icon={action.icon}>
-                {action.label}
-              </Button>
-            ) : (
-              <Button key={action.href + action.label} href={action.href} variant="secondary" size="sm" icon={action.icon}>
-                {action.label}
-              </Button>
-            ))}
-          </div>
-        )}
-
-        {/* Tarih & Saat */}
-        {pageConfig.showDateTime && (
-          <div className="hidden items-center gap-2 border-l border-slate-100 pl-3 text-xs text-slate-400 xl:flex">
-            <span className="text-slate-500">{today}</span>
-            <span className="h-3.5 w-px bg-slate-200" />
-            <Clock />
-          </div>
-        )}
+      <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
+        <CreateMenu items={createItems} />
 
         {/* Bekleme odası — hasta "Bekliyor" (geldi) işaretlendiğinde sayfa/kat
             farkı olmadan tüm klinik personeli bunu hemen görebilsin diye,
             uygulamanın her ekranında görünen topbar'a bağımsız bir gösterge
             olarak eklendi (bkz. Randevu ekranındaki "Bekliyor" işaretlemesi,
             ham durum hâlâ GELDI — bkz. src/lib/appointment-status.ts). */}
-        {pageConfig.showAlerts && canSeeWaiting && <div className="relative hidden sm:block" ref={waitingRef}>
+        {canSeeWaiting && <div className="relative hidden sm:block" ref={waitingRef}>
           <Tooltip label="Bekleyen hastalar" side="bottom">
             <button
               onClick={() => setShowWaiting(v => !v)}
@@ -651,9 +499,9 @@ export function Topbar({ user }: Props) {
               {alerts.waitingList.length > 0 ? (
                 <div className="max-h-80 divide-y divide-slate-50 overflow-y-auto py-1">
                   {alerts.waitingList.map((w) => (
-                    <a
+                    <Link
                       key={w.id}
-                      href="/randevu"
+                      href={routes.appointment(w.id, new Date(w.startAt).toLocaleDateString("sv-SE", { timeZone: "Europe/Istanbul" }))}
                       onClick={() => setShowWaiting(false)}
                       className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition"
                     >
@@ -666,7 +514,7 @@ export function Topbar({ user }: Props) {
                           {new Date(w.startAt).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })} · Dr. {w.doctorName}
                         </p>
                       </div>
-                    </a>
+                    </Link>
                   ))}
                 </div>
               ) : (
@@ -680,11 +528,11 @@ export function Topbar({ user }: Props) {
         </div>}
 
         {/* Alarm zili */}
-        {pageConfig.showAlerts && <div className="relative" ref={alertRef}>
-          <Tooltip label="Uyarılar" side="bottom">
+        <div className="relative" ref={alertRef}>
+          <Tooltip label="Bildirimler" side="bottom">
             <button
               onClick={() => setShowAlerts(v => !v)}
-              aria-label="Uyarılar"
+              aria-label="Bildirimler"
               className="relative flex h-9 w-9 items-center justify-center rounded-lg border border-transparent text-slate-500 transition hover:border-slate-200 hover:bg-slate-50 hover:text-slate-800"
             >
               <Bell className="h-4 w-4" />
@@ -702,12 +550,12 @@ export function Topbar({ user }: Props) {
               style={{ position: "fixed", top: alertPopoverPos.top, left: alertPopoverPos.left, width: alertPopoverPos.width }}
             >
               <div className="border-b border-slate-100 px-4 py-3">
-                <p className="text-sm font-bold text-slate-800">Sistem Uyarıları</p>
+                <p className="text-sm font-bold text-slate-800">Bildirimler</p>
               </div>
               <div className="divide-y divide-slate-50 py-1">
                 {/* Taksit bildirimi — sadece yetkili roller */}
                 {canSeeTaksit && (alerts.taksit > 0 ? (
-                  <a href="/muhasebe?tab=taksit" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition">
+                  <Link href="/muhasebe?tab=alacak" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition">
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-red-50">
                       <AlertCircle className="h-4 w-4 text-red-500" />
                     </span>
@@ -715,7 +563,7 @@ export function Topbar({ user }: Props) {
                       <p className="text-sm font-semibold text-slate-800">{alerts.taksit} Gecikmiş Taksit</p>
                       <p className="text-xs text-slate-500">Taksit takibine git</p>
                     </div>
-                  </a>
+                  </Link>
                 ) : (
                   <div className="flex items-center gap-3 px-4 py-3">
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50">
@@ -726,7 +574,7 @@ export function Topbar({ user }: Props) {
                 ))}
                 {/* Stok bildirimi — sadece yetkili roller */}
                 {canSeeStok && (alerts.stok > 0 ? (
-                  <a href="/stok" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition">
+                  <Link href="/stok" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition">
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-amber-50">
                       <PackageSearch className="h-4 w-4 text-amber-500" />
                     </span>
@@ -734,7 +582,7 @@ export function Topbar({ user }: Props) {
                       <p className="text-sm font-semibold text-slate-800">{alerts.stok} Kritik Stok Kalemi</p>
                       <p className="text-xs text-slate-500">Stok yönetimine git</p>
                     </div>
-                  </a>
+                  </Link>
                 ) : (
                   <div className="flex items-center gap-3 px-4 py-3">
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50">
@@ -745,7 +593,7 @@ export function Topbar({ user }: Props) {
                 ))}
                 {/* Lab bildirimi — sadece yetkili roller */}
                 {canSeeLab && (alerts.lab > 0 ? (
-                  <a href="/lab" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition">
+                  <Link href="/lab" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 hover:bg-slate-50 transition">
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10">
                       <FlaskConical className="h-4 w-4 text-primary" />
                     </span>
@@ -753,7 +601,7 @@ export function Topbar({ user }: Props) {
                       <p className="text-sm font-semibold text-slate-800">{alerts.lab} Bekleyen Laboratuvar İşi</p>
                       <p className="text-xs text-slate-500">Laboratuvar sayfasına git</p>
                     </div>
-                  </a>
+                  </Link>
                 ) : (
                   <div className="flex items-center gap-3 px-4 py-3">
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50">
@@ -763,7 +611,7 @@ export function Topbar({ user }: Props) {
                   </div>
                 ))}
                 {canSeeTasks && (alerts.tasks > 0 ? (
-                  <a href="/gorevler" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 transition hover:bg-slate-50">
+                  <Link href="/gorevler" onClick={() => setShowAlerts(false)} className="flex items-center gap-3 px-4 py-3 transition hover:bg-slate-50">
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-50">
                       <ClipboardList className="h-4 w-4 text-rose-500" />
                     </span>
@@ -771,7 +619,7 @@ export function Topbar({ user }: Props) {
                       <p className="text-sm font-semibold text-slate-800">{alerts.tasks} Görev Aksiyon Bekliyor</p>
                       <p className="text-xs text-slate-500">Atanan görevleri aç</p>
                     </div>
-                  </a>
+                  </Link>
                 ) : (
                   <div className="flex items-center gap-3 px-4 py-3">
                     <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-50">
@@ -783,35 +631,30 @@ export function Topbar({ user }: Props) {
                 {/* Hiçbir bildirim grubu yoksa */}
                 {!canSeeTaksit && !canSeeStok && !canSeeLab && !canSeeTasks && (
                   <div className="px-4 py-6 text-center">
-                    <p className="text-sm text-slate-400">Bu rol için sistem uyarısı bulunmuyor</p>
+                    <p className="text-sm text-slate-400">Bekleyen iş yok</p>
                   </div>
                 )}
               </div>
               {totalAlerts === 0 && (
                 <div className="border-t border-slate-100 px-4 py-3 text-center">
-                  <p className="text-xs text-slate-400">Tüm sistemler normal çalışıyor</p>
+                  <p className="text-xs text-slate-400">Bekleyen iş yok</p>
                 </div>
               )}
             </div>,
             document.body
           )}
-        </div>}
+        </div>
 
-        {/* Kullanıcı */}
-        <div className="flex items-center gap-2.5 border-l border-slate-100 pl-2 sm:pl-3">
-          <div className="hidden text-right lg:block">
-            <p className="text-sm font-bold leading-tight text-slate-800">{displayName}</p>
-            <Badge tone="info" size="sm">{displayRole}</Badge>
-          </div>
-          <a href="/profil" className="relative block h-9 w-9 shrink-0 overflow-hidden rounded-full ring-2 ring-primary/20 transition hover:ring-primary/50" title="Profilim">
-            {user.photoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={user.photoUrl} alt={displayName} className="h-full w-full object-cover" />
-            ) : (
-              <span className="flex h-full w-full items-center justify-center bg-gradient-to-br from-primary to-primary-strong text-xs font-bold text-white">{initials}</span>
-            )}
-            <span className="absolute -right-0.5 -bottom-0.5 h-2.5 w-2.5 rounded-full border-2 border-white bg-emerald-500" />
-          </a>
+        {/* Hesap: ad, rol, profil, destek ve çıkış tek yerde */}
+        <div className="border-l border-slate-100 pl-1.5 sm:pl-2">
+          <UserMenu
+            name={displayName}
+            roleLabel={displayRole}
+            photoUrl={user.photoUrl}
+            showSupport={can("support:read")}
+            onLogout={handleLogout}
+            loggingOut={loggingOut}
+          />
         </div>
       </div>
     </header>

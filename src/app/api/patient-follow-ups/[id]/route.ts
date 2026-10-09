@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { patientFollowUpUpdateSchema } from "@/lib/validators";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { FOLLOW_UP_INCLUDE, maskFollowUpPhone } from "../follow-up-include";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -59,24 +61,12 @@ export async function PUT(request: NextRequest, props: Params) {
       status: shouldClose ? "KAPALI" : shouldOpen ? "ACIK" : undefined,
       closedAt: shouldClose ? new Date() : shouldOpen ? null : undefined,
     },
-    include: {
-      patient: { select: { id: true, fullName: true, phone: true, whatsappOptInAt: true, whatsappOptOutAt: true } },
-      appointment: {
-        select: {
-          id: true,
-          startAt: true,
-          endAt: true,
-          status: true,
-          doctor: { select: { id: true, fullName: true } },
-        },
-      },
-      assignedDoctor: { select: { id: true, fullName: true } },
-      createdBy: { select: { id: true, fullName: true } },
-    },
+    include: FOLLOW_UP_INCLUDE,
   });
 
   await writeAudit(auth.user.id, "PATIENT_FOLLOW_UP_UPDATE", `${existing.patient.fullName} takip kaydı güncellendi`);
-  return NextResponse.json(updated);
+  const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
+  return NextResponse.json(maskFollowUpPhone(updated, hidePhone));
 }
 
 export async function DELETE(_: NextRequest, props: Params) {

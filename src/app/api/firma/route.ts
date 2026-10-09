@@ -4,20 +4,25 @@ import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
 import { firmaCreateSchema, formatZodError } from "@/lib/validators";
 import { requireActiveBranch } from "@/lib/branch-context";
 
-export const GET = withApiTiming("firma", async function GET(_req: NextRequest) {
+// GET /api/firma?durum=aktif|pasif|tumu — varsayılan yalnız aktif firmalar
+// (Muhasebe, Laboratuvar ve hasta dosyası seçicileri bu varsayılana güvenir).
+// Tedarikçi listesi "tumu" ile pasife alınmış ama borcu kalan firmaları da
+// görür; aksi halde pasife alınan firmanın borcu toplamlardan düşüyordu.
+export const GET = withApiTiming("firma", async function GET(req: NextRequest) {
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
     const branch = requireActiveBranch(auth.user.branchContext);
     if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
+    const durum = new URL(req.url).searchParams.get("durum");
     const firmaWhere = {
-      isActive: true,
+      ...(durum === "tumu" ? {} : { isActive: durum !== "pasif" }),
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
       branchId: branch.branchId,
     };
 
-    const [firmas, islemSums] = await Promise.all([
+    const [firmas, islemSums, pendingOrders] = await Promise.all([
       (prisma as any).firma.findMany({
         where: firmaWhere,
         include: {
@@ -34,13 +39,31 @@ export const GET = withApiTiming("firma", async function GET(_req: NextRequest) 
         by: ["firmaId", "islemTipi"],
         where: { status: "AKTIF", firma: firmaWhere },
         _sum: { tutar: true },
+        _max: { tarih: true },
+        _count: { _all: true },
+      }),
+      // Teslimat bekleyen siparişler: listede "sipariş bekliyor" bilgisi
+      // (stok ve borç teslimde oluştuğu için başka hiçbir yerde görünmüyordu).
+      (prisma as any).purchase.groupBy({
+        by: ["firmaId"],
+        where: {
+          status: "AKTIF",
+          receiptStatus: "SIPARIS_VERILDI",
+          ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+          branchId: branch.branchId,
+        },
         _count: { _all: true },
       }),
     ]);
+    const pendingByFirma = new Map<string, number>(
+      pendingOrders.map((row: any) => [row.firmaId as string, Number(row._count?._all || 0)]),
+    );
 
-    const sumsByFirma = new Map<string, { borc: number; odenen: number; totalIslem: number; odemeCount: number }>();
+    const sumsByFirma = new Map<string, { borc: number; odenen: number; totalIslem: number; odemeCount: number; sonIslem: Date | null }>();
     for (const row of islemSums) {
-      const entry = sumsByFirma.get(row.firmaId) || { borc: 0, odenen: 0, totalIslem: 0, odemeCount: 0 };
+      const entry = sumsByFirma.get(row.firmaId) || { borc: 0, odenen: 0, totalIslem: 0, odemeCount: 0, sonIslem: null };
+      const lastDate = row._max?.tarih ? new Date(row._max.tarih) : null;
+      if (lastDate && (!entry.sonIslem || lastDate > entry.sonIslem)) entry.sonIslem = lastDate;
       const amount = Number(row._sum.tutar ?? 0);
       if (row.islemTipi === "ALIM" || row.islemTipi === "HIZMET") entry.borc += amount;
       else if (row.islemTipi === "ODEME") { entry.odenen += amount; entry.odemeCount += row._count._all; }
@@ -50,7 +73,7 @@ export const GET = withApiTiming("firma", async function GET(_req: NextRequest) 
 
     return NextResponse.json(
       firmas.map((f: any) => {
-        const sums = sumsByFirma.get(f.id) || { borc: 0, odenen: 0, totalIslem: 0, odemeCount: 0 };
+        const sums = sumsByFirma.get(f.id) || { borc: 0, odenen: 0, totalIslem: 0, odemeCount: 0, sonIslem: null };
 
         // Vendor Score hesaplama: ödeme disiplini + kalite + hız
         const totalIslem = sums.totalIslem;
@@ -64,7 +87,9 @@ export const GET = withApiTiming("firma", async function GET(_req: NextRequest) 
           ...rest,
           borc: sums.borc,
           odenen: sums.odenen,
-          bakiye: sums.borc - sums.odenen,
+          bakiye: Math.round((sums.borc - sums.odenen) * 100) / 100,
+          sonIslemTarihi: sums.sonIslem ? sums.sonIslem.toISOString() : null,
+          bekleyenSiparis: pendingByFirma.get(f.id) || 0,
           vendorScore: Math.min(100, Math.max(0, score)),
           primaryKontakt: kontaktler?.find((k: any) => k.isPrimary) || null,
           toplamKontakt: kontaktler?.length || 0
@@ -92,6 +117,22 @@ export async function POST(req: NextRequest) {
     }
     const { name, phone, iban, ibanName, notes, kategori, paymentTerms, customPaymentDays } = parsed.data;
 
+    // Aynı ad farklı büyük/küçük harfle ("İmplant A.Ş." / "implant a.ş.") ikinci
+    // bir cari açmasın: veritabanı kısıtı harf farkını ayırt ediyordu.
+    const nameKey = (value: string) => value.toLocaleLowerCase("tr-TR").replace(/\s+/g, " ").trim();
+    const sameBranchFirmas = await (prisma as any).firma.findMany({
+      where: { institutionId: auth.user.institutionId, branchId: branch.branchId },
+      select: { name: true, isActive: true },
+    });
+    const duplicate = sameBranchFirmas.find((row: { name: string }) => nameKey(row.name) === nameKey(name));
+    if (duplicate) {
+      return NextResponse.json({
+        error: duplicate.isActive
+          ? `"${duplicate.name}" adlı firma zaten kayıtlı.`
+          : `"${duplicate.name}" adlı firma pasif durumda kayıtlı. Tedarikçi listesinde "Pasif" filtresinden açıp aktif edebilirsiniz.`,
+      }, { status: 409 });
+    }
+
     const firma = await (prisma as any).firma.create({
       data: {
         name,
@@ -114,7 +155,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(firma, { status: 201 });
   } catch (e: unknown) {
     const err = e as { code?: string };
-    if (err.code === "P2002") return NextResponse.json({ error: "Bu firma adi zaten kayitli" }, { status: 409 });
+    if (err.code === "P2002") return NextResponse.json({ error: "Bu adla kayıtlı bir firma zaten var." }, { status: 409 });
     return NextResponse.json({ error: "Firma kaydı oluşturulamadı" }, { status: 503 });
   }
 }

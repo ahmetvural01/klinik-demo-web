@@ -1,195 +1,264 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Reply, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { Archive, ArchiveRestore, Reply } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Tabs, useTabParam } from "@/components/ui/Tabs";
+import { Toolbar } from "@/components/ui/Toolbar";
+import { SearchInput } from "@/components/ui/SearchInput";
 import { Button, IconButton } from "@/components/ui/Button";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
-import { Badge } from "@/components/ui/Badge";
-import { showToastSafe } from "@/lib/toast-client";
-import { confirmDialog } from "@/lib/confirm-client";
-import { EmptyState } from "@/components/ui/EmptyState";
+import { Textarea } from "@/components/ui/Input";
+import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
-import { Spinner } from "@/components/ui/Spinner";
+import { confirmDialog } from "@/lib/confirm-client";
+import { showToastSafe } from "@/lib/toast-client";
+import { roleLabel } from "@/lib/staff-roles";
+import { dateTime } from "@/components/superadmin/sa-format";
+import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
 const SupportEmptyIcon = createModuleEmptyIcon("support");
 
-// SupportTicket modelinde status/priority/institution alanları YOK (bkz.
-// prisma/schema.prisma) — sadece answer (nullable). "Açık/Yanıtlandı" ayrımı
-// bu yüzden answer'ın dolu olup olmamasına dayanıyor, uydurma bir status
-// alanına değil.
 type Ticket = {
   id: string;
   subject: string;
   message: string;
-  answer?: string | null;
-  user?: { fullName: string; role?: string; email?: string; institutionId?: string | null } | null;
-  institution?: { id: string; name: string } | null;
+  answer: string | null;
+  status: string;
+  closedAt: string | null;
   createdAt: string;
+  user: { fullName: string; role: string; email: string | null } | null;
+  institution: { id: string; name: string } | null;
 };
 
-type Filter = "ALL" | "OPEN" | "ANSWERED";
+const STATUS_KEYS = ["open", "answered", "closed", "all"] as const;
 
+function ticketState(ticket: Ticket): { label: string; tone: BadgeTone } {
+  if (ticket.status === "CLOSED") return { label: "Kapatıldı", tone: "neutral" };
+  if (ticket.answer) return { label: "Yanıtlandı", tone: "success" };
+  return { label: "Yanıt bekliyor", tone: "warning" };
+}
+
+/**
+ * Destek talepleri — iş kuyruğu: varsayılan sekme yanıt bekleyenler (en eski
+ * üstte). Filtre ve sayaçlar sunucudan gelir, sayfalanır. Talep silinmez,
+ * kapatılır (yeniden açılabilir).
+ */
 export default function SupportPage() {
+  const [status, setStatus] = useTabParam(STATUS_KEYS, "open", "durum");
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [counts, setCounts] = useState({ open: 0, answered: 0, closed: 0 });
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState<Filter>("ALL");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [replyTicket, setReplyTicket] = useState<Ticket | null>(null);
   const [replyText, setReplyText] = useState("");
+  const [replyError, setReplyError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  const load = async () => {
+  const reload = useCallback(() => setReloadKey((value) => value + 1), []);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => { setPage(1); }, [status, debouncedQuery]);
+
+  useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
-    try {
-      const response = await fetch("/api/superadmin/support", { cache: "no-store" });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.message || "Destek talepleri yüklenemedi.");
-      setTickets(Array.isArray(data) ? data : data?.tickets ?? []);
-    } catch (error) {
-      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "Destek talepleri yüklenemedi.", type: "error" });
-    } finally {
-      setLoading(false);
-    }
-  };
+    setLoadError(null);
+    const params = new URLSearchParams({ page: String(page) });
+    if (status !== "all") params.set("status", status);
+    if (debouncedQuery) params.set("q", debouncedQuery);
+    saGet<{ tickets: Ticket[]; total: number; totalPages: number; counts: typeof counts }>(`/api/superadmin/support?${params.toString()}`, "Destek talepleri yüklenemedi.", controller.signal)
+      .then((data) => {
+        setTickets(Array.isArray(data?.tickets) ? data.tickets : []);
+        setTotal(data?.total ?? 0);
+        setTotalPages(data?.totalPages ?? 1);
+        if (data?.counts) setCounts(data.counts);
+      })
+      .catch((error) => {
+        if (!isAbort(error)) setLoadError(errorMessage(error, "Destek talepleri yüklenemedi."));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [status, page, debouncedQuery, reloadKey]);
 
-  useEffect(() => { void load(); }, []);
-
-  const openReply = (t: Ticket) => {
-    setReplyTicket(t);
-    setReplyText(t.answer ?? "");
+  const openReply = (ticket: Ticket) => {
+    setReplyTicket(ticket);
+    setReplyText(ticket.answer ?? "");
+    setReplyError(null);
   };
 
   const submitReply = async () => {
-    if (!replyTicket || !replyText.trim()) return;
+    if (!replyTicket) return;
+    if (!replyText.trim()) return setReplyError("Yanıtınızı yazın.");
     setSaving(true);
+    setReplyError(null);
     try {
-      const res = await fetch("/api/superadmin/support", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: replyTicket.id, answer: replyText.trim() }),
-      });
-      if (!res.ok) throw new Error("Yanıt gönderilemedi");
-      showToastSafe({ title: "Gönderildi", message: "Yanıt kaydedildi.", type: "success", icon: "support" });
+      await saSend("/api/superadmin/support", "PATCH", { id: replyTicket.id, answer: replyText.trim() }, "Yanıt kaydedilemedi.");
+      showToastSafe({ type: "success", message: "Yanıt kaydedildi; kliniğin Destek ekranında görünür.", icon: "support" });
       setReplyTicket(null);
-      load();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
-      showToastSafe({ title: "Hata", message: msg, type: "error" });
+      reload();
+    } catch (error) {
+      setReplyError(errorMessage(error, "Yanıt kaydedilemedi."));
     } finally {
       setSaving(false);
     }
   };
 
-  const remove = async (t: Ticket) => {
-    const ok = await confirmDialog({
-      title: "Talebi Sil",
-      message: `"${t.subject}" başlıklı destek talebi kalıcı olarak silinecek. Emin misiniz?`,
-      danger: true,
-      confirmText: "Sil",
-    });
-    if (!ok) return;
+  const toggleClosed = async (ticket: Ticket) => {
+    const closing = ticket.status !== "CLOSED";
+    if (closing && !ticket.answer) {
+      const ok = await confirmDialog({
+        title: "Yanıtsız talep kapatılsın mı?",
+        message: `"${ticket.subject}" talebine henüz yanıt yazılmadı. Kapatılırsa yanıt bekleyenler listesinden çıkar; gerekirse “Kapatılanlar”dan yeniden açabilirsiniz.`,
+        confirmText: "Kapat",
+        cancelText: "Vazgeç",
+      });
+      if (!ok) return;
+    }
+    setBusyId(ticket.id);
     try {
-      const res = await fetch(`/api/superadmin/support?id=${t.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Silinemedi");
-      showToastSafe({ title: "Silindi", message: "Destek talebi silindi.", type: "success" });
-      load();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
-      showToastSafe({ title: "Hata", message: msg, type: "error" });
+      await saSend("/api/superadmin/support", "PATCH", { id: ticket.id, action: closing ? "close" : "reopen" }, "Talep güncellenemedi.");
+      showToastSafe({ type: "success", message: closing ? "Talep kapatıldı." : "Talep yeniden açıldı.", icon: "support" });
+      reload();
+    } catch (error) {
+      showToastSafe({ type: "error", message: errorMessage(error, "Talep güncellenemedi.") });
+    } finally {
+      setBusyId(null);
     }
   };
 
-  const filtered = tickets.filter((t) => {
-    if (filter === "OPEN") return !t.answer;
-    if (filter === "ANSWERED") return !!t.answer;
-    return true;
-  });
+  const who = (ticket: Ticket) => (
+    <span className="text-xs text-slate-500">
+      {ticket.institution ? <Link href={`/superadmin/institutions/${ticket.institution.id}`} className="font-semibold text-primary hover:underline">{ticket.institution.name}</Link> : "Klinik bilinmiyor"}
+      {ticket.user ? ` · ${ticket.user.fullName} (${roleLabel(ticket.user.role)})` : ""}
+      {ticket.user?.email ? ` · ${ticket.user.email}` : ""}
+    </span>
+  );
+
+  const actions = (ticket: Ticket) => (
+    <div className="flex items-center justify-end gap-1.5">
+      {ticket.status !== "CLOSED" && (
+        <Button size="sm" variant="secondary" icon={Reply} onClick={() => openReply(ticket)}>
+          {ticket.answer ? "Yanıtı düzenle" : "Yanıtla"}
+        </Button>
+      )}
+      <IconButton
+        icon={ticket.status === "CLOSED" ? ArchiveRestore : Archive}
+        title={ticket.status === "CLOSED" ? "Yeniden aç" : "Kapat"}
+        size="sm"
+        disabled={busyId === ticket.id}
+        onClick={() => void toggleClosed(ticket)}
+      />
+    </div>
+  );
+
+  const columns: ListTableColumn<Ticket>[] = [
+    {
+      key: "ticket",
+      header: "Talep",
+      render: (ticket) => (
+        <div className="min-w-0 max-w-2xl space-y-0.5">
+          <p className="font-semibold text-slate-900">{ticket.subject}</p>
+          <p className="line-clamp-2 text-sm text-slate-600">{ticket.message}</p>
+          {ticket.answer && <p className="line-clamp-2 rounded-md bg-emerald-50 px-2 py-1 text-xs text-emerald-800"><span className="font-semibold">Yanıt:</span> {ticket.answer}</p>}
+          {who(ticket)}
+        </div>
+      ),
+    },
+    { key: "date", header: "Tarih", render: (ticket) => <span className="whitespace-nowrap text-sm text-slate-600">{dateTime(ticket.createdAt)}</span> },
+    { key: "status", header: "Durum", render: (ticket) => { const state = ticketState(ticket); return <Badge tone={state.tone}>{state.label}</Badge>; } },
+    { key: "actions", header: "", align: "right", render: actions },
+  ];
 
   return (
-    <section className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-lg font-black text-slate-900">Destek Talepleri</h1>
-          <span className="rounded-full bg-slate-100 px-3 py-1 text-sm font-semibold text-slate-700">{tickets.length} talep</span>
-        </div>
-      </div>
+    <section className="space-y-4">
+      <PageHeader icon="support" title="Destek Talepleri" description="Kliniklerden gelen soruları yanıtlayın. Yanıt kliniğin Destek ekranında görünür." />
 
-      <div className="flex flex-wrap gap-2">
-        {([
-          { key: "ALL", label: "Tümü" },
-          { key: "OPEN", label: "Açık" },
-          { key: "ANSWERED", label: "Yanıtlandı" },
-        ] as const).map((s) => (
-          <Button
-            key={s.key}
-            variant={filter === s.key ? "primary" : "secondary"}
-            size="sm"
-            onClick={() => setFilter(s.key)}
-          >
-            {s.label}
-          </Button>
-        ))}
-      </div>
+      <Tabs
+        ariaLabel="Talep durumu"
+        size="sm"
+        value={status}
+        onChange={setStatus}
+        items={[
+          { key: "open", label: "Yanıt bekleyen", count: counts.open, countTone: "warning" },
+          { key: "answered", label: "Yanıtlanan", count: counts.answered },
+          { key: "closed", label: "Kapatılan", count: counts.closed },
+          { key: "all", label: "Tümü" },
+        ]}
+      />
 
-      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-        {loading ? (
-          <div className="flex items-center justify-center py-16">
-            <Spinner className="h-6 w-6 text-primary" />
-          </div>
-        ) : filtered.length === 0 ? (
-          <EmptyState icon={SupportEmptyIcon} illustrative title="Talep bulunamadı" description="Seçilen filtrede destek talebi yok." />
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {filtered.map((t, tIdx) => (
-              <div key={t.id} style={{ ["--row-delay" as string]: `${Math.min(tIdx, 14) * 18}ms` }} className="ui-row-in p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-1 flex flex-wrap items-center gap-2">
-                      <span className="font-bold text-slate-900">{t.subject}</span>
-                      <Badge tone={t.answer ? "success" : "warning"}>{t.answer ? "Yanıtlandı" : "Açık"}</Badge>
-                    </div>
-                    <p className="mb-1 text-sm text-slate-600">{t.message}</p>
-                    {t.answer && (
-                      <div className="mb-1 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                        <span className="font-bold">Yanıt: </span>{t.answer}
-                      </div>
-                    )}
-                    <p className="text-xs text-slate-400">
-                      {t.user?.fullName ?? "—"} · {t.user?.email ?? "—"} · {t.institution?.name ?? t.user?.institutionId ?? "—"} · {" "}
-                      {new Date(t.createdAt).toLocaleDateString("tr-TR")}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 gap-1">
-                    <IconButton icon={Reply} title="Yanıtla" tone="primary" onClick={() => openReply(t)} />
-                    <IconButton icon={Trash2} title="Sil" tone="danger" onClick={() => remove(t)} />
-                  </div>
-                </div>
+      <ListTable<Ticket>
+        header={
+          <Toolbar>
+            <SearchInput value={query} onChange={setQuery} placeholder="Konu, mesaj, klinik veya kişi" wrapperClassName="flex-1 min-w-[220px]" />
+          </Toolbar>
+        }
+        columns={columns}
+        rows={tickets}
+        rowKey={(ticket) => ticket.id}
+        loading={loading}
+        error={loadError}
+        onRetry={reload}
+        rowClassName={(ticket) => (ticket.status === "CLOSED" ? "opacity-60" : "")}
+        emptyText={status === "open" && !debouncedQuery ? "Yanıt bekleyen talep yok" : "Bu filtrede talep yok"}
+        emptyIcon={SupportEmptyIcon}
+        emptyIllustrative
+        pager={{ page, pageCount: totalPages, pageSize: 30, total, onPageChange: setPage }}
+        mobileCard={(ticket) => {
+          const state = ticketState(ticket);
+          return (
+            <div className="space-y-1.5">
+              <div className="flex items-start justify-between gap-2">
+                <p className="min-w-0 font-semibold text-slate-900">{ticket.subject}</p>
+                <Badge tone={state.tone}>{state.label}</Badge>
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+              <p className="line-clamp-3 text-sm text-slate-600">{ticket.message}</p>
+              {who(ticket)}
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs text-slate-500">{dateTime(ticket.createdAt)}</span>
+                {actions(ticket)}
+              </div>
+            </div>
+          );
+        }}
+      />
 
       <Modal
-        open={!!replyTicket}
+        open={Boolean(replyTicket)}
         onClose={() => setReplyTicket(null)}
-        title={`Yanıtla: ${replyTicket?.subject ?? ""}`}
+        title={replyTicket?.answer ? "Yanıtı düzenle" : "Talebi yanıtla"}
+        description={replyTicket ? `${replyTicket.institution?.name ?? "Klinik"} · ${replyTicket.subject}` : undefined}
+        size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setReplyTicket(null)}>İptal</Button>
-            <Button variant="primary" loading={saving} onClick={submitReply} disabled={!replyText.trim()}>
-              {replyTicket?.answer ? "Yanıtı Güncelle" : "Yanıtı Gönder"}
-            </Button>
+            <Button variant="secondary" onClick={() => setReplyTicket(null)}>Vazgeç</Button>
+            <Button loading={saving} onClick={() => void submitReply()}>Kaydet</Button>
           </>
         }
       >
-        <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">{replyTicket?.message}</p>
-        <textarea aria-label={"Yanıtınızı yazın..."}
-          value={replyText}
-          onChange={(e) => setReplyText(e.target.value)}
-          rows={5}
-          placeholder="Yanıtınızı yazın..."
-          className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20"
-        />
+        <div className="space-y-3">
+          <FormErrorBanner message={replyError} />
+          <p className="whitespace-pre-line rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-700">{replyTicket?.message}</p>
+          <FormField label="Yanıtınız" htmlFor="support-reply" required hint="Kliniğin Destek ekranında görünür; kliniğe ayrıca SMS/e-posta bildirimi gitmez.">
+            <Textarea id="support-reply" rows={5} maxLength={5000} value={replyText} onChange={(event) => setReplyText(event.target.value)} />
+          </FormField>
+        </div>
       </Modal>
     </section>
   );

@@ -19,6 +19,8 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     const body = await req.json();
     const status = String(body?.status || "");
     const appointmentId = body?.appointmentId ? String(body.appointmentId) : null;
+    // Red/kapama nedeni yalnız işlem kaydına yazılır (hastaya mesaj gitmez).
+    const reason = typeof body?.reason === "string" ? body.reason.trim().slice(0, 300) : "";
     if (!["ONAYLANDI", "REDDEDILDI", "IPTAL"].includes(status)) {
       return NextResponse.json({ error: "Geçersiz durum" }, { status: 400 });
     }
@@ -28,6 +30,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     if (status !== "ONAYLANDI" && appointmentId) {
       return NextResponse.json({ error: "Randevu yalnızca onaylanan talebe bağlanabilir" }, { status: 400 });
     }
+    let doctorChangeNote = "";
 
     const existing = await prisma.bookingRequest.findFirst({
       where: {
@@ -48,16 +51,22 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
     // doğduğunu kalıcı olarak kaydeder (bkz. denetim raporu Tema 4 —
     // createdAppointmentId alanı önceden hiç kullanılmıyordu).
     if (appointmentId) {
+      // Hastanın doktor tercihi bir istektir, zorunluluk değil: personel
+      // başka doktora randevu verdiyse de talep onaylanmış sayılır (kimlik
+      // eşleşmesi aşağıda aynen zorunlu). Önceden doktor farklıysa bağlama
+      // reddediliyor, talep açık kalıyor ve ikinci kez "onayla" ikinci bir
+      // randevu üretiyordu.
       const appointment = await prisma.appointment.findFirst({
         where: {
           id: appointmentId,
           institutionId: existing.institutionId,
           branchId: branch.branchId,
-          ...(existing.doctorId ? { doctorId: existing.doctorId } : {}),
         },
         select: {
           id: true,
           status: true,
+          doctorId: true,
+          doctor: { select: { fullName: true } },
           patient: { select: { phone: true, tcNo: true } },
         },
       });
@@ -78,6 +87,9 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       if (alreadyLinked) {
         return NextResponse.json({ error: "Bu randevu başka bir online talebe bağlı" }, { status: 409 });
       }
+      if (existing.doctorId && appointment.doctorId !== existing.doctorId) {
+        doctorChangeNote = ` · doktor tercihi değiştirildi (${appointment.doctor?.fullName || "başka doktor"})`;
+      }
     }
 
     const updated = await prisma.bookingRequest.update({
@@ -95,7 +107,7 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       include: { doctor: { select: { id: true, fullName: true } } },
     });
 
-    await writeAudit(auth.user.id, "BOOKING_REQUEST_UPDATE", `${existing.fullName} → ${status}`);
+    await writeAudit(auth.user.id, "BOOKING_REQUEST_UPDATE", `${existing.fullName} → ${status}${doctorChangeNote}${reason ? ` · Neden: ${reason}` : ""}`);
     return NextResponse.json(updated);
   } catch (error) {
     console.error("[booking-requests PATCH]", error);

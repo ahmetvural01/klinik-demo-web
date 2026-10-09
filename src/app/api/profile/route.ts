@@ -1,7 +1,8 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
-import { validateWorkHoursRange } from "@/lib/working-hours-core";
+import { parseTimeToMinutes, validateWorkHoursRange } from "@/lib/working-hours-core";
+import { turkeyTimeKey } from "@/lib/tz";
 import { invalidateUserSessionCache, requireAuth, writeAudit } from "@/lib/api";
 import { setAuthCookie, signToken } from "@/lib/auth";
 
@@ -32,6 +33,9 @@ export async function GET() {
         kkYuzde: true,
         maasYuzde: true,
         twoFactorEnabled: true,
+        // Profil ekranı ilk şifresini (TC kimlik no) henüz değiştirmemiş
+        // kullanıcıya yalnız şifre formunu gösterir.
+        mustChangePassword: true,
         profile: true,
       },
     });
@@ -69,6 +73,46 @@ export async function PUT(request: NextRequest) {
   const workHoursError = validateWorkHoursRange(workStart, workEnd, "Çalışma saatleri");
   if (workHoursError) {
     return NextResponse.json({ message: workHoursError }, { status: 400 });
+  }
+
+  // Personel ekranındaki (api/staff/[id]) kuralların aynısı: hekim kendi
+  // mesaisini daraltırken ya da yönetici kendini hekim listesinden
+  // gizlerken gelecekteki randevular sessizce mesai dışında/sahipsiz
+  // kalmasın. Önceden Profil bu kontrolleri atlıyordu (bkz. denetim YK-11).
+  const oldWorkStart = currentProfile?.workStart || "08:30";
+  const oldWorkEnd = currentProfile?.workEnd || "18:00";
+  const hoursNarrowed = (workStart > oldWorkStart || workEnd < oldWorkEnd) && (workStart !== oldWorkStart || workEnd !== oldWorkEnd);
+  const hidingAsDoctor = body.hideAsDoctor === true && !currentProfile?.hideAsDoctor && auth.user.role === "YONETICI";
+  if (hoursNarrowed || hidingAsDoctor) {
+    const futureAppointments = await prisma.appointment.findMany({
+      where: {
+        doctorId: auth.user.id,
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        startAt: { gte: new Date() },
+        status: { notIn: ["IPTAL", "GELMEDI"] },
+      },
+      select: { startAt: true },
+    });
+    if (hidingAsDoctor && futureAppointments.length > 0) {
+      return NextResponse.json({
+        message: `${futureAppointments.length} gelecek randevunuz var. Hekim listesinden çıkmadan önce bu randevuları başka bir hekime devredin veya iptal edin.`,
+        requiresReassignment: true,
+      }, { status: 409 });
+    }
+    if (hoursNarrowed) {
+      const newStartMin = parseTimeToMinutes(workStart);
+      const newEndMin = parseTimeToMinutes(workEnd);
+      const outsideCount = futureAppointments.filter((appointment) => {
+        const minutes = parseTimeToMinutes(turkeyTimeKey(appointment.startAt));
+        return newStartMin === null || newEndMin === null || minutes === null || minutes < newStartMin || minutes >= newEndMin;
+      }).length;
+      if (outsideCount > 0) {
+        return NextResponse.json({
+          message: `Yeni çalışma saatleriniz dışında kalan ${outsideCount} gelecek randevunuz var. Önce bu randevuları yeniden planlayın veya iptal edin.`,
+          requiresReschedule: true,
+        }, { status: 409 });
+      }
+    }
   }
 
   if (body.newPassword) {

@@ -1,11 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Download, FileSpreadsheet, CheckCircle2, AlertTriangle } from "lucide-react";
+import { useParams } from "next/navigation";
+import { Download, FileSpreadsheet, CheckCircle2, AlertTriangle } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { Select } from "@/components/ui/Input";
+import { FormField } from "@/components/ui/FormField";
 import { Spinner } from "@/components/ui/Spinner";
+import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
@@ -32,6 +36,7 @@ type PreviewSummary = {
 };
 
 type RowError = { rowNumber: number; errors: string[] };
+type RowNote = { rowNumber: number; message: string };
 
 type PreviewResponse = {
   summary: PreviewSummary;
@@ -43,9 +48,9 @@ type PreviewResponse = {
   paymentRowWarnings: RowError[];
   treatmentRowWarnings: RowError[];
   prescriptionRowWarnings: RowError[];
-  paymentWarnings: { rowNumber: number; message: string }[];
-  treatmentWarnings: { rowNumber: number; message: string }[];
-  prescriptionWarnings: { rowNumber: number; message: string }[];
+  paymentWarnings: RowNote[];
+  treatmentWarnings: RowNote[];
+  prescriptionWarnings: RowNote[];
 };
 
 type BranchOption = { id: string; name: string; isHeadquarters: boolean; isActive: boolean };
@@ -67,7 +72,6 @@ type CommitResponse = {
 
 export default function InstitutionImportPage() {
   const params = useParams<{ id: string }>();
-  const router = useRouter();
   const institutionId = params.id;
 
   const [institutionName, setInstitutionName] = useState<string>("");
@@ -143,10 +147,14 @@ export default function InstitutionImportPage() {
       preview.summary.prescriptionsValid > 0 ? `${preview.summary.prescriptionsValid} reçete` : null,
     ].filter(Boolean);
 
+    const ledgerNote = preview.summary.paymentsValid > 0
+      ? `\n\n${preview.summary.paymentsValid} ödeme Excel'deki tarihleriyle kliniğin kasasına ve o dönemin hekim hakedişlerine eklenecek; kapanmış kasa günleri ve ödenmiş hakedişlerin toplamları değişebilir.`
+      : "";
     const confirmed = await confirmDialog({
-      title: "Veri Aktarımını Onayla",
-      message: `${parts.join(", ")} kaydı ${institutionName || "bu kliniğe"} eklenecek. Bu işlem geri alınamaz. Devam edilsin mi?`,
+      title: "Veri aktarımı onaylansın mı?",
+      message: `${parts.join(", ")} kaydı ${institutionName || "bu kliniğe"} eklenecek. Bu işlem geri alınamaz.${ledgerNote}`,
       confirmText: "Aktar",
+      cancelText: "Vazgeç",
     });
     if (!confirmed) return;
 
@@ -178,70 +186,70 @@ export default function InstitutionImportPage() {
     ? preview.summary.patientsNew > 0 || preview.summary.paymentsValid > 0 || preview.summary.treatmentsValid > 0 || preview.summary.prescriptionsValid > 0
     : false;
 
+  const header = (
+    <PageHeader
+      icon="institutions"
+      back={{ href: `/superadmin/institutions/${institutionId}`, label: institutionName || "Klinik dosyası" }}
+      title="Toplu veri aktarımı"
+      description={`${institutionName ? `${institutionName} için` : "Klinik için"} eski hasta, ödeme, tedavi ve reçete kayıtlarını Excel'den içe alın.`}
+    />
+  );
+
   if (metadataLoading) {
-    return <div className="flex min-h-64 items-center justify-center"><Spinner className="h-8 w-8 text-primary" /></div>;
+    return (
+      <section className="mx-auto max-w-4xl space-y-4">
+        {header}
+        <div className="ui-surface overflow-hidden"><ListRowSkeleton rows={3} /></div>
+      </section>
+    );
   }
 
   if (metadataError) {
     return (
-      <section className="mx-auto max-w-4xl space-y-5">
-        <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={() => router.push(`/superadmin/institutions/${institutionId}`)}>Geri</Button>
+      <section className="mx-auto max-w-4xl space-y-4">
+        {header}
         <LoadErrorState message={metadataError} onRetry={() => setMetadataReloadKey((value) => value + 1)} />
       </section>
     );
   }
 
   return (
-    <section className="mx-auto max-w-4xl space-y-5">
-      <div className="flex items-center gap-3">
-        <Button variant="ghost" size="sm" icon={ArrowLeft} onClick={() => router.push(`/superadmin/institutions/${institutionId}`)}>
-          Geri
-        </Button>
-        <div>
-          <h1 className="text-lg font-black text-slate-900">Toplu Veri Aktarımı</h1>
-          <p className="text-xs text-slate-500">{institutionName ? `${institutionName} için` : "Klinik için"} mevcut hasta, ödeme, tedavi ve reçete geçmişini içe aktarın</p>
-        </div>
-      </div>
+    <section className="mx-auto max-w-4xl space-y-4">
+      {header}
 
       {/* Adım 1: Şablon */}
-      <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-        <div className="flex items-start justify-between gap-4">
-          <div>
-            <h2 className="text-sm font-black text-slate-900">1. Şablonu İndirin</h2>
+      <div className="ui-surface p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1 basis-64">
+            <h2 className="text-sm font-bold text-slate-900">1. Şablonu indirin</h2>
             <p className="mt-1 text-xs text-slate-500">
               Bu kliniğin mevcut doktor listesiyle önceden hazırlanmış Excel şablonunu indirin ve kliniğe iletin.
               Şablonda 4 sayfa vardır: Hastalar, Odeme Gecmisi, Tedavi Gecmisi, Recete Gecmisi — hepsini doldurmak
               zorunlu değildir, sadece elde olan veri girilir, kalanı boş bırakılır.
             </p>
           </div>
-          <Button variant="secondary" size="sm" icon={Download} onClick={downloadTemplate}>
-            Şablonu İndir
+          <Button variant="secondary" icon={Download} onClick={downloadTemplate}>
+            Şablonu indir
           </Button>
         </div>
       </div>
 
       {/* Hedef şube (birden fazla şubesi olan kurumlar için) */}
       {branches.length > 1 && (
-        <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-          <h2 className="text-sm font-black text-slate-900">Hedef Şube</h2>
-          <p className="mt-1 text-xs text-slate-500">
-            Bu kurumun birden fazla şubesi var. Aktarılacak hasta/ödeme/tedavi/reçete kayıtları hangi şubeye ait olacak?
-          </p>
-          <select
-            className="mt-3 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700"
-            value={targetBranchId}
-            onChange={(e) => setTargetBranchId(e.target.value)}
-          >
-            {branches.map((b) => (
-              <option key={b.id} value={b.id}>{b.name}{b.isHeadquarters ? " (Merkez)" : ""}</option>
-            ))}
-          </select>
+        <div className="ui-surface p-4">
+          <FormField label="Kayıtlar hangi şubeye eklensin?" htmlFor="import-branch" hint="Bu kliniğin birden fazla şubesi var; aktarılan tüm kayıtlar seçilen şubeye yazılır.">
+            <Select id="import-branch" value={targetBranchId} onChange={(event) => setTargetBranchId(event.target.value)}>
+              {branches.map((b) => (
+                <option key={b.id} value={b.id}>{b.name}{b.isHeadquarters ? " (Merkez)" : ""}</option>
+              ))}
+            </Select>
+          </FormField>
         </div>
       )}
 
       {/* Adım 2: Yükle */}
-      <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-        <h2 className="text-sm font-black text-slate-900">2. Doldurulmuş Dosyayı Yükleyin</h2>
+      <div className="ui-surface p-4">
+        <h2 className="text-sm font-bold text-slate-900">2. Doldurulmuş dosyayı yükleyin</h2>
         <p className="mt-1 text-xs text-slate-500">Yükleme sonrası hiçbir kayıt yazılmadan önce bir önizleme gösterilir.</p>
 
         <label className="mt-3 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center transition hover:border-primary hover:bg-primary/5">
@@ -266,8 +274,9 @@ export default function InstitutionImportPage() {
 
       {/* Adım 3: Önizleme */}
       {preview && !result && (
-        <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-          <h2 className="text-sm font-black text-slate-900">3. Önizleme</h2>
+        <div className="ui-surface p-4">
+          <h2 className="text-sm font-bold text-slate-900">3. Kontrol edin ve aktarın</h2>
+          <p className="mt-1 text-xs text-slate-500">Henüz hiçbir kayıt yazılmadı. Hatalı veya eşleşmeyen satırlar aktarılmaz; Excel&apos;de düzeltip dosyayı yeniden yükleyebilirsiniz.</p>
 
           <PreviewSection
             title="Hastalar"
@@ -289,6 +298,8 @@ export default function InstitutionImportPage() {
             ]}
             errors={preview.paymentErrors}
             warnings={preview.paymentRowWarnings}
+            unmatched={preview.paymentWarnings}
+            ledgerNote={preview.summary.paymentsValid > 0 ? `${preview.summary.paymentsValid} ödeme Excel'deki tarihleriyle kliniğin kasasına ve o dönemin hekim hakedişlerine eklenecek. Kapanmış kasa günlerinin ve ödenmiş hakedişlerin toplamları değişebilir; klinik muhasebesiyle konuşmadan aktarmayın.` : undefined}
             note={preview.summary.paymentsUnmatchedDoctor > 0 ? `${preview.summary.paymentsUnmatchedDoctor} satırda yazılan doktor adı kurum personeliyle eşleşmedi — bu ödemeler doktorsuz eklenecek.` : undefined}
           />
 
@@ -301,6 +312,7 @@ export default function InstitutionImportPage() {
             ]}
             errors={preview.treatmentErrors}
             warnings={preview.treatmentRowWarnings}
+            unmatched={preview.treatmentWarnings}
             note={preview.summary.treatmentsUnresolvedDoctor > 0 ? `${preview.summary.treatmentsUnresolvedDoctor} satırda yazılan doktor adı kurum personeliyle eşleşmedi — tedavi kaydı bir doktora zorunlu bağlı olduğu için bu satırlar aktarılamayacak.` : undefined}
           />
 
@@ -313,12 +325,12 @@ export default function InstitutionImportPage() {
             ]}
             errors={preview.prescriptionErrors}
             warnings={preview.prescriptionRowWarnings}
+            unmatched={preview.prescriptionWarnings}
           />
 
-          <div className="mt-5 flex items-center justify-end gap-2">
-            <Button variant="secondary" size="sm" onClick={reset}>Vazgeç</Button>
+          <div className="mt-5 flex flex-wrap items-center justify-end gap-2">
+            <Button variant="secondary" onClick={reset}>Vazgeç</Button>
             <Button
-              size="sm"
               loading={committing}
               disabled={!hasAnythingToImport}
               onClick={() => void commitImport()}
@@ -331,10 +343,10 @@ export default function InstitutionImportPage() {
 
       {/* Sonuç */}
       {result && (
-        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
           <div className="flex items-center gap-2">
             <CheckCircle2 className="h-5 w-5 text-emerald-600" />
-            <h2 className="text-sm font-black text-emerald-800">Aktarım Tamamlandı</h2>
+            <h2 className="text-sm font-bold text-emerald-800">Aktarım tamamlandı</h2>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <StatBox label="Eklenen Hasta" value={result.patientsCreated} tone="success" />
@@ -351,9 +363,9 @@ export default function InstitutionImportPage() {
               {result.paymentsDuplicate + result.treatmentsDuplicate + result.prescriptionsDuplicate} kayıt bu dosyanın daha önce yüklendiği için tekrar eklenmedi.
             </p>
           )}
-          <div className="mt-5 flex justify-end gap-2">
-            <Button variant="secondary" size="sm" onClick={reset}>Yeni Dosya Yükle</Button>
-            <Button size="sm" href={`/superadmin/institutions/${institutionId}`}>Klinik Detayına Dön</Button>
+          <div className="mt-5 flex flex-wrap justify-end gap-2">
+            <Button variant="secondary" onClick={reset}>Yeni dosya yükle</Button>
+            <Button href={`/superadmin/institutions/${institutionId}`}>Klinik dosyasına dön</Button>
           </div>
         </div>
       )}
@@ -368,18 +380,23 @@ function PreviewSection({
   stats,
   errors,
   warnings,
+  unmatched = [],
   note,
+  ledgerNote,
 }: {
   title: string;
   stats: { label: string; value: number; tone: Tone }[];
   errors: RowError[];
   warnings: RowError[];
+  /** Hastası/doktoru eşleşmeyen ve bu yüzden aktarılmayacak satırlar. */
+  unmatched?: RowNote[];
   note?: string;
+  ledgerNote?: string;
 }) {
   return (
     <div className="mt-4 border-t border-slate-100 pt-4 first:mt-3 first:border-t-0 first:pt-0">
-      <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500">{title}</h3>
-      <div className="mt-2 grid grid-cols-3 gap-3">
+      <h3 className="text-sm font-bold text-slate-800">{title}</h3>
+      <div className="mt-2 grid grid-cols-3 gap-2 sm:gap-3">
         {stats.map((s) => <StatBox key={s.label} label={s.label} value={s.value} tone={s.tone} />)}
       </div>
       {note && (
@@ -388,7 +405,20 @@ function PreviewSection({
           {note}
         </p>
       )}
-      {errors.length > 0 && <ErrorList title="Hatalar" rows={errors} tone="critical" />}
+      {ledgerNote && (
+        <p className="mt-3 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          {ledgerNote}
+        </p>
+      )}
+      {errors.length > 0 && <ErrorList title="Hatalı satırlar (aktarılmayacak)" rows={errors} tone="critical" />}
+      {unmatched.length > 0 && (
+        <ErrorList
+          title="Eşleşmeyen satırlar (aktarılmayacak — TC veya doktor adını kontrol edin)"
+          rows={unmatched.map((row) => ({ rowNumber: row.rowNumber, errors: [row.message] }))}
+          tone="warning"
+        />
+      )}
       {warnings.length > 0 && <ErrorList title="Uyarılar (kayıt yine de eklenecek)" rows={warnings} tone="warning" />}
     </div>
   );
@@ -402,9 +432,9 @@ function StatBox({ label, value, tone }: { label: string; value: number; tone: T
     neutral: "text-slate-900",
   }[tone];
   return (
-    <div className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+    <div className="rounded-lg border border-slate-100 bg-slate-50 p-3">
       <p className="text-xs font-semibold text-slate-500">{label}</p>
-      <p className={`mt-1 text-xl font-black ${toneClass}`}>{value}</p>
+      <p className={`mt-1 text-lg font-bold tabular-nums ${toneClass}`}>{value}</p>
     </div>
   );
 }
@@ -417,11 +447,11 @@ function ErrorList({ title, rows, tone = "critical" }: { title: string; rows: Ro
     <div className="mt-3">
       <div className="mb-1.5 flex items-center gap-2">
         <Badge tone={tone}>{rows.length} satır</Badge>
-        <h4 className="text-[11px] font-bold uppercase tracking-wide text-slate-500">{title}</h4>
+        <h4 className="text-xs font-semibold text-slate-600">{title}</h4>
       </div>
       <div className={`max-h-56 overflow-y-auto rounded-lg border ${borderClass}`}>
         {rows.map((row) => (
-          <div key={row.rowNumber} className={`border-b ${rowBorderClass} px-3 py-2 text-xs last:border-b-0`}>
+          <div key={`${row.rowNumber}-${row.errors[0] ?? ""}`} className={`border-b ${rowBorderClass} px-3 py-2 text-xs last:border-b-0`}>
             <span className={`font-bold ${labelClass}`}>Satır {row.rowNumber}:</span>{" "}
             <span className="text-slate-600">{row.errors.join(", ")}</span>
           </div>

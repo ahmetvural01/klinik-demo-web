@@ -6,6 +6,7 @@ import { metricIncrement, metricObserve } from "@/lib/metrics";
 import { enqueueSmsDispatchJob } from "@/lib/sms-jobs";
 import { renderCommunicationTemplate, resolveSmsTemplate } from "@/lib/sms-templates";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { maskPatientName, maskPatientPhone } from "@/lib/audit-mask";
 
 const EVENT_TYPE_BY_SMS_TYPE: Record<string, NotificationEventType> = {
   BILGI: "APPOINTMENT_INFO",
@@ -236,7 +237,7 @@ export async function POST(request: NextRequest) {
         await writeAudit(
           auth.user.id,
           `${result.channel}_${smsType}`,
-          `${appt.patient.fullName} (${appt.patient.phone}) - ProviderMsgId: ${result.providerMessageId || "-"}`,
+          `${maskPatientName(appt.patient.fullName)} (${maskPatientPhone(appt.patient.phone)}) - ProviderMsgId: ${result.providerMessageId || "-"}`,
         );
       } else {
         failedRecipients.push({
@@ -247,7 +248,7 @@ export async function POST(request: NextRequest) {
         await writeAudit(
           auth.user.id,
           `SMS_${smsType}_FAILED`,
-          `${appt.patient.fullName} (${appt.patient.phone}) - ${result.reason || result.error || "Bilinmeyen hata"}`,
+          `${maskPatientName(appt.patient.fullName)} (${maskPatientPhone(appt.patient.phone)}) - ${result.reason || result.error || "Bilinmeyen hata"}`,
         );
       }
     }

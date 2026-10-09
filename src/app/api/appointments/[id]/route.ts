@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+﻿import { after, NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { APPOINTMENT_STATUS_VALUES, appointmentSchema } from "@/lib/validators";
 import { requireAuth, writeAudit } from "@/lib/api";
@@ -9,6 +9,8 @@ import { turkeyDayBeforeStartUtc } from "@/lib/tz";
 import { hasBranchPermission, requireActiveBranch, type BranchContext } from "@/lib/branch-context";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { can } from "@/lib/rbac";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
+import { notifyAppointmentCancelled, notifyAppointmentChanged } from "@/lib/appointment-change-notify";
 
 const APPT_REMINDER_PREFIX = "[APPT_REMINDER]";
 
@@ -82,6 +84,14 @@ async function syncAppointmentReminder(appointment: {
 
 type Params = { params: Promise<{ id: string }> };
 
+// Liste ucundaki (/api/appointments) gizleme kuralının aynısı: telefon görme
+// yetkisi olmayan rollere tekil randevu yanıtında da hasta telefonu/TC'si
+// gönderilmez (önceden tekil uç tüm hasta kaydını döndürüyordu).
+async function maskForRole<T extends { patient?: { phone?: string | null; tcNo?: string | null } | null }>(appointment: T, role: string): Promise<T> {
+  if (!appointment.patient || !(await shouldHidePatientPhoneForRole(role))) return appointment;
+  return { ...appointment, patient: { ...appointment.patient, phone: null, tcNo: appointment.patient.tcNo ? "***" : appointment.patient.tcNo } };
+}
+
 async function isEligibleAppointmentDoctor(doctorId: string, institutionId: string | null | undefined, branchId: string) {
   return prisma.user.findFirst({
     where: { id: doctorId, ...effectiveDoctorWhere(institutionId, branchId) },
@@ -147,7 +157,7 @@ export async function GET(_: NextRequest, props: Params) {
     return NextResponse.json({ message: "Randevu bulunamadı" }, { status: 404 });
   }
 
-  return NextResponse.json(appointment);
+  return NextResponse.json(await maskForRole(appointment, auth.user.role));
 }
 
 export async function PUT(request: NextRequest, props: Params) {
@@ -252,6 +262,12 @@ export async function PUT(request: NextRequest, props: Params) {
       afterParts.push(`Not: ${fmt(body.note)}`);
     }
 
+    // İptal edilen gelecek randevu için hastaya bilgi mesajı (yanıt döndükten sonra).
+    if (body.status === "IPTAL" && existing.status !== "IPTAL") {
+      const actorId = auth.user.id;
+      after(() => notifyAppointmentCancelled({ appointment: existing, actorId }).then(() => undefined));
+    }
+
     const action = typeof body.status === "string" && keys.length === 1 ? "APPOINTMENT_STATUS" : "APPOINTMENT_UPDATE";
     const detail = [
       `${auth.user.fullName || "Personel"} tarafından ${appointment.patient.fullName} randevusu güncellendi.`,
@@ -260,7 +276,7 @@ export async function PUT(request: NextRequest, props: Params) {
     ].join("\n");
 
     await writeAudit(auth.user.id, action, detail);
-    return NextResponse.json(appointment);
+    return NextResponse.json(await maskForRole(appointment, auth.user.role));
   }
 
   const parsed = appointmentSchema.safeParse(body);
@@ -367,8 +383,8 @@ export async function PUT(request: NextRequest, props: Params) {
       select: { id: true, startAt: true, endAt: true, patient: { select: { fullName: true } } },
     });
     if (unitConflict) {
-      const cs = unitConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
-      const ce = unitConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+      const cs = unitConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
+      const ce = unitConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
       return NextResponse.json({ message: `${selectedUnit.name} tedavi alanı ${cs}–${ce} saatleri arasında dolu (${unitConflict.patient?.fullName ?? "—"}).`, conflictId: unitConflict.id }, { status: 409 });
     }
   }
@@ -385,8 +401,8 @@ export async function PUT(request: NextRequest, props: Params) {
       select: { id: true, startAt: true, endAt: true },
     });
     if (patientConflict) {
-      const cs = patientConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
-      const ce = patientConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+      const cs = patientConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
+      const ce = patientConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
       return NextResponse.json({
         message: `Bu hastanın ${cs}–${ce} saatleri arası başka bir randevusu mevcut`,
         conflictId: patientConflict.id,
@@ -408,8 +424,8 @@ export async function PUT(request: NextRequest, props: Params) {
       select: { id: true, startAt: true, endAt: true, patient: { select: { fullName: true } } },
     });
     if (conflict) {
-      const cs = conflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
-      const ce = conflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+      const cs = conflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
+      const ce = conflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
       return NextResponse.json({
         message: `Bu doktorun ${cs}–${ce} arası randevusu mevcut (${conflict.patient?.fullName ?? "—"}). Yine de taşımak istiyor musunuz?`,
         conflictId: conflict.id,
@@ -560,8 +576,20 @@ export async function PUT(request: NextRequest, props: Params) {
     ...(conflictOverridden ? ["Doktor çakışması onaylanarak taşındı."] : []),
   ].join("\n");
 
+  // Hastaya otomatik bilgi: iptal edildiyse iptal mesajı, tarih/saat/doktor
+  // değiştiyse değişiklik mesajı (kurallar src/lib/appointment-change-notify.ts).
+  {
+    const actorId = auth.user.id;
+    const updated = appointment;
+    if (updated.status === "IPTAL" && existing.status !== "IPTAL") {
+      after(() => notifyAppointmentCancelled({ appointment: existing, actorId }).then(() => undefined));
+    } else {
+      after(() => notifyAppointmentChanged({ before: existing, after: updated, actorId }).then(() => undefined));
+    }
+  }
+
   await writeAudit(auth.user.id, "APPOINTMENT_UPDATE", detail);
-  return NextResponse.json(appointment);
+  return NextResponse.json(await maskForRole(appointment, auth.user.role));
 }
 
 export async function DELETE(_: NextRequest, props: Params) {
@@ -578,16 +606,31 @@ export async function DELETE(_: NextRequest, props: Params) {
   if (!existing)
     return NextResponse.json({ message: "Randevu bulunamadı" }, { status: 404 });
 
-  // Soft delete — durumu IPTAL yap (veri kaybını önler)
-  await prisma.appointment.update({
-    where: {
-      id_institutionId_branchId: {
-        id: existing.id,
-        institutionId: existing.institutionId,
-        branchId: existing.branchId,
+  // Soft delete — durumu IPTAL yap (veri kaybını önler). Durum güncellemesi
+  // (PUT status=IPTAL) ile aynı kural: Bekliyor/Tamamlandı iken paketten
+  // düşülmüş seans varsa iade edilir; önceden bu yoldan iptal edilen
+  // randevunun seansı hastanın paketinde "kullanılmış" kalıyordu.
+  await prisma.$transaction(async (tx) => {
+    if (["GELDI", "TAMAMLANDI"].includes(existing.status)) {
+      const usage = await tx.patientPackageUsage.findFirst({ where: { appointmentId: existing.id, status: "ACTIVE" } });
+      if (usage) {
+        await tx.patientPackageUsage.update({ where: { id: usage.id }, data: { status: "VOID", voidedAt: new Date() } });
+        await tx.patientPackage.updateMany({
+          where: { id: usage.patientPackageId, sessionsUsed: { gt: 0 } },
+          data: { sessionsUsed: { decrement: 1 }, status: "AKTIF" },
+        });
+      }
+    }
+    await tx.appointment.update({
+      where: {
+        id_institutionId_branchId: {
+          id: existing.id,
+          institutionId: existing.institutionId,
+          branchId: existing.branchId,
+        },
       },
-    },
-    data: { status: "IPTAL" },
+      data: { status: "IPTAL" },
+    });
   });
 
   try {
@@ -597,6 +640,11 @@ export async function DELETE(_: NextRequest, props: Params) {
     });
   } catch {
     // reminder kapanış hatası cancel akışını kırmamalı.
+  }
+
+  if (existing.status !== "IPTAL") {
+    const actorId = auth.user.id;
+    after(() => notifyAppointmentCancelled({ appointment: existing, actorId }).then(() => undefined));
   }
 
   await writeAudit(auth.user.id, "APPOINTMENT_CANCEL", `${existing.patient?.fullName ?? "—"} randevusu iptal edildi`);

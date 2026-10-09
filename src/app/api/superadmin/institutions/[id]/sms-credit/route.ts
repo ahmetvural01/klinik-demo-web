@@ -9,10 +9,15 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
   if (auth.error) return auth.error;
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
 
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ message: "Geçersiz istek" }, { status: 400 });
+  }
   const amount = Number(body.amount);
+  // Faturasız düzeltmenin nedeni denetim kaydına yazılır (ekranda zorunlu).
+  const reason = typeof body.reason === "string" ? body.reason.trim().replace(/\s+/g, " ").slice(0, 300) : "";
   if (!amount || isNaN(amount)) return NextResponse.json({ message: "Geçersiz miktar" }, { status: 400 });
-  if (!Number.isInteger(amount)) return NextResponse.json({ message: "Miktar tam sayi olmali" }, { status: 400 });
+  if (!Number.isInteger(amount)) return NextResponse.json({ message: "Miktar tam sayı olmalı" }, { status: 400 });
   if (Math.abs(amount) > 5_000_000) return NextResponse.json({ message: "Tek işlemde en fazla 5.000.000 SMS düzenlenebilir" }, { status: 400 });
 
   const institution = await prisma.institution.findUnique({ where: { id: params.id } });
@@ -35,7 +40,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
 
     if (amount > 0) {
       if (currentWallet.availableBalance < amount) {
-        return { error: `Platform stok yetersiz. Mevcut: ${currentWallet.availableBalance}, Istek: ${amount}` };
+        return { error: `Platform SMS stoğu yetersiz. Stokta ${currentWallet.availableBalance.toLocaleString("tr-TR")} SMS var, ${amount.toLocaleString("tr-TR")} istendi.` };
       }
 
       const [updatedInstitution, updatedWallet] = await Promise.all([
@@ -82,7 +87,7 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
   await writeAudit(
     auth.user.id,
     "SMS_CREDIT_ADJUST",
-    `${institution.name} SMS duzenleme: ${result.appliedAmount > 0 ? "+" : ""}${result.appliedAmount}`,
+    `${institution.name} SMS bakiyesi düzeltildi: ${result.appliedAmount > 0 ? "+" : ""}${result.appliedAmount}${reason ? ` — neden: ${reason}` : ""}`,
   );
 
   return NextResponse.json({

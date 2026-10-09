@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit, withApiTiming } from "@/lib/api";
-import { findEligibleDoctor } from "@/lib/hakedis";
+import { computeDoctorMonthlyHakedis, computeDoctorMonthlyOdenen, findEligibleDoctor, monthRangeUtc } from "@/lib/hakedis";
 import { isValidDateKey, turkeyDayRangeUtc, turkeyYearMonth } from "@/lib/tz";
 import { requireActiveBranch } from "@/lib/branch-context";
 
@@ -65,11 +65,13 @@ export async function POST(req: NextRequest) {
   // (bkz. denetim raporu). Aynı desen burada da uygulanıyor.
   const requestKey = req.headers.get("idempotency-key")?.trim() || null;
   let institutionId: string | null | undefined;
+  let activeBranchId: string | null = null;
   try {
     const auth = await requireAuth("finance:write");
     if (auth.error) return auth.error;
     const branch = requireActiveBranch(auth.user.branchContext);
     if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
+    activeBranchId = branch.branchId;
     institutionId = auth.user.institutionId;
     if (!institutionId) {
       return NextResponse.json({ error: "Gider kaydı için kurum bağlamı zorunlu" }, { status: 403 });
@@ -80,7 +82,12 @@ export async function POST(req: NextRequest) {
     }
 
     if (requestKey) {
-      const existingExpense = await (prisma as any).expense.findUnique({ where: { requestKey } });
+      // requestKey şube içinde benzersizdir (@@unique([branchId, requestKey])); tek başına
+      // findUnique({ requestKey }) Prisma doğrulama hatası verip HER anahtarlı gider
+      // kaydını (normal gider ve hakediş ödemesi) 500 ile düşürüyordu.
+      const existingExpense = await prisma.expense.findUnique({
+        where: { branchId_requestKey: { branchId: branch.branchId, requestKey } },
+      });
       if (existingExpense) {
         if (institutionId && (existingExpense.institutionId !== institutionId || existingExpense.branchId !== branch.branchId)) {
           return NextResponse.json({ error: "İşlem anahtarı başka bir kayıtta kullanılmış" }, { status: 409 });
@@ -154,6 +161,30 @@ export async function POST(req: NextRequest) {
         ? periodMonth
         : datePeriod.month;
 
+      // Ödeme o ayın kalan hakedişini aşamaz. Bu sınır önceden yalnız formda
+      // vardı; PATCH ucundaki aynı kontrol burada da uygulanır.
+      const payoutYear = resolvedPeriodYear as number;
+      const payoutMonth = resolvedPeriodMonth as number;
+      const { start: periodStart, end: periodEnd } = monthRangeUtc(payoutYear, payoutMonth);
+      const [hakedisRows, odenenMap] = await Promise.all([
+        computeDoctorMonthlyHakedis({
+          doctorId,
+          institutionId: auth.user.institutionId,
+          branchId: branch.branchId,
+          rates: { kkYuzde: Number(doctor.kkYuzde ?? 3), genelYuzde: Number(doctor.genelYuzde ?? 15), maasYuzde: Number(doctor.maasYuzde ?? 40) },
+          rangeStart: periodStart,
+          rangeEnd: periodEnd,
+        }),
+        computeDoctorMonthlyOdenen({ doctorId, institutionId: auth.user.institutionId, branchId: branch.branchId, rangeStart: periodStart, rangeEnd: periodEnd }),
+      ]);
+      const hakedilen = hakedisRows.find((row) => row.year === payoutYear && row.month === payoutMonth)?.hakedilen ?? 0;
+      const odenen = odenenMap.get(`${payoutYear}-${String(payoutMonth).padStart(2, "0")}`) || 0;
+      if (odenen + tutarNum > hakedilen + 0.01) {
+        return NextResponse.json({
+          error: `Bu tutar doktorun ${payoutMonth}/${payoutYear} hakedişini aşıyor. Ödenebilecek en fazla: ${Math.max(0, hakedilen - odenen).toFixed(2)} TL`,
+        }, { status: 400 });
+      }
+
       // Kategori verilmemişse "Doktor Hakedişi" kategorisini bul ya da oluştur —
       // kullanıcı her seferinde kategori seçmek zorunda kalmasın.
       if (!categoryId) {
@@ -222,8 +253,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(expense, { status: 201 });
   } catch (e) {
     if (e && typeof e === "object" && "code" in e && (e as { code?: string }).code === "P2002") {
-      if (requestKey) {
-        const existingExpense = await (prisma as any).expense.findUnique({ where: { requestKey } });
+      if (requestKey && activeBranchId) {
+        const existingExpense = await prisma.expense.findUnique({
+          where: { branchId_requestKey: { branchId: activeBranchId, requestKey } },
+        });
         if (existingExpense && (!institutionId || existingExpense.institutionId === institutionId)) {
           return NextResponse.json({ ...existingExpense, duplicatePrevented: true }, { status: 200 });
         }

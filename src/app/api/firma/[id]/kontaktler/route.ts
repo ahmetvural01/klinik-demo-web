@@ -18,7 +18,7 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
       },
       select: { id: true },
     });
-    if (!firma) return NextResponse.json({ error: "Bulunamadi" }, { status: 404 });
+    if (!firma) return NextResponse.json({ error: "Kayıt bulunamadı" }, { status: 404 });
 
     const kontaktler = await (prisma as any).firmaKontakt.findMany({
       where: { institutionId: auth.user.institutionId, branchId: branch.branchId, firmaId: params.id, isActive: true },
@@ -47,10 +47,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       },
       select: { id: true, institutionId: true, branchId: true },
     });
-    if (!firma) return NextResponse.json({ error: "Bulunamadi" }, { status: 404 });
+    if (!firma) return NextResponse.json({ error: "Kayıt bulunamadı" }, { status: 404 });
 
     const { ad, unvan, email, telefon, rol, isPrimary } = await req.json();
-    if (!ad) return NextResponse.json({ error: "Kontakt adi zorunlu" }, { status: 400 });
+    if (typeof ad !== "string" || !ad.trim()) return NextResponse.json({ error: "Yetkili kişinin adı zorunlu" }, { status: 400 });
 
     // Eğer bu primary olarak işaretlenirse, diğer primary'leri false'a çevir
     if (isPrimary) {
@@ -65,7 +65,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         institutionId: firma.institutionId,
         branchId: firma.branchId,
         firmaId: params.id,
-        ad,
+        ad: ad.trim(),
         unvan: unvan || null,
         email: email || null,
         telefon: telefon || null,
@@ -78,6 +78,6 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     return NextResponse.json(kontakt, { status: 201 });
   } catch (e) {
     console.error(e);
-    return NextResponse.json({ error: "Kontakt eklenemedi" }, { status: 503 });
+    return NextResponse.json({ error: "Yetkili kişi eklenemedi. Lütfen tekrar deneyin." }, { status: 503 });
   }
 }

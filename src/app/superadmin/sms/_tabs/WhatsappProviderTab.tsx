@@ -1,100 +1,170 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { AlertCircle, Building2, CheckCircle2, Clock3, MessageCircle, RefreshCw, Unplug } from "lucide-react";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
-import { Button } from "@/components/ui/Button";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { Badge } from "@/components/ui/Badge";
+import { Switch } from "@/components/ui/Switch";
+import { Toolbar } from "@/components/ui/Toolbar";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
+import { TabIntro } from "@/components/superadmin/TabIntro";
+import { WHATSAPP_STATUS_META } from "@/components/superadmin/sa-labels";
+import { dateTime } from "@/components/superadmin/sa-format";
+import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
 type Row = {
   institutionId: string;
   institutionName: string;
   institutionActive: boolean;
+  whatsappEnabled: boolean;
   providerId: string | null;
-  connectionStatus: "NOT_CONNECTED" | "CONNECTING" | "CONNECTED" | "ERROR" | "DISCONNECTED";
+  connectionStatus: string;
   displayPhoneNumber: string | null;
   verifiedName: string | null;
   connectedAt: string | null;
   lastSuccessfulSendAt: string | null;
   lastWebhookAt: string | null;
-  updatedAt: string | null;
+  todaySent: number;
+  dailyLimit: number;
 };
 
-type PlatformStatus = { ready: boolean; missing: string[] };
-
-const statusMap: Record<Row["connectionStatus"], { label: string; tone: BadgeTone; icon: typeof Clock3 }> = {
-  NOT_CONNECTED: { label: "Bağlı değil", tone: "neutral", icon: Clock3 },
-  CONNECTING: { label: "Bağlanıyor", tone: "info", icon: RefreshCw },
-  CONNECTED: { label: "Bağlı", tone: "success", icon: CheckCircle2 },
-  ERROR: { label: "Hata", tone: "critical", icon: AlertCircle },
-  DISCONNECTED: { label: "Kesildi", tone: "neutral", icon: Unplug },
-};
-
-function formatDate(value: string | null) {
-  return value ? new Intl.DateTimeFormat("tr-TR", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value)) : "-";
-}
-
+/**
+ * WhatsApp: kliniklere WhatsApp kullanımı TEK yerden (burada) açılır ve
+ * bağlantı durumları izlenir. Klinik numarasını kendi panelinden QR kod ile
+ * bağlar. Erişimi kapatmak bağlantıyı kestiği için ayrıca onay istenir
+ * (önceden düzenleme penceresindeki bir kutunun işaretini kaldırıp genel
+ * "Kaydet"e basmak uyarısız siliyordu).
+ */
 export default function WhatsappProviderTab() {
   const [rows, setRows] = useState<Row[]>([]);
-  const [platform, setPlatform] = useState<PlatformStatus>({ ready: false, missing: [] });
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [query, setQuery] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
+  const reload = useCallback(() => setReloadKey((value) => value + 1), []);
+
+  useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
+    setLoadError(null);
+    saGet<{ providers: Row[] }>("/api/superadmin/whatsapp-provider", "WhatsApp bilgileri yüklenemedi.", controller.signal)
+      .then((data) => {
+        setRows(Array.isArray(data?.providers) ? data.providers : []);
+      })
+      .catch((error) => {
+        if (!isAbort(error)) setLoadError(errorMessage(error, "WhatsApp bilgileri yüklenemedi."));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [reloadKey]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase("tr-TR");
+    return rows.filter((row) => !q || row.institutionName.toLocaleLowerCase("tr-TR").includes(q));
+  }, [rows, query]);
+
+  const enabledCount = rows.filter((row) => row.whatsappEnabled).length;
+  const connectedCount = rows.filter((row) => row.whatsappEnabled && row.connectionStatus === "CONNECTED").length;
+  const errorCount = rows.filter((row) => row.whatsappEnabled && row.connectionStatus === "ERROR").length;
+
+  const toggle = async (row: Row) => {
+    const enabling = !row.whatsappEnabled;
+    const ok = await confirmDialog(enabling ? {
+      title: "WhatsApp kullanımı açılsın mı?",
+      message: `${row.institutionName} kliniği kendi WhatsApp numarasını İletişim > Ayarlar'dan QR kod ile bağlayıp mesajlarını WhatsApp'tan gönderebilir.`,
+      confirmText: "Aç",
+      cancelText: "Vazgeç",
+    } : {
+      title: "WhatsApp kullanımı kapatılsın mı?",
+      message: `${row.institutionName} kliniğinin WhatsApp bağlantısı kesilecek ve mesajları SMS ile gidecek. Yeniden açarsanız klinik numarasını tekrar bağlamalıdır.`,
+      confirmText: "Kapat",
+      cancelText: "Vazgeç",
+      danger: true,
+    });
+    if (!ok) return;
+    setBusyId(row.institutionId);
     try {
-      const res = await fetch("/api/superadmin/whatsapp-provider", { cache: "no-store" });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.message || "Bağlantılar yüklenemedi.");
-      setRows(data.providers || []);
-      setPlatform(data.platform || { ready: false, missing: [] });
+      await saSend(`/api/superadmin/institutions/${row.institutionId}`, "PUT", { whatsappEnabled: enabling }, "WhatsApp erişimi değiştirilemedi.");
+      showToastSafe({ type: "success", message: enabling ? `${row.institutionName} için WhatsApp açıldı.` : `${row.institutionName} için WhatsApp kapatıldı.`, icon: "sms" });
+      reload();
     } catch (error) {
-      showToastSafe({ message: error instanceof Error ? error.message : "Bağlantılar yüklenemedi", type: "error" });
-    } finally { setLoading(false); }
-  }, []);
+      showToastSafe({ type: "error", message: errorMessage(error, "WhatsApp erişimi değiştirilemedi.") });
+    } finally {
+      setBusyId(null);
+    }
+  };
 
-  useEffect(() => { void load(); }, [load]);
+  const statusBadge = (row: Row) => {
+    if (!row.whatsappEnabled) return <span className="text-sm text-slate-400">Kapalı</span>;
+    const meta = WHATSAPP_STATUS_META[row.connectionStatus] || { label: "Bilinmiyor", tone: "neutral" as const };
+    return <Badge tone={meta.tone}>{meta.label}</Badge>;
+  };
 
-  const connectedCount = rows.filter((row) => row.connectionStatus === "CONNECTED").length;
-  const errorCount = rows.filter((row) => row.connectionStatus === "ERROR").length;
+  const accessSwitch = (row: Row) => (
+    <Switch
+      checked={row.whatsappEnabled}
+      onChange={() => void toggle(row)}
+      disabled={busyId === row.institutionId || !row.institutionActive}
+      label={<span className="sr-only">WhatsApp erişimi</span>}
+      aria-label={`${row.institutionName} WhatsApp erişimi`}
+      className="justify-end"
+    />
+  );
+
+  const columns: ListTableColumn<Row>[] = [
+    {
+      key: "clinic",
+      header: "Klinik",
+      render: (row) => (
+        <Link href={`/superadmin/institutions/${row.institutionId}`} className="font-semibold text-slate-900 hover:text-primary hover:underline">
+          {row.institutionName}
+        </Link>
+      ),
+    },
+    { key: "access", header: "Erişim", render: accessSwitch },
+    { key: "status", header: "Bağlantı", render: statusBadge },
+    { key: "account", header: "Hesap / numara", render: (row) => (row.verifiedName || row.displayPhoneNumber ? <span className="text-sm text-slate-700">{[row.verifiedName, row.displayPhoneNumber].filter(Boolean).join(" · ")}</span> : <EmptyValue />) },
+    { key: "lastSend", header: "Son gönderim", render: (row) => dateTime(row.lastSuccessfulSendAt) || <EmptyValue /> },
+    { key: "today", header: "Bugün", align: "right", render: (row) => (row.whatsappEnabled && row.connectionStatus === "CONNECTED" ? <span className="tabular-nums text-sm text-slate-700">{row.todaySent} / {row.dailyLimit}</span> : <EmptyValue />) },
+  ];
 
   return (
-    <section className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-md bg-emerald-50 text-emerald-700"><MessageCircle className="h-5 w-5" /></span>
-          <div><h2 className="text-base font-black text-slate-900">WhatsApp Bağlantı Sağlığı</h2><p className="text-xs text-slate-500">Kurum sırları gösterilmeden bağlantı ve gönderim durumu</p></div>
-        </div>
-        <Button variant="secondary" icon={RefreshCw} onClick={() => void load()} loading={loading}>Yenile</Button>
-      </div>
+    <section className="space-y-3">
+      <TabIntro text={`Kliniklere WhatsApp kullanımı buradan açılır; klinik numarasını kendi panelinden QR kod ile bağlar. Açık: ${enabledCount} · bağlı: ${connectedCount}${errorCount ? ` · sorunlu: ${errorCount}` : ""}`} />
 
-      <div className={`flex items-start gap-3 border p-4 ${platform.ready ? "border-emerald-200 bg-emerald-50" : "border-amber-200 bg-amber-50"}`}>
-        {platform.ready ? <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700" /> : <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" />}
-        <div>
-          <p className={`text-sm font-black ${platform.ready ? "text-emerald-900" : "text-amber-900"}`}>{platform.ready ? "WhatsApp altyapısı kullanıma hazır" : "WhatsApp altyapısı henüz hazır değil"}</p>
-          <p className={`mt-1 text-xs ${platform.ready ? "text-emerald-700" : "text-amber-800"}`}>
-            {platform.ready ? "Klinikler kendi WhatsApp Business numaralarını bağlayabilir." : "Sistemin Meta uygulaması henüz bağlanmadı. Güvenli sunucu kurulumu tamamlanmadan klinikler numara bağlayamaz; klinik erişim hakları bu hazırlıktan bağımsızdır."}
-          </p>
-        </div>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="border border-slate-200 bg-white p-4"><p className="text-xs font-bold text-slate-400">Modülü açık kurum</p><p className="mt-1 text-2xl font-black text-slate-900">{rows.length}</p></div>
-        <div className="border border-emerald-200 bg-emerald-50 p-4"><p className="text-xs font-bold text-emerald-700">Bağlı</p><p className="mt-1 text-2xl font-black text-emerald-800">{connectedCount}</p></div>
-        <div className="border border-red-200 bg-red-50 p-4"><p className="text-xs font-bold text-red-700">İnceleme gerekli</p><p className="mt-1 text-2xl font-black text-red-800">{errorCount}</p></div>
-      </div>
-
-      <div className="overflow-x-auto border border-slate-200 bg-white shadow-sm">
-        <table className="w-full min-w-[900px] text-left text-sm">
-          <thead className="border-b border-slate-200 bg-slate-50 text-xs font-bold text-slate-500"><tr><th className="px-4 py-3">Kurum</th><th className="px-4 py-3">Durum</th><th className="px-4 py-3">Doğrulanmış hesap</th><th className="px-4 py-3">Numara</th><th className="px-4 py-3">Bağlandı</th><th className="px-4 py-3">Son gönderim</th><th className="px-4 py-3">Son webhook</th></tr></thead>
-          <tbody className="divide-y divide-slate-100">
-            {rows.map((row) => {
-              const status = statusMap[row.connectionStatus];
-              return <tr key={row.institutionId} className="hover:bg-slate-50/70"><td className="px-4 py-3"><span className="flex items-center gap-2 font-bold text-slate-900"><Building2 className="h-4 w-4 text-slate-400" />{row.institutionName}</span></td><td className="px-4 py-3"><Badge tone={status.tone} icon={status.icon}>{status.label}</Badge></td><td className="px-4 py-3 font-semibold text-slate-700">{row.verifiedName || "-"}</td><td className="px-4 py-3 text-slate-600">{row.displayPhoneNumber || "-"}</td><td className="px-4 py-3 text-xs text-slate-500">{formatDate(row.connectedAt)}</td><td className="px-4 py-3 text-xs text-slate-500">{formatDate(row.lastSuccessfulSendAt)}</td><td className="px-4 py-3 text-xs text-slate-500">{formatDate(row.lastWebhookAt)}</td></tr>;
-            })}
-            {!loading && rows.length === 0 && <tr><td colSpan={7} className="px-4 py-12 text-center text-sm text-slate-500">WhatsApp modülü açık kurum bulunmuyor.</td></tr>}
-          </tbody>
-        </table>
-      </div>
+      <ListTable<Row>
+        header={
+          <Toolbar>
+            <SearchInput value={query} onChange={setQuery} placeholder="Klinik adı" wrapperClassName="flex-1 min-w-[220px]" />
+          </Toolbar>
+        }
+        columns={columns}
+        rows={filtered}
+        rowKey={(row) => row.institutionId}
+        loading={loading}
+        error={loadError}
+        onRetry={reload}
+        rowClassName={(row) => (row.institutionActive ? "" : "opacity-60")}
+        emptyText={query ? "Bu adla klinik yok" : "Klinik yok"}
+        mobileCard={(row) => (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <Link href={`/superadmin/institutions/${row.institutionId}`} className="min-w-0 truncate font-semibold text-slate-900">{row.institutionName}</Link>
+              {accessSwitch(row)}
+            </div>
+            <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+              {statusBadge(row)}
+              <span>{row.displayPhoneNumber || ""}</span>
+            </div>
+          </div>
+        )}
+      />
     </section>
   );
 }

@@ -35,9 +35,10 @@ function main() {
   assert(isCelebrationDate(dateRow("KURBAN_BAYRAMI"), new Date(2026, 4, 27)), "Kurban Bayramı tarih kataloğu hatalı.");
 
   const smsPage = source("src/app/(panel)/sms/page.tsx");
-  assert(smsPage.includes("paymentReminderDaysBefore"), "Çoklu ödeme hatırlatma günleri arayüzde bulunmalı.");
-  assert(smsPage.includes("WhatsappSettingsTab connectionOnly"), "WhatsApp bağlantısı İletişim Merkezi'nde olmalı.");
-  assert(!source("src/app/(panel)/ayar/page.tsx").includes("WhatsappSettingsTab"), "WhatsApp genel Ayarlar'da tekrarlanmamalı.");
+  assert(source("src/app/(panel)/sms/_tabs/AutomationsTab.tsx").includes("paymentReminderDaysBefore"), "Çoklu ödeme hatırlatma günleri arayüzde bulunmalı.");
+  assert(source("src/app/(panel)/sms/_tabs/SettingsTab.tsx").includes("WhatsappWebConnect"), "WhatsApp bağlantısı İletişim > Ayarlar'da olmalı.");
+  assert(!smsPage.includes("WhatsappMessagesTab"), "Panelde WhatsApp sohbet ekranı olmamalı.");
+  assert(!source("src/app/(panel)/ayar/page.tsx").includes("WhatsappWebConnect"), "WhatsApp genel Ayarlar'da tekrarlanmamalı.");
 
   const bulkRoute = source("src/app/api/sms/bulk/route.ts");
   assert(bulkRoute.includes("celebrationCode"), "Manuel özel gün gönderimi katalog kodunu korumalı.");
@@ -47,10 +48,9 @@ function main() {
     "Otomatik kanal, WhatsApp yazma yetkisi olmayan kullanıcı için SMS ile sınırlandırılmalı.",
   );
 
-  const bulkTab = source("src/app/(panel)/sms/_tabs/BulkSendTab.tsx");
   assert(
-    bulkTab.includes('hasFeature("whatsapp") && can("whatsapp:write")'),
-    "Toplu gönderimde WhatsApp seçeneği özellik ve yazma yetkisini birlikte aramalı.",
+    smsPage.includes('whatsappFeature && can("whatsapp:write")') && source("src/app/(panel)/sms/_tabs/SendTab.tsx").includes("canWriteWhatsapp && whatsappConnected"),
+    "Toplu gönderimde WhatsApp seçeneği özellik, yazma yetkisi ve bağlantıyı birlikte aramalı.",
   );
 
   const embeddedSignup = source("src/app/api/whatsapp/embedded-signup/route.ts");

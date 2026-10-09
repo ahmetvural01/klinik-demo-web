@@ -1,9 +1,20 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { z } from "zod";
 import { examinationSchema } from "@/lib/validators";
+import { EXAM_STATUS_DIAGNOSIS, EXAM_STATUS_DONE } from "@/lib/examination-status";
 import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { requireActiveBranch } from "@/lib/branch-context";
+
+// Hasta dosyası yeni kaydı ya muayene listesine ("Diagnoz (Ön Teşhis)" —
+// ücrete yansımaz) ya da doğrudan yapılan tedavi olarak (TAMAMLANDI) açar.
+// Ortak şemadaki enum ön teşhis değerini kabul etmediği için hasta
+// dosyasından hiçbir muayene kaydı oluşturulamıyordu (400). Bkz.
+// src/lib/examination-status.ts.
+const examinationCreateSchema = examinationSchema.extend({
+  status: z.enum([EXAM_STATUS_DIAGNOSIS, EXAM_STATUS_DONE, "PLANLANDI", "DEVAM"]),
+});
 
 export const GET = withApiTiming("examinations", async function GET(request: NextRequest) {
   const auth = await requireAuth("examinations:read");
@@ -19,7 +30,10 @@ export const GET = withApiTiming("examinations", async function GET(request: Nex
       institutionId: auth.user.institutionId as string,
       branchId: branch.branchId,
     },
-    include: { patient: true, doctor: { select: { id: true, fullName: true } } },
+    // Hastanın tam kaydı (TC, telefon, şifreli sağlık alanları) burada
+    // gerekmez; yalnız kim olduğu döner. Telefonu/TC'yi göremeyen roller bu
+    // liste üzerinden de göremez.
+    include: { patient: { select: { id: true, fullName: true } }, doctor: { select: { id: true, fullName: true } } },
     orderBy: { diagnosedAt: "desc" },
     take: 500,
   });
@@ -34,10 +48,10 @@ export async function POST(request: NextRequest) {
   if (!branch.ok || !auth.user.institutionId) return NextResponse.json({ message: branch.ok ? "Kurum bilgisi bulunamadı" : branch.message }, { status: 403 });
 
   const body = await request.json();
-  const parsed = examinationSchema.safeParse(body);
+  const parsed = examinationCreateSchema.safeParse(body);
 
   if (!parsed.success) {
-    return NextResponse.json({ message: "Geçersiz muayene verisi" }, { status: 400 });
+    return NextResponse.json({ message: "Geçersiz muayene verisi", errors: parsed.error.errors }, { status: 400 });
   }
 
   const [patientInfo, doctorInfo] = await Promise.all([

@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { dispatchPatientMessage } from "@/lib/notification-dispatch";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { findBulkAudience } from "@/lib/sms-bulk-audience";
+import { maskPatientName, maskPatientPhone } from "@/lib/audit-mask";
 
 function renderTemplate(template: string, vars: Record<string, string>) {
   return template.replace(/{{\s*(\w+)\s*}}/g, (_, key: string) => vars[key] ?? "");
@@ -10,7 +12,7 @@ function renderTemplate(template: string, vars: Record<string, string>) {
 
 // POST - Ozel gunler/kampanyalar icin secili hasta grubuna serbest metin SMS
 // gonderimi. "sms:bulk" yuksek riskli bir yetki (bkz. src/lib/role-permissions.ts) —
-// varsayilan olarak sadece YONETICI'de var, BANKO/DOKTOR/ASISTAN'da yok.
+// varsayilan rol listelerinde YONETICI ve BANKO'da var; DOKTOR/ASISTAN/MUHASEBE'de yok.
 export async function POST(request: NextRequest) {
   const auth = await requireAuth("sms:bulk");
   if (auth.error) return auth.error;
@@ -32,6 +34,9 @@ export async function POST(request: NextRequest) {
   const rawChannelPreference = typeof body.channelPreference === "string" ? body.channelPreference : "AUTO";
   const templateCode = typeof body.templateCode === "string" ? body.templateCode.trim() : "TOPLU";
   const celebrationCode = typeof body.celebrationCode === "string" ? body.celebrationCode.trim() : undefined;
+  // Mesleğe özel gün metni seçildiğinde alıcılar varsayılan olarak o meslekle
+  // sınırlanır; kullanıcı ekranda bu sınırı bilerek kaldırabilir (false).
+  const restrictToProfessions = body.restrictToProfessions !== false;
   const requestId = typeof body.requestId === "string" ? body.requestId.trim() : "";
 
   if (audience !== "ALL" && audience !== "SELECTED") {
@@ -86,23 +91,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Seçilen özel gün şablonu bulunamadı." }, { status: 404 });
   }
 
-  const professionFilter = celebrationDay?.targetProfessions.length
-    ? { profession: { in: celebrationDay.targetProfessions } }
-    : {};
+  const targetProfessions = restrictToProfessions ? celebrationDay?.targetProfessions ?? [] : [];
 
   // institutionId + homeBranchId filtresi kritik: bu filtreler olmadan baska
   // bir kurumun veya subenin hasta ID'si gonderilirse cross-tenant/cross-branch
   // SMS gonderimi riski olurdu. "ALL" modunda da ayni filtre kullanilir,
-  // sadece patientIds yerine aktif subenin tum hastalari.
-  const patients = audience === "ALL"
-    ? await prisma.patient.findMany({
-        where: { institutionId: auth.user.institutionId, homeBranchId: activeBranch.branchId, archivedAt: null, ...professionFilter },
-        select: { id: true, fullName: true, phone: true },
-      })
-    : await prisma.patient.findMany({
-        where: { id: { in: patientIds }, institutionId: auth.user.institutionId, homeBranchId: activeBranch.branchId, archivedAt: null, ...professionFilter },
-        select: { id: true, fullName: true, phone: true },
-      });
+  // sadece patientIds yerine aktif subenin tum hastalari. Sorgu, gönderim
+  // öncesi özetle (bulk/preview) aynı olsun diye ortak fonksiyondadır.
+  const patients = await findBulkAudience({
+    institutionId: auth.user.institutionId,
+    branchId: activeBranch.branchId,
+    audience,
+    patientIds,
+    targetProfessions,
+  });
 
   if (!patients.length) {
     return NextResponse.json({ message: "Seçilen ölçütlere uygun hasta bulunamadı." }, { status: 404 });
@@ -119,23 +121,30 @@ export async function POST(request: NextRequest) {
   const institutionPhone = settings?.institutionPhone || institution.phone || "";
 
   let sent = 0;
-  const failedRecipients: { patientId: string; phone: string; reason: string }[] = [];
+  // Gönderilemeyenlerin sonucu üç türdür:
+  // - notSent: izin yok / kredi yok / SMS kapalı (SUPPRESSED) — sağlayıcıya
+  //   hiç gitmedi; aynı koşulda tekrar denemek sonucu değiştirmez.
+  // - uncertain: sağlayıcı yanıtı kesinleşmedi (dispatch retryable:false) —
+  //   mesaj ulaşmış olabilir; çift mesaj olmasın diye yeniden seçilmez.
+  // - failed: sağlayıcı kesin olarak reddetti — yeniden denenebilir.
+  type FailureOutcome = "notSent" | "uncertain" | "failed";
+  const failedRecipients: { patientId: string; reason: string; outcome: FailureOutcome }[] = [];
   const packageId = `TOPLU-${requestId}`;
 
   const batchSize = 8;
   for (let i = 0; i < withPhone.length; i += batchSize) {
     const chunk = withPhone.slice(i, i + batchSize);
     const chunkResults = await Promise.all(chunk.map(async (patient) => {
-      const message = renderTemplate(content, {
+      // Hazır özel gün metinleri [Kutlama Günü Adı] etiketini içerebilir;
+      // otomatik kutlama taramasıyla (celebration-sms.ts) aynı değişkenler doldurulur.
+      const vars = {
         institutionName,
         institutionPhone,
         patientName: patient.fullName,
-      });
-      const renderedWhatsappMessage = renderTemplate(whatsappContent?.trim() || content, {
-        institutionName,
-        institutionPhone,
-        patientName: patient.fullName,
-      });
+        title: celebrationDay?.title || "",
+      };
+      const message = renderTemplate(content, vars);
+      const renderedWhatsappMessage = renderTemplate(whatsappContent?.trim() || content, vars);
       const result = await dispatchPatientMessage({
         institutionId: institution.id,
         patientId: patient.id,
@@ -155,37 +164,59 @@ export async function POST(request: NextRequest) {
     }));
 
     for (const { patient, result } of chunkResults) {
+      // İşlem günlüğüne hasta adı/telefonu düz metin yazılmaz (bkz.
+      // src/lib/audit-mask.ts); kurum içi geçmiş ekranı adı Patient kaydından
+      // gösterir (api/sms/dispatches).
+      const maskedRecipient = `${maskPatientName(patient.fullName)} (${maskPatientPhone(patient.phone)})`;
       if (result.success) {
         sent += 1;
         await writeAudit(
           auth.user.id,
           `${result.channel}_TOPLU`,
-          `[Paket:${packageId}] ${patient.fullName} (${patient.phone}) - ProviderMsgId: ${result.providerMessageId || "-"}`
+          `[Paket:${packageId}] ${maskedRecipient} - ProviderMsgId: ${result.providerMessageId || "-"}`
         );
       } else {
         failedRecipients.push({
           patientId: patient.id,
-          phone: patient.phone,
           reason: result.reason || result.error || "Bilinmeyen hata",
+          outcome: result.suppressed ? "notSent" : result.retryable === false ? "uncertain" : "failed",
         });
         await writeAudit(
           auth.user.id,
           "SMS_TOPLU_FAILED",
-          `[Paket:${packageId}] ${patient.fullName} (${patient.phone}) - ${result.reason || result.error || "Bilinmeyen hata"}`
+          `[Paket:${packageId}] ${maskedRecipient} - ${result.reason || result.error || "Bilinmeyen hata"}`
         );
       }
     }
   }
 
-  const failed = failedRecipients.length;
+  const countOutcome = (outcome: FailureOutcome) => failedRecipients.filter((item) => item.outcome === outcome).length;
+  const notSent = countOutcome("notSent");
+  const uncertain = countOutcome("uncertain");
+  const failed = countOutcome("failed");
+  const notSentReasons = Object.entries(
+    failedRecipients
+      .filter((item) => item.outcome === "notSent")
+      .reduce<Record<string, number>>((acc, item) => ({ ...acc, [item.reason]: (acc[item.reason] || 0) + 1 }), {}),
+  ).map(([reason, count]) => ({ reason, count }));
   const refreshedInstitution = await prisma.institution.findUnique({ where: { id: institution.id } });
 
   return NextResponse.json({
     sent,
     failed,
+    uncertain,
+    notSent,
+    notSentReasons,
     failedRecipients,
     skippedNoPhone,
+    batchId: packageId,
     remainingBalance: refreshedInstitution?.smsBalance ?? institution.smsBalance,
-    message: `${sent} hastaya toplu ileti gönderildi${failed ? `, ${failed} gönderim başarısız` : ""}${skippedNoPhone ? `, ${skippedNoPhone} hastanın telefonu yok` : ""}`,
+    message: [
+      `${sent} hastaya gönderildi`,
+      notSent ? `${notSent} hastaya gönderilmedi` : "",
+      failed ? `${failed} gönderim başarısız` : "",
+      uncertain ? `${uncertain} gönderimin sonucu belirsiz` : "",
+      skippedNoPhone ? `${skippedNoPhone} hastanın telefonu yok` : "",
+    ].filter(Boolean).join(" · "),
   });
 }

@@ -1,22 +1,57 @@
 "use client";
-import Link from "next/link";
+
+import { Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowLeft, Home, Lock } from "lucide-react";
+import { Button } from "@/components/ui/Button";
+import { getPanelRouteRequirement } from "@/lib/panel-permissions";
+import { PAGE_TITLES } from "@/lib/page-titles";
+import { PERMISSION_DETAILS } from "@/lib/role-permissions";
+
+/** "/personel-ekle?id=..." -> "Yeni personel"; bilinmeyen adres için null. */
+function pageNameFor(path: string) {
+  const pathname = path.split("?")[0] || "";
+  if (PAGE_TITLES[pathname]) return PAGE_TITLES[pathname];
+  const prefix = Object.keys(PAGE_TITLES)
+    .filter((key) => pathname.startsWith(`${key}/`))
+    .sort((a, b) => b.length - a.length)[0];
+  return prefix ? PAGE_TITLES[prefix] : null;
+}
+
+function YetkisizContent() {
+  const router = useRouter();
+  const from = useSearchParams().get("from") || "";
+  // Yalnız uygulama içi adresler okunur (dışarıdan gelen bağlantı metni gösterilmez).
+  const safeFrom = from.startsWith("/") && !from.startsWith("//") ? from : "";
+  const pageName = safeFrom ? pageNameFor(safeFrom) : null;
+  const requirement = safeFrom ? getPanelRouteRequirement(safeFrom.split("?")[0]) : null;
+  const permissionTitles = (requirement?.anyOf || []).map((code) => PERMISSION_DETAILS[code]?.title).filter(Boolean);
+
+  return (
+    <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 px-4 text-center">
+      <span className="flex h-14 w-14 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-500" aria-hidden="true">
+        <Lock className="h-6 w-6" />
+      </span>
+      <h1 className="font-display text-xl font-extrabold tracking-tight text-slate-900">Bu sayfayı açma izniniz yok</h1>
+      <div className="max-w-md space-y-2 text-sm leading-6 text-slate-600">
+        <p>
+          {pageName ? <><b>{pageName}</b> sayfası</> : "Açmaya çalıştığınız sayfa"} sizin rolünüze kapalı.
+          {permissionTitles.length > 0 && <> Gereken izin: <b>{permissionTitles.join(" veya ")}</b>.</>}
+        </p>
+        <p>Bu işe ihtiyacınız varsa klinik yöneticinizden izin isteyin.</p>
+      </div>
+      <div className="mt-2 flex flex-wrap justify-center gap-2">
+        <Button variant="secondary" icon={ArrowLeft} onClick={() => router.back()}>Geri dön</Button>
+        <Button icon={Home} href="/anasayfa">Anasayfa</Button>
+      </div>
+    </div>
+  );
+}
 
 export default function YetkisizPage() {
   return (
-    <div className="flex min-h-[60vh] flex-col items-center justify-center gap-4 text-center">
-      <div className="flex h-20 w-20 items-center justify-center rounded-full bg-red-100">
-        <svg className="h-10 w-10 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M4.929 4.929l14.142 14.142M4.929 19.071l14.142-14.142" />
-          <circle cx="12" cy="12" r="9" strokeLinecap="round" />
-        </svg>
-      </div>
-      <h1 className="text-lg font-black text-slate-900">Erişim Yetkiniz Yok</h1>
-      <p className="text-sm text-slate-500 max-w-xs">
-        Bu sayfaya erişmek için gerekli yetkiye sahip değilsiniz. Lütfen yöneticinizle iletişime geçin.
-      </p>
-      <Link href="/anasayfa" className="mt-2 rounded-lg bg-primary px-5 py-2 text-sm font-bold text-white hover:bg-primary/90 transition">
-        Ana Sayfaya Dön
-      </Link>
-    </div>
+    <Suspense fallback={null}>
+      <YetkisizContent />
+    </Suspense>
   );
 }

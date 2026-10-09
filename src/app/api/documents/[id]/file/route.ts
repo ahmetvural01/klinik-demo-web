@@ -4,6 +4,7 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { can } from "@/lib/rbac";
 import type { Role } from "@prisma/client";
 import { readDocumentFile } from "@/lib/document-storage";
+import { requireActiveBranch } from "@/lib/branch-context";
 
 function permissionForCategory(category: string, action: "read" | "write" | "delete") {
   return category === "BELGE" ? `documents:${action}` : `xray:${action}`;
@@ -13,12 +14,16 @@ export async function GET(req: NextRequest, props: { params: Promise<{ id: strin
   const params = await props.params;
   const auth = await requireAuth();
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ error: branch.message }, { status: 403 });
 
   try {
     const document = await prisma.document.findFirst({
       where: {
         id: params.id,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        // Hasta dosyasıyla aynı sınır: yalnız aktif şubedeki hastanın belgesi.
+        patient: { homeBranchId: branch.branchId },
       },
     });
     if (!document) return NextResponse.json({ error: "Belge bulunamadı" }, { status: 404 });

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { treatmentNoteMatch } from "@/app/api/treatment-types/treatment-usage";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -54,6 +55,25 @@ export async function DELETE(_: NextRequest, props: Params) {
     where: { id: params.id, ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}) },
   });
   if (!existing) return NextResponse.json({ message: "Tedavi türü bulunamadı" }, { status: 404 });
+
+  // Randevuda kullanılmış tür silinirse o randevular takvimde sessizce
+  // "Muayene" görünüyordu (tür listede bulunamayınca varsayılana düşüyor).
+  // Kullanılmış tür silinmez, pasife alınır: yeni randevuda seçilemez ama
+  // eski randevular adını ve rengini korur (POS cihazıyla aynı kural).
+  const usage = await prisma.appointment.count({
+    where: { institutionId: existing.institutionId, OR: treatmentNoteMatch(existing.value) },
+  });
+  if (usage > 0) {
+    if (existing.isActive) {
+      await prisma.treatmentType.update({ where: { id: existing.id }, data: { isActive: false } });
+      await writeAudit(auth.user.id, "TREATMENT_TYPE_UPDATE", `Tedavi türü pasife alındı (${usage} randevuda kullanıldığı için silinmedi): ${existing.label}`);
+    }
+    return NextResponse.json({
+      ok: true,
+      deactivated: true,
+      message: `${existing.label} ${usage} randevuda kullanıldığı için silinmedi; pasife alındı. Yeni randevuda seçilemez.`,
+    });
+  }
 
   await prisma.treatmentType.delete({ where: { id: existing.id } });
   await writeAudit(auth.user.id, "TREATMENT_TYPE_DELETE", `Tedavi türü silindi: ${existing.label}`);

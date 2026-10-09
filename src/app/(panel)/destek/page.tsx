@@ -1,214 +1,296 @@
-﻿"use client";
+"use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { LifeBuoy, MessageCircle, Plus } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
-import { Button } from "@/components/ui/Button";
+import { roleLabel } from "@/lib/staff-roles";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 import { Badge } from "@/components/ui/Badge";
-import { FormField } from "@/components/ui/FormField";
-import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { Button } from "@/components/ui/Button";
+import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { Input, Select, Textarea } from "@/components/ui/Input";
+import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { Modal } from "@/components/ui/Modal";
 import { PageHeader } from "@/components/ui/PageHeader";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { ActiveFilters, Toolbar } from "@/components/ui/Toolbar";
+import { matchesSearch } from "@/components/yonetim/search-text";
 
-type Ticket = { id: string; subject: string; message: string; answer: string | null; createdAt: string };
+type Ticket = {
+  id: string;
+  subject: string;
+  message: string;
+  answer: string | null;
+  createdAt: string;
+  user?: { id: string; fullName: string; role: string } | null;
+};
+
+type StatusFilter = "" | "bekliyor" | "yanitlandi";
 
 const SUPPORT_TOPICS = [
-  "Giriş ve yetki problemi",
-  "Hasta / randevu işlemleri",
-  "Tedavi / laboratuvar akışı",
-  "Muhasebe / ödeme işlemleri",
-  "Stok / tedarikçi işlemleri",
-  "SMS / bildirim problemi",
-  "Rapor / dışa aktarım",
+  "Giriş ve yetki",
+  "Hasta / randevu",
+  "Tedavi / laboratuvar",
+  "Muhasebe / ödeme",
+  "Stok / satın alma",
+  "SMS / WhatsApp",
+  "Rapor / dışa aktarma",
   "Diğer",
 ] as const;
 
+const STATUS_OPTIONS: Array<{ value: StatusFilter; label: string }> = [
+  { value: "", label: "Tüm talepler" },
+  { value: "bekliyor", label: "Yanıt bekleyenler" },
+  { value: "yanitlandi", label: "Yanıtlananlar" },
+];
+
+const WHATSAPP_URL = "https://api.whatsapp.com/send/?phone=903228028162";
+const MESSAGE_MAX = 5000;
+
+function formatDateTime(value: string) {
+  return new Date(value).toLocaleString("tr-TR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function StatusBadge({ ticket }: { ticket: Ticket }) {
+  return ticket.answer
+    ? <Badge tone="success">Yanıtlandı</Badge>
+    : <Badge tone="warning">Yanıt bekliyor</Badge>;
+}
+
 export default function DestekPage() {
+  const { can } = usePermissions();
+  const canWrite = can("support:write");
   const [tickets, setTickets] = useState<Ticket[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [newTicket, setNewTicket] = useState({ subject: SUPPORT_TOPICS[0] as string, customSubject: "", message: "" });
-  const [sending, setSending] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"" | "acik" | "yanitli">("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
+  const [selected, setSelected] = useState<Ticket | null>(null);
 
-  const showToast = (type: "success" | "error", text: string) => {
-    showToastSafe({ message: text, type });
-  };
+  const [formOpen, setFormOpen] = useState(false);
+  const [form, setForm] = useState({ topic: SUPPORT_TOPICS[0] as string, customSubject: "", message: "" });
+  const [formSubmitted, setFormSubmitted] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
 
-  // Destek geçmişini sayfa ilk açıldığında bir kez yükle.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { void fetchTickets(); }, []);
-
-  const fetchTickets = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
-      const res = await fetch("/api/support");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.message || "Destek talepleri yüklenemedi.");
-      setTickets(Array.isArray(data) ? data : []);
+      const response = await fetch("/api/support", { cache: "no-store" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(data)) throw new Error(data?.message || "Destek talepleri yüklenemedi.");
+      setTickets(data);
     } catch (error) {
-      showToast("error", error instanceof Error ? error.message : "Destek talepleri yüklenemedi.");
+      setLoadError(error instanceof Error ? error.message : "Destek talepleri yüklenemedi.");
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const waitingCount = tickets.filter((ticket) => !ticket.answer).length;
+
+  const filtered = useMemo(() => tickets.filter((ticket) => {
+    if (statusFilter === "bekliyor" && ticket.answer) return false;
+    if (statusFilter === "yanitlandi" && !ticket.answer) return false;
+    return matchesSearch([ticket.subject, ticket.message, ticket.answer, ticket.user?.fullName], query);
+  }), [query, statusFilter, tickets]);
+
+  const subject = form.topic === "Diğer" ? form.customSubject.trim() : form.topic;
+  const formErrors = {
+    subject: !subject ? "Kısa bir konu başlığı yazın." : subject.length > 120 ? "Konu en fazla 120 karakter olabilir." : undefined,
+    message: !form.message.trim() ? "Sorunu veya isteğinizi yazın." : form.message.length > MESSAGE_MAX ? `Mesaj en fazla ${MESSAGE_MAX} karakter olabilir.` : undefined,
   };
 
-  const sendTicket = async () => {
-    if (!newTicket.message.trim()) return showToast("error", "Lütfen görüşünüzü yazın");
-    const subject = newTicket.subject === "Diğer" ? newTicket.customSubject.trim() : newTicket.subject;
-    if (!subject) return showToast("error", "Lütfen konu seçin veya yazın");
+  const openForm = () => {
+    setForm({ topic: SUPPORT_TOPICS[0], customSubject: "", message: "" });
+    setFormSubmitted(false);
+    setFormError(null);
+    setFormOpen(true);
+  };
+
+  const send = async () => {
+    setFormSubmitted(true);
+    setFormError(null);
+    if (formErrors.subject || formErrors.message) return;
     setSending(true);
     try {
-      const res = await fetch("/api/support", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ subject, message: newTicket.message }) });
-      const data = await res.json().catch(() => null);
-      if (res.ok) {
-        setNewTicket({ subject: SUPPORT_TOPICS[0], customSubject: "", message: "" });
-        showToast("success", "Destek talebiniz gönderildi");
-        void fetchTickets();
-      } else {
-        throw new Error(data?.message || "Destek talebi gönderilemedi.");
+      const response = await fetch("/api/support", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subject, message: form.message.trim() }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) {
+        setFormError(data?.message || "Talep gönderilemedi.");
+        return;
       }
-    } catch (error) {
-      showToast("error", error instanceof Error ? error.message : "Destek talebi gönderilemedi.");
+      setFormOpen(false);
+      showToastSafe({ message: "Talebiniz destek ekibine iletildi. Yanıt geldiğinde bu listede görünür.", type: "success", duration: 5000 });
+      void load();
+    } catch {
+      setFormError("Talep gönderilemedi. Bağlantınızı kontrol edip tekrar deneyin.");
     } finally {
       setSending(false);
     }
   };
 
-  const filteredTickets = tickets.filter((t) => {
-    if (statusFilter === "acik" && t.answer) return false;
-    if (statusFilter === "yanitli" && !t.answer) return false;
-    if (!query.trim()) return true;
-    const q = query.toLowerCase();
-    return (
-      (t.subject || "").toLowerCase().includes(q) ||
-      (t.message || "").toLowerCase().includes(q) ||
-      (t.answer || "").toLowerCase().includes(q)
-    );
-  });
-
-  const ticketColumns: ListTableColumn<Ticket>[] = [
-    { key: "subject", header: "Konu", render: (t) => <span className="font-medium text-slate-800">{t.subject}</span> },
-    { key: "message", header: "Mesaj", cellClassName: "max-w-[240px] truncate", render: (t) => <span className="text-slate-600">{t.message}</span> },
-    {
-      key: "answer",
-      header: "Yanıt",
-      render: (t) => (t.answer ? <span className="text-slate-700">{t.answer}</span> : <Badge tone="warning">Bekliyor</Badge>),
-    },
+  const columns: ListTableColumn<Ticket>[] = [
     {
       key: "createdAt",
       header: "Tarih",
-      render: (t) => <span className="text-xs text-slate-400">{new Date(t.createdAt).toLocaleDateString("tr-TR")}</span>,
+      cellClassName: "whitespace-nowrap text-sm text-slate-600 tabular-nums",
+      render: (ticket) => formatDateTime(ticket.createdAt),
     },
+    {
+      key: "subject",
+      header: "Konu",
+      render: (ticket) => (
+        <div className="min-w-0 max-w-xl">
+          <p className="font-semibold text-slate-900">{ticket.subject}</p>
+          <p className="mt-0.5 truncate text-xs text-slate-500">{ticket.message}</p>
+        </div>
+      ),
+    },
+    {
+      key: "user",
+      header: "Gönderen",
+      render: (ticket) => ticket.user ? (
+        <div>
+          <p className="text-sm text-slate-800">{ticket.user.fullName}</p>
+          <p className="text-xs text-slate-500">{roleLabel(ticket.user.role)}</p>
+        </div>
+      ) : <EmptyValue />,
+    },
+    { key: "status", header: "Durum", render: (ticket) => <StatusBadge ticket={ticket} /> },
+  ];
+
+  const activeFilters = [
+    ...(statusFilter ? [{ key: "durum", label: STATUS_OPTIONS.find((option) => option.value === statusFilter)?.label || "", onRemove: () => setStatusFilter("") }] : []),
   ];
 
   return (
-    <div className="space-y-5">
-      {/* Header */}
+    <section className="space-y-3">
       <PageHeader
         icon="support"
         title="Destek"
-        description="Platform ekibine talep açın, geçmiş yanıtlarınızı görüntüleyin."
-        stats={[{ label: "Talep", value: tickets.length }]}
+        description="Programla ilgili sorun ve isteklerinizi destek ekibine iletin; yanıtlar burada görünür."
+        stats={waitingCount > 0 ? [{ label: "Yanıt bekleyen", value: waitingCount, color: "text-amber-700" }] : undefined}
+        actions={(
+          <>
+            <Button variant="secondary" icon={MessageCircle} onClick={() => window.open(WHATSAPP_URL, "_blank", "noopener,noreferrer")}>
+              WhatsApp ile yaz
+            </Button>
+            {canWrite && <Button icon={Plus} onClick={openForm}>Yeni talep</Button>}
+          </>
+        )}
       />
 
-      {/* WhatsApp */}
-      <div className="flex items-center gap-4 rounded-2xl bg-emerald-50 border border-emerald-200 p-4">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500 text-white shrink-0">
-          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/></svg>
-        </div>
-        <div className="flex-1">
-          <p className="text-sm font-semibold text-emerald-800">WhatsApp Destek Hattı</p>
-          <p className="text-xs text-emerald-600">Hızlı destek için WhatsApp üzerinden ulaşabilirsiniz.</p>
-        </div>
-        <a href="https://api.whatsapp.com/send/?phone=903228028162" target="_blank" rel="noopener noreferrer"
-          className="shrink-0 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-700">
-          WhatsApp ile Yaz
-        </a>
-      </div>
+      {!canWrite && (
+        <p className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm text-slate-600">
+          Talep açma izniniz yok. Acil durumlarda WhatsApp destek hattına yazabilir veya klinik yöneticinize iletebilirsiniz.
+        </p>
+      )}
 
-      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.2fr)_minmax(260px,0.8fr)]">
-        {/* Görüş Gönder */}
-        <div className="rounded-2xl bg-white border border-slate-100 p-5 shadow-sm space-y-3">
-          <h3 className="text-base font-black text-slate-900">Yeni Destek Talebi</h3>
-          <p className="text-sm text-slate-500">Yaşadığınız sorunu veya önerinizi kısa ve anlaşılır şekilde yazın.</p>
-          <FormField label="Konu">
-            <select
-              value={newTicket.subject}
-              onChange={e => setNewTicket({ ...newTicket, subject: e.target.value })}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none"
-            >
+      <Toolbar>
+        <SearchInput value={query} onChange={setQuery} placeholder="Konu, mesaj veya gönderen ara" wrapperClassName="flex-1 min-w-[220px]" />
+        <Select aria-label="Durum" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as StatusFilter)} className="sm:w-52">
+          {STATUS_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </Select>
+      </Toolbar>
+      <ActiveFilters filters={activeFilters} />
+
+      <ListTable
+        columns={columns}
+        rows={filtered}
+        rowKey={(ticket) => ticket.id}
+        loading={loading}
+        error={loadError}
+        onRetry={() => void load()}
+        emptyIcon={LifeBuoy}
+        emptyText={tickets.length === 0 ? "Henüz destek talebi yok" : "Aramanızla eşleşen talep yok"}
+        emptyDescription={tickets.length === 0 && canWrite ? "Programda takıldığınız bir yer olursa buradan yazın; yanıtı bu listede görürsünüz." : undefined}
+        emptyAction={tickets.length === 0 && canWrite ? <Button icon={Plus} onClick={openForm}>Yeni talep</Button> : undefined}
+        onRowClick={setSelected}
+        getRowAriaLabel={(ticket) => `${ticket.subject} talebini aç`}
+        mobileCard={(ticket) => (
+          <div className="space-y-1">
+            <div className="flex items-start justify-between gap-2">
+              <p className="min-w-0 font-semibold text-slate-900">{ticket.subject}</p>
+              <StatusBadge ticket={ticket} />
+            </div>
+            <p className="truncate text-xs text-slate-500">{ticket.message}</p>
+            <p className="text-xs text-slate-400">{formatDateTime(ticket.createdAt)}{ticket.user ? ` · ${ticket.user.fullName}` : ""}</p>
+          </div>
+        )}
+      />
+
+      <Modal
+        open={Boolean(selected)}
+        onClose={() => setSelected(null)}
+        title={selected?.subject || "Destek talebi"}
+        description={selected ? `${formatDateTime(selected.createdAt)}${selected.user ? ` · ${selected.user.fullName}` : ""}` : undefined}
+        size="lg"
+        trackFormChanges={false}
+        footer={<Button variant="secondary" onClick={() => setSelected(null)}>Kapat</Button>}
+      >
+        {selected && (
+          <div className="space-y-4">
+            <StatusBadge ticket={selected} />
+            <div>
+              <p className="mb-1 text-xs font-bold text-slate-500">Mesaj</p>
+              <p className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm leading-6 text-slate-800">{selected.message}</p>
+            </div>
+            <div>
+              <p className="mb-1 text-xs font-bold text-slate-500">Destek ekibinin yanıtı</p>
+              {selected.answer ? (
+                <p className="whitespace-pre-wrap rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm leading-6 text-emerald-900">{selected.answer}</p>
+              ) : (
+                <p className="text-sm text-slate-500">Henüz yanıt gelmedi. Acil ise WhatsApp destek hattına yazabilirsiniz.</p>
+              )}
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        title="Yeni destek talebi"
+        description="Talebiniz CepKlinik destek ekibine gider; yanıt bu sayfada görünür."
+        size="md"
+        footer={(
+          <>
+            <Button variant="secondary" onClick={() => setFormOpen(false)}>Vazgeç</Button>
+            <Button onClick={() => void send()} loading={sending}>Gönder</Button>
+          </>
+        )}
+      >
+        <form className="space-y-4" noValidate onSubmit={(event) => { event.preventDefault(); void send(); }}>
+          <FormField label="Konu" htmlFor="destek-konu" required>
+            <Select id="destek-konu" value={form.topic} onChange={(event) => setForm((current) => ({ ...current, topic: event.target.value }))}>
               {SUPPORT_TOPICS.map((topic) => <option key={topic} value={topic}>{topic}</option>)}
-            </select>
-            {newTicket.subject === "Diğer" && (
-              <input
-                value={newTicket.customSubject}
-                onChange={e => setNewTicket({ ...newTicket, customSubject: e.target.value })}
-                placeholder="Kısa konu başlığı"
-                className="mt-2 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none"
-              />
-            )}
+            </Select>
           </FormField>
-          <FormField label="Mesaj">
-            <textarea
-              rows={4}
-              placeholder="Detaylı açıklayınız…"
-              value={newTicket.message}
-              onChange={e => setNewTicket({ ...newTicket, message: e.target.value })}
-              className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none"
-            />
+          {form.topic === "Diğer" && (
+            <FormField label="Konu başlığı" htmlFor="destek-konu-ozel" required error={formSubmitted ? formErrors.subject : undefined}>
+              <Input id="destek-konu-ozel" maxLength={120} value={form.customSubject} placeholder="örn: Yazıcı çıktısı" onChange={(event) => setForm((current) => ({ ...current, customSubject: event.target.value }))} />
+            </FormField>
+          )}
+          <FormField
+            label="Mesaj"
+            htmlFor="destek-mesaj"
+            required
+            error={formSubmitted ? formErrors.message : undefined}
+            hint="Hangi ekranda, hangi adımda ne olduğunu yazın. Hastanın TC veya telefon numarasını yazmayın."
+          >
+            <Textarea id="destek-mesaj" rows={5} maxLength={MESSAGE_MAX} value={form.message} onChange={(event) => setForm((current) => ({ ...current, message: event.target.value }))} />
           </FormField>
-          <Button onClick={sendTicket} disabled={sending || loading} loading={sending} fullWidth>
-            Talebi Gönder
-          </Button>
-        </div>
-
-        {/* Destek Bilgilendirme */}
-        <div className="rounded-2xl bg-white border border-slate-100 p-5 shadow-sm space-y-3">
-          <h3 className="text-sm font-bold text-slate-800">Destek Süreci</h3>
-          <div className="rounded-xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
-            Talep oluştururken hangi ekranda, hangi işlemde ve mümkünse hasta/firma adı gibi bağlam bilgilerini yazmanız çözümü hızlandırır.
-          </div>
-          <div className="grid gap-2 text-xs text-slate-500">
-            <button
-              type="button"
-              onClick={() => setStatusFilter((s) => (s === "acik" ? "" : "acik"))}
-              className={`rounded-lg border px-3 py-2 text-left transition ${statusFilter === "acik" ? "border-primary bg-primary/5" : "border-slate-100 hover:bg-slate-50"}`}
-            >
-              <span className="font-bold text-slate-700">Açık talepler:</span> {tickets.filter((ticket) => !ticket.answer).length}
-            </button>
-            <button
-              type="button"
-              onClick={() => setStatusFilter((s) => (s === "yanitli" ? "" : "yanitli"))}
-              className={`rounded-lg border px-3 py-2 text-left transition ${statusFilter === "yanitli" ? "border-primary bg-primary/5" : "border-slate-100 hover:bg-slate-50"}`}
-            >
-              <span className="font-bold text-slate-700">Yanıtlanan:</span> {tickets.filter((ticket) => ticket.answer).length}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Görüşler Tablosu */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white px-5 py-3 shadow-sm">
-          <div className="flex items-center gap-2">
-            <h3 className="text-sm font-bold text-slate-800">Gönderilen Görüşler</h3>
-            {statusFilter && (
-              <button type="button" onClick={() => setStatusFilter("")} className="rounded-full bg-primary/10 px-2.5 py-0.5 text-[11px] font-bold text-primary hover:bg-primary/20">
-                {statusFilter === "acik" ? "Açık" : "Yanıtlanan"} ×
-              </button>
-            )}
-          </div>
-          <input aria-label={"Destek taleplerinde ara"} value={query} onChange={e => setQuery(e.target.value)}
-            placeholder="Ara…"
-            className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:border-primary focus:bg-white focus:outline-none" />
-        </div>
-        <ListTable<Ticket>
-          columns={ticketColumns}
-          rows={filteredTickets}
-          rowKey={(t) => t.id}
-          loading={loading}
-          emptyText="Henüz destek talebi gönderilmedi"
-        />
-      </div>
-    </div>
+          <FormErrorBanner message={formError} />
+        </form>
+      </Modal>
+    </section>
   );
 }

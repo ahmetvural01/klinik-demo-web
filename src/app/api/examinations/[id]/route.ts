@@ -1,6 +1,17 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { z } from "zod";
 import { examinationSchema } from "@/lib/validators";
+import {
+  EXAM_STATUS_CANCELLED,
+  EXAM_STATUS_DIAGNOSIS,
+  EXAM_STATUS_DONE,
+  EXAM_STATUS_KIND_LABELS,
+  EXAM_STATUS_LEGACY_DONE,
+  EXAM_STATUS_VALUES,
+  examStatusKind,
+  isDiagnosisExamStatus,
+} from "@/lib/examination-status";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { effectiveDoctorWhere, isDoctorPeriodSettled } from "@/lib/hakedis";
 import { requireActiveBranch } from "@/lib/branch-context";
@@ -8,18 +19,26 @@ import { turkeyYearMonth } from "@/lib/tz";
 
 type Params = { params: Promise<{ id: string }> };
 
-const EXAM_STATUS_LABELS: Record<string, string> = {
-  PLANLANDI: "Planlandı",
-  DEVAM: "Devam Ediyor",
-  TAMAMLANDI: "Tamamlandı",
-  IPTAL: "İptal",
+// Durum geçişleri kaydın TÜRÜNE göre denetlenir (bkz.
+// src/lib/examination-status.ts). Önceden yalnız enum değerleri tanınıyordu:
+// hasta dosyasının yazdığı "Diagnoz (Ön Teşhis)" kayıtları hiçbir geçişe
+// uymadığı için "Tedaviye aktar" ve satır düzenleme 409 ile reddediliyordu.
+const ALLOWED_TARGETS: Record<ReturnType<typeof examStatusKind>, ReadonlySet<string>> = {
+  pending: new Set(["PLANLANDI", EXAM_STATUS_DIAGNOSIS, "DEVAM", EXAM_STATUS_DONE, EXAM_STATUS_CANCELLED]),
+  in_progress: new Set(["DEVAM", EXAM_STATUS_DONE, EXAM_STATUS_CANCELLED]),
+  done: new Set([EXAM_STATUS_DONE, EXAM_STATUS_LEGACY_DONE]),
+  cancelled: new Set([EXAM_STATUS_CANCELLED]),
 };
-const EXAM_STATUS_TRANSITIONS: Record<string, ReadonlySet<string>> = {
-  PLANLANDI: new Set(["PLANLANDI", "DEVAM", "TAMAMLANDI", "IPTAL"]),
-  DEVAM: new Set(["DEVAM", "TAMAMLANDI", "IPTAL"]),
-  TAMAMLANDI: new Set(["TAMAMLANDI"]),
-  IPTAL: new Set(["IPTAL"]),
-};
+
+function canTransition(from: string, to: string) {
+  // Aynı durumda kalan düzenleme (tutar/diş/doktor değişikliği) her zaman serbest.
+  if (from === to) return true;
+  return ALLOWED_TARGETS[examStatusKind(from)].has(to);
+}
+
+const examinationUpdateSchema = examinationSchema.extend({
+  status: z.enum(EXAM_STATUS_VALUES),
+});
 
 function fmt(v: unknown): string {
   if (v === null || v === undefined || v === "") return "-";
@@ -27,7 +46,7 @@ function fmt(v: unknown): string {
 }
 
 function fmtStatus(v: string): string {
-  return EXAM_STATUS_LABELS[v] || v;
+  return EXAM_STATUS_KIND_LABELS[examStatusKind(v)] || v;
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {
@@ -90,12 +109,12 @@ export async function PUT(request: NextRequest, props: Params) {
     note: body.note !== undefined ? normalizeOptionalString(body.note) : normalizeOptionalString(existing.note),
   };
 
-  const parsed = examinationSchema.safeParse(merged);
+  const parsed = examinationUpdateSchema.safeParse(merged);
 
   if (!parsed.success) {
     return NextResponse.json({ message: "Geçersiz muayene verisi", errors: parsed.error.errors }, { status: 400 });
   }
-  if (!EXAM_STATUS_TRANSITIONS[existing.status]?.has(parsed.data.status)) {
+  if (!canTransition(existing.status, parsed.data.status)) {
     return NextResponse.json({ message: "Bu muayene durum geçişine izin verilmiyor" }, { status: 409 });
   }
 
@@ -121,16 +140,28 @@ export async function PUT(request: NextRequest, props: Params) {
   // kilidini hiç kontrol etmiyordu. Doktora Ocak hakedişi ödendikten sonra
   // Ocak'a ait bir muayenenin tutarı/tarihi sessizce değiştirilip zaten
   // ödenmiş hakediş geçmişe dönük bozulabiliyordu (bkz. denetim raporu).
+  //
+  // Hakediş sorgusu (src/lib/hakedis.ts) ön teşhis/diagnoz kayıtlarını
+  // saymaz. Bu yüzden: kayıt önceden hakedişe girmiyorsa kaynak dönem kilidi
+  // aranmaz (muayene listesindeki eski bir kaydı bugün "yapıldı" yapmak
+  // mümkün olmalı); kayıt bu güncellemeyle hakedişe GİRİYORSA (ön teşhis →
+  // yapıldı) hedef dönem kilitliyse reddedilir — önceden durum değişikliği hiç
+  // kontrol edilmiyordu, ödenmiş bir döneme sessizce hakediş eklenebiliyordu.
   const amountChanged = Number(existing.amount) !== parsed.data.amount;
   const dateChanged = existing.diagnosedAt.toISOString() !== parsed.data.diagnosedAt;
   const doctorChangedForPeriod = existing.doctorId !== parsed.data.doctorId;
+  const wasCounted = !isDiagnosisExamStatus(existing.status);
+  const willBeCounted = !isDiagnosisExamStatus(parsed.data.status);
+  const countChanged = wasCounted !== willBeCounted;
   let periodLockOverridden = false;
-  if (existing.doctorId && (amountChanged || dateChanged || doctorChangedForPeriod)) {
+  if (existing.doctorId && (amountChanged || dateChanged || doctorChangedForPeriod || countChanged)) {
     const sourcePeriod = turkeyYearMonth(existing.diagnosedAt);
-    const sourceSettled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId ?? null, branch.branchId, sourcePeriod.year, sourcePeriod.month);
+    const sourceSettled = wasCounted
+      ? await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId ?? null, branch.branchId, sourcePeriod.year, sourcePeriod.month)
+      : false;
     const targetPeriod = turkeyYearMonth(new Date(parsed.data.diagnosedAt));
     const targetChanged = doctorChangedForPeriod || targetPeriod.year !== sourcePeriod.year || targetPeriod.month !== sourcePeriod.month;
-    const targetSettled = targetChanged && parsed.data.doctorId
+    const targetSettled = willBeCounted && (targetChanged || !wasCounted) && parsed.data.doctorId
       ? await isDoctorPeriodSettled(parsed.data.doctorId, auth.user.institutionId ?? null, branch.branchId, targetPeriod.year, targetPeriod.month)
       : false;
     if (sourceSettled || targetSettled) {
@@ -218,7 +249,10 @@ export async function DELETE(_: NextRequest, props: Params) {
   }
 
   let periodLockOverridden = false;
-  if (existing.doctorId) {
+  // Ön teşhis (muayene listesi) kaydı hakedişe hiç girmediği için onu
+  // listeden çıkarmak ödenmiş bir dönemi değiştirmez; kilit yalnız hakedişe
+  // sayılan kayıtlar için aranır.
+  if (existing.doctorId && !isDiagnosisExamStatus(existing.status) && existing.status !== EXAM_STATUS_CANCELLED) {
     const { year, month } = turkeyYearMonth(existing.diagnosedAt);
     const settled = await isDoctorPeriodSettled(existing.doctorId, auth.user.institutionId ?? null, branch.branchId, year, month);
     if (settled) {

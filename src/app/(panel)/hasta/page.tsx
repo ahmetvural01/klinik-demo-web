@@ -1,86 +1,69 @@
 "use client";
 
-import Link from "next/link";
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
-  CalendarDays,
-  CalendarPlus,
-  ChevronLeft,
-  ChevronRight,
-  Filter,
-  Pencil,
-  Phone,
-  Search,
-  Trash2,
-  UserPlus,
-  X,
-} from "lucide-react";
+import { Archive, CalendarPlus, Pencil, Percent, Phone, ShieldAlert, UserPlus } from "lucide-react";
 import { confirmDialog } from "@/lib/confirm-client";
 import { clientMutation } from "@/lib/client-mutation";
-import { useSlashFocus } from "@/lib/use-slash-focus";
+import { showToastSafe } from "@/lib/toast-client";
+import { formatCurrency, formatPhoneNumber } from "@/lib/format";
 import { usePermissions } from "@/components/auth/PermissionProvider";
-import { ListRowSkeleton, TableRowsSkeleton } from "@/components/ui/ListSkeleton";
-import { cachedGet } from "@/lib/client-cache";
 import { PatientFormModal } from "@/components/patient/PatientFormModal";
-import { Button } from "@/components/ui/Button";
-import { PageHeader } from "@/components/ui/PageHeader";
-import { createSceneIllustration } from "@/components/ui/SceneIllustration";
+import { DoctorSelect } from "@/components/staff/DoctorSelect";
 import { Badge } from "@/components/ui/Badge";
-import { ShieldAlert, Percent } from "lucide-react";
-import { Tooltip } from "@/components/ui/Tooltip";
-import { LoadErrorState } from "@/components/ui/LoadErrorState";
-
-const PatientEmptyIcon = createSceneIllustration("hasta");
+import { Button, IconButton } from "@/components/ui/Button";
+import { EmptyValue, ListTable, type ListSort, type ListTableColumn } from "@/components/ui/ListTable";
+import { formatDateText } from "@/components/ui/Money";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { ActiveFilters, Toolbar, type ActiveFilter } from "@/components/ui/Toolbar";
 
 type Patient = {
   id: string;
   tcNo: string;
   fullName: string;
   phone: string;
-  profession?: string | null;
   gender: string;
   birthDate?: string | null;
   insurance?: string | null;
   discountRate?: number | null;
-  hasAllergy?: boolean;
-  hasHepatitis?: boolean;
-  hasKidney?: boolean;
-  hasDiabetes?: boolean;
-  hasHeart?: boolean;
-  hasBloodIssue?: boolean;
   hasContagiousDisease?: boolean;
   contagiousDiseaseNote?: string | null;
   hasMedicalRisk?: boolean;
-  createdAt?: string;
-  updatedAt?: string;
+  // GET /api/patients?extras=1 — yalnız ilgili yetkisi olan role gelir;
+  // yetki yoksa alan hiç gelmez (undefined), sütun da gösterilmez.
+  lastVisitAt?: string | null;
+  nextAppointment?: { startAt: string; doctorName: string | null } | null;
+  balance?: number | null;
 };
 
 type PatientResponse = {
   patients: Patient[];
   total: number;
-  page: number;
   pageCount: number;
-  take: number;
-  summary?: {
-    total: number;
-    newThisMonth: number;
-  };
+  summary?: { total: number; newThisMonth: number };
   message?: string;
 };
 
-type SortKey = "fullName" | "tcNo" | "phone" | "gender" | "birthDate" | "insurance" | "profession" | "createdAt" | "updatedAt";
+type SortKey = "fullName" | "createdAt";
 
 const PAGE_SIZES = [15, 25, 50, 100];
 
-function formatDate(value?: string | null) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleDateString("tr-TR");
+const SMS_CONSENT_FILTER_LABELS: Record<string, string> = {
+  ENABLED: "SMS izni: Onaylandı",
+  DISABLED: "SMS izni: Reddedildi",
+  PENDING: "SMS izni: Onay bekliyor",
+  EXPIRED: "SMS izni: Süresi doldu",
+  SEND_FAILED: "SMS izni: Onay SMS'i gönderilemedi",
+};
+
+// Veritabanında cinsiyet hem "ERKEK/KADIN" hem eski kayıtlarda "E/K" olarak duruyor;
+// ekranda ham kod görünmesin.
+function genderLabel(value?: string | null) {
+  const code = (value || "").trim().toUpperCase();
+  if (code === "ERKEK" || code === "E") return "Erkek";
+  if (code === "KADIN" || code === "K") return "Kadın";
+  return "";
 }
 
 function calculateAge(value?: string | null) {
@@ -94,28 +77,47 @@ function calculateAge(value?: string | null) {
   return age >= 0 && age < 130 ? age : null;
 }
 
-function hasMedicalRisk(patient: Patient) {
-  return Boolean(patient.hasMedicalRisk);
+/** "41 yaş · Kadın" — boş parçalar yazılmaz. */
+function patientFacts(patient: Patient) {
+  const age = calculateAge(patient.birthDate);
+  return [age !== null ? `${age} yaş` : "", genderLabel(patient.gender)].filter(Boolean).join(" · ");
 }
 
-function patientInitials(name: string) {
-  return name
-    .split(" ")
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part[0])
-    .join("")
-    .toLocaleUpperCase("tr-TR");
+function telHref(phone: string) {
+  const digits = phone.replace(/\D/g, "");
+  return digits ? `tel:${digits.startsWith("0") ? digits : `0${digits}`}` : "";
+}
+
+function appointmentText(next: NonNullable<Patient["nextAppointment"]>) {
+  return formatDateText(next.startAt, "datetime");
+}
+
+function PatientBadges({ patient }: { patient: Patient }) {
+  if (!patient.hasContagiousDisease && !patient.hasMedicalRisk && !patient.discountRate) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {patient.hasContagiousDisease && (
+        <Badge tone="critical" solid icon={ShieldAlert} title={patient.contagiousDiseaseNote || undefined}>Bulaşıcı hastalık</Badge>
+      )}
+      {patient.hasMedicalRisk && <Badge tone="critical" icon={ShieldAlert}>Medikal uyarı</Badge>}
+      {patient.discountRate ? <Badge tone="warning" icon={Percent}>%{patient.discountRate} indirim</Badge> : null}
+    </div>
+  );
+}
+
+/** Pozitif bakiye = hastanın borcu (kırmızı); negatif = hastanın avansı (yeşil). */
+function BalanceText({ value }: { value: number | null | undefined }) {
+  if (value === null || value === undefined || Math.abs(value) < 0.005) return <EmptyValue />;
+  if (value > 0) return <span className="font-semibold tabular-nums text-red-700">{formatCurrency(value)} borç</span>;
+  return <span className="tabular-nums text-emerald-700">{formatCurrency(Math.abs(value))} avans</span>;
 }
 
 function HastaContent() {
   const { can } = usePermissions();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  const summaryLoadedRef = useRef(false);
   const loadSequenceRef = useRef(0);
-  useSlashFocus(searchInputRef);
+  const summaryLoadedRef = useRef(false);
 
   const [query, setQuery] = useState(searchParams.get("q") || "");
   const [debouncedQuery, setDebouncedQuery] = useState(searchParams.get("q") || "");
@@ -125,47 +127,37 @@ function HastaContent() {
   const [pageCount, setPageCount] = useState(1);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
-  const [sortKey, setSortKey] = useState<SortKey>("createdAt");
-  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "createdAt", dir: "desc" });
   const [doctorId, setDoctorId] = useState("");
-  const [doctors, setDoctors] = useState<{ id: string; fullName: string }[]>([]);
-  const [doctorLoadError, setDoctorLoadError] = useState("");
-  const [doctorReloadKey, setDoctorReloadKey] = useState(0);
+  const [doctorName, setDoctorName] = useState("");
+  const [smsConsentFilter, setSmsConsentFilter] = useState(searchParams.get("smsConsent") || "");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
-  const [showQuickCreate, setShowQuickCreate] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
   const [editPatientId, setEditPatientId] = useState<string | null>(null);
-  const [smsConsentFilter, setSmsConsentFilter] = useState(searchParams.get("smsConsent") || "");
 
   const hidePhone = !can("patients:phone");
   const canWritePatients = can("patients:write");
   const canDeletePatients = can("patients:delete");
-  const activeFilterCount = [doctorId, smsConsentFilter].filter(Boolean).length;
+  const canBookAppointments = can("appointments:write");
 
+  // Üst bardaki "Yeni > Hasta" ve diğer ekranlardan gelen ?yeni=1 formu açar.
   useEffect(() => {
-    if (searchParams.get("yeni") === "1" && canWritePatients) setShowQuickCreate(true);
+    if (searchParams.get("yeni") === "1" && canWritePatients) setShowCreate(true);
   }, [searchParams, canWritePatients]);
 
-  const closeQuickCreate = () => {
-    setShowQuickCreate(false);
-    if (searchParams.get("yeni") === "1") {
-      window.history.replaceState(null, "", "/hasta");
-    }
+  const closeCreate = () => {
+    setShowCreate(false);
+    if (searchParams.get("yeni") === "1") window.history.replaceState(null, "", "/hasta");
   };
 
+  // Üst bardaki aramadan ya da başka ekrandan /hasta?q=… ile gelindiğinde
+  // sayfa açıkken de arama kutusu ve liste güncellenir (denetim X-HL-01).
+  const urlQuery = searchParams.get("q") || "";
   useEffect(() => {
-    setDoctorLoadError("");
-    cachedGet<unknown>("/api/staff", 60_000, { throwOnError: true, force: doctorReloadKey > 0 }).then((d) => {
-      type StaffMember = { id: string; fullName: string; role: string; profile?: { hideAsDoctor?: boolean | null } | null };
-      if (!Array.isArray(d)) throw new Error("Doktor listesi beklenmeyen biçimde döndü.");
-      const list = (d as StaffMember[]).filter((u) => u.role === "DOKTOR" || (u.role === "YONETICI" && u.profile?.hideAsDoctor === false));
-      setDoctors(list.map((u) => ({ id: u.id, fullName: u.fullName })));
-    }).catch((loadError) => {
-      setDoctors([]);
-      setDoctorLoadError(loadError instanceof Error ? loadError.message : "Doktor listesi yüklenemedi.");
-    });
-  }, [doctorReloadKey]);
+    setQuery(urlQuery);
+  }, [urlQuery]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -184,20 +176,19 @@ function HastaContent() {
       q: debouncedQuery,
       page: String(page),
       take: String(pageSize),
-      sortBy: sortKey,
-      sortDir,
+      sortBy: sort.key,
+      sortDir: sort.dir,
+      extras: "1",
     });
     if (doctorId) params.set("doctorId", doctorId);
     if (smsConsentFilter) params.set("smsConsent", smsConsentFilter);
+    // Üstteki "Bu ay yeni" sayısı filtreden bağımsızdır; yalnız ilk açılışta
+    // ve kayıt değişince (force) istenir.
     if (summaryLoadedRef.current && !force) params.set("summary", "false");
 
     try {
-      const url = `/api/patients?${params.toString()}`;
-      // cachedGet burada kasıtlı kullanılmıyor: 403 durumunda gerçek durum
-      // kodunu ayırt edip kullanıcıya "yetkiniz yok" ile "kayıt bulunamadı"
-      // arasındaki farkı net göstermek gerekiyor — cachedGet her HTTP
-      // hatasını aynı şekilde null'a indirger (bkz. src/lib/client-cache.ts).
-      const res = await fetch(url, { cache: "no-store" });
+      // cachedGet kasıtlı kullanılmıyor: 403'ü "kayıt yok"tan ayırmak gerekir.
+      const res = await fetch(`/api/patients?${params.toString()}`, { cache: "no-store" });
       if (requestId !== loadSequenceRef.current) return;
       if (res.status === 401 || res.status === 403) {
         setForbidden(true);
@@ -206,8 +197,8 @@ function HastaContent() {
         setPageCount(1);
         return;
       }
-      if (!res.ok) throw new Error("Hasta listesi yüklenemedi");
-      const json: PatientResponse = await res.json();
+      const json: PatientResponse = await res.json().catch(() => ({ patients: [], total: 0, pageCount: 1 }));
+      if (!res.ok) throw new Error(json.message || "Hasta listesi yüklenemedi.");
       if (requestId !== loadSequenceRef.current) return;
       const nextPageCount = Math.max(1, Number(json.pageCount || 1));
       if (page > nextPageCount) {
@@ -224,13 +215,11 @@ function HastaContent() {
       }
     } catch (err) {
       if (requestId !== loadSequenceRef.current) return;
-      setError(err instanceof Error ? err.message : "Hasta listesi yüklenemedi");
-      // Bir filtre yenilenirken mevcut tabloyu boşaltmak, ekranda gereksiz
-      // zıplama yaratır. Son geçerli sonuç kullanıcıda kalır.
+      setError(err instanceof Error ? err.message : "Hasta listesi yüklenemedi.");
     } finally {
       if (requestId === loadSequenceRef.current) setLoading(false);
     }
-  }, [debouncedQuery, doctorId, smsConsentFilter, page, pageSize, sortDir, sortKey]);
+  }, [debouncedQuery, doctorId, smsConsentFilter, page, pageSize, sort]);
 
   useEffect(() => {
     void load();
@@ -249,433 +238,259 @@ function HastaContent() {
     };
   }, [load]);
 
-  const remove = async (id: string) => {
-    const patient = patients.find((p) => p.id === id);
-    if (
-      !(await confirmDialog({
-        title: `"${patient?.fullName || "Hasta"}" arşivlensin mi?`,
-        message:
-          "Hasta aktif listeden kaldırılır. Klinik, finans, laboratuvar ve yasal kayıt geçmişi korunur; gelecekteki randevular iptal edilir.",
-        danger: true,
-        confirmText: "Arşivle",
-      }))
-    ) {
-      return;
-    }
+  const archive = async (patient: Patient) => {
+    const confirmed = await confirmDialog({
+      title: `"${patient.fullName}" arşivlensin mi?`,
+      message: "Hasta aktif listeden kaldırılır. Tedavi, ödeme, laboratuvar ve yasal kayıt geçmişi korunur; ileri tarihli randevuları iptal edilir.",
+      danger: true,
+      confirmText: "Arşivle",
+    });
+    if (!confirmed) return;
     try {
-      await clientMutation(`/api/patients/${id}`, { method: "DELETE" }, "Hasta arşivlenemedi.");
+      await clientMutation(`/api/patients/${patient.id}`, { method: "DELETE" }, "Hasta arşivlenemedi.");
+      showToastSafe({ title: "Hasta arşivlendi", message: `${patient.fullName} aktif listeden kaldırıldı.`, type: "success" });
       void load(true);
-    } catch (error) {
-      setError(error instanceof Error ? error.message : "Hasta arşivlenemedi.");
+    } catch (archiveError) {
+      showToastSafe({ title: "Hasta arşivlenemedi", message: archiveError instanceof Error ? archiveError.message : "Lütfen tekrar deneyin.", type: "error" });
     }
   };
 
-  const toggleSort = (key: SortKey) => {
+  const bookAppointment = (patient: Patient) => {
+    router.push(`/randevu?newPatientId=${patient.id}&newPatientName=${encodeURIComponent(patient.fullName)}`);
+  };
+
+  const openPatient = (patient: Patient) => router.push(`/hasta-detay?id=${patient.id}`);
+
+  const clearSmsFilter = () => {
+    setSmsConsentFilter("");
     setPage(1);
-    if (sortKey === key) {
-      setSortDir((current) => (current === "asc" ? "desc" : "asc"));
-      return;
-    }
-    setSortKey(key);
-    setSortDir(key === "createdAt" || key === "updatedAt" ? "desc" : "asc");
+    window.history.replaceState(null, "", "/hasta");
   };
 
   const resetFilters = () => {
     setQuery("");
     setDebouncedQuery("");
     setDoctorId("");
-    setSmsConsentFilter("");
+    setDoctorName("");
+    if (smsConsentFilter) clearSmsFilter();
     setPage(1);
-    if (searchParams.get("smsConsent")) window.history.replaceState(null, "", "/hasta");
   };
 
-  const SMS_CONSENT_FILTER_LABELS: Record<string, string> = {
-    ENABLED: "SMS İzni: Onaylandı",
-    DISABLED: "SMS İzni: Reddedildi",
-    PENDING: "SMS İzni: Onay Bekliyor",
-    EXPIRED: "SMS İzni: Süresi Doldu",
-    SEND_FAILED: "SMS İzni: Onay SMS'i Gönderilemedi",
-  };
+  const activeFilters: ActiveFilter[] = [
+    ...(doctorId ? [{
+      key: "doctor",
+      label: `Doktorun hastaları: ${doctorName || "Seçili doktor"}`,
+      onRemove: () => { setDoctorId(""); setDoctorName(""); setPage(1); },
+    }] : []),
+    ...(smsConsentFilter ? [{
+      key: "sms",
+      label: SMS_CONSENT_FILTER_LABELS[smsConsentFilter] || "SMS izni",
+      onRemove: clearSmsFilter,
+    }] : []),
+  ];
+  const isFiltered = Boolean(debouncedQuery || doctorId || smsConsentFilter);
 
-  const SortButton = ({ col, label }: { col: SortKey; label: string }) => (
-    <button type="button" onClick={() => toggleSort(col)} className="inline-flex items-center gap-1 text-left uppercase tracking-wide">
-      {label}
-      {sortKey === col ? (
-        sortDir === "asc" ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
-      ) : (
-        <ArrowUpDown className="h-3 w-3 text-slate-300" />
+  // Yetkiye göre gelen ek alanlar: yetki yoksa API alanı hiç göndermez.
+  const showVisits = patients.some((patient) => patient.nextAppointment !== undefined);
+  const showBalance = patients.some((patient) => patient.balance !== undefined);
+
+  const rowActions = (patient: Patient) => (
+    <div className="flex items-center justify-end gap-1.5">
+      {canBookAppointments && (
+        <IconButton icon={CalendarPlus} title="Randevu ver" tone="primary" onClick={() => bookAppointment(patient)} />
       )}
-    </button>
+      {canWritePatients && (
+        <IconButton icon={Pencil} title="Bilgileri düzenle" onClick={() => setEditPatientId(patient.id)} />
+      )}
+      {canDeletePatients && (
+        <IconButton icon={Archive} title={`${patient.fullName} hastasını arşivle`} tone="danger" onClick={() => void archive(patient)} />
+      )}
+    </div>
   );
 
-  const startRow = total === 0 ? 0 : (page - 1) * pageSize + 1;
-  const endRow = Math.min(page * pageSize, total);
+  const columns: ListTableColumn<Patient>[] = [
+    {
+      key: "fullName",
+      header: "Hasta",
+      sortKey: "fullName",
+      render: (patient) => (
+        <div className="min-w-0">
+          <p className="font-bold text-slate-900">{patient.fullName}</p>
+          <p className="text-xs text-slate-500">
+            {[patientFacts(patient), !hidePhone && patient.tcNo ? `TC ${patient.tcNo}` : ""].filter(Boolean).join(" · ") || "—"}
+          </p>
+          <PatientBadges patient={patient} />
+        </div>
+      ),
+    },
+    ...(!hidePhone ? [{
+      key: "phone",
+      header: "Telefon",
+      cellClassName: "whitespace-nowrap",
+      render: (patient: Patient) => patient.phone ? (
+        <a href={telHref(patient.phone)} className="tabular-nums text-slate-700 hover:text-primary hover:underline">{formatPhoneNumber(patient.phone)}</a>
+      ) : <EmptyValue />,
+    }] : []),
+    {
+      key: "insurance",
+      header: "Anlaşmalı kurum",
+      render: (patient) => patient.insurance?.trim() ? <Badge tone="neutral">{patient.insurance}</Badge> : <EmptyValue />,
+    },
+    ...(showVisits ? [{
+      key: "lastVisit",
+      header: "Son ziyaret",
+      cellClassName: "whitespace-nowrap",
+      render: (patient: Patient) => patient.lastVisitAt
+        ? <span className="tabular-nums text-slate-600">{formatDateText(patient.lastVisitAt)}</span>
+        : <EmptyValue />,
+    }, {
+      key: "nextAppointment",
+      header: "Sonraki randevu",
+      render: (patient: Patient) => patient.nextAppointment ? (
+        <div className="whitespace-nowrap">
+          <p className="font-semibold tabular-nums text-slate-800">{appointmentText(patient.nextAppointment)}</p>
+          {patient.nextAppointment.doctorName && <p className="text-xs text-slate-500">{patient.nextAppointment.doctorName}</p>}
+        </div>
+      ) : <EmptyValue />,
+    }] : []),
+    ...(showBalance ? [{
+      key: "balance",
+      header: "Bakiye",
+      align: "right" as const,
+      cellClassName: "whitespace-nowrap",
+      render: (patient: Patient) => <BalanceText value={patient.balance} />,
+    }] : []),
+    {
+      key: "islem",
+      header: "İşlem",
+      align: "right",
+      render: rowActions,
+    },
+  ];
 
-  const visibleSummary = useMemo(
-    () => [
-      { label: "Toplam Hasta", value: summary?.total ?? total, color: "text-slate-800" },
-      { label: "Bu Ay Yeni", value: summary?.newThisMonth ?? 0, color: "text-emerald-700" },
-    ],
-    [summary, total],
+  const mobileCard = (patient: Patient) => (
+    <div className="space-y-1.5">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-bold text-slate-900">{patient.fullName}</p>
+          <p className="text-xs text-slate-500">
+            {[patientFacts(patient), patient.insurance?.trim() || ""].filter(Boolean).join(" · ") || "—"}
+          </p>
+        </div>
+        <BalanceBadge value={patient.balance} />
+      </div>
+      <PatientBadges patient={patient} />
+      {patient.nextAppointment && (
+        <p className="text-xs text-slate-600">
+          Sonraki randevu: <span className="font-semibold tabular-nums text-slate-800">{appointmentText(patient.nextAppointment)}</span>
+          {patient.nextAppointment.doctorName ? ` · ${patient.nextAppointment.doctorName}` : ""}
+        </p>
+      )}
+      <div className="flex items-center gap-1.5">
+        {!hidePhone && patient.phone ? (
+          <a href={telHref(patient.phone)} className="inline-flex min-h-9 items-center gap-1.5 text-sm font-semibold tabular-nums text-primary">
+            <Phone className="h-4 w-4" aria-hidden="true" />
+            {formatPhoneNumber(patient.phone)}
+          </a>
+        ) : null}
+        <span className="flex-1" />
+        {canBookAppointments && <IconButton icon={CalendarPlus} title="Randevu ver" tone="primary" onClick={() => bookAppointment(patient)} />}
+        {canWritePatients && <IconButton icon={Pencil} title="Bilgileri düzenle" onClick={() => setEditPatientId(patient.id)} />}
+        {canDeletePatients && <IconButton icon={Archive} title={`${patient.fullName} hastasını arşivle`} tone="danger" onClick={() => void archive(patient)} />}
+      </div>
+    </div>
+  );
+
+  const emptyAction = (
+    <div className="flex flex-wrap justify-center gap-2">
+      {canWritePatients && <Button size="sm" icon={UserPlus} onClick={() => setShowCreate(true)}>Yeni hasta kaydet</Button>}
+      {isFiltered && <Button size="sm" variant="secondary" onClick={resetFilters}>Aramayı temizle</Button>}
+    </div>
   );
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-3">
       <PageHeader
         icon="users"
         title="Hastalar"
-        description="Kayıtlı hasta dosyalarını, iletişim bilgilerini ve klinik uyarıları yönetin."
-        stats={visibleSummary.map((item) => ({
-          label: item.label,
-          value: Number(item.value || 0).toLocaleString("tr-TR"),
-          color: item.color,
-        }))}
-        actions={canWritePatients ? <Button icon={UserPlus} onClick={() => setShowQuickCreate(true)}>Yeni Hasta</Button> : undefined}
+        description="Hastayı adı, TC'si veya telefonuyla bulun; dosyasını açın ya da randevu verin."
+        stats={summary ? [{ label: "Bu ay yeni kayıt", value: summary.newThisMonth.toLocaleString("tr-TR"), color: "text-emerald-700" }] : undefined}
+        actions={canWritePatients ? <Button icon={UserPlus} onClick={() => setShowCreate(true)}>Yeni Hasta</Button> : undefined}
       />
 
-      <div className="ui-surface p-3">
-        <div className="grid gap-2 xl:grid-cols-[1fr_auto] xl:items-center">
-          <div className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_160px]">
-            <label className="relative block">
-              <span className="sr-only">Hasta ara</span>
-              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-              <input
-                ref={searchInputRef}
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Ad, TC, telefon, kurum/sigorta veya referans kişi ile ara... ( / )"
-                className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-9 pr-3 text-sm outline-none transition focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/20"
-              />
-            </label>
-            <select
-              value={doctorId}
-              onChange={(event) => {
-                setDoctorId(event.target.value);
-                setPage(1);
-              }}
-              aria-label="Doktor filtresi"
-              className="h-10 rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-            >
-              <option value="">Tüm doktorlar</option>
-              {doctors.map((d) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
-            </select>
-          </div>
+      <Toolbar>
+        <SearchInput
+          value={query}
+          onChange={setQuery}
+          placeholder="Ad, TC veya telefon ara"
+          aria-label="Hasta ara: ad, TC, telefon, anlaşmalı kurum veya yönlendiren kişi"
+          slashShortcut
+          wrapperClassName="flex-1 min-w-[220px]"
+        />
+        <DoctorSelect
+          value={doctorId}
+          onChange={(id, doctor) => { setDoctorId(id); setDoctorName(doctor?.fullName || ""); setPage(1); }}
+          emptyLabel="Tüm doktorların hastaları"
+          aria-label="Doktora göre: bu doktordan randevu veya muayene almış hastalar"
+          className="sm:w-64"
+        />
+      </Toolbar>
+      <ActiveFilters filters={activeFilters} onClearAll={resetFilters} />
 
-          <div className="flex flex-wrap items-center gap-2">
-            <div className={`inline-flex h-10 items-center gap-2 rounded-lg border px-3 text-sm transition ${activeFilterCount > 0 ? "border-primary/25 bg-primary/5 text-primary" : "border-slate-200 text-slate-500"}`}>
-              <Filter className="h-4 w-4" />
-              {activeFilterCount} filtre
-            </div>
-            {(query || activeFilterCount > 0) && (
-              <button
-                type="button"
-                onClick={resetFilters}
-                className="inline-flex h-10 items-center gap-1 rounded-lg border border-slate-200 px-3 text-sm font-semibold text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-              >
-                <X className="h-4 w-4" />
-                Temizle
-              </button>
-            )}
-          </div>
-        </div>
-        {doctorLoadError && (
-          <div className="mt-2">
-            <LoadErrorState compact message={doctorLoadError} onRetry={() => setDoctorReloadKey((value) => value + 1)} />
-          </div>
-        )}
-      </div>
+      <ListTable<Patient>
+        columns={columns}
+        rows={patients}
+        rowKey={(patient) => patient.id}
+        loading={loading}
+        error={forbidden ? "Hasta listesini görme yetkiniz yok." : error}
+        onRetry={forbidden ? undefined : () => void load(true)}
+        onRowClick={openPatient}
+        getRowAriaLabel={(patient) => `${patient.fullName} hasta dosyasını aç`}
+        mobileCard={mobileCard}
+        sort={sort.key === "fullName" ? { key: "fullName", dir: sort.dir } satisfies ListSort : null}
+        onSortChange={() => {
+          setPage(1);
+          setSort((current) => current.key === "fullName"
+            ? (current.dir === "asc" ? { key: "fullName", dir: "desc" } : { key: "createdAt", dir: "desc" })
+            : { key: "fullName", dir: "asc" });
+        }}
+        emptyText={isFiltered ? "Aramanıza uyan hasta yok" : "Henüz hasta kaydı yok"}
+        emptyDescription={isFiltered
+          ? "Yazımı kontrol edin; hasta kayıtlı değilse yeni kayıt açabilirsiniz."
+          : "İlk hastanızı kaydederek başlayın."}
+        emptyAction={canWritePatients || isFiltered ? emptyAction : undefined}
+        pager={{
+          page,
+          pageCount,
+          pageSize,
+          pageSizeOptions: PAGE_SIZES,
+          total,
+          loading,
+          onPageChange: setPage,
+          onPageSizeChange: (size) => { setPageSize(size); setPage(1); },
+        }}
+      />
 
-      {smsConsentFilter && (
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-bold text-primary">
-            {SMS_CONSENT_FILTER_LABELS[smsConsentFilter] || smsConsentFilter}
-            <button
-              type="button"
-              onClick={() => { setSmsConsentFilter(""); setPage(1); window.history.replaceState(null, "", "/hasta"); }}
-              className="ml-0.5 rounded-full p-0.5 hover:bg-primary/10"
-              aria-label="SMS izin filtresini kaldır"
-            >
-              <X className="h-3 w-3" />
-            </button>
-          </span>
-        </div>
+      {canWritePatients && (
+        <PatientFormModal open={showCreate} onClose={closeCreate} onSaved={(patient) => router.push(`/hasta-detay?id=${patient.id}`)} />
       )}
-
-      {error && <p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-medium text-red-700 shadow-[var(--shadow-rest)]">{error}</p>}
-
-      <div className="ui-surface overflow-hidden" aria-busy={loading}>
-        <div className="divide-y divide-slate-100 md:hidden">
-          {loading && patients.length === 0 ? (
-            <ListRowSkeleton rows={6} />
-          ) : forbidden ? (
-            <div className="px-4 py-14 text-center text-sm font-medium text-amber-700">Bu sayfayı görüntüleme yetkiniz yok.</div>
-          ) : patients.length === 0 ? (
-            <div className="flex flex-col items-center px-4 py-14 text-center">
-              <PatientEmptyIcon className="ui-empty-illustration mb-4" />
-              <p className="text-sm font-bold text-slate-800">Hasta bulunamadı</p>
-              <p className="mt-1 max-w-xs text-xs leading-5 text-slate-500">Arama veya filtre kriterlerine uyan bir hasta yok. Yeni bir hasta ekleyerek başlayabilirsiniz.</p>
-            </div>
-          ) : (
-            patients.map((patient, patientIdx) => {
-              const age = calculateAge(patient.birthDate);
-              const riskFlag = hasMedicalRisk(patient);
-              return (
-                <div
-                  key={patient.id}
-                  role="link"
-                  tabIndex={0}
-                  aria-label={`${patient.fullName} hasta kartını aç`}
-                  onClick={(event) => {
-                    if ((event.target as HTMLElement).closest("button, a")) return;
-                    router.push(`/hasta-detay?id=${patient.id}`);
-                  }}
-                  onKeyDown={(event) => {
-                    if ((event.target as HTMLElement).closest("button, a, input, select, textarea, [role='button']")) return;
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      router.push(`/hasta-detay?id=${patient.id}`);
-                    }
-                  }}
-                  style={{ ["--row-delay" as string]: `${Math.min(patientIdx, 12) * 20}ms` }}
-                  className="ui-tone-card-interactive ui-row-in ui-pressable p-4 transition-colors hover:bg-primary/[0.035] focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary-strong text-sm font-black text-white shadow-[0_2px_6px_rgb(var(--app-primary)/0.28)] ring-2 ring-white">
-                      {patientInitials(patient.fullName)}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <Link href={`/hasta-detay?id=${patient.id}`} className="font-black text-slate-900">
-                        {patient.fullName}
-                      </Link>
-                      <p className="mt-1 font-mono text-xs text-slate-500">TC: {patient.tcNo || "-"}</p>
-                      {patient.profession && <p className="mt-0.5 text-xs font-semibold text-slate-500">Meslek: {patient.profession}</p>}
-                      {!hidePhone && (
-                        <p className="mt-1 inline-flex items-center gap-1 text-sm text-slate-600">
-                          <Phone className="h-3.5 w-3.5" />
-                          {patient.phone || "-"}
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    <Badge tone="neutral">{patient.gender || "Cinsiyet yok"}</Badge>
-                    <Badge tone="neutral">{age !== null ? `${age} yaş` : "Yaş yok"}</Badge>
-                    {patient.insurance && <Badge tone="success">{patient.insurance}</Badge>}
-                    {patient.hasContagiousDisease && <Badge tone="critical" solid icon={ShieldAlert} className="ui-badge-pulse" title={patient.contagiousDiseaseNote || undefined}>Bulaşıcı Hastalık</Badge>}
-                    {riskFlag && <Badge tone="critical" icon={ShieldAlert}>Medikal uyarı</Badge>}
-                  </div>
-                  <div className="mt-4 grid grid-cols-1 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => router.push(`/randevu?newPatientId=${patient.id}&newPatientName=${encodeURIComponent(patient.fullName)}`)}
-                      className="ui-interactive rounded-lg bg-gradient-to-b from-primary to-primary-strong px-3 py-2.5 text-center text-sm font-bold text-white shadow-[0_2px_8px_rgb(var(--app-primary)/0.25)]"
-                    >
-                      Randevu Oluştur
-                    </button>
-                    {(canWritePatients || canDeletePatients) && <div className={`grid gap-2 ${canWritePatients && canDeletePatients ? "grid-cols-2" : "grid-cols-1"}`}>
-                      {canWritePatients && <button type="button" onClick={() => setEditPatientId(patient.id)} className="ui-interactive rounded-lg border border-slate-200 px-3 py-2.5 text-center text-sm font-semibold text-slate-700">Düzenle</button>}
-                      {canDeletePatients && <button type="button" onClick={() => remove(patient.id)} className="ui-interactive rounded-lg border border-red-200 px-3 py-2.5 text-sm font-semibold text-red-600">Arşivle</button>}
-                    </div>}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        <div className="hidden overflow-x-auto md:block">
-          <table className="min-w-full text-sm">
-            <thead className="bg-slate-50">
-              <tr className="border-b border-slate-200">
-                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                  <SortButton col="fullName" label="Hasta" />
-                </th>
-                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                  <SortButton col="tcNo" label="TC Kimlik" />
-                </th>
-                {!hidePhone && (
-                  <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                    <SortButton col="phone" label="Telefon" />
-                  </th>
-                )}
-                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                  <SortButton col="birthDate" label="Yaş" />
-                </th>
-                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                  <SortButton col="profession" label="Meslek" />
-                </th>
-                <th className="px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wide text-slate-500">
-                  <SortButton col="insurance" label="Kurum" />
-                </th>
-                <th className="px-4 py-3 text-right text-[11px] font-bold uppercase tracking-wide text-slate-500">İşlem</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {loading && patients.length === 0 && <TableRowsSkeleton rows={7} columns={hidePhone ? 6 : 7} />}
-              {!loading && forbidden && (
-                <tr>
-                  <td colSpan={hidePhone ? 6 : 7} className="px-4 py-14 text-center text-sm font-medium text-amber-700">
-                    Bu sayfayı görüntüleme yetkiniz yok.
-                  </td>
-                </tr>
-              )}
-              {!loading && !forbidden && patients.length === 0 && (
-                <tr>
-                  <td colSpan={hidePhone ? 6 : 7} className="px-4 py-14 text-center">
-                    <PatientEmptyIcon className="ui-empty-illustration mx-auto mb-4" />
-                    <p className="text-sm font-bold text-slate-800">Hasta bulunamadı</p>
-                    <p className="mx-auto mt-1 max-w-xs text-xs leading-5 text-slate-500">Arama veya filtre kriterlerine uyan bir hasta yok. Yeni bir hasta ekleyerek başlayabilirsiniz.</p>
-                  </td>
-                </tr>
-              )}
-              {patients.map((patient, patientIdx) => {
-                const age = calculateAge(patient.birthDate);
-                const riskFlag = hasMedicalRisk(patient);
-                return (
-                  <tr
-                    key={patient.id}
-                    role="link"
-                    tabIndex={0}
-                    aria-label={`${patient.fullName} hasta kartını aç`}
-                    onClick={(event) => {
-                      if ((event.target as HTMLElement).closest("button, a")) return;
-                      router.push(`/hasta-detay?id=${patient.id}`);
-                    }}
-                    onKeyDown={(event) => {
-                      if ((event.target as HTMLElement).closest("button, a, input, select, textarea, [role='button']")) return;
-                      if (event.key === "Enter" || event.key === " ") {
-                        event.preventDefault();
-                        router.push(`/hasta-detay?id=${patient.id}`);
-                      }
-                    }}
-                    style={{ ["--row-delay" as string]: `${Math.min(patientIdx, 12) * 20}ms` }}
-                    className="ui-row-in cursor-pointer transition-colors hover:bg-primary/[0.035] focus:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-primary/25"
-                  >
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-primary to-primary-strong text-xs font-black text-white shadow-[0_2px_6px_rgb(var(--app-primary)/0.28)] ring-2 ring-white">
-                          {patientInitials(patient.fullName)}
-                        </div>
-                        <div className="min-w-0">
-                          <Link href={`/hasta-detay?id=${patient.id}`} className="font-black text-slate-900 hover:text-primary">
-                            {patient.fullName}
-                          </Link>
-                          <p className="mt-0.5 text-xs text-slate-400">{patient.gender === "ERKEK" ? "Erkek" : patient.gender === "KADIN" ? "Kadın" : "Cinsiyet yok"}</p>
-                          {Boolean(patient.hasContagiousDisease || riskFlag || patient.discountRate) && (
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              {patient.hasContagiousDisease && <Badge tone="critical" solid icon={ShieldAlert} className="ui-badge-pulse" title={patient.contagiousDiseaseNote || undefined}>Bulaşıcı Hastalık</Badge>}
-                              {riskFlag && <Badge tone="critical" icon={ShieldAlert}>Medikal uyarı</Badge>}
-                              {patient.discountRate ? <Badge tone="warning" icon={Percent}>%{patient.discountRate} indirim</Badge> : null}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 font-mono text-xs text-slate-600">{patient.tcNo || "-"}</td>
-                    {!hidePhone && <td className="px-4 py-3 text-slate-600">{patient.phone || "-"}</td>}
-                    <td className="px-4 py-3">
-                      <div className="flex flex-col">
-                        <span className="font-semibold text-slate-700">{age !== null ? `${age} yaş` : "-"}</span>
-                        <span className="text-xs text-slate-400">{formatDate(patient.birthDate)}</span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3 text-slate-600">{patient.profession || "-"}</td>
-                    <td className="px-4 py-3">
-                      {patient.insurance ? (
-                        <Badge tone="success">{patient.insurance}</Badge>
-                      ) : (
-                        <span className="text-slate-300">-</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <Tooltip label="Randevu Oluştur">
-                          <button
-                            type="button"
-                            onClick={() => router.push(`/randevu?newPatientId=${patient.id}&newPatientName=${encodeURIComponent(patient.fullName)}`)}
-                            aria-label="Randevu Oluştur"
-                            className="ui-interactive rounded-lg bg-primary/10 p-2 text-primary hover:bg-primary/20"
-                          >
-                            <CalendarPlus className="h-4 w-4" />
-                          </button>
-                        </Tooltip>
-                        {canWritePatients && <Tooltip label="Düzenle">
-                          <button type="button" onClick={() => setEditPatientId(patient.id)} aria-label="Düzenle" className="ui-interactive rounded-lg bg-slate-100 p-2 text-slate-600 hover:bg-slate-200">
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                        </Tooltip>}
-                        {canDeletePatients && (
-                          <Tooltip label="Arşivle">
-                            <button type="button" onClick={() => remove(patient.id)} aria-label={`${patient.fullName} hastasını arşivle`} className="ui-interactive rounded-lg bg-red-50 p-2 text-red-600 hover:bg-red-100">
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </Tooltip>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-
-        <div className="flex flex-col gap-3 border-t border-slate-100 bg-slate-50/70 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-3 text-xs font-medium text-slate-500">
-            <span className="font-bold text-slate-700">{startRow}-{endRow}</span>
-            <span>/ {total.toLocaleString("tr-TR")} kayıt</span>
-            <span className="inline-flex items-center gap-1">
-              <CalendarDays className="h-3.5 w-3.5" />
-              Sayfa {page} / {pageCount}
-            </span>
-            <label className="inline-flex items-center gap-2">
-              Sayfa başına
-              <select
-                value={pageSize}
-                onChange={(event) => {
-                  setPageSize(Number(event.target.value));
-                  setPage(1);
-                }}
-                className="rounded-md border border-slate-200 bg-white px-2 py-1 text-xs outline-none"
-              >
-                {PAGE_SIZES.map((size) => (
-                  <option key={size} value={size}>{size}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              disabled={page <= 1 || loading}
-              onClick={() => setPage((current) => Math.max(1, current - 1))}
-              className="ui-interactive inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 disabled:pointer-events-none disabled:opacity-40"
-            >
-              <ChevronLeft className="h-4 w-4" />
-              Önceki
-            </button>
-            <button
-              type="button"
-              disabled={page >= pageCount || loading}
-              onClick={() => setPage((current) => Math.min(pageCount, current + 1))}
-              className="ui-interactive inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-bold text-slate-600 disabled:pointer-events-none disabled:opacity-40"
-            >
-              Sonraki
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-      {canWritePatients && <PatientFormModal open={showQuickCreate} onClose={closeQuickCreate} onSaved={(patient) => router.push(`/hasta-detay?id=${patient.id}`)} />}
-      {canWritePatients && <PatientFormModal
-        open={Boolean(editPatientId)}
-        onClose={() => setEditPatientId(null)}
-        patientId={editPatientId || undefined}
-        hidePhoneField={hidePhone}
-        onSaved={() => void load(true)}
-      />}
+      {canWritePatients && (
+        <PatientFormModal
+          open={Boolean(editPatientId)}
+          onClose={() => setEditPatientId(null)}
+          patientId={editPatientId || undefined}
+          hidePhoneField={hidePhone}
+          onSaved={() => void load(true)}
+        />
+      )}
     </section>
   );
+}
+
+/** Mobil kartta yalnız borç varsa küçük kırmızı etiket. */
+function BalanceBadge({ value }: { value: number | null | undefined }) {
+  if (value === null || value === undefined || value < 0.005) return null;
+  return <Badge tone="critical">Borç {formatCurrency(value)}</Badge>;
 }
 
 export default function HastaPage() {

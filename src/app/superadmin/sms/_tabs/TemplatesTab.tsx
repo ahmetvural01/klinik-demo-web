@@ -1,14 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { MessageCircle, Pencil, PlusCircle, Smartphone } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Pencil, Plus } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
-import { FormField } from "@/components/ui/FormField";
+import { Input, Select } from "@/components/ui/Input";
+import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { Switch } from "@/components/ui/Switch";
+import { Toolbar } from "@/components/ui/Toolbar";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { SmsMessageEditor } from "@/components/sms/SmsMessageEditor";
 import { showToastSafe } from "@/lib/toast-client";
 import { SMS_PLACEHOLDERS, renderSmsPreview, toReadableText, toStoredText } from "@/lib/sms-template-placeholders";
+import { TabIntro } from "@/components/superadmin/TabIntro";
+import { codeFromTitle } from "@/components/superadmin/sa-labels";
+import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
 type Template = {
   id: string;
@@ -24,158 +32,224 @@ type Template = {
   createdAt: string;
 };
 
-const inputClass = "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
+const CATEGORIES: Record<string, string> = { APPOINTMENT: "Randevu", PAYMENT: "Ödeme", GREETING: "Kutlama", AFTERCARE: "Randevu sonrası", GENERAL: "Genel" };
 
-const emptyForm = { code: "", title: "", description: "", category: "GENERAL", content: "", whatsappContent: "", whatsappTemplateName: "", whatsappTemplateLanguage: "tr", isActive: true };
-const CATEGORIES: Record<string, string> = { APPOINTMENT: "Randevu", PAYMENT: "Ödeme", GREETING: "Kutlama", AFTERCARE: "Randevu Sonrası", GENERAL: "Genel" };
+type FormState = {
+  title: string;
+  description: string;
+  category: string;
+  content: string;
+  sameForWhatsapp: boolean;
+  whatsappContent: string;
+  whatsappTemplateName: string;
+  whatsappTemplateLanguage: string;
+  isActive: boolean;
+};
 
+const EMPTY: FormState = { title: "", description: "", category: "GENERAL", content: "", sameForWhatsapp: true, whatsappContent: "", whatsappTemplateName: "", whatsappTemplateLanguage: "tr", isActive: true };
+
+function sameText(a: string | null | undefined, b: string | null | undefined) {
+  return (a || "").trim() === (b || "").trim();
+}
+
+/**
+ * Tüm kliniklerin varsayılan SMS/WhatsApp şablonları. Liste sade: başlık,
+ * kategori, ilk satır, WhatsApp metninin SMS ile aynı mı özel mi olduğu.
+ * Önceden her kartta ham kod, iki önizleme (özel metin yoksa aynısı iki kez)
+ * ve tarih vardı; düzenlerken WhatsApp alanı SMS metnini kopyalıyor, sonradan
+ * SMS değişince WhatsApp eski metinde kalıyordu. Artık "SMS ile aynı" açıkken
+ * ayrı kopya yazılmaz.
+ */
 export default function TemplatesTab() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState("");
   const [editing, setEditing] = useState<Template | null>(null);
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState(emptyForm);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState<FormState>(EMPTY);
+  const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch("/api/superadmin/sms-templates", { cache: "no-store" });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.message || "İletişim şablonları yüklenemedi.");
-      setTemplates(Array.isArray(data) ? data : data?.templates ?? []);
-    } catch (error) {
-      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "İletişim şablonları yüklenemedi.", type: "error" });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const reload = useCallback(() => setReloadKey((value) => value + 1), []);
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setLoadError(null);
+    saGet<Template[]>("/api/superadmin/sms-templates", "Şablonlar yüklenemedi.", controller.signal)
+      .then((data) => setTemplates(Array.isArray(data) ? data : []))
+      .catch((error) => {
+        if (!isAbort(error)) setLoadError(errorMessage(error, "Şablonlar yüklenemedi."));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [reloadKey]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLocaleLowerCase("tr-TR");
+    return templates.filter((item) => (!category || item.category === category)
+      && (!q || item.title.toLocaleLowerCase("tr-TR").includes(q) || item.content.toLocaleLowerCase("tr-TR").includes(q)));
+  }, [templates, query, category]);
+
+  const set = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm((current) => ({ ...current, [key]: value }));
 
   const openCreate = () => {
     setEditing(null);
-    setForm(emptyForm);
-    setShowForm(true);
+    setForm(EMPTY);
+    setFormError(null);
+    setOpen(true);
   };
 
-  const openEdit = (t: Template) => {
-    setEditing(t);
-    setForm({ code: t.code, title: t.title, description: t.description || "", category: t.category, content: toReadableText(t.content), whatsappContent: toReadableText(t.whatsappContent || t.content), whatsappTemplateName: t.whatsappTemplateName || "", whatsappTemplateLanguage: t.whatsappTemplateLanguage || "tr", isActive: t.isActive });
-    setShowForm(true);
+  const openEdit = (item: Template) => {
+    const same = !item.whatsappContent || sameText(item.whatsappContent, item.content);
+    setEditing(item);
+    setForm({
+      title: item.title,
+      description: item.description || "",
+      category: item.category,
+      content: toReadableText(item.content),
+      sameForWhatsapp: same,
+      whatsappContent: same ? "" : toReadableText(item.whatsappContent || ""),
+      whatsappTemplateName: item.whatsappTemplateName || "",
+      whatsappTemplateLanguage: item.whatsappTemplateLanguage || "tr",
+      isActive: item.isActive,
+    });
+    setFormError(null);
+    setOpen(true);
   };
 
-  const submit = async () => {
-    if (!form.code.trim() || !form.title.trim() || !form.content.trim()) {
-      showToastSafe({ title: "Eksik alan", message: "Kod, başlık ve içerik zorunlu", type: "error" });
-      return;
-    }
+  const uniqueCode = (title: string) => {
+    const base = codeFromTitle(title) || "OZEL_SABLON";
+    const taken = new Set(templates.map((item) => item.code));
+    if (!taken.has(base)) return base;
+    let index = 2;
+    while (taken.has(`${base}_${index}`)) index += 1;
+    return `${base}_${index}`;
+  };
+
+  const save = async () => {
+    if (!form.title.trim()) return setFormError("Şablon başlığını yazın.");
+    if (!form.content.trim()) return setFormError("Mesaj metnini yazın.");
     setSaving(true);
+    setFormError(null);
     try {
-      const payload = { ...form, content: toStoredText(form.content), whatsappContent: toStoredText(form.whatsappContent || form.content) };
-      const res = await fetch("/api/superadmin/sms-templates", {
-        method: editing ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          editing
-            ? { id: editing.id, ...payload }
-            : payload
-        ),
-      });
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.message || "Kaydedilemedi");
-      showToastSafe({ title: "Kaydedildi", message: `${d.title} şablonu kaydedildi`, type: "success" });
-      setShowForm(false);
-      load();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
-      showToastSafe({ title: "Hata", message: msg, type: "error" });
+      const payload = {
+        title: form.title.trim(),
+        description: form.description.trim(),
+        category: form.category,
+        content: toStoredText(form.content),
+        // Tek metin: aynı metin WhatsApp'tan da gider; eski ayrı WhatsApp metni
+        // ve Meta şablon adı temizlenir.
+        whatsappContent: "",
+        whatsappTemplateName: "",
+        whatsappTemplateLanguage: "tr",
+        isActive: form.isActive,
+      };
+      // Yeni şablonda sistem kodu başlıktan üretilir ve mevcut bir kodla
+      // çakışmaz (aynı kodla kayıt mevcut şablonun üzerine yazardı).
+      if (editing) await saSend("/api/superadmin/sms-templates", "PUT", { id: editing.id, ...payload }, "Şablon kaydedilemedi.");
+      else await saSend("/api/superadmin/sms-templates", "POST", { code: uniqueCode(form.title), ...payload }, "Şablon kaydedilemedi.");
+      showToastSafe({ type: "success", message: `${payload.title} kaydedildi.`, icon: "sms" });
+      setOpen(false);
+      reload();
+    } catch (error) {
+      setFormError(errorMessage(error, "Şablon kaydedilemedi."));
     } finally {
       setSaving(false);
     }
   };
 
-  return (
-    <section className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">SMS ve WhatsApp için tüm kliniklerde kullanılan sistem şablonları. Klinik özelleştirmeleri İletişim Merkezi&apos;nden yapılır.</p>
-        <Button icon={PlusCircle} size="sm" onClick={openCreate}>Yeni Şablon</Button>
-      </div>
+  const columns: ListTableColumn<Template>[] = [
+    {
+      key: "title",
+      header: "Şablon",
+      render: (item) => (
+        <div className="min-w-0 max-w-xl">
+          <p className="font-semibold text-slate-900">{item.title}</p>
+          <p className="truncate text-xs text-slate-500">{renderSmsPreview(item.content)}</p>
+        </div>
+      ),
+    },
+    { key: "category", header: "Kategori", render: (item) => <Badge tone="info">{CATEGORIES[item.category] || "Genel"}</Badge> },
+    { key: "status", header: "Durum", render: (item) => <Badge tone={item.isActive ? "success" : "neutral"}>{item.isActive ? "Kullanımda" : "Pasif"}</Badge> },
+    { key: "actions", header: "", align: "right", render: (item) => <IconButton icon={Pencil} title="Düzenle" size="sm" onClick={() => openEdit(item)} /> },
+  ];
 
-      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-        {loading ? (
-          <div className="divide-y divide-slate-100">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-20 animate-pulse bg-slate-50" style={{ animationDelay: `${i * 40}ms` }} />
-            ))}
-          </div>
-        ) : templates.length === 0 ? (
-          <div className="px-6 py-14 text-center text-sm text-slate-400">Şablon bulunamadı</div>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {templates.map((t) => (
-              <div key={t.id} className="p-4 transition hover:bg-slate-50/80">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                      <span className="font-bold text-slate-900">{t.title}</span>
-                      <Badge tone="info">{CATEGORIES[t.category] || t.category}</Badge>
-                      <Badge tone="neutral">{t.code}</Badge>
-                      {!t.isActive && <Badge tone="neutral">Pasif</Badge>}
-                    </div>
-                    {t.description && <p className="mb-2 text-xs text-slate-500">{t.description}</p>}
-                    <div className="grid gap-2 md:grid-cols-2"><div className="rounded-lg border border-sky-100 bg-sky-50 p-2 text-sm text-slate-600"><p className="mb-1 flex items-center gap-1 text-xs font-black text-sky-700"><Smartphone className="h-3.5 w-3.5" />SMS</p>{renderSmsPreview(t.content)}</div><div className="rounded-lg border border-emerald-100 bg-emerald-50 p-2 text-sm text-slate-600"><p className="mb-1 flex items-center gap-1 text-xs font-black text-emerald-700"><MessageCircle className="h-3.5 w-3.5" />WhatsApp</p>{renderSmsPreview(t.whatsappContent || t.content)}</div></div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className="whitespace-nowrap text-xs text-slate-400">
-                      {new Date(t.createdAt).toLocaleDateString("tr-TR")}
-                    </span>
-                    <IconButton icon={Pencil} title="Düzenle" tone="neutral" onClick={() => openEdit(t)} />
-                  </div>
-                </div>
-              </div>
-            ))}
+  return (
+    <section className="space-y-3">
+      <TabIntro
+        text="Tüm kliniklerin varsayılan mesajları. Klinikler kendi metinlerini İletişim ekranından değiştirebilir."
+        actions={<Button icon={Plus} onClick={openCreate}>Yeni şablon</Button>}
+      />
+      <ListTable<Template>
+        header={
+          <Toolbar>
+            <SearchInput value={query} onChange={setQuery} placeholder="Şablon adı veya metin" wrapperClassName="flex-1 min-w-[220px]" />
+            <Select aria-label="Kategori" value={category} onChange={(event) => setCategory(event.target.value)} className="sm:w-48">
+              <option value="">Tüm kategoriler</option>
+              {Object.entries(CATEGORIES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </Select>
+          </Toolbar>
+        }
+        columns={columns}
+        rows={filtered}
+        rowKey={(item) => item.id}
+        loading={loading}
+        error={loadError}
+        onRetry={reload}
+        onRowClick={openEdit}
+        getRowAriaLabel={(item) => `${item.title} şablonunu düzenle`}
+        rowClassName={(item) => (item.isActive ? "" : "opacity-60")}
+        emptyText={query || category ? "Bu aramaya uyan şablon yok" : "Şablon yok"}
+        mobileCard={(item) => (
+          <div className="space-y-1">
+            <div className="flex items-start justify-between gap-2">
+              <p className="min-w-0 font-semibold text-slate-900">{item.title}</p>
+              <Badge tone="info">{CATEGORIES[item.category] || "Genel"}</Badge>
+            </div>
+            <p className="line-clamp-2 text-xs text-slate-500">{renderSmsPreview(item.content)}</p>
+            {!item.isActive && <div className="flex items-center gap-1.5"><Badge tone="neutral">Pasif</Badge></div>}
           </div>
         )}
-      </div>
+      />
 
       <Modal
-        open={showForm}
-        onClose={() => setShowForm(false)}
-        title={editing ? `Düzenle: ${editing.title}` : "Yeni İletişim Şablonu"}
+        open={open}
+        onClose={() => setOpen(false)}
+        title={editing ? "Şablonu düzenle" : "Yeni şablon"}
+        description={editing ? `Sistem kodu: ${editing.code}` : "Sistem kodu başlıktan otomatik oluşturulur."}
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowForm(false)}>İptal</Button>
-            <Button loading={saving} onClick={submit}>Kaydet</Button>
+            <Button variant="secondary" onClick={() => setOpen(false)}>Vazgeç</Button>
+            <Button loading={saving} onClick={() => void save()}>Kaydet</Button>
           </>
         }
       >
-        <div className="space-y-3">
-          <FormField label="Başlık" required hint="Bu şablonu tanımak için kısa bir ad, örn. Randevu Hatırlatması">
-            <input className={inputClass} value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-          </FormField>
-          {!editing && (
-            <FormField label="Kod" required hint="Sistem içi kısa tanımlayıcı, sonradan değiştirilemez — örn. OZEL_HATIRLATMA">
-              <input className={inputClass} value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value.toUpperCase() })} />
+        <div className="space-y-4">
+          <FormErrorBanner message={formError} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField label="Başlık" htmlFor="template-title" required hint="Ör. Randevu hatırlatması">
+              <Input id="template-title" value={form.title} onChange={(event) => set("title", event.target.value)} />
             </FormField>
-          )}
-          <div className="grid gap-3 sm:grid-cols-2"><FormField label="Kategori"><select className={inputClass} value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })}>{Object.entries(CATEGORIES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></FormField><FormField label="Açıklama"><input className={inputClass} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></FormField></div>
-          <SmsMessageEditor
-            value={form.content}
-            onChange={(content) => setForm({ ...form, content })}
-            placeholders={SMS_PLACEHOLDERS}
-          />
-          <div className="border-t border-slate-100 pt-4"><SmsMessageEditor value={form.whatsappContent} onChange={(whatsappContent) => setForm({ ...form, whatsappContent })} placeholders={SMS_PLACEHOLDERS} label="WhatsApp Mesajı" /><div className="mt-3 grid gap-3 sm:grid-cols-2"><FormField label="Meta şablon adı"><input className={inputClass} value={form.whatsappTemplateName} onChange={(e) => setForm({ ...form, whatsappTemplateName: e.target.value })} /></FormField><FormField label="Dil"><select className={inputClass} value={form.whatsappTemplateLanguage} onChange={(e) => setForm({ ...form, whatsappTemplateLanguage: e.target.value })}><option value="tr">Türkçe (tr)</option><option value="en_US">English (en_US)</option></select></FormField></div></div>
-          <label className="flex cursor-pointer items-center gap-2">
-            <input
-              type="checkbox"
-              checked={form.isActive}
-              onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
-              className="rounded border-slate-300 text-primary focus:ring-primary/30"
-            />
-            <span className="text-sm text-slate-700">Aktif</span>
-          </label>
+            <FormField label="Kategori" htmlFor="template-category">
+              <Select id="template-category" value={form.category} onChange={(event) => set("category", event.target.value)}>
+                {Object.entries(CATEGORIES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              </Select>
+            </FormField>
+            <div className="sm:col-span-2">
+              <FormField label="Ne zaman kullanılır?" htmlFor="template-description" hint="Kliniklere gösterilen kısa açıklama">
+                <Input id="template-description" value={form.description} onChange={(event) => set("description", event.target.value)} />
+              </FormField>
+            </div>
+          </div>
+          <SmsMessageEditor value={form.content} onChange={(content) => set("content", content)} placeholders={SMS_PLACEHOLDERS} label="Mesaj metni" hint="Aynı metin WhatsApp bağlı kliniklerde WhatsApp'tan, diğerlerinde SMS ile gider." />
+          <Switch checked={form.isActive} onChange={(checked) => set("isActive", checked)} label="Şablon aktif" description="Kapalı şablon kliniklerin listesinde pasif olarak görünür." />
         </div>
       </Modal>
     </section>

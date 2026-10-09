@@ -1,15 +1,21 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { Button, IconButton } from "@/components/ui/Button";
+import { Textarea } from "@/components/ui/Input";
+import { FormErrorBanner, FormField } from "@/components/ui/FormField";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
+import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
 import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
-import { Spinner } from "@/components/ui/Spinner";
-import { showToastSafe } from "@/lib/toast-client";
+import { clientMutation } from "@/lib/client-mutation";
 import { confirmDialog } from "@/lib/confirm-client";
+import { showToastSafe } from "@/lib/toast-client";
+import { dateTime } from "@/components/superadmin/sa-format";
 
 const OnamEmptyIcon = createModuleEmptyIcon("clipboard");
+const MIN_LENGTH = 200;
 
 type ConsentTemplate = {
   id: string;
@@ -32,183 +38,139 @@ type OldTemplate = {
   _count?: { consents: number };
 };
 
-function formatDate(value: string) {
-  return new Date(value).toLocaleString("tr-TR", { dateStyle: "medium", timeStyle: "short" });
-}
-
 function countSections(body: string) {
   return (body.match(/^##\s+/gm) || []).length;
 }
 
+/**
+ * Tüm kliniklerin kullandığı tek KVKK ve tedavi onam metni. Belge başlığı
+ * sunucuda sabittir (değiştirilemez); önceden düzenlenebilir görünüp
+ * kaydedilince sessizce yok sayılıyordu. Tek "Kaydet" vardır ve kısa metinde
+ * neden basılamadığı yazar.
+ */
 export default function OnamTab() {
   const [template, setTemplate] = useState<ConsentTemplate | null>(null);
   const [oldTemplates, setOldTemplates] = useState<OldTemplate[]>([]);
-  const [title, setTitle] = useState("Kapsamlı Klinik Onam ve KVKK Paketi");
   const [body, setBody] = useState("");
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState("");
 
   const sectionCount = useMemo(() => countSections(body), [body]);
-  const wordCount = useMemo(() => body.trim().split(/\s+/).filter(Boolean).length, [body]);
+  const length = body.trim().length;
+  const dirty = template ? body !== template.body : body.trim().length > 0;
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await fetch("/api/superadmin/consent-template", { cache: "no-store" });
       const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.message || "Onam paketi yüklenemedi.");
+      if (!res.ok || !data) throw new Error(data?.message || "Onam paketi yüklenemedi.");
       setTemplate(data.template);
       setOldTemplates(Array.isArray(data.oldTemplates) ? data.oldTemplates : []);
-      setTitle(data.template?.title || "Kapsamlı Klinik Onam ve KVKK Paketi");
       setBody(data.template?.body || "");
     } catch (error) {
-      showToastSafe({ title: "Hata", message: error instanceof Error ? error.message : "Onam paketi yüklenemedi.", type: "error" });
+      setLoadError(error instanceof Error ? error.message : "Onam paketi yüklenemedi.");
     } finally {
       setLoading(false);
     }
-  }
-
-  useEffect(() => {
-    void load();
   }, []);
 
-  async function save() {
+  useEffect(() => { void load(); }, [load]);
+
+  const save = async () => {
+    if (length < MIN_LENGTH) {
+      setSaveError(`Onam metni en az ${MIN_LENGTH} karakter olmalı (şu an ${length}).`);
+      return;
+    }
     setSaving(true);
+    setSaveError(null);
     try {
-      const res = await fetch("/api/superadmin/consent-template", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title, body }),
-      });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.message || "Onam paketi kaydedilemedi.");
-      setTemplate(data);
-      showToastSafe({ title: "Kaydedildi", message: "Onam paketi kaydedildi. Klinik ekranları bu metni kullanacak.", type: "success", icon: "clipboard" });
+      await clientMutation(
+        "/api/superadmin/consent-template",
+        { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ body }) },
+        "Onam paketi kaydedilemedi.",
+      );
+      showToastSafe({ type: "success", message: "Onam paketi kaydedildi. Klinikler yeni onamlarda bu metni kullanır.", icon: "clipboard" });
       await load();
     } catch (error) {
-      showToastSafe({ title: "Hata", message: error instanceof Error ? error.message : "Onam paketi kaydedilemedi.", type: "error" });
+      setSaveError(error instanceof Error ? error.message : "Onam paketi kaydedilemedi.");
     } finally {
       setSaving(false);
     }
-  }
+  };
 
-  async function deleteOld(id: string) {
+  const deleteOld = async (item: OldTemplate) => {
     const confirmed = await confirmDialog({
-      title: "Şablonu Sil",
-      message: "Bu pasif onam şablonu silinsin mi? İmzalı hasta kayıtları saklanmaya devam eder.",
+      title: "Eski şablon silinsin mi?",
+      message: `"${item.title}" kullanılmayan eski bir şablon. İmzalanmış hasta onamları silinmez.`,
       confirmText: "Sil",
+      cancelText: "Vazgeç",
       danger: true,
     });
     if (!confirmed) return;
-    setDeletingId(id);
+    setDeletingId(item.id);
     try {
-      const res = await fetch(`/api/superadmin/consent-template?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-      const data = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(data?.message || "Şablon silinemedi.");
-      setOldTemplates((current) => current.filter((item) => item.id !== id));
-      showToastSafe({ title: "Silindi", message: "Pasif onam şablonu silindi.", type: "success", icon: "clipboard" });
+      await clientMutation(`/api/superadmin/consent-template?id=${encodeURIComponent(item.id)}`, { method: "DELETE" }, "Şablon silinemedi.");
+      setOldTemplates((current) => current.filter((row) => row.id !== item.id));
+      showToastSafe({ type: "success", message: "Eski şablon silindi.", icon: "clipboard" });
     } catch (error) {
-      showToastSafe({ title: "Hata", message: error instanceof Error ? error.message : "Şablon silinemedi.", type: "error" });
+      showToastSafe({ type: "error", message: error instanceof Error ? error.message : "Şablon silinemedi." });
     } finally {
       setDeletingId("");
     }
-  }
+  };
+
+  if (loading) return <div className="ui-surface"><ListRowSkeleton rows={4} /></div>;
+  if (loadError) return <LoadErrorState message={loadError} onRetry={() => void load()} />;
 
   return (
-    <section className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xs text-slate-500">Kliniklerde kullanılan tek kapsamlı KVKK ve tedavi onam metni.</p>
-        <Button onClick={() => void save()} disabled={loading || body.trim().length < 200} loading={saving}>
-          Paketi Kaydet
-        </Button>
-      </div>
-
-      {loading ? (
-        <div className="rounded-2xl border border-slate-100 bg-white p-10 text-center shadow-sm">
-          <Spinner className="mx-auto h-8 w-8 text-primary" />
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <section className="ui-surface space-y-3 p-4 sm:p-5">
+        <div>
+          <h2 className="text-base font-bold text-slate-900">{template?.title || "Kapsamlı Klinik Onam ve KVKK Paketi"}</h2>
+          <p className="text-sm text-slate-500">
+            Kliniklerde hastaya imzalatılan tek onam metni. Son değişiklik: {template?.updatedAt ? dateTime(template.updatedAt) : "—"}.
+          </p>
         </div>
-      ) : (
-        <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-            <div className="mb-4 grid gap-4 md:grid-cols-[minmax(0,1fr)_220px_220px]">
-              <div>
-                <label className="mb-1 block text-sm font-bold text-slate-700">Belge Başlığı</label>
-                <input aria-label={"Belge Başlığı"}
-                  value={title}
-                  onChange={(event) => setTitle(event.target.value)}
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-                />
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                <p className="text-xs font-bold uppercase text-slate-500">Bölüm</p>
-                <p className="text-lg font-black text-slate-900">{sectionCount}</p>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2">
-                <p className="text-xs font-bold uppercase text-slate-500">Kelime</p>
-                <p className="text-lg font-black text-slate-900">{wordCount}</p>
-              </div>
-            </div>
-
-            <label className="mb-1 block text-sm font-bold text-slate-700">Onam Metni</label>
-            <textarea aria-label={"Onam Metni"}
-              value={body}
-              onChange={(event) => setBody(event.target.value)}
-              rows={30}
-              className="min-h-[640px] w-full rounded-lg border border-slate-200 px-3 py-3 font-mono text-sm leading-relaxed outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-            />
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-xs text-slate-500">Başlıklar için <code>## 1. Başlık</code> formatı kullanılır; klinik yazdırma çıktısı bu bölümleri profesyonel form düzenine dönüştürür.</p>
-              <Button onClick={() => void save()} disabled={body.trim().length < 200} loading={saving}>
-                Paketi Kaydet
-              </Button>
-            </div>
-          </div>
-
-          <aside className="space-y-4">
-            <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-              <h3 className="text-base font-bold text-slate-900">Aktif Paket</h3>
-              <div className="mt-3 space-y-2 text-sm text-slate-600">
-                <p><span className="font-semibold text-slate-900">Başlık:</span> {template?.title || "-"}</p>
-                <p><span className="font-semibold text-slate-900">Durum:</span> Aktif global paket</p>
-                <p><span className="font-semibold text-slate-900">Güncelleme:</span> {template?.updatedAt ? formatDate(template.updatedAt) : "-"}</p>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <h3 className="text-base font-bold text-slate-900">Eski Şablonlar</h3>
-                <span className="rounded-full bg-slate-100 px-2 py-1 text-xs font-bold text-slate-600">{oldTemplates.length}</span>
-              </div>
-              <div className="max-h-[620px] space-y-2 overflow-auto pr-1">
-                {oldTemplates.length === 0 ? (
-                  <EmptyState icon={OnamEmptyIcon} illustrative compact title="Silinebilir pasif şablon yok" />
-                ) : (
-                  oldTemplates.map((item, itemIdx) => (
-                    <div key={item.id} style={{ ["--row-delay" as string]: `${Math.min(itemIdx, 14) * 18}ms` }} className="ui-row-in rounded-lg border border-slate-200 p-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-sm font-bold text-slate-900">{item.title}</p>
-                          <p className="mt-1 text-xs text-slate-500">{item.institution?.name || "Global"} · {formatDate(item.updatedAt)}</p>
-                          <p className="mt-1 text-xs text-slate-500">{item._count?.consents || 0} imzalı kayıt bağlantısı</p>
-                        </div>
-                        <IconButton
-                          icon={Trash2}
-                          title="Sil"
-                          tone="danger"
-                          size="sm"
-                          disabled={deletingId === item.id}
-                          onClick={() => void deleteOld(item.id)}
-                        />
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </aside>
+        <FormErrorBanner message={saveError} />
+        <FormField
+          label="Onam metni"
+          htmlFor="consent-body"
+          hint={`${sectionCount} bölüm · ${length.toLocaleString("tr-TR")} karakter. Bölüm başlıkları "## 1. Başlık" biçiminde yazılır; yazdırırken form düzenine çevrilir.`}
+        >
+          <Textarea id="consent-body" rows={24} value={body} onChange={(event) => setBody(event.target.value)} className="min-h-[480px] font-mono leading-relaxed" />
+        </FormField>
+        <div className="sticky bottom-0 -mx-4 flex flex-wrap items-center justify-end gap-3 border-t border-slate-100 bg-[rgb(var(--app-surface))] px-4 pt-3 sm:-mx-5 sm:px-5">
+          {length < MIN_LENGTH && <span className="text-xs font-semibold text-amber-700">En az {MIN_LENGTH} karakter gerekli (şu an {length}).</span>}
+          {dirty && length >= MIN_LENGTH && <span className="text-xs text-slate-500">Kaydedilmemiş değişiklik var.</span>}
+          <Button loading={saving} disabled={!dirty || length < MIN_LENGTH} onClick={() => void save()}>Kaydet</Button>
         </div>
-      )}
-    </section>
+      </section>
+
+      <aside className="ui-surface h-fit p-4">
+        <h2 className="text-sm font-bold text-slate-900">Eski şablonlar ({oldTemplates.length})</h2>
+        <p className="mb-3 text-xs text-slate-500">Artık kullanılmayan şablonlar. Silmek imzalı onamları etkilemez.</p>
+        {oldTemplates.length === 0 ? (
+          <EmptyState icon={OnamEmptyIcon} illustrative compact title="Silinebilecek eski şablon yok" />
+        ) : (
+          <ul className="max-h-[520px] divide-y divide-slate-100 overflow-auto">
+            {oldTemplates.map((item) => (
+              <li key={item.id} className="flex items-start justify-between gap-2 py-2.5">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-slate-900">{item.title}</p>
+                  <p className="text-xs text-slate-500">{item.institution?.name || "Tüm klinikler"} · {dateTime(item.updatedAt)}</p>
+                  <p className="text-xs text-slate-500">{item._count?.consents || 0} imzalı onamda kullanıldı</p>
+                </div>
+                <IconButton icon={Trash2} title="Sil" tone="danger" size="sm" disabled={deletingId === item.id} onClick={() => void deleteOld(item)} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </aside>
+    </div>
   );
 }

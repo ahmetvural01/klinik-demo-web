@@ -50,13 +50,15 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
       return NextResponse.json({ error: "Randevu bağlantısı yalnızca yerleştirildi durumunda kaydedilebilir" }, { status: 400 });
     }
     if (appointmentId) {
+      // Hasta eşleşmesi zorunlu; doktor tercihi ise istektir — personel başka
+      // doktora randevu verdiyse kayıt yine kapanır (önceden bağlanamıyor,
+      // hasta listede "bekliyor" kalıyordu).
       const appointment = await prisma.appointment.findFirst({
         where: {
           id: appointmentId,
           patientId: existing.patientId,
           institutionId: existing.institutionId,
           branchId: branch.branchId,
-          ...(existing.doctorId ? { doctorId: existing.doctorId } : {}),
         },
         select: { id: true, status: true },
       });

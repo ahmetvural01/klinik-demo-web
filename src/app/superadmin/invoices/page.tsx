@@ -1,389 +1,279 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { showToastSafe } from "@/lib/toast-client";
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Plus } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Tabs, useTabParam } from "@/components/ui/Tabs";
+import { ActiveFilters, Toolbar } from "@/components/ui/Toolbar";
+import { SearchInput } from "@/components/ui/SearchInput";
 import { Button } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
-import { FormField, inputErrorClass } from "@/components/ui/FormField";
-import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
-import { ListPager } from "@/components/ui/ListPager";
-import { CountUp } from "@/components/ui/CountUp";
-import { confirmDialog } from "@/lib/confirm-client";
-import { isAbortError, useLatestRequest } from "@/lib/use-latest-request";
+import { Badge } from "@/components/ui/Badge";
+import { EmptyValue, ListTable, type ListSort, type ListTableColumn } from "@/components/ui/ListTable";
+import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
+import { useLatestRequest } from "@/lib/use-latest-request";
+import { InvoiceCreateModal } from "@/components/superadmin/InvoiceCreateModal";
+import { InvoiceRowActions } from "@/components/superadmin/InvoiceRowActions";
+import { EMPTY_INVOICE_SUMMARY, type InvoiceSummary, type InvoiceViewStatus } from "@/components/superadmin/invoice-status";
+import { INVOICE_STATUS_META } from "@/components/superadmin/sa-labels";
+import { count, daysUntil, money, shortDate } from "@/components/superadmin/sa-format";
+import { errorMessage, isAbort, saGet } from "@/components/superadmin/sa-fetch";
+
+const InvoiceEmptyIcon = createModuleEmptyIcon("hakediş");
+const PAGE_SIZE = 25;
 
 type Invoice = {
   id: string;
+  invoiceNo: string;
   amount: number;
-  status: string;
-  description?: string;
-  dueDate?: string | null;
-  institutionId?: string;
-  institution?: { id: string; name: string };
+  status: InvoiceViewStatus;
+  description: string | null;
+  dueDate: string | null;
+  paidAt: string | null;
   createdAt: string;
-  paidAt?: string;
+  institutionId: string;
+  institution: { id: string; name: string; subscriptionPlan: string; billingCycle: string } | null;
+  lastReminderAt: string | null;
+  reminderCount: number;
 };
 
-type Summary = {
-  total: number;
-  pending: number;
-  overdue: number;
-  paid: number;
-  totalAmount: number;
-  unpaidAmount: number;
-};
+const STATUS_KEYS = ["OPEN", "OVERDUE", "PENDING", "PAID", "CANCELLED", "ALL"] as const;
+type StatusKey = (typeof STATUS_KEYS)[number];
 
-type InstitutionOption = { id: string; name: string };
-
-const EMPTY_SUMMARY: Summary = { total: 0, pending: 0, overdue: 0, paid: 0, totalAmount: 0, unpaidAmount: 0 };
-
-const STATUS_META: Record<string, { label: string; tone: BadgeTone }> = {
-  PENDING: { label: "Bekliyor", tone: "warning" },
-  OVERDUE: { label: "Gecikti", tone: "critical" },
-  PAID: { label: "Ödendi", tone: "success" },
-  CANCELLED: { label: "İptal", tone: "neutral" },
-};
-
-const INP = "w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none";
-const MONEY = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 2 });
-const fmt = (n: number | string | null | undefined) => MONEY.format(Number(n) || 0);
-const fmtDate = (d?: string | null) => {
-  if (!d) return "—";
-  try { return new Date(d).toLocaleDateString("tr-TR"); } catch { return d; }
-};
-
-const PAGE_SIZE = 20;
-
+/**
+ * Faturalar — kliniklere kesilen platform faturaları. Varsayılan görünüm iş
+ * kuyruğu: ödenmemiş (bekleyen + gecikmiş) faturalar, vadesi en eski üstte.
+ * Durum, Kontrol Paneli ve klinik dosyasıyla AYNI kuraldan türetilir; iptal
+ * edilen fatura hiçbir borç toplamına girmez. Satır eylemleri (Tahsil edildi,
+ * Hatırlat, İptal et) yalnız açık faturada görünür.
+ */
 export default function InvoicesPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const institutionId = searchParams.get("institutionId") || "";
+  const [status, setStatus] = useTabParam(STATUS_KEYS, "OPEN", "status");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [summary, setSummary] = useState<Summary>(EMPTY_SUMMARY);
+  const [summary, setSummary] = useState<InvoiceSummary>(EMPTY_INVOICE_SUMMARY);
   const [loading, setLoading] = useState(true);
-  const beginInvoiceLoad = useLatestRequest();
-  const [markingOverdue, setMarkingOverdue] = useState(false);
-  const [remindingId, setRemindingId] = useState<string | null>(null);
-
-  const [q, setQ] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
-  const [status, setStatus] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [page, setPage] = useState(1);
+  const [sort, setSort] = useState<ListSort>({ key: "dueDate", dir: "asc" });
+  const [createOpen, setCreateOpen] = useState(false);
+  const [clinicName, setClinicName] = useState<string | null>(null);
+  const beginLoad = useLatestRequest();
 
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQ(q.trim()), 300);
+    const timer = setTimeout(() => setDebouncedQuery(query.trim()), 300);
     return () => clearTimeout(timer);
-  }, [q]);
+  }, [query]);
 
-  useEffect(() => { setPage(1); }, [debouncedQ, status]);
+  useEffect(() => { setPage(1); }, [debouncedQuery, status, institutionId]);
 
-  const load = useCallback(async () => {
-    const request = beginInvoiceLoad();
+  // Paneldeki "Yeni fatura" ve kısayollar (?yeni=1) formu açar.
+  useEffect(() => {
+    if (searchParams.get("yeni") === "1") {
+      setCreateOpen(true);
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("yeni");
+      router.replace(`${pathname}${params.toString() ? `?${params.toString()}` : ""}`, { scroll: false });
+    }
+  }, [pathname, router, searchParams]);
+
+  const reload = useCallback(() => setReloadKey((value) => value + 1), []);
+
+  useEffect(() => {
+    const request = beginLoad();
     setLoading(true);
+    setLoadError(null);
     const params = new URLSearchParams();
-    if (status) params.set("status", status);
-    if (debouncedQ) params.set("q", debouncedQ);
-    try {
-      const response = await fetch(`/api/superadmin/invoices?${params.toString()}`, { cache: "no-store", signal: request.signal });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.message || "Faturalar yüklenemedi.");
-      if (!request.isLatest()) return;
-      setInvoices(Array.isArray(data) ? data : data?.invoices ?? []);
-      setSummary(data?.summary ?? EMPTY_SUMMARY);
-    } catch (error) {
-      if (isAbortError(error)) return;
-      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "Faturalar yüklenemedi.", type: "error" });
-    } finally {
-      if (request.isLatest()) setLoading(false);
-    }
-  }, [status, debouncedQ, beginInvoiceLoad]);
-
-  useEffect(() => { void load(); }, [load]);
-
-  const pageCount = Math.max(1, Math.ceil(invoices.length / PAGE_SIZE));
-  const pagedInvoices = useMemo(
-    () => invoices.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
-    [invoices, page],
-  );
-
-  const overdueAmount = useMemo(
-    () => invoices.filter((i) => i.status === "OVERDUE").reduce((s, i) => s + Number(i.amount || 0), 0),
-    [invoices],
-  );
-
-  const markPaid = async (id: string) => {
-    const ok = await confirmDialog({
-      title: "Fatura Ödendi İşaretle",
-      message: "Bu fatura ödendi olarak işaretlensin mi? Klinik hizmet kısıtlaması varsa bu işlem kısıtlamayı kaldırabilir.",
-      confirmText: "Ödendi İşaretle",
-    });
-    if (!ok) return;
-    const r = await fetch(`/api/superadmin/invoices/${id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "PAID" }),
-    }).catch(() => null);
-    if (r?.ok) {
-      showToastSafe({ message: "Fatura ödendi olarak işaretlendi", type: "success", icon: "finance" });
-      load();
-    } else {
-      showToastSafe({ message: "Fatura güncellenemedi", type: "error" });
-    }
-  };
-
-  const markOverdue = async () => {
-    setMarkingOverdue(true);
-    const r = await fetch("/api/superadmin/invoices/mark-overdue", { method: "POST" }).catch(() => null);
-    setMarkingOverdue(false);
-    if (r?.ok) {
-      const d = await r.json().catch(() => ({}));
-      const count = typeof d?.updated === "number" ? d.updated : null;
-      showToastSafe({
-        message: count !== null ? `${count} fatura gecikmiş olarak işaretlendi` : "Gecikmiş faturalar işaretlendi",
-        type: "success",
+    if (status !== "ALL") params.set("status", status);
+    if (debouncedQuery) params.set("q", debouncedQuery);
+    if (institutionId) params.set("institutionId", institutionId);
+    saGet<{ invoices: Invoice[]; summary: InvoiceSummary }>(`/api/superadmin/invoices?${params.toString()}`, "Faturalar yüklenemedi.", request.signal)
+      .then((data) => {
+        if (!request.isLatest()) return;
+        const list = Array.isArray(data?.invoices) ? data.invoices : [];
+        setInvoices(list);
+        setSummary(data?.summary ?? EMPTY_INVOICE_SUMMARY);
+        if (institutionId && list[0]?.institution?.name) setClinicName(list[0].institution.name);
+      })
+      .catch((error) => {
+        if (isAbort(error) || !request.isLatest()) return;
+        setLoadError(errorMessage(error, "Faturalar yüklenemedi."));
+      })
+      .finally(() => {
+        if (request.isLatest()) setLoading(false);
       });
-      load();
-    } else {
-      showToastSafe({ message: "Gecikmiş faturalar işaretlenemedi", type: "error" });
+  }, [beginLoad, debouncedQuery, institutionId, status, reloadKey]);
+
+  // Klinik filtresiyle gelindiyse ve listede o kliniğin faturası yoksa adını ayrıca öğren.
+  useEffect(() => {
+    if (!institutionId) {
+      setClinicName(null);
+      return;
     }
+    const controller = new AbortController();
+    saGet<{ name: string }>(`/api/superadmin/institutions/${institutionId}`, "", controller.signal)
+      .then((data) => setClinicName(data?.name ?? null))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [institutionId]);
+
+  const clearInstitution = () => {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("institutionId");
+    router.replace(`${pathname}${params.toString() ? `?${params.toString()}` : ""}`, { scroll: false });
   };
 
-  const sendReminder = async (invoice: Invoice) => {
-    setRemindingId(invoice.id);
-    const r = await fetch("/api/superadmin/invoices/remind", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ invoiceId: invoice.id, channels: ["EMAIL", "SMS"] }),
-    }).catch(() => null);
-    setRemindingId(null);
-    if (r?.ok) {
-      const d = await r.json().catch(() => ({ results: [] }));
-      const results: Array<{ channel: string; success: boolean }> = Array.isArray(d?.results) ? d.results : [];
-      const successCount = results.filter((res) => res.success).length;
-      if (successCount === 0 && results.length > 0) {
-        showToastSafe({ message: "Hatırlatma gönderilemedi", type: "error" });
-      } else {
-        showToastSafe({
-          message: `Hatırlatma gönderildi (${successCount}/${results.length} kanal başarılı)`,
-          type: successCount === results.length ? "success" : "info",
-        });
-      }
-    } else {
-      const e = await r?.json().catch(() => ({}));
-      showToastSafe({ message: e?.message || "Hatırlatma gönderilemedi", type: "error" });
-    }
+  const sorted = useMemo(() => {
+    const dir = sort.dir === "asc" ? 1 : -1;
+    const time = (value: string | null) => (value ? new Date(value).getTime() : Number.MAX_SAFE_INTEGER);
+    return [...invoices].sort((a, b) => {
+      if (sort.key === "amount") return (a.amount - b.amount) * dir;
+      if (sort.key === "createdAt") return (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()) * dir;
+      return (time(a.dueDate) - time(b.dueDate)) * dir;
+    });
+  }, [invoices, sort]);
+
+  const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const rows = sorted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const changeSort = (key: string) => setSort((current) => ({ key, dir: current.key === key && current.dir === "asc" ? "desc" : "asc" }));
+
+  const dueCell = (row: Invoice) => {
+    const date = shortDate(row.dueDate);
+    if (!date) return <EmptyValue />;
+    const days = daysUntil(row.dueDate);
+    const open = row.status === "PENDING" || row.status === "OVERDUE";
+    return (
+      <div>
+        <p className="tabular-nums">{date}</p>
+        {open && days != null && (
+          <p className={`text-xs ${days < 0 ? "font-semibold text-red-700" : days <= 7 ? "text-amber-700" : "text-slate-500"}`}>
+            {days < 0 ? `${-days} gün geçti` : days === 0 ? "Bugün" : `${days} gün kaldı`}
+          </p>
+        )}
+      </div>
+    );
   };
 
-  // ── Yeni fatura oluşturma ────────────────────────────────────────────────
-  const [createOpen, setCreateOpen] = useState(false);
-  const [institutions, setInstitutions] = useState<InstitutionOption[]>([]);
-  const [form, setForm] = useState({ institutionId: "", amount: "", description: "", dueDate: "" });
-  const [formErrors, setFormErrors] = useState<{ institutionId?: string; amount?: string }>({});
-  const [saving, setSaving] = useState(false);
+  const statusCell = (row: Invoice) => (
+    <div>
+      <Badge tone={INVOICE_STATUS_META[row.status].tone}>{INVOICE_STATUS_META[row.status].label}</Badge>
+      {row.status === "PAID" && row.paidAt && <p className="mt-0.5 text-xs text-slate-500">{shortDate(row.paidAt)}</p>}
+      {(row.status === "PENDING" || row.status === "OVERDUE") && row.reminderCount > 0 && (
+        <p className="mt-0.5 text-xs text-slate-500">{row.reminderCount} hatırlatma · son {shortDate(row.lastReminderAt)}</p>
+      )}
+    </div>
+  );
 
-  const openCreate = () => {
-    setCreateOpen(true);
-    if (institutions.length === 0) {
-      fetch("/api/superadmin/institutions", { cache: "no-store" })
-        .then((r) => (r.ok ? r.json() : []))
-        .then((d) => setInstitutions(Array.isArray(d) ? d.map((i: { id: string; name: string }) => ({ id: i.id, name: i.name })) : []))
-        .catch(() => setInstitutions([]));
-    }
-  };
-
-  const closeCreate = () => {
-    setCreateOpen(false);
-    setForm({ institutionId: "", amount: "", description: "", dueDate: "" });
-    setFormErrors({});
-  };
-
-  const submitCreate = async () => {
-    const errors: { institutionId?: string; amount?: string } = {};
-    if (!form.institutionId) errors.institutionId = "Klinik seçimi zorunlu";
-    if (!form.amount || Number(form.amount) <= 0) errors.amount = "Geçerli bir tutar giriniz";
-    setFormErrors(errors);
-    if (Object.keys(errors).length > 0) return;
-
-    setSaving(true);
-    const r = await fetch("/api/superadmin/invoices", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        institutionId: form.institutionId,
-        amount: Number(form.amount),
-        description: form.description || undefined,
-        dueDate: form.dueDate ? new Date(form.dueDate).toISOString() : undefined,
-      }),
-    }).catch(() => null);
-    setSaving(false);
-
-    if (r?.ok) {
-      showToastSafe({ message: "Fatura oluşturuldu", type: "success", icon: "finance" });
-      closeCreate();
-      load();
-    } else {
-      const e = await r?.json().catch(() => ({}));
-      showToastSafe({ message: e?.message || "Fatura oluşturulamadı", type: "error" });
-    }
-  };
+  const actions = (row: Invoice) => (
+    <InvoiceRowActions
+      invoice={{ id: row.id, invoiceNo: row.invoiceNo, amount: row.amount, status: row.status, institutionName: row.institution?.name, lastReminderAt: row.lastReminderAt, reminderCount: row.reminderCount }}
+      onChanged={reload}
+    />
+  );
 
   const columns: ListTableColumn<Invoice>[] = [
-    { key: "klinik", header: "Klinik", render: (inv) => <span className="font-medium text-slate-900">{inv.institution?.name ?? "—"}</span> },
-    { key: "aciklama", header: "Açıklama", render: (inv) => <span className="text-slate-600">{inv.description ?? "—"}</span> },
-    { key: "tutar", header: "Tutar", align: "right", render: (inv) => <span className="font-semibold text-slate-900">{fmt(inv.amount)}</span> },
-    { key: "vade", header: "Vade Tarihi", render: (inv) => <span className="text-slate-500">{fmtDate(inv.dueDate)}</span> },
     {
-      key: "durum",
-      header: "Durum",
-      render: (inv) => {
-        const meta = STATUS_META[inv.status] ?? { label: inv.status, tone: "neutral" as BadgeTone };
-        return <Badge tone={meta.tone}>{meta.label}</Badge>;
-      },
-    },
-    { key: "olusturma", header: "Oluşturma Tarihi", render: (inv) => <span className="text-slate-500">{fmtDate(inv.createdAt)}</span> },
-    {
-      key: "islem",
-      header: "İşlem",
-      render: (inv) => (
-        <div className="flex flex-wrap items-center gap-2">
-          {inv.status !== "PAID" && (
-            <Button size="sm" variant="primary" onClick={() => markPaid(inv.id)}>
-              Ödendi İşaretle
-            </Button>
-          )}
-          {(inv.status === "PENDING" || inv.status === "OVERDUE") && (
-            <Button
-              size="sm"
-              variant="secondary"
-              loading={remindingId === inv.id}
-              onClick={() => sendReminder(inv)}
-            >
-              Hatırlatma Gönder
-            </Button>
-          )}
+      key: "clinic",
+      header: "Klinik",
+      render: (row) => (
+        <div className="min-w-0">
+          {row.institution ? (
+            <Link href={`/superadmin/institutions/${row.institution.id}?tab=faturalar`} className="font-semibold text-slate-900 hover:text-primary hover:underline">{row.institution.name}</Link>
+          ) : <EmptyValue />}
+          <p className="truncate text-xs text-slate-500">{row.description || "Platform faturası"} · {row.invoiceNo}</p>
         </div>
       ),
     },
+    { key: "amount", header: "Tutar", align: "right", sortKey: "amount", render: (row) => <span className="font-semibold tabular-nums">{money(row.amount)}</span> },
+    { key: "dueDate", header: "Vade", sortKey: "dueDate", render: dueCell },
+    { key: "status", header: "Durum", render: statusCell },
+    { key: "actions", header: "", align: "right", render: actions },
   ];
 
+  const tabItems = [
+    { key: "OPEN" as const, label: "Ödenmemiş", count: summary.openCount },
+    { key: "OVERDUE" as const, label: "Gecikmiş", count: summary.overdueCount, countTone: "critical" as const },
+    { key: "PENDING" as const, label: "Vadesi gelmemiş", count: summary.upcomingCount },
+    { key: "PAID" as const, label: "Ödendi", count: summary.paidCount },
+    { key: "CANCELLED" as const, label: "İptal", count: summary.cancelledCount },
+    { key: "ALL" as const, label: "Tümü" },
+  ];
+
+  const filters = institutionId ? [{ key: "clinic", label: `Klinik: ${clinicName || "seçili klinik"}`, onRemove: clearInstitution }] : [];
+  const emptyText = debouncedQuery || institutionId ? "Bu aramaya uyan fatura yok" : status === "OPEN" ? "Ödenmemiş fatura yok" : status === "OVERDUE" ? "Gecikmiş fatura yok" : "Fatura yok";
+
   return (
-    <section className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="text-3xl">💳</span>
-          <h2 className="text-2xl font-bold text-gray-900">Faturalar</h2>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <input aria-label={"Klinik / açıklama ara…"}
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Klinik / açıklama ara…"
-            className="w-52 rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-          />
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-          >
-            <option value="">Tümü</option>
-            <option value="PENDING">Bekliyor</option>
-            <option value="OVERDUE">Gecikti</option>
-            <option value="PAID">Ödendi</option>
-            <option value="CANCELLED">İptal</option>
-          </select>
-          <Button variant="secondary" onClick={load}>Yenile</Button>
-          <Button variant="secondary" loading={markingOverdue} onClick={markOverdue}>
-            Gecikmiş Faturaları İşaretle
-          </Button>
-          <Button variant="primary" onClick={openCreate}>Yeni Fatura Oluştur</Button>
-        </div>
-      </div>
-
-      <div className="ui-surface grid grid-cols-2 divide-x divide-y divide-slate-100 overflow-hidden sm:grid-cols-4 sm:divide-y-0">
-        {[
-          { label: "Toplam", value: summary.totalAmount, money: true, tone: "text-primary", pulse: false },
-          { label: "Ödendi", value: summary.paid, money: false, tone: "text-emerald-700", pulse: false },
-          { label: "Bekliyor", value: summary.unpaidAmount, money: true, tone: "text-amber-700", pulse: false },
-          { label: "Gecikmiş", value: overdueAmount, money: true, tone: "text-red-700", pulse: overdueAmount > 0 },
-        ].map((stat, i) => (
-          <div key={stat.label} className={`ui-kpi-in p-4 ${stat.pulse ? "ui-badge-pulse" : ""}`} style={{ ["--row-delay" as string]: `${i * 40}ms` }}>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{stat.label}</p>
-            <p className={`mt-1 text-2xl font-black ${stat.tone}`}>
-              <CountUp value={stat.value} formatter={stat.money ? (n) => fmt(n) : undefined} />
-            </p>
-          </div>
-        ))}
-      </div>
-
-      <ListTable
-        columns={columns}
-        rows={pagedInvoices}
-        rowKey={(inv) => inv.id}
-        loading={loading}
-        emptyText="Fatura bulunamadı"
+    <section className="space-y-4">
+      <PageHeader
+        icon="hakediş"
+        title="Faturalar"
+        description="Kliniklere kesilen platform faturaları: tahsilat, hatırlatma ve iptal."
+        stats={[
+          { label: "Gecikmiş", value: money(summary.overdueAmount), color: summary.overdueAmount > 0 ? "text-red-700" : undefined },
+          { label: "Vadesi gelmemiş", value: money(summary.upcomingAmount) },
+          { label: "Bu ay tahsil edilen", value: money(summary.paidThisMonthAmount), color: "text-emerald-700" },
+        ]}
+        actions={<Button icon={Plus} onClick={() => setCreateOpen(true)}>Yeni fatura</Button>}
       />
-      {invoices.length > 0 && (
-        <ListPager
-          page={page}
-          pageCount={pageCount}
-          pageSize={PAGE_SIZE}
-          total={invoices.length}
-          onPageChange={setPage}
-          loading={loading}
-        />
-      )}
 
-      <Modal
-        open={createOpen}
-        onClose={closeCreate}
-        title="Yeni Fatura Oluştur"
-        size="sm"
-        footer={
+      <Tabs ariaLabel="Fatura durumu" size="sm" items={tabItems} value={status as StatusKey} onChange={setStatus} />
+
+      <ListTable<Invoice>
+        header={
           <>
-            <Button variant="secondary" onClick={closeCreate}>İptal</Button>
-            <Button variant="primary" loading={saving} onClick={submitCreate}>Fatura Oluştur</Button>
+            <Toolbar>
+              <SearchInput value={query} onChange={setQuery} placeholder="Klinik adı, fatura no veya açıklama" slashShortcut wrapperClassName="flex-1 min-w-[220px]" />
+            </Toolbar>
+            {filters.length > 0 && <div className="px-3 pb-2.5"><ActiveFilters filters={filters} /></div>}
           </>
         }
-      >
-        <div className="space-y-4">
-          <FormField label="Klinik" required error={formErrors.institutionId}>
-            <select
-              value={form.institutionId}
-              onChange={(e) => setForm((f) => ({ ...f, institutionId: e.target.value }))}
-              className={`${INP} ${inputErrorClass(Boolean(formErrors.institutionId))}`}
-            >
-              <option value="">Seçiniz…</option>
-              {institutions.map((inst) => (
-                <option key={inst.id} value={inst.id}>{inst.name}</option>
-              ))}
-            </select>
-          </FormField>
-          <FormField label="Tutar" required error={formErrors.amount}>
-            <input
-              type="number"
-              min="0"
-              step="0.01"
-              value={form.amount}
-              onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
-              className={`${INP} ${inputErrorClass(Boolean(formErrors.amount))}`}
-              placeholder="0.00"
-            />
-          </FormField>
-          <FormField label="Açıklama">
-            <input
-              value={form.description}
-              onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
-              className={INP}
-              placeholder="Örn. Temmuz 2026 abonelik ücreti"
-            />
-          </FormField>
-          <FormField label="Vade Tarihi">
-            <input
-              type="date"
-              value={form.dueDate}
-              onChange={(e) => setForm((f) => ({ ...f, dueDate: e.target.value }))}
-              className={INP}
-            />
-          </FormField>
-        </div>
-      </Modal>
+        columns={columns}
+        rows={rows}
+        rowKey={(row) => row.id}
+        loading={loading}
+        error={loadError}
+        onRetry={reload}
+        sort={sort}
+        onSortChange={changeSort}
+        rowClassName={(row) => (row.status === "CANCELLED" ? "opacity-60" : "")}
+        emptyText={emptyText}
+        emptyDescription={status === "OPEN" && !debouncedQuery ? "Tüm faturalar ödenmiş ya da iptal edilmiş." : undefined}
+        emptyIcon={InvoiceEmptyIcon}
+        emptyIllustrative
+        pager={{ page, pageCount, pageSize: PAGE_SIZE, total: sorted.length, onPageChange: setPage }}
+        mobileCard={(row) => (
+          <div className="space-y-1.5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-slate-900">{row.institution?.name || "—"}</p>
+                <p className="truncate text-xs text-slate-500">{row.description || "Platform faturası"}</p>
+              </div>
+              <Badge tone={INVOICE_STATUS_META[row.status].tone}>{INVOICE_STATUS_META[row.status].label}</Badge>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="font-semibold tabular-nums text-slate-900">{money(row.amount)}</p>
+                <p className="text-xs text-slate-500">Vade {shortDate(row.dueDate) || "—"}{row.reminderCount > 0 ? ` · ${count(row.reminderCount)} hatırlatma` : ""}</p>
+              </div>
+              {actions(row)}
+            </div>
+          </div>
+        )}
+      />
+
+      <InvoiceCreateModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={reload}
+        existingInvoices={invoices.map((row) => ({ institutionId: row.institutionId, description: row.description, status: row.status, invoiceNo: row.invoiceNo }))}
+      />
     </section>
   );
 }

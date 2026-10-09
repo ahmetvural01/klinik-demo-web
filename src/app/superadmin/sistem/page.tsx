@@ -1,49 +1,36 @@
 "use client";
 
-import { useState } from "react";
-import { Settings as SettingsIcon } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Tabs, useTabParam } from "@/components/ui/Tabs";
 import OnamTab from "./_tabs/OnamTab";
 import TemaTab from "./_tabs/TemaTab";
+import EpostaTab from "./_tabs/EpostaTab";
 
-const TABS = [
-  { id: "onam", label: "Onam Paketi", Component: OnamTab },
-  { id: "tema", label: "Tema", Component: TemaTab },
-] as const;
-
-type TabId = (typeof TABS)[number]["id"];
+const TAB_KEYS = ["onam", "tema", "eposta"] as const;
 
 export default function SistemPage() {
-  const [activeTab, setActiveTab] = useState<TabId>("onam");
-  const ActiveComponent = TABS.find((t) => t.id === activeTab)?.Component ?? OnamTab;
+  const [tab, setTab] = useTabParam(TAB_KEYS, "onam");
 
   return (
-    <section className="space-y-5">
-      <div className="flex items-center gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <SettingsIcon className="h-4 w-4" />
-        </span>
-        <h1 className="text-lg font-black text-slate-900">Sistem Ayarları</h1>
-      </div>
-
-      <div role="group" aria-label="Platform ayarları bölümleri" className="flex flex-wrap gap-2">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            aria-pressed={activeTab === tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`rounded-xl px-4 py-2 text-sm font-black transition ${
-              activeTab === tab.id
-                ? "bg-primary text-white shadow-sm"
-                : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-100 hover:text-slate-900"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      <ActiveComponent />
+    <section className="space-y-4">
+      <PageHeader
+        icon="settings"
+        title="Sistem Ayarları"
+        description="Tüm klinikler için geçerli onam metni, görünüm ve e-posta ayarları."
+      />
+      <Tabs
+        ariaLabel="Sistem ayarları bölümleri"
+        value={tab}
+        onChange={setTab}
+        items={[
+          { key: "onam", label: "Onam paketi" },
+          { key: "tema", label: "Tema" },
+          { key: "eposta", label: "E-posta (SMTP)" },
+        ]}
+      />
+      {tab === "onam" && <OnamTab />}
+      {tab === "tema" && <TemaTab />}
+      {tab === "eposta" && <EpostaTab />}
     </section>
   );
 }

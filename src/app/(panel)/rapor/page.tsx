@@ -1,114 +1,138 @@
-﻿"use client";
+"use client";
 
 import { reportQuickRange } from "@/lib/report-date-range";
-import { turkeyDateTimeLocalValue } from "@/lib/tz";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { RefreshCw } from "lucide-react";
-import type { ConsistencyPayload } from "@/lib/data-consistency";
-import { Button } from "@/components/ui/Button";
+import { ArrowRight } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Tabs, useTabParam } from "@/components/ui/Tabs";
+import { Toolbar } from "@/components/ui/Toolbar";
+import { Input, Select } from "@/components/ui/Input";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
-import { createSceneIllustration } from "@/components/ui/SceneIllustration";
-import { ModuleIcon } from "@/components/ui/ModuleIcon";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { isAbortError, useLatestRequest } from "@/lib/use-latest-request";
+import { turkeyDateKey } from "@/lib/tz";
+import { METHOD_LABELS, money, shortDate } from "@/components/muhasebe/muhasebe-utils";
 
-const RaporEmptyIcon = createSceneIllustration("rapor", 130);
-
-type DoctorReport = {
-  id: string; fullName: string;
-  examinationCount: number;
-  ciro: number; kk: number; nakit: number; havale: number; mo: number;
-  kkMasraf: number; labCost: number; genelMasraf: number; toplamGider: number;
-  brut: number; hakEdis: number;
-  kkYuzde: number; genelYuzde: number; maasYuzde: number;
-  labOrderCount: number; uniquePatients: number;
-};
 type ExpenseCat = { category: string; amount: number };
-type FirmaRow   = { name: string; amount: number };
-type TopExam    = { treatmentName: string; count: number };
-type TopTooth   = { tooth: string; count: number };
+type FirmaRow = { name: string; amount: number };
+type TopExam = { treatmentName: string; count: number };
+type TopTooth = { tooth: string; count: number };
 
 type DayCloseCheck = { key: string; label: string; status: "ok" | "warning" | "critical"; detail: string; href: string };
 type DayClose = {
   income: number; expense: number; net: number;
+  cashIn?: number; cashOut?: number; cashNet?: number;
   cash: number; card: number; transfer: number; mailOrder: number; other: number;
   openLabCount: number; openFollowUpCount: number; overdueInstallments: number;
   unpaidTreatmentPatientCount: number;
   checks: DayCloseCheck[];
 };
 type Stats = {
-  total: number; totalRevenue: number; totalExpenses: number;
+  totalRevenue: number; totalExpenses: number;
   totalLabCost: number; totalFirmaAlim: number; netCash: number;
   newPatients: number; totalExaminations: number;
   cash: number; card: number; transfer: number; mailOrder: number; other: number;
-  doctorReports: DoctorReport[];
   expenseByCategory: ExpenseCat[];
   firmaByName: FirmaRow[];
   topExaminations: TopExam[];
   topTeeth: TopTooth[];
-  totalLabOrders: number; overdueInstallments: number;
+  overdueInstallments: number;
   outputVAT: number; inputVAT: number; netVAT: number;
   periodNetProfit: number; annualNetProfit: number; gelirVergisi: number;
   dayClose: DayClose | null;
-  consistency: ConsistencyPayload | null;
 };
 
 const EMPTY: Stats = {
-  total: 0, totalRevenue: 0, totalExpenses: 0, totalLabCost: 0, totalFirmaAlim: 0,
+  totalRevenue: 0, totalExpenses: 0, totalLabCost: 0, totalFirmaAlim: 0,
   netCash: 0, newPatients: 0, totalExaminations: 0,
   cash: 0, card: 0, transfer: 0, mailOrder: 0, other: 0,
-  doctorReports: [], expenseByCategory: [], firmaByName: [],
-  topExaminations: [], topTeeth: [],
-  totalLabOrders: 0, overdueInstallments: 0,
+  expenseByCategory: [], firmaByName: [], topExaminations: [], topTeeth: [],
+  overdueInstallments: 0,
   outputVAT: 0, inputVAT: 0, netVAT: 0,
   periodNetProfit: 0, annualNetProfit: 0, gelirVergisi: 0,
-  dayClose: null, consistency: null,
+  dayClose: null,
 };
-
-const CUR  = (n: number) => "₺" + (n || 0).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const PCT  = (n: number, t: number) => t > 0 ? Math.round((n / t) * 100) : 0;
-const FMT  = (n: number) => (n || 0).toLocaleString("tr-TR");
-const SIGN = (n: number) => n >= 0 ? `+${CUR(n)}` : CUR(n);
 
 type Tab = "genel" | "giderler" | "islemler";
+const TAB_KEYS: readonly Tab[] = ["genel", "giderler", "islemler"];
+type Period = "bugun" | "hafta" | "ay" | "yil" | "ozel";
+const PERIOD_LABELS: Record<Period, string> = { bugun: "Bugün", hafta: "Bu hafta", ay: "Bu ay", yil: "Bu yıl", ozel: "Tarih aralığı seç" };
 
-const STATUS_STYLE: Record<DayCloseCheck["status"], { badge: string; dot: string; label: string }> = {
-  ok:       { badge: "bg-emerald-50 border-emerald-200 text-emerald-700", dot: "bg-emerald-500", label: "Tamam" },
-  warning:  { badge: "bg-amber-50 border-amber-200 text-amber-700",       dot: "bg-amber-500",   label: "Uyarı" },
-  critical: { badge: "bg-red-50 border-red-200 text-red-700",             dot: "bg-red-500",      label: "Kritik" },
+const STATUS: Record<DayCloseCheck["status"], { tone: BadgeTone; label: string }> = {
+  ok: { tone: "success", label: "Tamam" },
+  warning: { tone: "warning", label: "Bakılmalı" },
+  critical: { tone: "critical", label: "Acil" },
 };
-const STATUS_TONE: Record<DayCloseCheck["status"], BadgeTone> = { ok: "success", warning: "warning", critical: "critical" };
 
+const PCT = (n: number, t: number) => (t > 0 ? Math.round((n / t) * 100) : 0);
+const count = (n: number) => (n || 0).toLocaleString("tr-TR");
+const signed = (n: number) => `${n < 0 ? "−" : ""}${money(Math.abs(n))}`;
+
+function Card({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="ui-surface p-4 sm:p-5">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <h2 className="text-sm font-bold text-slate-900">{title}</h2>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function Line({ label, value, tone = "text-slate-900", hint, strong = false }: { label: string; value: string; tone?: string; hint?: string; strong?: boolean }) {
+  return (
+    <div className={`flex items-start justify-between gap-3 py-2 ${strong ? "" : "border-b border-slate-100"}`}>
+      <div>
+        <p className={strong ? "font-bold text-slate-900" : "text-sm text-slate-600"}>{label}</p>
+        {hint && <p className="text-xs text-slate-400">{hint}</p>}
+      </div>
+      <p className={`shrink-0 tabular-nums ${strong ? "text-lg font-extrabold" : "text-sm font-semibold"} ${tone}`}>{value}</p>
+    </div>
+  );
+}
+
+function Bars({ rows, total, color }: { rows: { label: string; value: number; display: string }[]; total: number; color: string }) {
+  return (
+    <ul className="space-y-2.5">
+      {rows.map((row) => (
+        <li key={row.label} className="grid grid-cols-[minmax(0,8rem)_1fr_auto] items-center gap-3 text-sm">
+          <span className="truncate text-slate-600" title={row.label}>{row.label}</span>
+          <span className="h-2.5 overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
+            <span className={`block h-full rounded-full ${color}`} style={{ width: `${Math.max(3, PCT(row.value, total))}%` }} />
+          </span>
+          <span className="text-right font-semibold tabular-nums text-slate-800">{row.display}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export default function RaporPage() {
   const startReportRequest = useLatestRequest();
-  const [fromDate, setFromDate] = useState("");
-  const [toDate,   setToDate]   = useState("");
-  const [stats,    setStats]    = useState<Stats>(EMPTY);
-  const [loading,  setLoading]  = useState(false);
+  const [tab, setTab] = useTabParam<Tab>(TAB_KEYS, "genel");
+  const [period, setPeriod] = useState<Period>("ay");
+  const [customFrom, setCustomFrom] = useState(() => `${turkeyDateKey().slice(0, 7)}-01`);
+  const [customTo, setCustomTo] = useState(() => turkeyDateKey());
+  const [stats, setStats] = useState<Stats>(EMPTY);
+  const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
-  const [tab,      setTab]      = useState<Tab>("genel");
 
-  const setQuickRange = (period: "bugun" | "hafta" | "ay" | "yil") => {
-    const range = reportQuickRange(period);
-    setFromDate(range.from);
-    setToDate(range.to);
-  };
-
-  useEffect(() => {
-    const now = new Date();
-    setFromDate(reportQuickRange("ay", now).from);
-    setToDate(turkeyDateTimeLocalValue(now));
-  }, []);
+  const range = useMemo(() => {
+    if (period === "ozel") return { from: `${customFrom}T00:00`, to: `${customTo}T23:59` };
+    return reportQuickRange(period);
+  }, [customFrom, customTo, period]);
+  const rangeInvalid = period === "ozel" && (!customFrom || !customTo || customFrom > customTo);
 
   const load = useCallback(async () => {
-    if (!fromDate || !toDate) return;
-    if (fromDate > toDate) { setLoadError("Başlangıç tarihi bitiş tarihinden sonra olamaz."); return; }
+    if (rangeInvalid) { setLoadError("Başlangıç tarihi bitiş tarihinden sonra olamaz."); return; }
     const request = startReportRequest();
     setLoading(true);
     setLoadError("");
     try {
-      const res = await fetch(`/api/reports?from=${fromDate}&to=${toDate}`, { signal: request.signal });
+      const res = await fetch(`/api/reports?from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`, { signal: request.signal });
       const data = await res.json();
       if (!request.isLatest()) return;
       if (!res.ok) throw new Error(data?.message || "Rapor verileri yüklenemedi.");
@@ -116,465 +140,208 @@ export default function RaporPage() {
     } catch (error) {
       if (isAbortError(error) || !request.isLatest()) return;
       setLoadError(error instanceof Error ? error.message : "Rapor verileri yüklenemedi.");
+    } finally {
+      if (request.isLatest()) setLoading(false);
     }
-    finally { if (request.isLatest()) setLoading(false); }
-  }, [fromDate, startReportRequest, toDate]);
+  }, [range.from, range.to, rangeInvalid, startReportRequest]);
 
-  useEffect(() => { if (fromDate && toDate) void load(); }, [fromDate, load, toDate]);
+  useEffect(() => { void load(); }, [load]);
 
-  const dayCloseAlertCount = (stats.dayClose?.checks || []).filter(c => c.status !== "ok").length;
-  const consistencyAlertCount = (stats.consistency?.summary.critical || 0) + (stats.consistency?.summary.warning || 0);
-  const gunSonuAlertTotal = dayCloseAlertCount + consistencyAlertCount;
+  // Sekme rozeti açık kalan iş sayısıdır (lab, hasta takip, gecikmiş taksit).
+  const openChecks = (stats.dayClose?.checks || []).filter((check) => check.status !== "ok").length;
+  const dateFrom = range.from.slice(0, 10);
+  const dateTo = range.to.slice(0, 10);
+  const rangeText = dateFrom === dateTo ? shortDate(`${dateFrom}T12:00:00Z`) : `${shortDate(`${dateFrom}T12:00:00Z`)} – ${shortDate(`${dateTo}T12:00:00Z`)}`;
+  const vatPayable = stats.netVAT >= 0;
+  const methodRows = [
+    { key: "NAKIT", value: stats.cash },
+    { key: "KREDI_KARTI", value: stats.card },
+    { key: "HAVALE_EFT", value: stats.transfer },
+    { key: "MAIL_ORDER", value: stats.mailOrder },
+    { key: "DIGER", value: stats.other },
+  ].filter((row) => row.value > 0).map((row) => ({ label: METHOD_LABELS[row.key], value: row.value, display: money(row.value) }));
+  const cashNet = stats.dayClose?.cashNet ?? stats.cash;
 
-  const TABS: { id: Tab; label: string; badge?: number }[] = [
-    { id: "genel",     label: "Genel Bakış & Gün Sonu", badge: gunSonuAlertTotal || undefined },
-    { id: "giderler",  label: "Giderler & Vergi" },
-    { id: "islemler",  label: "İşlem Analizi" },
-  ];
-
-  const maxExp = Math.max(...stats.expenseByCategory.map(e => e.amount), 1);
-  const headlineMetrics = [
-    { label: "Toplam Ciro",    val: stats.totalRevenue,    cls: "text-emerald-700", bg: "bg-emerald-50 border-emerald-100", isCount: false },
-    { label: "Net Kasa",       val: stats.netCash,         cls: stats.netCash >= 0 ? "text-primary" : "text-red-700", bg: "bg-primary/5 border-primary/15", isCount: false },
-    { label: "Ödenecek KDV",   val: Math.abs(stats.netVAT), cls: stats.netVAT >= 0 ? "text-amber-700" : "text-green-700", bg: "bg-amber-50 border-amber-100", isCount: false },
-    { label: "Gecikmiş Taksit", val: stats.overdueInstallments, cls: "text-violet-700", bg: "bg-violet-50 border-violet-100", isCount: true },
-  ];
-  // Bu 4 kart, eskiden ayrıca "Diğer özet göstergeler" olarak gösteriliyordu —
-  // artık kafa karıştırmasınlar diye ilgili sekmenin başlığında bağlamsal
-  // rozet olarak gösteriliyor (bkz. giderMetrics / islemMetrics).
-  const giderMetrics = [
-    { label: "Lab Maliyeti", val: stats.totalLabCost,  cls: "text-red-600" },
-    { label: "Giderler",     val: stats.totalExpenses, cls: "text-orange-700" },
-    { label: "Firma Alımı",  val: stats.totalFirmaAlim, cls: "text-purple-700" },
-  ];
-  const islemMetrics = [
-    { label: "Muayene",    val: stats.totalExaminations, cls: "text-slate-800" },
-    { label: "Yeni Hasta", val: stats.newPatients,       cls: "text-violet-700" },
+  const headline = [
+    { label: "Tahsilat", value: money(stats.totalRevenue), tone: "text-emerald-700" },
+    { label: "Gider", value: money(stats.totalExpenses), tone: "text-red-700" },
+    { label: "Net nakit akışı", value: signed(stats.netCash), tone: stats.netCash >= 0 ? "text-slate-900" : "text-red-700" },
+    { label: vatPayable ? "Ödenecek KDV (tahmini)" : "Devreden KDV (tahmini)", value: money(Math.abs(stats.netVAT)), tone: "text-slate-900" },
   ];
 
   return (
-    <section className="space-y-5">
-      {/* Header */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-3">
-          <ModuleIcon module="rapor" size="lg" />
-          <div>
-            <h1 className="font-display text-xl font-black tracking-tight text-slate-900">Raporlar</h1>
-            <p className="text-xs font-medium text-slate-500">Ciro, gider ve performans verilerini dönem bazında inceleyin.</p>
+    <section className="space-y-3">
+      <PageHeader icon="rapor" title="Raporlar" description="Seçili dönemin tahsilat, gider, vergi ve tedavi özeti." />
+
+      <Tabs
+        ariaLabel="Rapor bölümleri"
+        items={[
+          { key: "genel", label: "Genel bakış", count: openChecks || undefined, countTone: "warning" },
+          { key: "giderler", label: "Giderler ve vergi" },
+          { key: "islemler", label: "Tedavi analizi" },
+        ]}
+        value={tab}
+        onChange={setTab}
+      />
+
+      <Toolbar>
+        <Select aria-label="Dönem" size="sm" value={period} onChange={(event) => setPeriod(event.target.value as Period)} className="sm:w-auto">
+          {(Object.keys(PERIOD_LABELS) as Period[]).map((key) => <option key={key} value={key}>{PERIOD_LABELS[key]}</option>)}
+        </Select>
+        {period === "ozel" && (
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+              Başlangıç
+              <Input type="date" size="sm" value={customFrom} max={customTo || undefined} onChange={(event) => setCustomFrom(event.target.value)} className="w-auto" />
+            </label>
+            <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+              Bitiş
+              <Input type="date" size="sm" value={customTo} min={customFrom || undefined} onChange={(event) => setCustomTo(event.target.value)} className="w-auto" />
+            </label>
           </div>
-        </div>
-        <div className="flex w-full flex-wrap items-center gap-2 lg:w-auto lg:justify-end">
-          {/* Hızlı dönem butonları */}
-          {([
-            { key: "bugun", label: "Bugün" },
-            { key: "hafta", label: "Bu Hafta" },
-            { key: "ay",    label: "Bu Ay" },
-            { key: "yil",   label: "Bu Yıl" },
-          ] as const).map(p => (
-            <Button key={p.key} variant="secondary" onClick={() => setQuickRange(p.key)}>
-              {p.label}
-            </Button>
-          ))}
-          <div className="hidden h-6 w-px bg-slate-200 lg:block" />
-          <input aria-label="Rapor başlangıç tarihi" type="datetime-local" value={fromDate} onChange={e => setFromDate(e.target.value)}
-            className="min-w-[190px] flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 lg:flex-none" />
-          <span className="text-slate-400 text-sm">—</span>
-          <input aria-label="Rapor bitiş tarihi" type="datetime-local" value={toDate} onChange={e => setToDate(e.target.value)}
-            className="min-w-[190px] flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 lg:flex-none" />
-          <Button onClick={load} loading={loading} icon={RefreshCw}>
-            Yenile
-          </Button>
-        </div>
-      </div>
-      {loadError && (
-        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          <span>{loadError}</span>
-          <Button variant="secondary" size="sm" onClick={() => void load()}>
-            Yeniden Dene
-          </Button>
-        </div>
-      )}
+        )}
+        <span className="text-xs text-slate-500">{loading ? "Hesaplanıyor…" : rangeText}</span>
+      </Toolbar>
 
-      {/* KPI Özet */}
-      <div className="space-y-3">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {headlineMetrics.map(c => (
-            <article key={c.label} className={`rounded-2xl border p-4 shadow-sm ${c.bg}`}>
-              <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{c.label}</p>
-              <p className={`mt-1 text-xl font-black ${c.cls}`}>{c.isCount ? FMT(c.val as number) : CUR(c.val as number)}</p>
-            </article>
-          ))}
-        </div>
-      </div>
+      {loadError && <LoadErrorState message={loadError} onRetry={() => void load()} />}
 
-      {/* Tabs */}
-      <div className="sticky top-0 z-20 flex gap-1 rounded-2xl border border-slate-100 bg-white p-1 shadow-sm overflow-x-auto">
-        {TABS.map(t => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            className={`flex shrink-0 items-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-bold transition ${tab === t.id ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"}`}>
-            {t.label}
-            {Boolean(t.badge) && (
-              <Badge tone="critical" solid={tab === t.id} size="sm">
-                {t.badge}
-              </Badge>
-            )}
-          </button>
+      <dl className="ui-surface grid grid-cols-2 divide-slate-100 sm:grid-cols-4 sm:divide-x">
+        {headline.map((item) => (
+          <div key={item.label} className="px-4 py-3">
+            <dt className="text-xs font-semibold text-slate-500">{item.label}</dt>
+            <dd className={`mt-0.5 text-lg font-extrabold tabular-nums ${item.tone}`}>{loading && stats === EMPTY ? "…" : item.value}</dd>
+          </div>
         ))}
-      </div>
+      </dl>
 
-      {/* ── GENEL BAKIŞ & GÜN SONU ──────────────────────────────────────── */}
       {tab === "genel" && (
-        <div className="space-y-5">
-          <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-            <p className="text-sm font-bold text-slate-800">Gün sonu kontrol listesi</p>
-            <p className="mt-1 text-xs text-slate-500">
-              Seçili dönem için kasa, laboratuvar, hasta takip ve taksit tarafında kapanmamış açık kalemleri gösterir.
-              Kapanış öncesi tüm kalemlerin &quot;Tamam&quot; olması önerilir.
-            </p>
-          </div>
-
-          {stats.dayClose ? (
-            <>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {stats.dayClose.checks.map(check => {
-                  const s = STATUS_STYLE[check.status];
-                  return (
-                    <div key={check.key} className={`rounded-2xl border p-4 shadow-sm ${s.badge}`}>
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className={`h-2 w-2 shrink-0 rounded-full ${s.dot}`} />
-                          <span className="text-sm font-bold">{check.label}</span>
-                        </div>
-                        <Badge tone={STATUS_TONE[check.status]} size="sm">{s.label}</Badge>
-                      </div>
-                      <p className="mt-2 text-xs leading-relaxed">{check.detail}</p>
-                      <Link href={check.href} className="mt-2 inline-block text-xs font-bold underline underline-offset-2">
-                        İncele →
-                      </Link>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <Card title="Açık kalan işler" action={<span className="text-xs text-slate-400">Seçili döneme göre</span>}>
+            {stats.dayClose ? (
+              <ul className="divide-y divide-slate-100">
+                {stats.dayClose.checks.map((check) => (
+                  <li key={check.key} className="flex items-start justify-between gap-3 py-2.5">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-800">{check.label}</p>
+                      <p className="text-xs text-slate-500">{check.detail}</p>
                     </div>
-                  );
-                })}
-              </div>
-
-              <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-                <h3 className="mb-4 text-sm font-bold text-slate-800">Kapanış Özeti</h3>
-                <div className="grid gap-3 grid-cols-2 sm:grid-cols-4">
-                  {[
-                    { label: "Nakit",      val: stats.dayClose.cash },
-                    { label: "Kredi Kartı", val: stats.dayClose.card },
-                    { label: "Havale/EFT", val: stats.dayClose.transfer },
-                    { label: "Mail Order", val: stats.dayClose.mailOrder },
-                  ].map(r => (
-                    <div key={r.label} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
-                      <p className="text-[11px] font-bold uppercase text-slate-500">{r.label}</p>
-                      <p className="mt-1 text-sm font-black text-slate-800">{CUR(r.val)}</p>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <Badge tone={STATUS[check.status].tone}>{STATUS[check.status].label}</Badge>
+                      {check.status !== "ok" && (
+                        <Link href={check.href} className="inline-flex items-center gap-0.5 text-xs font-semibold text-primary hover:underline">
+                          Aç <ArrowRight className="h-3 w-3" aria-hidden="true" />
+                        </Link>
+                      )}
                     </div>
-                  ))}
-                </div>
-                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
-                  <span className="text-xs text-slate-500">
-                    Tahsil edilmemiş tedavi bakiyesi olan hasta sayısı: <span className="font-bold text-slate-700">{FMT(stats.dayClose.unpaidTreatmentPatientCount)}</span>
-                  </span>
-                  <span className="text-sm font-black text-slate-800">Net: <span className={stats.dayClose.net >= 0 ? "text-emerald-700" : "text-red-600"}>{CUR(stats.dayClose.net)}</span></span>
-                </div>
-              </div>
-            </>
-          ) : (
-            <div className="rounded-xl border border-slate-100 bg-white p-8 text-center shadow-sm">
-              <p className="text-sm text-slate-400">Gün sonu verisi yüklenemedi.</p>
-            </div>
-          )}
-
-          <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h3 className="text-sm font-bold text-slate-800">Veri Tutarlılığı</h3>
-                <p className="mt-0.5 text-xs text-slate-500">Kayıtlar arasında kopan bağlantıları ve düzeltilmesi gereken kalemleri gösterir — aynı kontrol Sistem İzleme sayfasında da yer alır.</p>
-                <Link href="/sistem-izleme" className="mt-1 inline-block text-xs font-bold text-primary hover:underline">Sistem İzleme&apos;de detaylı gör →</Link>
-              </div>
-              {stats.consistency && (
-                <Badge
-                  tone={stats.consistency.summary.critical > 0 ? "critical" : stats.consistency.summary.warning > 0 ? "warning" : "success"}
-                  size="md"
-                >
-                  Skor: {stats.consistency.summary.score}/100
-                </Badge>
-              )}
-            </div>
-
-            {stats.consistency && stats.consistency.issues.length > 0 ? (
-              <div className="flex flex-wrap items-center gap-2 text-xs font-semibold">
-                {stats.consistency.summary.critical > 0 && (
-                  <span className="rounded-full bg-red-50 px-3 py-1 text-red-700">{stats.consistency.summary.critical} kritik</span>
-                )}
-                {stats.consistency.summary.warning > 0 && (
-                  <span className="rounded-full bg-amber-50 px-3 py-1 text-amber-700">{stats.consistency.summary.warning} uyarı</span>
-                )}
-                {stats.consistency.summary.info > 0 && (
-                  <span className="rounded-full bg-slate-100 px-3 py-1 text-slate-600">{stats.consistency.summary.info} bilgi</span>
-                )}
-                <span className="text-slate-400">— detaylar için Sistem İzleme&apos;ye bakın.</span>
-              </div>
-            ) : (
-              <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-6 text-center">
-                <p className="text-sm font-semibold text-emerald-700">Kritik veri bağlantısı sorunu bulunamadı.</p>
-              </div>
-            )}
-          </div>
-
-          <div className="grid gap-5 lg:grid-cols-2">
-            <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-              <h3 className="mb-4 text-sm font-bold text-slate-800">Ödeme Yöntemi Dağılımı</h3>
-              {stats.totalRevenue > 0 ? (
-                <div className="space-y-3">
-                  {[
-                    { label: "Nakit",       val: stats.cash,      color: "bg-emerald-500" },
-                    { label: "Kredi Kartı", val: stats.card,      color: "bg-blue-500" },
-                    { label: "Havale/EFT",  val: stats.transfer,  color: "bg-violet-500" },
-                    { label: "Mail Order",  val: stats.mailOrder, color: "bg-cyan-500" },
-                    { label: "Diğer",       val: stats.other,     color: "bg-amber-500" },
-                  ].filter(i => i.val > 0).map(item => {
-                    const pct = PCT(item.val, stats.totalRevenue);
-                    return (
-                      <div key={item.label} className="flex items-center gap-3">
-                        <span className="w-24 shrink-0 text-xs text-slate-600">{item.label}</span>
-                        <div className="flex-1 overflow-hidden rounded-full bg-slate-100 h-5">
-                          <div className={`h-5 flex items-center justify-end pr-2 rounded-full ${item.color} transition-all`}
-                            style={{ width: Math.max(8, pct) + "%" }}>
-                            <span className="text-xs font-bold text-white">{pct}%</span>
-                          </div>
-                        </div>
-                        <span className="w-24 shrink-0 text-right text-xs font-bold text-slate-800">{CUR(item.val)}</span>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : <p className="py-8 text-center text-sm text-slate-400">Seçili dönemde ödeme verisi yok</p>}
-            </div>
-
-            <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-              <h3 className="mb-4 text-sm font-bold text-slate-800">Net Kasa Hesabı</h3>
-              <div className="space-y-2.5 text-sm">
-                {[
-                  { label: "+ Toplam Ciro",      val: stats.totalRevenue,   cls: "text-emerald-700" },
-                  { label: "− Giderler",         val: stats.totalExpenses,  cls: "text-orange-700" },
-                  { label: "− Firma / Tedarik",  val: stats.totalFirmaAlim, cls: "text-purple-700" },
-                ].map(r => (
-                  <div key={r.label} className="flex justify-between items-center py-1.5 border-b border-slate-50">
-                    <span className="text-slate-600">{r.label}</span>
-                    <span className={`font-bold ${r.cls}`}>{CUR(r.val)}</span>
-                  </div>
+                  </li>
                 ))}
-                <div className="flex justify-between items-center pt-2">
-                  <span className="font-black text-slate-800">= Net Kasa</span>
-                  <span className={`text-xl font-black ${stats.netCash >= 0 ? "text-emerald-700" : "text-red-600"}`}>{CUR(stats.netCash)}</span>
-                </div>
-              </div>
-              <div className="mt-4 rounded-lg bg-amber-50 border border-amber-200 p-3">
-                <p className="text-xs font-semibold text-amber-700">Not: Lab maliyeti doktor hakedişi hesabında ayrıca düşülür; kasa hesabında firma alımlarına dahildir.</p>
-              </div>
-            </div>
-          </div>
+              </ul>
+            ) : (
+              <p className="py-6 text-center text-sm text-slate-400">{loading ? "Hesaplanıyor…" : "Kontrol listesi yüklenemedi."}</p>
+            )}
+          </Card>
+
+          <Card
+            title="Kasa ve nakit akışı"
+            action={<Link href="/muhasebe?tab=defter&donem=bugun" className="text-xs font-semibold text-primary hover:underline">Bugünün hareketleri</Link>}
+          >
+            <Line label="Tahsilat" value={money(stats.totalRevenue)} tone="text-emerald-700" />
+            <Line label="Ödenen giderler" hint="Firma ödemeleri ve doktor hakediş ödemeleri dahil" value={`−${money(stats.totalExpenses)}`} tone="text-red-700" />
+            <Line label="Net nakit akışı" value={signed(stats.netCash)} tone={stats.netCash >= 0 ? "text-slate-900" : "text-red-700"} strong />
+            <p className="mt-1 text-xs text-slate-500">
+              Kasadaki nakit değişimi (nakit tahsilat − nakit gider): <b className="tabular-nums text-slate-700">{signed(cashNet)}</b>
+            </p>
+            {stats.totalFirmaAlim > 0 && (
+              <p className="mt-1 text-xs text-slate-500">
+                Bu dönemde firmalardan {money(stats.totalFirmaAlim)} alım faturası var; ödendikçe giderlere yansır.
+              </p>
+            )}
+          </Card>
+
+          <Card title="Tahsilatın ödeme yöntemine göre dağılımı">
+            {methodRows.length > 0
+              ? <Bars rows={methodRows} total={stats.totalRevenue} color="bg-primary" />
+              : <EmptyState title="Bu dönemde tahsilat yok" compact />}
+          </Card>
+
+          {stats.dayClose && (
+            <Card title="Tahsil edilmemiş tedaviler">
+              <p className="text-sm text-slate-600">
+                Bu dönemde tedavi görüp ödemesini tamamlamamış <b className="text-slate-900">{count(stats.dayClose.unpaidTreatmentPatientCount)}</b> hasta var.
+              </p>
+              <Link href="/muhasebe?tab=alacak" className="mt-2 inline-flex items-center gap-1 text-sm font-semibold text-primary hover:underline">
+                Hasta borçlarını aç <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
+              </Link>
+            </Card>
+          )}
         </div>
       )}
 
-      {/* ── GİDERLER & VERGİ ─────────────────────────────────────────────── */}
       {tab === "giderler" && (
-        <div className="space-y-5">
-          <div className="flex flex-wrap gap-3">
-            {giderMetrics.map(m => (
-              <div key={m.label} className="rounded-xl border border-slate-100 bg-white px-4 py-2.5 shadow-sm">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{m.label}</p>
-                <p className={`text-sm font-black ${m.cls}`}>{CUR(m.val)}</p>
-              </div>
-            ))}
-          </div>
-        <div className="grid gap-5 lg:grid-cols-2">
-          <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-800">Gider Kategorileri</h3>
-              <Link href="/muhasebe?tab=gider" className="text-xs font-bold text-primary hover:underline">Tüm Giderleri Gör</Link>
-            </div>
+        <div className="grid gap-3 lg:grid-cols-2">
+          <Card
+            title="Gider türleri"
+            action={<Link href={`/muhasebe?tab=defter&tur=GIDER&from=${dateFrom}&to=${dateTo}`} className="text-xs font-semibold text-primary hover:underline">Giderleri listele</Link>}
+          >
             {stats.expenseByCategory.length > 0 ? (
-              <div className="space-y-3">
-                {stats.expenseByCategory.map(e => {
-                  const pct = PCT(e.amount, maxExp);
-                  return (
-                    <div key={e.category} className="flex items-center gap-3">
-                      <span className="w-28 shrink-0 text-xs text-slate-600 truncate">{e.category}</span>
-                      <div className="flex-1 overflow-hidden rounded-full bg-slate-100 h-4">
-                        <div className="h-4 rounded-full bg-orange-400 transition-all" style={{ width: `${Math.max(4, pct)}%` }} />
-                      </div>
-                      <span className="w-24 shrink-0 text-right text-xs font-bold">{CUR(e.amount)}</span>
-                    </div>
-                  );
-                })}
-                <div className="flex justify-between border-t pt-2">
-                  <span className="text-xs font-bold">Toplam Gider</span>
-                  <span className="text-sm font-black text-orange-700">{CUR(stats.totalExpenses)}</span>
-                </div>
-              </div>
-            ) : <p className="py-8 text-center text-sm text-slate-400">Gider kaydı yok</p>}
-          </div>
+              <>
+                <Bars rows={stats.expenseByCategory.map((row) => ({ label: row.category, value: row.amount, display: money(row.amount) }))} total={Math.max(...stats.expenseByCategory.map((row) => row.amount), 1)} color="bg-orange-400" />
+                <Line label="Toplam gider" value={money(stats.totalExpenses)} strong />
+              </>
+            ) : <EmptyState title="Bu dönemde gider yok" compact />}
+          </Card>
 
-          <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-            <div className="mb-4 flex items-center justify-between">
-              <h3 className="text-sm font-bold text-slate-800">Firma / Tedarikçi Alımları</h3>
-              <Link href="/firma" className="text-xs font-bold text-primary hover:underline">Tüm Firmaları Gör</Link>
-            </div>
-            {stats.firmaByName && stats.firmaByName.length > 0 ? (
-              <div className="space-y-2.5">
-                {stats.firmaByName.map(f => {
-                  const pct = PCT(f.amount, stats.totalFirmaAlim || 1);
-                  return (
-                    <div key={f.name} className="flex items-center gap-3">
-                      <span className="w-28 shrink-0 text-xs text-slate-600 truncate">{f.name}</span>
-                      <div className="flex-1 overflow-hidden rounded-full bg-slate-100 h-4">
-                        <div className="h-4 rounded-full bg-purple-400 transition-all" style={{ width: `${Math.max(4, pct)}%` }} />
-                      </div>
-                      <span className="w-24 shrink-0 text-right text-xs font-bold">{CUR(f.amount)}</span>
-                    </div>
-                  );
-                })}
-                <div className="flex justify-between border-t pt-2">
-                  <span className="text-xs font-bold">Toplam Alım</span>
-                  <span className="text-sm font-black text-purple-700">{CUR(stats.totalFirmaAlim)}</span>
-                </div>
-              </div>
-            ) : <p className="py-8 text-center text-sm text-slate-400">Firma alım kaydı yok</p>}
-          </div>
-        </div>
+          <Card title="Firma alımları (fatura)" action={<Link href="/firma" className="text-xs font-semibold text-primary hover:underline">Firmalar</Link>}>
+            {stats.firmaByName.length > 0 ? (
+              <>
+                <Bars rows={stats.firmaByName.map((row) => ({ label: row.name, value: row.amount, display: money(row.amount) }))} total={Math.max(...stats.firmaByName.map((row) => row.amount), 1)} color="bg-violet-400" />
+                <Line label="Toplam alım" value={money(stats.totalFirmaAlim)} strong />
+                <p className="text-xs text-slate-500">Alım faturasıdır; firmaya yapılan ödemeler giderlerde görünür.</p>
+              </>
+            ) : <EmptyState title="Bu dönemde firma alımı yok" compact />}
+            {stats.totalLabCost > 0 && <p className="mt-2 text-xs text-slate-500">Laboratuvar faturaları: {money(stats.totalLabCost)} (doktor hakedişinden düşülür).</p>}
+          </Card>
 
-        <div className="grid gap-5 lg:grid-cols-2">
-          <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-            <h3 className="mb-4 text-sm font-bold text-slate-800">KDV Özeti (Dönem)</h3>
-            <div className="space-y-3 text-sm">
-              {[
-                { label: "Çıkan KDV (Tahsil Edilen)",  val: stats.outputVAT,  sign: "+", cls: "text-emerald-700", desc: "Gelirden %10 KDV" },
-                { label: "Girdi KDV (Ödenen)",          val: stats.inputVAT,   sign: "−", cls: "text-red-600",    desc: "Gider + alım faturalarından" },
-              ].map(r => (
-                <div key={r.label} className="flex justify-between items-start py-2 border-b border-slate-50">
-                  <div>
-                    <span className="text-slate-700">{r.sign} {r.label}</span>
-                    <p className="text-xs text-slate-400">{r.desc}</p>
-                  </div>
-                  <span className={`font-bold ${r.cls}`}>{CUR(r.val)}</span>
-                </div>
-              ))}
-              <div className="flex justify-between items-center pt-2">
-                <div>
-                  <span className="font-black text-slate-800">= {stats.netVAT >= 0 ? "Ödenecek KDV" : "Devreden KDV (Sonraki Dönem)"}</span>
-                </div>
-                <span className={`text-xl font-black ${stats.netVAT >= 0 ? "text-red-600" : "text-green-600"}`}>{CUR(Math.abs(stats.netVAT))}</span>
-              </div>
-              {stats.netVAT < 0 && (
-                <div className="rounded-lg bg-green-50 border border-green-200 p-3">
-                  <p className="text-xs text-green-700">Girdi KDV &gt; Çıkan KDV: Bu dönem ödemeniz gereken KDV yoktur, fazla kısım sonraki döneme devredilir.</p>
-                </div>
-              )}
-            </div>
-          </div>
+          <Card title="KDV özeti (tahmini)">
+            <Line label="Hesaplanan KDV" hint="Tahsilatın %10'u" value={money(stats.outputVAT)} />
+            <Line label="İndirilecek KDV" hint="Gider ve alım faturalarından" value={`−${money(stats.inputVAT)}`} />
+            <Line label={vatPayable ? "Ödenecek KDV" : "Devreden KDV (sonraki döneme)"} value={money(Math.abs(stats.netVAT))} tone={vatPayable ? "text-red-700" : "text-emerald-700"} strong />
+          </Card>
 
-          <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-            <h3 className="mb-4 text-sm font-bold text-slate-800">Gelir Vergisi Tahmini (2026)</h3>
-            <div className="space-y-2.5 text-sm">
-              {[
-                { label: "Dönem Net Kâr (KDV hariç)", val: stats.periodNetProfit, cls: stats.periodNetProfit >= 0 ? "text-emerald-700" : "text-red-600" },
-                { label: "Yıllık Net Kâr (Tahmin)",   val: stats.annualNetProfit, cls: stats.annualNetProfit >= 0 ? "text-primary" : "text-red-600" },
-              ].map(r => (
-                <div key={r.label} className="flex justify-between py-1.5 border-b border-slate-50">
-                  <span className="text-slate-600">{r.label}</span>
-                  <span className={`font-bold ${r.cls}`}>{SIGN(r.val)}</span>
-                </div>
-              ))}
-              <details className="group pt-2">
-                <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-bold text-slate-700">
-                  <span>2026 Vergi Dilimleri</span>
-                  <span className="text-[10px] font-medium text-slate-400 group-open:hidden">Göster</span>
-                  <span className="hidden text-[10px] font-medium text-slate-400 group-open:inline">Gizle</span>
-                </summary>
-                <div className="mt-2 space-y-2">
-                  {[
-                    ["0 – 190.000 TL",        "% 15"],
-                    ["190.001 – 400.000 TL",  "% 20"],
-                    ["400.001 – 1.500.000 TL","% 27"],
-                    ["1.500.001 – 5.300.000 TL","% 35"],
-                    ["5.300.001 TL üzeri",    "% 40"],
-                  ].map(([label, rate]) => (
-                    <div key={label} className="flex justify-between text-xs text-slate-500">
-                      <span>{label}</span><span className="font-semibold">{rate}</span>
-                    </div>
-                  ))}
-                </div>
-              </details>
-              <div className="flex justify-between items-center border-t-2 border-slate-200 pt-3">
-                <span className="font-black text-slate-900">Hesaplanan Gelir Vergisi</span>
-                <span className="text-xl font-black text-red-700">{CUR(stats.gelirVergisi)}</span>
-              </div>
-              <p className="text-xs text-slate-400">* Tahmini hesaplama. Resmi vergi beyanı için mali müşavir ile görüşünüz.</p>
-            </div>
-          </div>
-        </div>
+          <Card title="Gelir vergisi tahmini">
+            <Line label="Dönem kârı (KDV hariç)" hint="Tahsilat − gider" value={signed(stats.periodNetProfit)} tone={stats.periodNetProfit >= 0 ? "text-slate-900" : "text-red-700"} />
+            <Line label="Yıllık kâr (bu yıl şimdiye kadar)" value={signed(stats.annualNetProfit)} tone={stats.annualNetProfit >= 0 ? "text-slate-900" : "text-red-700"} />
+            <Line label="Hesaplanan gelir vergisi" value={money(stats.gelirVergisi)} tone="text-red-700" strong />
+            <details className="mt-1 text-xs text-slate-500">
+              <summary className="cursor-pointer font-semibold text-slate-600">Vergi dilimleri (2026)</summary>
+              <ul className="mt-1 space-y-0.5">
+                {[["0 – 190.000 TL", "%15"], ["190.001 – 400.000 TL", "%20"], ["400.001 – 1.500.000 TL", "%27"], ["1.500.001 – 5.300.000 TL", "%35"], ["5.300.001 TL üzeri", "%40"]].map(([label, rate]) => (
+                  <li key={label} className="flex justify-between"><span>{label}</span><span className="font-semibold">{rate}</span></li>
+                ))}
+              </ul>
+            </details>
+            <p className="mt-2 text-xs text-slate-400">Tahmini hesaplamadır. Resmi beyan için mali müşavirinize danışın.</p>
+          </Card>
         </div>
       )}
 
-      {/* ── İŞLEM ANALİZİ ──────────────────────────────────────────────── */}
       {tab === "islemler" && (
-        <div className="space-y-5">
-          <div className="flex flex-wrap gap-3">
-            {islemMetrics.map(m => (
-              <div key={m.label} className="rounded-xl border border-slate-100 bg-white px-4 py-2.5 shadow-sm">
-                <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{m.label}</p>
-                <p className={`text-sm font-black ${m.cls}`}>{FMT(m.val)}</p>
-              </div>
-            ))}
+        <div className="space-y-3">
+          <p className="text-sm text-slate-600">
+            Bu dönemde <b className="text-slate-900">{count(stats.totalExaminations)}</b> tedavi kalemi işlendi, <b className="text-slate-900">{count(stats.newPatients)}</b> yeni hasta kaydedildi.
+          </p>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <Card title="En çok yapılan tedaviler">
+              {stats.topExaminations.length > 0
+                ? <Bars rows={stats.topExaminations.map((row) => ({ label: row.treatmentName, value: row.count, display: `${count(row.count)} kez` }))} total={stats.topExaminations[0]?.count || 1} color="bg-primary" />
+                : <EmptyState title="Bu dönemde tedavi kaydı yok" compact />}
+            </Card>
+            <Card title="En çok işlem gören dişler">
+              {stats.topTeeth.length > 0
+                ? <Bars rows={stats.topTeeth.map((row) => ({ label: `Diş ${row.tooth}`, value: row.count, display: `${count(row.count)} kez` }))} total={stats.topTeeth[0]?.count || 1} color="bg-teal-500" />
+                : <EmptyState title="Bu dönemde diş kaydı yok" compact />}
+            </Card>
           </div>
-        <div className="grid gap-5 lg:grid-cols-2">
-          <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 text-sm font-bold text-slate-800">En Çok Yapılan İşlemler</h3>
-            {stats.topExaminations.length > 0 ? (
-              <div className="space-y-2">
-                {stats.topExaminations.map((e, i) => {
-                  const pct = PCT(e.count, stats.topExaminations[0]?.count || 1);
-                  return (
-                    <div key={i} className="flex items-center gap-2.5">
-                      <span className="w-5 text-right text-xs font-bold text-slate-400">{i+1}</span>
-                      <div className="flex-1 overflow-hidden rounded-full bg-slate-100 h-5">
-                        <div className="h-5 flex items-center rounded-full bg-primary transition-all" style={{ width: `${Math.max(8, pct)}%` }}>
-                          {pct > 20 && <span className="pl-2 text-xs font-bold text-white">{e.count}</span>}
-                        </div>
-                      </div>
-                      <span className="w-7 text-right text-xs font-bold">{e.count}</span>
-                      <span className="w-36 truncate text-xs text-slate-600">{e.treatmentName}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : <div className="flex flex-col items-center py-8 text-center"><RaporEmptyIcon className="ui-empty-illustration mb-2" /><p className="text-sm text-slate-400">Veri yok</p></div>}
-          </div>
-          <div className="rounded-xl border border-slate-100 bg-white p-5 shadow-sm">
-            <h3 className="mb-3 text-sm font-bold text-slate-800">En Çok İşlem Gören Dişler</h3>
-            {stats.topTeeth.length > 0 ? (
-              <div className="space-y-2">
-                {stats.topTeeth.map((t, i) => {
-                  const pct = PCT(t.count, stats.topTeeth[0]?.count || 1);
-                  return (
-                    <div key={i} className="flex items-center gap-2.5">
-                      <span className="w-5 text-right text-xs font-bold text-slate-400">{i+1}</span>
-                      <div className="flex-1 overflow-hidden rounded-full bg-slate-100 h-5">
-                        <div className="h-5 flex items-center rounded-full bg-accent transition-all" style={{ width: `${Math.max(8, pct)}%` }}>
-                          {pct > 20 && <span className="pl-2 text-xs font-bold text-white">{t.count}</span>}
-                        </div>
-                      </div>
-                      <span className="w-7 text-right text-xs font-bold">{t.count}</span>
-                      <span className="font-mono text-xs text-slate-700">Diş #{t.tooth}</span>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : <div className="flex flex-col items-center py-8 text-center"><RaporEmptyIcon className="ui-empty-illustration mb-2" /><p className="text-sm text-slate-400">Veri yok</p></div>}
-          </div>
-        </div>
         </div>
       )}
     </section>

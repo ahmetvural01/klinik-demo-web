@@ -160,7 +160,7 @@ export async function processSmsDispatchJob(job: SmsDispatchJob) {
   for (let i = 0; i < appointments.length; i += batchSize) {
     const chunk = appointments.slice(i, i + batchSize);
     const chunkResults = await Promise.all(chunk.map(async (appt) => {
-      const dateText = new Date(appt.startAt).toLocaleString("tr-TR");
+      const dateText = new Date(appt.startAt).toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" });
       const institutionName = settings?.institutionName || institution.name;
       const institutionPhone = settings?.institutionPhone || institution.phone || "";
       const fallbackMessage = job.smsType === "BILGI"

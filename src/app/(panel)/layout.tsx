@@ -30,7 +30,7 @@ export default async function PanelLayout({ children }: { children: React.ReactN
     user.institution
       ? prisma.institution.findUnique({
           where: { id: user.institution },
-          select: { whatsappEnabled: true },
+          select: { whatsappEnabled: true, name: true, settings: { select: { institutionName: true } } },
         }).catch(() => null)
       : Promise.resolve(null),
     resolveBranchContext({
@@ -64,7 +64,10 @@ export default async function PanelLayout({ children }: { children: React.ReactN
       <PanelRealtimeSync />
       <PanelRouteWarmup />
       <PanelCacheReset scopeKey={scopeKey} />
-      <Sidebar user={{ fullName: user.fullName, role: user.rawRole, photoUrl }} />
+      <Sidebar
+        user={{ fullName: user.fullName, role: user.rawRole, photoUrl }}
+        initialBrandName={institutionFeatures?.settings?.institutionName || institutionFeatures?.name || ""}
+      />
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <Topbar user={{ fullName: user.fullName, role: user.role, photoUrl }} />
         {user.ghost && <GhostModeBanner institutionName={institutionName} />}

@@ -64,7 +64,7 @@ export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   }, []);
 
   const toastList = (
-    <div aria-live="polite" aria-atomic="false" className="fixed right-3 top-3 z-[360] flex w-[calc(100vw-1.5rem)] max-w-sm flex-col gap-2 sm:right-4 sm:top-4 sm:w-auto">
+    <div aria-live="polite" aria-atomic="false" className="fixed right-3 top-[68px] z-[360] flex w-[calc(100vw-1.5rem)] max-w-sm flex-col gap-2 sm:right-4 sm:top-[72px] sm:w-auto">
       {toasts.map((t) => {
         const bg = t.type === 'error' ? 'bg-red-50 border-red-200' : t.type === 'success' ? 'bg-emerald-50 border-emerald-200' : 'bg-white border-slate-200';
         return (

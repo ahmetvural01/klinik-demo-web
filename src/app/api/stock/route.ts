@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, withApiTiming, writeAudit } from "@/lib/api";
+import { hasEffectivePermission, requireAuth, withApiTiming, writeAudit } from "@/lib/api";
 import { applyStockMovement } from "@/lib/stock-ledger";
 import { formatZodError, stockItemCreateSchema } from "@/lib/validators";
 import { requireActiveBranch } from "@/lib/branch-context";
@@ -8,7 +8,9 @@ import { getCategoryAliases, normalizeCategory } from "@/lib/stock-category";
 
 export const dynamic = "force-dynamic";
 
-function enrichStockItem(item: any, purchaseLines?: any[], activeLots?: any[]) {
+const nameKey = (value: string) => value.toLocaleLowerCase("tr-TR").replace(/\s+/g, " ").trim();
+
+function enrichStockItem(item: any, purchaseLines?: any[], activeLots?: any[], onOrderQuantity = 0) {
   const purchaseItems = Array.isArray(purchaseLines) ? purchaseLines : Array.isArray(item.purchaseItems) ? item.purchaseItems : [];
   const lots = Array.isArray(activeLots) ? activeLots : [];
   const sortedPurchases = [...purchaseItems].sort((a, b) => {
@@ -38,14 +40,29 @@ function enrichStockItem(item: any, purchaseLines?: any[], activeLots?: any[]) {
     category: normalizeCategory(item.category),
     averageUnitPrice,
     activeLotCount: lots.length,
+    // Çıkış yalnız partilerden yapılabildiği için ekranda "en fazla" sınırı
+    // ve partisi eksik kartların uyarısı bu sayıdan hesaplanır.
+    lotQuantity,
+    // Teslim alınmamış siparişlerdeki miktar ("Siparişte").
+    onOrderQuantity,
     nearestExpiry: expiringLot?.expiresAt || null,
     lastPurchase: lastLine ? {
       date: lastLine.purchase?.tarih || lastLine.createdAt,
       supplier: lastLine.purchase?.firma?.name || null,
+      supplierId: lastLine.purchase?.firma?.id || null,
       unitPrice: Number(lastLine.unitPrice || 0),
       quantity: Number(lastLine.quantity || 0),
       invoiceNo: lastLine.purchase?.faturaNo || null,
     } : null,
+  };
+}
+
+function hideStockCost(item: any) {
+  return {
+    ...item,
+    unitPrice: null,
+    averageUnitPrice: null,
+    lastPurchase: item.lastPurchase ? { ...item.lastPurchase, unitPrice: null, invoiceNo: null } : null,
   };
 }
 
@@ -58,12 +75,14 @@ export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const category = searchParams.get("category");
   const categoryAliases = category ? getCategoryAliases(category) : [];
+  // ?arsiv=1: arşivlenmiş kartlar (geri almak için).
+  const archived = searchParams.get("arsiv") === "1";
 
   let items: any[] = [];
   try {
     items = await (prisma as any).stockItem.findMany({
       where: {
-        isActive: true,
+        isActive: !archived,
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
         branchId: branch.branchId,
         ...(category ? { category: { in: categoryAliases } } : {}),
@@ -80,6 +99,7 @@ export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
     ? await (prisma as any).purchaseItem.findMany({
         where: {
           stockItemId: { in: itemIds },
+          archivedAt: null,
           purchase: {
             status: "AKTIF",
             ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
@@ -92,14 +112,22 @@ export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
             select: {
               tarih: true,
               faturaNo: true,
-              firma: { select: { name: true } },
+              receiptStatus: true,
+              firma: { select: { id: true, name: true } },
             },
           },
         },
       })
     : [];
+  // "Son alış" ve ortalama maliyet yalnız teslim alınmış satırlardan;
+  // gelmemiş sipariş ayrı "Siparişte" miktarı olarak gösterilir.
+  const onOrderByItem = new Map<string, number>();
   const linesByItem = new Map<string, any[]>();
   for (const line of purchaseLines) {
+    if (line.purchase?.receiptStatus === "SIPARIS_VERILDI") {
+      onOrderByItem.set(line.stockItemId, (onOrderByItem.get(line.stockItemId) || 0) + Number(line.quantity || 0));
+      continue;
+    }
     const arr = linesByItem.get(line.stockItemId) || [];
     arr.push(line);
     linesByItem.set(line.stockItemId, arr);
@@ -129,11 +157,18 @@ export const GET = withApiTiming("stock", async function GET(req: NextRequest) {
     lotsByItem.set(lot.stockItemId, arr);
   }
 
-  return NextResponse.json(items.map((item) => enrichStockItem(
-    item,
-    linesByItem.get(item.id) || [],
-    lotsByItem.get(item.id) || [],
-  )));
+  // Alış fiyatı ve maliyet finans bilgisidir: finance:read olmayan roller
+  // (asistan, banko, doktor) stok miktarını görür ama maliyeti görmez.
+  const canSeeCost = await hasEffectivePermission(auth.user, "finance:read");
+  return NextResponse.json(items.map((item) => {
+    const enriched = enrichStockItem(
+      item,
+      linesByItem.get(item.id) || [],
+      lotsByItem.get(item.id) || [],
+      onOrderByItem.get(item.id) || 0,
+    );
+    return canSeeCost ? enriched : hideStockCost(enriched);
+  }));
 });
 
 export async function POST(req: NextRequest) {
@@ -149,23 +184,28 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: "Stok kartı bilgileri geçersiz", errors: formatZodError(parsed.error) }, { status: 400 });
   }
-  const { name, category, unit, quantity, minQuantity, barcode, expiresAt, storageLocation } = parsed.data;
+  const { name, category, unit, quantity, minQuantity, unitPrice, barcode, expiresAt, storageLocation } = parsed.data;
 
   // "Yeni Kart" formu isim çakışmasını kontrol etmiyordu — aynı isimle iki
   // stok kartı açılabiliyordu (bkz. StockItem'a eklenen unique kısıt).
   // Burada önceden, açık bir mesajla engelliyoruz.
-  const existingByName = await (prisma as any).stockItem.findFirst({
+  // Veritabanı karşılaştırması Türkçe İ/ı harflerini ayırt ediyordu ("İmplant"
+  // ile "implant" iki ayrı kart açılıyordu); karşılaştırma Türkçe küçük harfle yapılır.
+  const sameBranchItems = await (prisma as any).stockItem.findMany({
     where: {
       ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
       branchId: branch.branchId,
-      isActive: true,
-      name: { equals: name, mode: "insensitive" },
     },
-    select: { id: true, name: true },
+    select: { id: true, name: true, isActive: true },
   });
+  const existingByName = sameBranchItems.find((row: { name: string }) => nameKey(row.name) === nameKey(name));
   if (existingByName) {
     return NextResponse.json(
-      { error: `"${existingByName.name}" isimli bir stok kartı zaten var. Mevcut kartı kullanın veya farklı bir isim seçin.` },
+      {
+        error: existingByName.isActive
+          ? `"${existingByName.name}" isimli bir stok kartı zaten var. Mevcut kartı kullanın veya farklı bir isim seçin.`
+          : `"${existingByName.name}" isimli kart arşivde. Stok listesinde "Arşiv" filtresinden geri alabilirsiniz.`,
+      },
       { status: 409 }
     );
   }
@@ -200,7 +240,10 @@ export async function POST(req: NextRequest) {
           userId: auth.user.id,
           type: "GIRIS",
           quantity: initialQuantity,
-          note: "Başlangıç stok girişi",
+          note: "Açılış stoku (sayım)",
+          // Açılış partisi birim maliyetiyle açılır; önceden ₺0 maliyetle
+          // açıldığı için ortalama maliyet ve stok değeri düşük görünüyordu.
+          ...(unitPrice !== null && unitPrice !== undefined ? { unitPrice: Number(unitPrice) } : {}),
         });
         return movement.item;
       }

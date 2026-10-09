@@ -1,6 +1,30 @@
 "use client";
 
-import type React from "react";
+import Link from "next/link";
+import { ArrowRight, Ban, Pencil, Phone, RotateCcw, XCircle } from "lucide-react";
+import { Badge } from "@/components/ui/Badge";
+import { Button, IconButton } from "@/components/ui/Button";
+import { LabStatusBadge } from "@/components/lab/LabStatusBadge";
+import { formatPhoneNumber } from "@/lib/format";
+import {
+  LAB_CURRENCY,
+  LAB_LABELS,
+  cleanReceivedNote,
+  cleanSentNote,
+  expectedReturnAt,
+  formatLabDate,
+  formatShortLabDate,
+  getOrderSummary,
+  getReceivedItemFromNote,
+  hasRptMarker,
+  isSameWorkflowValue,
+  isTripLate,
+  needsProvaAppointment,
+  parseDesc,
+  sentMethodLabel,
+  splitOrderNotes,
+  teethList,
+} from "@/lib/lab-workflow";
 
 export type SharedLabInvoice = {
   id: string;
@@ -16,6 +40,7 @@ export type SharedLabTrip = {
   order: number;
   description: string;
   sentAt: string;
+  expectedAt?: string | null;
   receivedAt?: string | null;
   sentNote?: string | null;
   receivedNote?: string | null;
@@ -28,162 +53,43 @@ export type SharedLabOrder = {
   teeth?: string | null;
   notes?: string | null;
   status: string;
+  firmaId?: string | null;
+  createdAt?: string | null;
   patient: { id: string; fullName: string; phone?: string | null };
   doctor: { id?: string | null; fullName: string };
   trips: SharedLabTrip[];
   invoices: SharedLabInvoice[];
 };
 
-type WorkflowStep = { send: string; request: string };
-
-const CUR = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 0 });
-const PROVA_FOLLOW_UP_MARKER = "RANDEVU_PROVA_GEREKLI";
-const RECEIVED_ITEM_MARKER = "LAB_GELEN_IS:";
-
-const WORKFLOW_TEMPLATES: Record<string, WorkflowStep[]> = {
-  Zirkonyum: [
-    { send: "Ölçü", request: "Zirkonyum Alt Yapı" },
-    { send: "Zirkonyum Alt Yapı", request: "Dentin Prova" },
-    { send: "Dentin Prova", request: "Glazeli Bitim" },
-  ],
-  "E-max": [
-    { send: "Ölçü", request: "E-max Prova" },
-    { send: "E-max Prova", request: "Glazeli Bitim" },
-  ],
-  "Metal Destekli Porselen": [
-    { send: "Ölçü", request: "Metal Alt Yapı Prova" },
-    { send: "Metal Alt Yapı Prova", request: "Dentin Prova" },
-    { send: "Dentin Prova", request: "Glazeli Bitim" },
-  ],
-  "Tam Protez": [
-    { send: "Primer Ölçü", request: "Bireysel Kaşık" },
-    { send: "Fonksiyonel Ölçü", request: "Mum Prova" },
-    { send: "Mum Prova", request: "Akrilik Prova" },
-    { send: "Akrilik Prova", request: "Tam Protez Bitim" },
-  ],
-  "Hareketli Kısmi Protez": [
-    { send: "Ölçü", request: "Altyapı Prova" },
-    { send: "Altyapı Prova", request: "Diş Dizimi Mum Prova" },
-    { send: "Diş Dizimi Mum Prova", request: "Final Protez" },
-  ],
-  "İmplant Üstü Sabit Restorasyon": [
-    { send: "İmplant Ölçüsü (Scanbody / Transfer)", request: "Altyapı Prova" },
-    { send: "Altyapı Prova", request: "Dentin Prova" },
-    { send: "Dentin Prova", request: "Glazeli Bitim" },
-  ],
-  "Gece Plağı": [{ send: "Ölçü", request: "Gece Plağı" }],
+type Props = {
+  order: SharedLabOrder;
+  onAddTrip?: (order: SharedLabOrder) => void;
+  onAddInvoice?: (order: SharedLabOrder) => void;
+  onEditInvoice?: (order: SharedLabOrder, invoice: SharedLabInvoice) => void;
+  onDeleteInvoice?: (order: SharedLabOrder, invoice: SharedLabInvoice) => void;
+  onReceive?: (order: SharedLabOrder, trip: SharedLabTrip) => void;
+  onEditTrip?: (order: SharedLabOrder, trip: SharedLabTrip) => void;
+  onComplete?: (order: SharedLabOrder) => void;
+  onRpt?: (order: SharedLabOrder) => void;
+  /** Hekim, laboratuvar, iş türü, dişler ve notu düzeltme. */
+  onEditOrder?: (order: SharedLabOrder) => void;
+  /** İşi iptal etme (lab:delete). */
+  onCancel?: (order: SharedLabOrder) => void;
+  /** Yalnız görüntüleme yetkisi olan kullanıcıda eylem düğmeleri gizlenir. */
+  canWrite?: boolean;
+  canComplete?: boolean;
+  /** Hasta dosyası içinde açıldığında hasta bağlantısı gösterilmez. */
+  showPatientLink?: boolean;
 };
 
-function fmt(iso?: string | null) {
-  if (!iso) return "-";
-  return new Date(iso).toLocaleDateString("tr-TR", { day: "2-digit", month: "short", year: "numeric" });
-}
-
-function daysSince(iso?: string | null) {
-  if (!iso) return 0;
-  return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 86400000));
-}
-
-function parseDesc(description: string): { sentItem: string; requestedItem: string } {
-  const idx = description.indexOf(" → ");
-  if (idx === -1) return { sentItem: description, requestedItem: "" };
-  return { sentItem: description.slice(0, idx), requestedItem: description.slice(idx + 3) };
-}
-
-function normalizeWorkflowText(value: string) {
-  return value
-    .toLocaleLowerCase("tr-TR")
-    .replace(/ı/g, "i")
-    .replace(/ğ/g, "g")
-    .replace(/ş/g, "s")
-    .replace(/ç/g, "c")
-    .replace(/ö/g, "o")
-    .replace(/ü/g, "u")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function isSameWorkflowValue(left: string, right: string) {
-  return normalizeWorkflowText(left) === normalizeWorkflowText(right);
-}
-
-function getCurrentCycleTrips(trips: SharedLabTrip[]) {
-  const sorted = [...trips].sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime());
-  let startIndex = 0;
-  for (let i = 0; i < sorted.length; i += 1) {
-    if ((sorted[i].sentNote || "").includes("RPT_RESET_START")) startIndex = i;
-  }
-  return sorted.slice(startIndex);
-}
-
-function getReceivedItemFromNote(note?: string | null, fallback = "") {
-  const match = (note || "").match(/LAB_GELEN_IS:([^|]+)/);
-  return (match?.[1] || fallback || "").trim();
-}
-
-function getNextTemplateStepIndex(labType: string, trips: SharedLabTrip[]) {
-  const template = WORKFLOW_TEMPLATES[labType] ?? [];
-  if (template.length === 0) return 0;
-
-  let cursor = 0;
-  for (const trip of trips) {
-    if (cursor >= template.length) break;
-    const { sentItem, requestedItem } = parseDesc(trip.description);
-    const expected = template[cursor];
-    if (isSameWorkflowValue(sentItem, expected.send) && isSameWorkflowValue(requestedItem, expected.request)) {
-      const receivedItem = getReceivedItemFromNote(trip.receivedNote, requestedItem);
-      if (trip.receivedAt && requestedItem && !isSameWorkflowValue(receivedItem, requestedItem)) break;
-      cursor += 1;
-    }
-  }
-  return cursor;
-}
-
-function cleanReceivedNote(note?: string | null) {
-  return (note || "")
-    .replace(`${PROVA_FOLLOW_UP_MARKER} | `, "")
-    .replace(PROVA_FOLLOW_UP_MARKER, "")
-    .replace(new RegExp(`\\s*\\|?\\s*${RECEIVED_ITEM_MARKER}[^|]*\\|?\\s*`, "g"), " ")
-    .replace(/\s*\|\s*/g, " | ")
-    .replace(/^\s*\|\s*|\s*\|\s*$/g, "")
-    .trim();
-}
-
-function needsProvaAppointment(note?: string | null) {
-  return Boolean(note && note.includes(PROVA_FOLLOW_UP_MARKER));
-}
-
-function getLatestProvaFollowUpTrip(order: SharedLabOrder) {
-  return getCurrentCycleTrips(order.trips)
-    .filter((trip) => trip.receivedAt && needsProvaAppointment(trip.receivedNote))
-    .sort((a, b) => new Date(b.receivedAt || b.sentAt).getTime() - new Date(a.receivedAt || a.sentAt).getTime())[0] || null;
-}
-
-function isRptOrder(order: Pick<SharedLabOrder, "notes">) {
-  return /(^|\s|\[)RPT(\]|\s|$)/i.test(order.notes || "");
-}
-
-function getOrderSummary(order: SharedLabOrder) {
-  const sortedTrips = getCurrentCycleTrips(order.trips);
-  const pendingTrip = sortedTrips.slice().reverse().find((trip) => !trip.receivedAt) || null;
-  const doneCount = sortedTrips.filter((trip) => trip.receivedAt).length;
-  const isDone = order.status === "HASTAYA_TAKILDI" && !pendingTrip;
-  const totalAmount = order.invoices.reduce((sum, inv) => sum + Number(inv.amount || 0), 0);
-  const template = WORKFLOW_TEMPLATES[order.labType] ?? [];
-  const stepIndex = getNextTemplateStepIndex(order.labType, sortedTrips);
-
-  return {
-    sortedTrips,
-    pendingTrip,
-    doneCount,
-    totalCount: Math.max(template.length, sortedTrips.length),
-    isDone,
-    pendingDays: pendingTrip ? daysSince(pendingTrip.sentAt) : 0,
-    totalAmount,
-    nextStep: template[stepIndex] ?? null,
-  };
-}
-
+/**
+ * Tek laboratuvar işinin ekranı — Laboratuvar sayfası ve hasta dosyası aynı
+ * paneli kullanır. Üstte "şu an ne durumda, sıradaki adım ne" ve TEK birincil
+ * eylem; altında adımlar (eskiden yeniye), lab faturası ve seyrek eylemler.
+ * Bütün hesaplar src/lib/lab-workflow.ts'ten gelir; önceden bu panel 22 iş
+ * türünün yalnız 7'sini bildiği için yeni açılmış bir işe "Süreç tamamlandı"
+ * diyebiliyordu.
+ */
 export function LabOrderDetailPanel({
   order,
   onAddTrip,
@@ -194,228 +100,264 @@ export function LabOrderDetailPanel({
   onEditTrip,
   onComplete,
   onRpt,
-}: {
-  order: SharedLabOrder;
-  onAddTrip?: (order: SharedLabOrder) => void;
-  onAddInvoice?: (order: SharedLabOrder) => void;
-  onEditInvoice?: (order: SharedLabOrder, invoice: SharedLabInvoice) => void;
-  onDeleteInvoice?: (order: SharedLabOrder, invoice: SharedLabInvoice) => void;
-  onReceive?: (order: SharedLabOrder, trip: SharedLabTrip) => void;
-  onEditTrip?: (order: SharedLabOrder, trip: SharedLabTrip) => void;
-  onComplete?: (order: SharedLabOrder) => void;
-  onRpt?: (order: SharedLabOrder) => void;
-}) {
+  onEditOrder,
+  onCancel,
+  canWrite = true,
+  canComplete = true,
+  showPatientLink = true,
+}: Props) {
   const summary = getOrderSummary(order);
-  const pendingDesc = summary.pendingTrip ? parseDesc(summary.pendingTrip.description) : null;
-  const rpt = isRptOrder(order);
-  const latestProvaFollowUpTrip = getLatestProvaFollowUpTrip(order);
-  const latestProvaParts = latestProvaFollowUpTrip ? parseDesc(latestProvaFollowUpTrip.description) : null;
-  const canSendToLab = !summary.pendingTrip && !summary.isDone;
-  const canReceiveFromLab = Boolean(summary.pendingTrip) && !summary.isDone;
-  const canComplete = !summary.pendingTrip && !summary.isDone;
-  const statusLabel = summary.isDone
-    ? "Tamamlandı"
-    : summary.pendingTrip
-    ? summary.pendingDays >= 4
-      ? "Gecikiyor"
-      : "Laboratuvarda"
-    : summary.totalCount > 0
-    ? "Klinikte"
-    : "Yeni";
+  const { userNotes, reworkReasons, cancelReasons } = splitOrderNotes(order.notes);
+  const teeth = teethList(order.teeth);
+  const open = !summary.cancelled && !summary.isDone;
+  const allTrips = [...order.trips].sort((a, b) => new Date(a.sentAt).getTime() - new Date(b.sentAt).getTime() || a.order - b.order);
+  const cycleIds = new Set(summary.sortedTrips.map((trip) => trip.id));
+  const previousTrips = allTrips.filter((trip) => !cycleIds.has(trip.id));
+  const provaTrip = summary.lastReceivedTrip && !summary.pendingTrip && needsProvaAppointment(summary.lastReceivedTrip.receivedNote)
+    ? summary.lastReceivedTrip
+    : null;
+  const phone = order.patient.phone && order.patient.phone !== "***" ? order.patient.phone : "";
+
+  // ── Sıradaki adım: tek cümle + tek birincil eylem ──────────────────────────
+  let nextTitle = "";
+  let nextText = "";
+  let primary: { label: string; onClick: () => void } | null = null;
+  let secondary: { label: string; onClick: () => void } | null = null;
+  if (summary.cancelled) {
+    nextText = cancelReasons.length ? `İptal nedeni: ${cancelReasons[cancelReasons.length - 1]}` : "";
+  } else if (summary.isDone) {
+    nextText = summary.lastActivityAt ? `Son işlem ${formatLabDate(summary.lastActivityAt)}. Sorun çıkarsa “${LAB_LABELS.rework}” ile laboratuvara ücretsiz yeniden yaptırabilirsiniz.` : "";
+  } else if (summary.pendingTrip) {
+    const pending = summary.pendingTrip;
+    const { sentItem, requestedItem } = parseDesc(pending.description);
+    nextTitle = summary.late ? "Dönüş gecikti — laboratuvarı arayın" : "Laboratuvardan dönüş bekleniyor";
+    nextText = `${requestedItem || sentItem} bekleniyor · ${formatShortLabDate(pending.sentAt)} gönderildi · dönüş ${formatShortLabDate(expectedReturnAt(pending))}${summary.late ? " idi" : ""}. Gelince “${LAB_LABELS.receive}” deyin.`;
+    if (canWrite && onReceive) primary = { label: LAB_LABELS.receive, onClick: () => onReceive(order, pending) };
+  } else if (summary.sortedTrips.length === 0) {
+    nextTitle = "Sıradaki adım: laboratuvara gönderin";
+    nextText = summary.nextStep ? `Sıradaki adım: ${summary.nextStep.send} gönderilecek, ${summary.nextStep.request} beklenecek.` : "Ölçüyü laboratuvara gönderdiğinizde kaydedin.";
+    if (canWrite && onAddTrip) primary = { label: LAB_LABELS.send, onClick: () => onAddTrip(order) };
+  } else {
+    const received = summary.lastReceivedTrip;
+    const parts = received ? parseDesc(received.description) : null;
+    const receivedItem = received && parts ? getReceivedItemFromNote(received.receivedNote, parts.requestedItem || parts.sentItem) : "";
+    const finished = summary.templateFinished || !summary.nextStep;
+    nextTitle = finished ? "Sıradaki adım: hastaya takın" : "Sıradaki adım: prova, sonra gönderim";
+    nextText = finished
+      ? `${receivedItem || "Son adım"} geldi. Hastaya takıldıysa işi kapatın.`
+      : `${receivedItem || "İş"} geldi. Hastada prova yapıldıktan sonra sıradaki adımı gönderin: ${summary.nextStep?.send} → ${summary.nextStep?.request}.`;
+    const completeAction = canComplete && onComplete ? { label: LAB_LABELS.complete, onClick: () => onComplete(order) } : null;
+    const sendAction = canWrite && onAddTrip ? { label: LAB_LABELS.send, onClick: () => onAddTrip(order) } : null;
+    primary = finished ? completeAction || sendAction : sendAction || completeAction;
+    secondary = finished ? (completeAction ? sendAction : null) : (sendAction ? completeAction : null);
+  }
+
+  const canAddInvoice = canWrite && open && !summary.rework && Boolean(onAddInvoice);
+  // Takılmış işte fatura iptal edilmez (sunucu son faturayı engeller); yanlış tutar "Faturayı düzenle" ile düzeltilir.
+  const canCancelInvoice = canWrite && !summary.cancelled && !summary.isDone && Boolean(onDeleteInvoice);
+
+  const renderTrip = (trip: SharedLabTrip, index: number, muted = false) => {
+    const parts = parseDesc(trip.description);
+    const done = Boolean(trip.receivedAt);
+    const receivedItem = getReceivedItemFromNote(trip.receivedNote, parts.requestedItem || parts.sentItem);
+    const differs = done && parts.requestedItem && !isSameWorkflowValue(receivedItem, parts.requestedItem);
+    const late = !done && isTripLate(trip);
+    const sentNote = cleanSentNote(trip.sentNote);
+    const receivedNote = cleanReceivedNote(trip.receivedNote);
+    const method = sentMethodLabel(trip.sentNote);
+    const isPrimaryPending = summary.pendingTrip?.id === trip.id;
+    return (
+      <li key={trip.id} className={`flex gap-3 px-3 py-2.5 ${muted ? "opacity-70" : ""}`}>
+        <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-bold tabular-nums ${
+          done ? "bg-emerald-100 text-emerald-700" : late ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800"
+        }`}>
+          {index + 1}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="flex flex-wrap items-center gap-x-1.5 text-sm font-semibold text-slate-900">
+            <span>{parts.sentItem}</span>
+            {parts.requestedItem && (
+              <>
+                <ArrowRight className="h-3.5 w-3.5 text-slate-400" aria-label="karşılığında beklenen" />
+                <span>{parts.requestedItem}</span>
+              </>
+            )}
+            {hasRptMarker(trip.sentNote) && <Badge tone="neutral" size="sm">Yeniden yapım başlangıcı</Badge>}
+          </p>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Gönderildi {formatShortLabDate(trip.sentAt)}
+            {done
+              ? ` · Geldi ${formatShortLabDate(trip.receivedAt)}`
+              : ` · Dönüş ${formatShortLabDate(expectedReturnAt(trip))}${late ? " (gecikti)" : ""}`}
+            {method ? ` · ${method}` : ""}
+          </p>
+          {differs && <p className="mt-0.5 text-xs font-semibold text-amber-700">Gelen: {receivedItem}</p>}
+          {sentNote && <p className="mt-0.5 text-xs text-slate-600">Not: {sentNote}</p>}
+          {receivedNote && <p className="mt-0.5 text-xs text-slate-600">Geliş notu: {receivedNote}</p>}
+        </div>
+        {canWrite && !summary.cancelled && (
+          <div className="flex shrink-0 items-start gap-1">
+            {!done && !isPrimaryPending && onReceive && (
+              <Button size="sm" variant="secondary" onClick={() => onReceive(order, trip)}>Geldi</Button>
+            )}
+            {onEditTrip && <IconButton icon={Pencil} size="sm" title={LAB_LABELS.editStep} onClick={() => onEditTrip(order, trip)} />}
+          </div>
+        )}
+      </li>
+    );
+  };
 
   return (
-    <div className="space-y-5">
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_240px]">
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <div className="flex flex-wrap gap-2 text-xs">
-            <span className="rounded-full bg-white px-2.5 py-1 font-bold text-slate-700">{statusLabel}</span>
-            <span className="rounded-full bg-white px-2.5 py-1 font-bold text-slate-700">İlerleme {summary.doneCount}/{summary.totalCount}</span>
-            <span className={`rounded-full px-2.5 py-1 font-bold ${summary.pendingTrip ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>
-              {summary.pendingTrip ? `${summary.pendingDays || 0}g bekliyor` : "Bekleyen yok"}
-            </span>
-            <span className="rounded-full bg-white px-2.5 py-1 font-bold text-slate-700">
-              {summary.totalAmount > 0 ? CUR.format(summary.totalAmount) : "Fatura yok"}
-            </span>
-            {rpt && <span className="rounded-full bg-violet-100 px-2.5 py-1 font-bold text-violet-700">RPT ücretsiz tekrar</span>}
-          </div>
-          <dl className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
-            <div><dt className="text-xs font-bold uppercase text-slate-400">Hasta</dt><dd className="font-semibold text-slate-900">{order.patient.fullName}</dd></div>
-            <div><dt className="text-xs font-bold uppercase text-slate-400">Hekim</dt><dd className="font-semibold text-slate-900">{order.doctor.fullName}</dd></div>
-            <div><dt className="text-xs font-bold uppercase text-slate-400">Laboratuvar</dt><dd className="font-semibold text-slate-900">{order.labName}</dd></div>
-            <div><dt className="text-xs font-bold uppercase text-slate-400">Diş / Üye</dt><dd className="font-semibold text-slate-900">{order.teeth || "Belirtilmedi"}</dd></div>
-          </dl>
-        </div>
-
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-3">
-          <p className="text-xs font-black uppercase tracking-wide text-slate-400">Sıradaki İşlem</p>
-          <p className="mt-2 text-sm font-bold text-slate-900">
-            {summary.nextStep ? `${summary.nextStep.send} → ${summary.nextStep.request}` : "Süreç tamamlandı"}
-          </p>
-          {pendingDesc && (
-            <p className="mt-2 text-xs font-semibold text-amber-700">
-              Bekleyen: {pendingDesc.sentItem}{pendingDesc.requestedItem ? ` → ${pendingDesc.requestedItem}` : ""}
-            </p>
+    <div className="space-y-4">
+      {/* Kim, ne, nerede — bir kez */}
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-4">
+        <div className="min-w-0">
+          <dt className="text-xs text-slate-500">Hasta</dt>
+          <dd className="truncate font-semibold text-slate-900">
+            {showPatientLink && order.patient.id ? (
+              <Link href={`/hasta-detay?id=${order.patient.id}&tab=lab`} className="text-primary hover:underline">{order.patient.fullName}</Link>
+            ) : order.patient.fullName}
+          </dd>
+          {phone && (
+            <dd>
+              <a href={`tel:${phone.replace(/\s/g, "")}`} className="inline-flex items-center gap-1 text-xs font-semibold text-slate-600 hover:text-primary">
+                <Phone className="h-3 w-3" aria-hidden="true" />
+                {formatPhoneNumber(phone)}
+              </a>
+            </dd>
           )}
         </div>
-      </div>
-
-      {latestProvaFollowUpTrip && latestProvaParts && (
-        <div className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3">
-          <p className="text-xs font-black uppercase tracking-wide text-violet-600">Hasta Takip Bağlantısı</p>
-          <p className="mt-1 text-sm font-semibold text-violet-900">
-            {latestProvaParts.requestedItem || latestProvaParts.sentItem} için hasta aranıp prova randevusu verilecek.
-          </p>
-          <p className="mt-1 text-xs text-violet-700">Hasta Takip ekranında en güncel lab prova aksiyonu olarak görünür.</p>
+        <div className="min-w-0">
+          <dt className="text-xs text-slate-500">{LAB_LABELS.doctor}</dt>
+          <dd className="truncate font-semibold text-slate-900">{order.doctor.fullName}</dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-xs text-slate-500">{LAB_LABELS.lab}</dt>
+          <dd className="truncate font-semibold text-slate-900">
+            {order.firmaId ? (
+              <Link href={`/firma-detay?id=${order.firmaId}`} className="text-primary hover:underline" title="Firma hesabını aç (borç ve ödemeler)">{order.labName}</Link>
+            ) : order.labName}
+          </dd>
+        </div>
+        <div className="min-w-0">
+          <dt className="text-xs text-slate-500">Dişler</dt>
+          <dd className="font-semibold text-slate-900">{teeth.length ? teeth.join(", ") : <span className="font-normal text-slate-400">—</span>}</dd>
+        </div>
+      </dl>
+      {(userNotes || reworkReasons.length > 0) && (
+        <div className="space-y-1 text-sm text-slate-700">
+          {userNotes && <p className="whitespace-pre-line"><span className="text-xs text-slate-500">Not: </span>{userNotes}</p>}
+          {reworkReasons.map((item, index) => (
+            <p key={`${item.at}-${index}`} className="text-xs text-slate-600">
+              Yeniden yapım{item.at ? ` (${formatLabDate(item.at)})` : ""}: {item.reason}
+            </p>
+          ))}
         </div>
       )}
 
-      <div>
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-sm font-black text-slate-900">Süreç Zaman Çizelgesi</h3>
-          {canSendToLab && onAddTrip && (
-            <button onClick={() => onAddTrip(order)} className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-700">Laboratuvara Gönder</button>
+      {/* Şu an + sıradaki adım */}
+      <section className={`rounded-lg border px-4 py-3 ${summary.late ? "border-red-200 bg-red-50/60" : "border-slate-200 bg-slate-50/70"}`} aria-label="Durum ve sıradaki adım">
+        <div className="flex flex-wrap items-center gap-2">
+          <LabStatusBadge stage={summary.stage} size="md" />
+          {summary.rework && <Badge tone="neutral">{LAB_LABELS.reworkBadge}</Badge>}
+          {summary.templateLength > 0 && open && (
+            <span className="text-xs text-slate-500">Adım {Math.min(summary.doneCount, summary.totalCount)}/{summary.totalCount}</span>
           )}
         </div>
-        {summary.sortedTrips.length === 0 ? (
-          <p className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-400">Henüz laboratuvar gönderimi eklenmedi.</p>
-        ) : (
-          <div className="space-y-2">
-            {summary.sortedTrips.slice().reverse().map((trip) => {
-              const parts = parseDesc(trip.description);
-              const done = Boolean(trip.receivedAt);
-              const receivedItem = getReceivedItemFromNote(trip.receivedNote, parts.requestedItem || parts.sentItem);
-              const receivedDiffers = done && parts.requestedItem && !isSameWorkflowValue(receivedItem, parts.requestedItem);
-              const isCycleStart = (trip.sentNote || "").includes("RPT_RESET_START");
-              return (
-                <div key={trip.id} className="rounded-xl border border-slate-200 bg-white px-3 py-3">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-bold text-slate-900">{done ? "Laboratuvardan geldi" : "Laboratuvara gönderildi"}</p>
-                        <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${done ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"}`}>
-                          {done ? "Geldi" : "Laboratuvarda"}
-                        </span>
-                        {isCycleStart && <span className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-bold text-violet-700">RPT başlangıcı</span>}
-                      </div>
-                      <div className="mt-2 grid gap-2 text-sm sm:grid-cols-2">
-                        <InfoBlock label="Gönderilen">{parts.sentItem || "-"}</InfoBlock>
-                        <InfoBlock label={done ? "Gelen / Prova" : "Gelmesi Beklenen"}>
-                          {done ? receivedItem || "-" : parts.requestedItem || "-"}
-                          {receivedDiffers && (
-                            <span className="mt-1 block text-xs font-bold text-amber-700">
-                              Beklenen: {parts.requestedItem}
-                            </span>
-                          )}
-                        </InfoBlock>
-                      </div>
-                      <p className="mt-1 text-xs text-slate-400">{fmt(trip.sentAt)}{trip.receivedAt ? ` · ${fmt(trip.receivedAt)}` : " · bekliyor"}</p>
-                      {trip.sentNote && <p className="mt-1 text-xs text-slate-500">{trip.sentNote}</p>}
-                      {cleanReceivedNote(trip.receivedNote) && <p className="mt-1 text-xs text-slate-500">{cleanReceivedNote(trip.receivedNote)}</p>}
-                    </div>
-                    <div className="flex shrink-0 gap-1.5">
-                      {!done && onReceive && (
-                        <button onClick={() => onReceive(order, trip)} className="rounded-lg border border-emerald-200 bg-emerald-50 px-2.5 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100">Geliş Kaydet</button>
-                      )}
-                      {onEditTrip && (
-                        <button onClick={() => onEditTrip(order, trip)} className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50">Düzenle</button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_260px]">
-        <div className="rounded-xl border border-slate-200 bg-white">
-          <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-            <h3 className="text-sm font-black text-slate-900">Fatura ve Firma Bağlantısı</h3>
-            {onAddInvoice && (
-              <button onClick={() => onAddInvoice(order)} disabled={rpt} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40">
-                {rpt ? "RPT Ücretsiz" : "Fatura Ekle"}
-              </button>
+        {nextTitle && <p className="mt-2 text-sm font-semibold text-slate-900">{nextTitle}</p>}
+        {nextText && <p className={`${nextTitle ? "mt-0.5" : "mt-2"} text-sm text-slate-600`}>{nextText}</p>}
+        {provaTrip && open && (
+          <p className="mt-1.5 text-xs text-slate-600">
+            Hasta prova randevusu için <Link href="/hasta-takip" className="font-semibold text-primary hover:underline">Hasta Takip</Link> listesinde aranacak.
+            {order.patient.id && (
+              <>
+                {" "}Randevuyu şimdi vermek için{" "}
+                <Link href={`/randevu?newPatientId=${encodeURIComponent(order.patient.id)}&newPatientName=${encodeURIComponent(order.patient.fullName)}`} className="font-semibold text-primary hover:underline">randevu oluşturun</Link>.
+              </>
             )}
+          </p>
+        )}
+        {(primary || secondary) && (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {primary && <Button size="sm" onClick={primary.onClick}>{primary.label}</Button>}
+            {secondary && <Button size="sm" variant="secondary" onClick={secondary.onClick}>{secondary.label}</Button>}
           </div>
-          {order.invoices.length === 0 ? (
-            <p className="px-4 py-6 text-center text-sm text-slate-400">Fatura eklenmedi; firma borcu oluşmadı.</p>
-          ) : (
-            <div className="divide-y divide-slate-100">
-              {order.invoices.map((inv) => (
-                <div key={inv.id} className="grid items-center gap-2 px-4 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_120px_110px_auto]">
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold text-slate-800">{inv.item}</p>
-                    <p className="mt-0.5 text-xs text-slate-400">{fmt(inv.issuedAt)}</p>
-                  </div>
-                  <span className="text-slate-500">{inv.invoiceNo || "Fatura no yok"}</span>
-                  <span className="text-right font-bold text-slate-900">{CUR.format(inv.amount)}</span>
-                  {(onEditInvoice || onDeleteInvoice) && (
-                    <div className="flex justify-end gap-1">
-                      {onEditInvoice && (
-                        <button
-                          type="button"
-                          onClick={() => onEditInvoice(order, inv)}
-                          className="rounded-lg border border-slate-200 px-2 py-1.5 text-xs font-bold text-slate-700 hover:bg-slate-50"
-                        >
-                          Düzenle
-                        </button>
-                      )}
-                      {onDeleteInvoice && (
-                        <button
-                          type="button"
-                          onClick={() => onDeleteInvoice(order, inv)}
-                          className="rounded-lg border border-red-200 px-2 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50"
-                        >
-                          İptal
-                        </button>
-                      )}
-                    </div>
-                  )}
+        )}
+      </section>
+
+      {/* Adımlar — eskiden yeniye */}
+      <section aria-label="Laboratuvar adımları">
+        <h3 className="mb-1.5 text-sm font-bold text-slate-900">Adımlar</h3>
+        {summary.sortedTrips.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-slate-200 px-4 py-4 text-center text-sm text-slate-500">Henüz gönderim yok.</p>
+        ) : (
+          <ol className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+            {summary.sortedTrips.map((trip, index) => renderTrip(trip, index))}
+          </ol>
+        )}
+        {previousTrips.length > 0 && (
+          <details className="mt-2 rounded-lg border border-slate-200">
+            <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-slate-600">Yeniden yapım öncesi adımlar ({previousTrips.length})</summary>
+            <ol className="divide-y divide-slate-100 border-t border-slate-100">
+              {previousTrips.map((trip, index) => renderTrip(trip, index, true))}
+            </ol>
+          </details>
+        )}
+      </section>
+
+      {/* Lab faturası */}
+      <section aria-label="Lab faturası">
+        <div className="mb-1.5 flex items-center justify-between gap-2">
+          <h3 className="text-sm font-bold text-slate-900">Lab faturası</h3>
+          {canAddInvoice && <Button size="sm" variant="secondary" onClick={() => onAddInvoice?.(order)}>{LAB_LABELS.addInvoice}</Button>}
+        </div>
+        {order.invoices.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-slate-200 px-4 py-3 text-sm text-slate-500">
+            {summary.rework
+              ? "Yeniden yapım ücretsizdir; fatura girilmez."
+              : summary.cancelled
+                ? "Fatura yok."
+                : "Fatura henüz girilmedi. “Hastaya takıldı” derken de girebilirsiniz; tutar laboratuvarın hesabına borç olarak yazılır."}
+          </p>
+        ) : (
+          <ul className="divide-y divide-slate-100 rounded-lg border border-slate-200">
+            {order.invoices.map((invoice) => (
+              <li key={invoice.id} className="flex items-center gap-3 px-3 py-2.5 text-sm">
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-semibold text-slate-800">{invoice.item}</p>
+                  <p className="text-xs text-slate-500">
+                    {formatLabDate(invoice.issuedAt)}{invoice.invoiceNo ? ` · Fatura no ${invoice.invoiceNo}` : ""}{invoice.note ? ` · ${invoice.note}` : ""}
+                  </p>
                 </div>
-              ))}
-              <div className="flex justify-between px-4 py-3 text-sm font-black text-slate-900">
+                <span className="shrink-0 font-bold tabular-nums text-slate-900">{LAB_CURRENCY.format(invoice.amount)}</span>
+                {canWrite && !summary.cancelled && (onEditInvoice || onDeleteInvoice) && (
+                  <div className="flex shrink-0 gap-1">
+                    {onEditInvoice && <IconButton icon={Pencil} size="sm" title={LAB_LABELS.editInvoice} onClick={() => onEditInvoice(order, invoice)} />}
+                    {canCancelInvoice && (
+                      <IconButton icon={XCircle} size="sm" tone="danger" title={LAB_LABELS.cancelInvoice} onClick={() => onDeleteInvoice?.(order, invoice)} />
+                    )}
+                  </div>
+                )}
+              </li>
+            ))}
+            {order.invoices.length > 1 && (
+              <li className="flex justify-between px-3 py-2 text-sm font-bold text-slate-900">
                 <span>Toplam</span>
-                <span>{CUR.format(summary.totalAmount)}</span>
-              </div>
-            </div>
-          )}
+                <span className="tabular-nums">{LAB_CURRENCY.format(summary.totalAmount)}</span>
+              </li>
+            )}
+          </ul>
+        )}
+      </section>
+
+      {/* Seyrek eylemler */}
+      {canWrite && !summary.cancelled && (onEditOrder || onCancel || (summary.isDone && onRpt)) && (
+        <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+          {onEditOrder && <Button size="sm" variant="ghost" icon={Pencil} onClick={() => onEditOrder(order)}>{LAB_LABELS.editOrder}</Button>}
+          {summary.isDone && onRpt && <Button size="sm" variant="ghost" icon={RotateCcw} onClick={() => onRpt(order)}>{LAB_LABELS.rework}</Button>}
+          {onCancel && <Button size="sm" variant="ghost" icon={Ban} className="!text-red-600 hover:!bg-red-50" onClick={() => onCancel(order)}>{LAB_LABELS.cancelOrder}</Button>}
         </div>
-
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
-          <p className="text-xs font-black uppercase tracking-wide text-slate-400">Kontrol</p>
-          <div className="mt-2 space-y-2 text-xs font-semibold">
-            <p className={order.invoices.length > 0 || rpt ? "text-emerald-700" : "text-amber-700"}>
-              {order.invoices.length > 0 ? "Firma borcu işlendi" : rpt ? "RPT ücretsiz takipte" : "Fatura bekliyor"}
-            </p>
-            <p className="text-slate-600">Hasta: {order.patient.fullName}</p>
-            <p className="text-slate-600">Hekim: {order.doctor.fullName}</p>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-4">
-        {canReceiveFromLab && summary.pendingTrip && onReceive && (
-          <button onClick={() => onReceive(order, summary.pendingTrip!)} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-bold text-emerald-700 hover:bg-emerald-100">Laboratuvardan Geldi</button>
-        )}
-        {canComplete && onComplete && (
-          <button onClick={() => onComplete(order)} className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-100">
-            Tamamla
-          </button>
-        )}
-        {summary.isDone && onRpt && (
-          <button onClick={() => onRpt(order)} className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-bold text-violet-700 hover:bg-violet-100">RPT Olarak Yeniden Aç</button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function InfoBlock({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="rounded-lg bg-slate-50 px-3 py-2">
-      <p className="text-[11px] font-black uppercase tracking-wide text-slate-400">{label}</p>
-      <p className="mt-0.5 font-semibold text-slate-800">{children}</p>
+      )}
     </div>
   );
 }

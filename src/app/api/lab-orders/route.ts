@@ -6,6 +6,8 @@ import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 import { formatZodError, labInvoiceCreateSchema } from "@/lib/validators";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
+import { toPublicLabOrder } from "@/app/api/lab-orders/lab-order-api";
+import { summarizeLabOrders } from "@/lib/lab-workflow";
 
 export const dynamic = "force-dynamic";
 
@@ -55,6 +57,39 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
     return NextResponse.json(uniqueNames.sort((a, b) => a.localeCompare(b, "tr")));
   }
 
+  // Menü rozeti, ana sayfa ve Laboratuvar sekmeleri aynı sayıyı göstersin diye
+  // tek sayım (bkz. lab-workflow summarizeLabOrders). Yalnız açık işler sayılır.
+  if (searchParams.get("summary") === "true") {
+    const openOrders = await prisma.labOrder.findMany({
+      where: {
+        ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
+        branchId: branch.branchId,
+        status: "DEVAM_EDIYOR",
+      },
+      select: {
+        labType: true,
+        notes: true,
+        status: true,
+        trips: { select: { description: true, sentAt: true, expectedAt: true, receivedAt: true, sentNote: true, receivedNote: true, order: true } },
+        invoices: { where: { status: "ACTIVE" }, select: { amount: true } },
+      },
+      take: 2000,
+    });
+    const counts = summarizeLabOrders(openOrders.map((order) => ({
+      labType: order.labType,
+      notes: order.notes,
+      status: order.status,
+      trips: order.trips.map((trip) => ({
+        ...trip,
+        sentAt: trip.sentAt.toISOString(),
+        expectedAt: trip.expectedAt?.toISOString() || null,
+        receivedAt: trip.receivedAt?.toISOString() || null,
+      })),
+      invoices: order.invoices.map((invoice) => ({ amount: Number(invoice.amount) })),
+    })));
+    return NextResponse.json(counts);
+  }
+
   let orders: any[] = [];
   try {
     orders = await (prisma as any).labOrder.findMany({
@@ -77,7 +112,8 @@ export const GET = withApiTiming("lab-orders", async function GET(req: NextReque
       },
       orderBy: { createdAt: "desc" },
       // limit verilmezse de tek istek tüm laboratuvar geçmişini döndürmesin diye varsayılan sınır.
-      take: limit > 0 ? Math.min(limit, 500) : 300,
+      // Açık işler (DEVAM_EDIYOR) listeden sessizce düşmesin diye daha yüksek sınır.
+      take: limit > 0 ? Math.min(limit, status === "DEVAM_EDIYOR" ? 2000 : 500) : 300,
     });
   } catch (error) {
     console.error("[lab-orders GET] fallback:", error);
@@ -144,7 +180,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Sipariş tutarı ile ilk fatura tutarı aynı olmalı." }, { status: 400 });
   }
 
-  let normalizedFirstTrip: { description: string; sentAt: Date; sentNote: string | null } | null = null;
+  let normalizedFirstTrip: { description: string; sentAt: Date; expectedAt: Date | null; sentNote: string | null } | null = null;
   if (firstTrip !== undefined && firstTrip !== null) {
     if (!firstTrip || typeof firstTrip !== "object" || Array.isArray(firstTrip)) {
       return NextResponse.json({ error: "İlk gönderim bilgisi geçersiz." }, { status: 400 });
@@ -152,10 +188,14 @@ export async function POST(req: NextRequest) {
     const description = typeof firstTrip.description === "string" ? firstTrip.description.trim() : "";
     const sentNote = typeof firstTrip.sentNote === "string" ? firstTrip.sentNote.trim() : "";
     const sentAt = firstTrip.sentAt ? new Date(firstTrip.sentAt) : new Date();
+    const expectedAt = typeof firstTrip.expectedAt === "string" && firstTrip.expectedAt ? new Date(firstTrip.expectedAt) : null;
     if (!description || description.length > 180 || sentNote.length > 1000 || Number.isNaN(sentAt.getTime())) {
       return NextResponse.json({ error: "İlk gönderim açıklaması veya tarihi geçersiz." }, { status: 400 });
     }
-    normalizedFirstTrip = { description, sentAt, sentNote: sentNote || null };
+    if (expectedAt && (Number.isNaN(expectedAt.getTime()) || expectedAt.getTime() < new Date(sentAt.toISOString().slice(0, 10)).getTime())) {
+      return NextResponse.json({ error: "Beklenen dönüş tarihi gönderim tarihinden önce olamaz." }, { status: 400 });
+    }
+    normalizedFirstTrip = { description, sentAt, expectedAt, sentNote: sentNote || null };
   }
 
   const labFirma = await prisma.firma.findFirst({
@@ -191,7 +231,7 @@ export async function POST(req: NextRequest) {
       },
     });
     if (existingOrder) {
-      return NextResponse.json({ ...toPublicOrder(existingOrder), duplicateRequest: true }, { status: 200 });
+      return NextResponse.json({ ...(await toPublicLabOrder(existingOrder, auth.user.role)), duplicateRequest: true }, { status: 200 });
     }
   }
 
@@ -206,8 +246,11 @@ export async function POST(req: NextRequest) {
         select: { id: true },
       }),
     ]);
-    if (!patient || !doctor) {
-      return NextResponse.json({ error: "Hasta veya doktor bu kuruma bağlı değil." }, { status: 403 });
+    if (!patient) {
+      return NextResponse.json({ error: "Seçilen hasta bu şubede bulunamadı." }, { status: 403 });
+    }
+    if (!doctor) {
+      return NextResponse.json({ error: "Seçilen hekim bu şubede bulunamadı. Hekim listesinden yeniden seçin." }, { status: 403 });
     }
   }
 
@@ -253,6 +296,7 @@ export async function POST(req: NextRequest) {
               order:       1,
               description: normalizedFirstTrip.description,
               sentAt: normalizedFirstTrip.sentAt,
+              expectedAt: normalizedFirstTrip.expectedAt,
               sentNote: normalizedFirstTrip.sentNote,
             }],
           } : undefined,
@@ -314,7 +358,7 @@ export async function POST(req: NextRequest) {
         },
       });
       if (existingOrder) {
-        return NextResponse.json({ ...toPublicOrder(existingOrder), duplicateRequest: true }, { status: 200 });
+        return NextResponse.json({ ...(await toPublicLabOrder(existingOrder, auth.user.role)), duplicateRequest: true }, { status: 200 });
       }
     }
     console.error("[lab-orders POST] fallback:", error);
@@ -323,5 +367,5 @@ export async function POST(req: NextRequest) {
 
   await writeAudit(auth.user.id, "LAB_ORDER_CREATE", `${normalizedLabName} (${normalizedLabType}) laboratuvar siparişi oluşturuldu`);
   await bumpRealtimeInstitution(auth.user.institutionId || null);
-  return NextResponse.json({ ...toPublicOrder(order), firmaIntegration }, { status: 201 });
+  return NextResponse.json({ ...(await toPublicLabOrder(order, auth.user.role)), firmaIntegration }, { status: 201 });
 }

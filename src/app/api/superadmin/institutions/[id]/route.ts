@@ -4,13 +4,15 @@ import { invalidateInstitutionCache, requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { getPlanDefaultLimits, type SubscriptionPlanId } from "@/lib/subscription-plans";
 import { getMetaWhatsappReadiness } from "@/lib/meta-whatsapp";
+import { deriveInvoiceStatus, summarizeInvoices } from "@/components/superadmin/invoice-status";
+import { SERVICE_MODE_META, cycleLabel, planLabel, type ServiceMode } from "@/components/superadmin/sa-labels";
 
 const VALID_SUBSCRIPTION_PLANS = new Set(["TEMEL", "PROFESYONEL", "KURUMSAL"]);
 const VALID_BILLING_CYCLES = new Set(["AYLIK", "YILLIK"]);
 const VALID_SERVICE_MODES = new Set(["NORMAL", "LIMITED", "READ_ONLY", "SUSPENDED"]);
 const VALID_AD_INTENSITIES = new Set(["LOW", "MEDIUM", "HIGH"]);
 
-// GET /api/superadmin/institutions/[id] - Klinik detayını getir
+// GET /api/superadmin/institutions/[id] - Klinik dosyası
 export async function GET(_req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   const auth = await requireAuth("superadmin");
@@ -21,64 +23,55 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
     where: { id: params.id },
     include: {
       owner: { select: { id: true, fullName: true, email: true, role: true } },
+      // TC kimlik no ekranda kullanılmıyor; kişisel veri tarayıcıya gönderilmez.
       users: {
-        select: { id: true, fullName: true, email: true, role: true, isActive: true, createdAt: true, identityNo: true },
+        select: { id: true, fullName: true, email: true, role: true, isActive: true, createdAt: true },
         orderBy: { createdAt: "asc" },
       },
       smsTransactions: {
         include: { smsPackage: { select: { name: true, smsCount: true } } },
         orderBy: { createdAt: "desc" },
-        take: 20,
+        take: 50,
       },
-      invoices: {
-        orderBy: { createdAt: "desc" },
-        take: 20,
-      },
-      adAssignments: {
-        include: {
-          advertisement: {
-            select: {
-              id: true,
-              title: true,
-              sponsorName: true,
-              isActive: true,
-              priority: true,
-              startAt: true,
-              endAt: true,
-            },
-          },
-        },
-        orderBy: { weight: "desc" },
-      },
-      settings: true,
     },
   });
 
-  if (!institution) return NextResponse.json({ message: "Bulunamadı" }, { status: 404 });
+  if (!institution) return NextResponse.json({ message: "Klinik bulunamadı" }, { status: 404 });
 
   const now = new Date();
-  const [overdueCount, pendingCount, paidCount, unpaidTotalAgg] = await Promise.all([
-    prisma.invoice.count({ where: { institutionId: params.id, status: { not: "PAID" }, dueDate: { lt: now } } }),
-    prisma.invoice.count({ where: { institutionId: params.id, status: "PENDING" } }),
-    prisma.invoice.count({ where: { institutionId: params.id, status: "PAID" } }),
-    prisma.invoice.aggregate({
-      where: { institutionId: params.id, status: { not: "PAID" } },
-      _sum: { amount: true },
+  // Borç özeti Faturalar sayfası ve Kontrol Paneli ile AYNI fonksiyondan:
+  // vadesi geçmiş açık fatura gecikmiş sayılır, iptal edilen fatura borca girmez.
+  // Liste: TÜM açık faturalar (eskiler de tahsil edilebilsin diye) + son 20
+  // kapanmış fatura. Önceden yalnız son 20 fatura geliyordu; eski bir açık
+  // fatura özette sayılıp listede görünmeyebiliyordu.
+  const [allInvoices, openInvoices, closedInvoices, reminderCounts] = await Promise.all([
+    prisma.invoice.findMany({
+      where: { institutionId: params.id },
+      select: { status: true, amount: true, dueDate: true, paidAt: true },
     }),
+    prisma.invoice.findMany({
+      where: { institutionId: params.id, status: { in: ["PENDING", "OVERDUE"] } },
+      orderBy: [{ dueDate: "asc" }, { createdAt: "asc" }],
+      include: { reminders: { select: { sentAt: true }, orderBy: { sentAt: "desc" }, take: 1 } },
+    }),
+    prisma.invoice.findMany({
+      where: { institutionId: params.id, status: { in: ["PAID", "CANCELLED"] } },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+    }),
+    prisma.invoiceReminder.groupBy({ by: ["invoiceId"], where: { institutionId: params.id }, _count: { _all: true } }),
   ]);
-
-  const allAds = await prisma.advertisement.findMany({
-    orderBy: [{ priority: "asc" }, { createdAt: "desc" }],
-    select: {
-      id: true,
-      title: true,
-      sponsorName: true,
-      isActive: true,
-      priority: true,
-      startAt: true,
-      endAt: true,
-    },
-  });
+  const summary = summarizeInvoices(allInvoices, now);
+  const reminderCountById = new Map(reminderCounts.map((row) => [row.invoiceId, row._count._all]));
+  const invoices = [
+    ...openInvoices.map(({ reminders, ...invoice }) => ({ ...invoice, lastReminderAt: reminders[0]?.sentAt ?? null })),
+    ...closedInvoices.map((invoice) => ({ ...invoice, lastReminderAt: null })),
+  ].map((invoice) => ({
+    ...invoice,
+    amount: Number(invoice.amount),
+    status: deriveInvoiceStatus(invoice, now),
+    reminderCount: reminderCountById.get(invoice.id) ?? 0,
+  }));
 
   const whatsappProvider = await prisma.whatsappProviderConfig.findFirst({
     where: { institutionId: params.id, code: "META_EMBEDDED" },
@@ -96,9 +89,22 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
     },
   });
 
+  const activeUsers = institution.users.filter((user) => user.isActive);
+
   return NextResponse.json({
     ...institution,
-    allAds,
+    invoices,
+    // Prisma Decimal JSON'da metin olarak gider; ekranda tutar ve gerçek SMS
+    // adedi (paket × adet) gösterilir.
+    smsTransactions: institution.smsTransactions.map((transaction) => ({
+      id: transaction.id,
+      createdAt: transaction.createdAt,
+      packageName: transaction.smsPackage?.name ?? null,
+      quantity: transaction.quantity,
+      smsCount: (transaction.smsPackage?.smsCount ?? 0) * transaction.quantity,
+      totalPrice: Number(transaction.totalPrice),
+      balanceAfter: transaction.balanceAfter,
+    })),
     whatsappPlatform: getMetaWhatsappReadiness(),
     whatsappProvider: whatsappProvider
       ? {
@@ -114,11 +120,21 @@ export async function GET(_req: NextRequest, props: { params: Promise<{ id: stri
           updatedAt: whatsappProvider.updatedAt,
         }
       : { exists: false },
+    usage: {
+      activeUsers: activeUsers.length,
+      // Lisans sınırı API'de yalnız DOKTOR rolünü sayar (bkz. PUT ve users route).
+      activeDoctors: activeUsers.filter((user) => user.role === "DOKTOR").length,
+    },
     paymentSummary: {
-      overdueCount,
-      pendingCount,
-      paidCount,
-      unpaidTotal: unpaidTotalAgg._sum.amount || 0,
+      overdueCount: summary.overdueCount,
+      overdueAmount: summary.overdueAmount,
+      pendingCount: summary.upcomingCount,
+      openCount: summary.openCount,
+      paidCount: summary.paidCount,
+      unpaidTotal: summary.openAmount,
+      upcomingAmount: summary.upcomingAmount,
+      nextDueDate: summary.nextDueDate,
+      totalInvoices: allInvoices.length,
     },
   });
 }
@@ -288,20 +304,38 @@ export async function PUT(request: NextRequest, props: { params: Promise<{ id: s
   // hiç denetim kaydına yazılmıyordu (bkz. denetim raporu) — artık hangi
   // alanların değiştiği açıkça kaydediliyor.
   const changedFields: string[] = [];
-  if (body.isActive !== undefined && body.isActive !== existing.isActive) changedFields.push(`isActive: ${existing.isActive} → ${updated.isActive}`);
-  if (body.subscriptionPlan && body.subscriptionPlan !== existing.subscriptionPlan) changedFields.push(`plan: ${existing.subscriptionPlan} → ${updated.subscriptionPlan}`);
-  if (body.serviceMode && body.serviceMode !== existing.serviceMode) changedFields.push(`serviceMode: ${existing.serviceMode} → ${updated.serviceMode}`);
-  if (body.suspendedUntil !== undefined && String(existing.suspendedUntil) !== String(updated.suspendedUntil)) changedFields.push(`suspendedUntil: ${existing.suspendedUntil?.toISOString() || "-"} → ${updated.suspendedUntil?.toISOString() || "-"}`);
-  if (body.maxActiveUsers !== undefined && existing.maxActiveUsers !== updated.maxActiveUsers) changedFields.push(`maxActiveUsers: ${existing.maxActiveUsers ?? "-"} → ${updated.maxActiveUsers ?? "-"}`);
-  if (body.maxActiveDoctors !== undefined && existing.maxActiveDoctors !== updated.maxActiveDoctors) changedFields.push(`maxActiveDoctors: ${existing.maxActiveDoctors ?? "-"} → ${updated.maxActiveDoctors ?? "-"}`);
-  if (body.whatsappEnabled !== undefined && existing.whatsappEnabled !== updated.whatsappEnabled) changedFields.push(`whatsappEnabled: ${existing.whatsappEnabled} → ${updated.whatsappEnabled}`);
+  const modeLabel = (mode: string) => SERVICE_MODE_META[mode as ServiceMode]?.label || mode;
+  const onOff = (value: boolean) => (value ? "açık" : "kapalı");
+  const limit = (value: number | null) => (value == null ? "sınırsız" : String(value));
+  const when = (value: Date | null) => (value ? value.toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" }) : "yok");
+  if (body.isActive !== undefined && body.isActive !== existing.isActive) changedFields.push(`klinik ${updated.isActive ? "yeniden açıldı" : "kapatıldı"}`);
+  if (body.subscriptionPlan && body.subscriptionPlan !== existing.subscriptionPlan) changedFields.push(`plan: ${planLabel(existing.subscriptionPlan)} → ${planLabel(updated.subscriptionPlan)}`);
+  if (body.billingCycle && body.billingCycle !== existing.billingCycle) changedFields.push(`fatura dönemi: ${cycleLabel(existing.billingCycle)} → ${cycleLabel(updated.billingCycle)}`);
+  if (body.serviceMode && body.serviceMode !== existing.serviceMode) changedFields.push(`hizmet durumu: ${modeLabel(existing.serviceMode)} → ${modeLabel(updated.serviceMode)}`);
+  if (body.suspendedUntil !== undefined && String(existing.suspendedUntil) !== String(updated.suspendedUntil)) changedFields.push(`askı bitişi: ${when(existing.suspendedUntil)} → ${when(updated.suspendedUntil)}`);
+  if (body.maxActiveUsers !== undefined && existing.maxActiveUsers !== updated.maxActiveUsers) changedFields.push(`kullanıcı sınırı: ${limit(existing.maxActiveUsers)} → ${limit(updated.maxActiveUsers)}`);
+  if (body.maxActiveDoctors !== undefined && existing.maxActiveDoctors !== updated.maxActiveDoctors) changedFields.push(`doktor sınırı: ${limit(existing.maxActiveDoctors)} → ${limit(updated.maxActiveDoctors)}`);
+  if (body.whatsappEnabled !== undefined && existing.whatsappEnabled !== updated.whatsappEnabled) changedFields.push(`WhatsApp modülü: ${onOff(existing.whatsappEnabled)} → ${onOff(updated.whatsappEnabled)}${updated.whatsappEnabled ? "" : " (bağlantı bilgileri silindi)"}`);
+  if (body.name !== undefined && body.name.trim() !== existing.name) changedFields.push(`ad: ${existing.name} → ${updated.name}`);
+  if (body.email && body.email !== existing.email) changedFields.push(`e-posta değişti`);
   await writeAudit(
     auth.user.id,
     "SUPERADMIN_INSTITUTION_UPDATE",
-    `${updated.name}: ${changedFields.length > 0 ? changedFields.join(", ") : "alan değişikliği yok"}`,
+    `${updated.name}: ${changedFields.length > 0 ? changedFields.join(", ") : "iletişim bilgileri güncellendi"}`,
   );
 
   invalidateInstitutionCache(params.id);
+
+  // WhatsApp erişimi kapatıldıysa QR ile bağlı numaranın oturumu da kapatılır
+  // (telefondaki bağlı cihazlardan çıkar, şifreli oturum anahtarları silinir).
+  if (body.whatsappEnabled === false && existing.whatsappEnabled) {
+    try {
+      const { disconnect } = await import("@/lib/whatsapp-web");
+      await disconnect(params.id, auth.user.id);
+    } catch (error) {
+      console.error("[superadmin institutions PUT] WhatsApp oturumu kapatılamadı:", error instanceof Error ? error.message : "bilinmeyen hata");
+    }
+  }
 
   return NextResponse.json(updated);
 }
@@ -318,7 +352,7 @@ export async function DELETE(_req: NextRequest, props: { params: Promise<{ id: s
     data: { isActive: false },
   });
 
-  await writeAudit(auth.user.id, "SUPERADMIN_INSTITUTION_DEACTIVATE", `${updated.name} pasife alındı.`);
+  await writeAudit(auth.user.id, "SUPERADMIN_INSTITUTION_DEACTIVATE", `${updated.name} kapatıldı (kullanıcılar giriş yapamaz).`);
   invalidateInstitutionCache(params.id);
 
   return NextResponse.json(updated);

@@ -1,17 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { PlusCircle, Pencil, Zap, Send, CheckCircle2 } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { AlertTriangle, Pencil, Plus, Send, Wallet } from "lucide-react";
 import { Button, IconButton } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Badge } from "@/components/ui/Badge";
-import { FormField } from "@/components/ui/FormField";
-import { EmptyState } from "@/components/ui/EmptyState";
-import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
-import { Spinner } from "@/components/ui/Spinner";
+import { Input, Select, Textarea } from "@/components/ui/Input";
+import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
-
-const ProviderEmptyIcon = createModuleEmptyIcon("sms");
+import { TabIntro } from "@/components/superadmin/TabIntro";
+import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
 type Provider = {
   id: string;
@@ -31,294 +31,308 @@ type Provider = {
   successPattern: string | null;
 };
 
-const inputClass = "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm font-mono focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
-
-const emptyForm = {
-  code: "", name: "", priority: "100", sendUrl: "", balanceUrl: "", httpMethod: "POST",
+const EMPTY = {
+  code: "", name: "", sendUrl: "", balanceUrl: "", httpMethod: "POST",
   username: "", password: "", apiKey: "", sender: "", headersJson: "", bodyTemplate: "", successPattern: "",
-  isActive: false,
 };
 
+const isMock = (provider: Provider) => provider.code === "MOCK";
+
+/**
+ * SMS sağlayıcısı: tüm kliniklerin SMS'i AKTİF sağlayıcı üzerinden gider
+ * (aynı anda tek sağlayıcı aktif olabilir). Önceden "Aktif Et" onaysızdı ve
+ * gönderim adresi/şifresi olmayan bir sağlayıcıyı da aktif edebiliyordu;
+ * ekranda işlevsiz bir "Öncelik" alanı ve yazısız simge düğmeler vardı.
+ */
 export default function ProviderTab() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [editing, setEditing] = useState<Provider | null>(null);
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState(emptyForm);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState(EMPTY);
+  const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [testingId, setTestingId] = useState<string | null>(null);
-  const [sendModal, setSendModal] = useState<Provider | null>(null);
-  const [sendForm, setSendForm] = useState({ phone: "", message: "" });
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [testTarget, setTestTarget] = useState<Provider | null>(null);
+  const [testForm, setTestForm] = useState({ phone: "", message: "CepKlinik deneme mesajı" });
+  const [testError, setTestError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
-  const load = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch("/api/superadmin/sms-provider", { cache: "no-store" });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.message || "SMS sağlayıcıları yüklenemedi.");
-      setProviders(Array.isArray(data?.providers) ? data.providers : []);
-    } catch (error) {
-      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "SMS sağlayıcıları yüklenemedi.", type: "error" });
-    } finally {
-      setLoading(false);
-    }
-  };
+  const reload = useCallback(() => setReloadKey((value) => value + 1), []);
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setLoadError(null);
+    saGet<{ providers: Provider[] }>("/api/superadmin/sms-provider", "SMS sağlayıcıları yüklenemedi.", controller.signal)
+      .then((data) => setProviders(Array.isArray(data?.providers) ? data.providers : []))
+      .catch((error) => {
+        if (!isAbort(error)) setLoadError(errorMessage(error, "SMS sağlayıcıları yüklenemedi."));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [reloadKey]);
+
+  const active = providers.find((item) => item.isActive) || null;
+  const set = <K extends keyof typeof EMPTY>(key: K, value: (typeof EMPTY)[K]) => setForm((current) => ({ ...current, [key]: value }));
 
   const openCreate = () => {
     setEditing(null);
-    setForm(emptyForm);
-    setShowForm(true);
+    setForm(EMPTY);
+    setFormError(null);
+    setOpen(true);
   };
 
-  const openEdit = (p: Provider) => {
-    setEditing(p);
+  const openEdit = (item: Provider) => {
+    setEditing(item);
     setForm({
-      code: p.code, name: p.name, priority: String(p.priority),
-      sendUrl: p.sendUrl ?? "", balanceUrl: p.balanceUrl ?? "", httpMethod: p.httpMethod,
-      username: p.username ?? "", password: "", apiKey: "",
-      sender: p.sender ?? "", headersJson: p.headersJson ?? "", bodyTemplate: p.bodyTemplate ?? "",
-      successPattern: p.successPattern ?? "", isActive: p.isActive,
+      code: item.code, name: item.name, sendUrl: item.sendUrl ?? "", balanceUrl: item.balanceUrl ?? "", httpMethod: item.httpMethod,
+      username: item.username ?? "", password: "", apiKey: "", sender: item.sender ?? "", headersJson: item.headersJson ?? "",
+      bodyTemplate: item.bodyTemplate ?? "", successPattern: item.successPattern ?? "",
     });
-    setShowForm(true);
+    setFormError(null);
+    setOpen(true);
   };
 
-  const submit = async () => {
-    if (!form.code.trim() || !form.name.trim()) {
-      showToastSafe({ title: "Eksik alan", message: "Kod ve ad zorunlu", type: "error" });
-      return;
-    }
+  const save = async () => {
+    if (!editing && !/^[A-Za-z0-9_-]{2,40}$/.test(form.code.trim())) return setFormError("Kısa kod 2-40 harf/rakam olmalı (ör. NETGSM).");
+    if (!form.name.trim()) return setFormError("Sağlayıcı adını yazın.");
     setSaving(true);
+    setFormError(null);
     try {
-      const payload = { ...form, priority: Number(form.priority) };
-      const res = await fetch("/api/superadmin/sms-provider", {
-        method: editing ? "PUT" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(editing ? { ...payload, id: editing.id } : payload),
-      });
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.message || "Kaydedilemedi");
-      showToastSafe({ title: "Kaydedildi", message: `${d.name} sağlayıcısı kaydedildi`, type: "success", icon: "sms" });
-      setShowForm(false);
-      load();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
-      showToastSafe({ title: "Hata", message: msg, type: "error" });
+      // Öncelik alanı ekrandan kaldırıldı (tek aktif sağlayıcı kuralıyla
+      // işlevsizdi); düzenlemede mevcut değer korunur. Aktif etme yalnız
+      // listedeki onaylı "Aktif et" ile yapılır.
+      const { code, ...rest } = form;
+      if (editing) await saSend("/api/superadmin/sms-provider", "PUT", { id: editing.id, ...rest }, "Sağlayıcı kaydedilemedi.");
+      else await saSend("/api/superadmin/sms-provider", "POST", { code: code.trim(), ...rest, isActive: false }, "Sağlayıcı kaydedilemedi.");
+      showToastSafe({ type: "success", message: `${form.name.trim()} kaydedildi.`, icon: "sms" });
+      setOpen(false);
+      reload();
+    } catch (error) {
+      setFormError(errorMessage(error, "Sağlayıcı kaydedilemedi."));
     } finally {
       setSaving(false);
     }
   };
 
-  const activate = async (p: Provider) => {
-    try {
-      const res = await fetch("/api/superadmin/sms-provider", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: p.id, isActive: true }),
-      });
-      if (!res.ok) throw new Error("Aktif edilemedi");
-      showToastSafe({ title: "Aktif edildi", message: `${p.name} artık aktif sağlayıcı`, type: "success", icon: "sms" });
-      load();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
-      showToastSafe({ title: "Hata", message: msg, type: "error" });
+  const activate = async (item: Provider) => {
+    if (!isMock(item) && !item.sendUrl) {
+      showToastSafe({ type: "error", message: `${item.name} için gönderim adresi tanımlı değil. Önce Düzenle'den ekleyin.` });
+      return;
     }
-  };
-
-  const testBalance = async (p: Provider) => {
-    setTestingId(p.id);
+    const missingCredentials = !isMock(item) && !item.hasPassword && !item.hasApiKey;
+    const ok = await confirmDialog({
+      title: `${item.name} aktif edilsin mi?`,
+      message: [
+        `Tüm kliniklerin SMS'leri (randevu hatırlatma, ödeme, kutlama) bundan sonra ${item.name} üzerinden gönderilecek.${active ? ` Şu anki sağlayıcı (${active.name}) kapanacak.` : ""}`,
+        isMock(item) ? "Bu bir DENEME sağlayıcısıdır: mesajlar gerçekte gönderilmez." : "Önce “Deneme SMS” ile kendi telefonunuza mesaj geldiğini doğrulayın.",
+        missingCredentials ? "Uyarı: şifre veya API anahtarı tanımlı değil; gönderimler başarısız olabilir." : "",
+      ].filter(Boolean).join("\n\n"),
+      confirmText: "Aktif et",
+      cancelText: "Vazgeç",
+      danger: isMock(item) || missingCredentials,
+    });
+    if (!ok) return;
+    setBusyId(item.id);
     try {
-      const res = await fetch("/api/superadmin/sms-provider/balance", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerId: p.id }),
-      });
-      const d = await res.json();
-      if (d.ok) {
-        showToastSafe({ title: "Bakiye", message: `${p.name}: ${d.balance ?? d.raw}`, type: "success", icon: "sms" });
-      } else {
-        showToastSafe({ title: "Hata", message: d.error || "Bakiye alınamadı", type: "error" });
-      }
-    } catch {
-      showToastSafe({ title: "Hata", message: "Bağlantı hatası", type: "error" });
+      await saSend("/api/superadmin/sms-provider", "PUT", { id: item.id, isActive: true }, "Sağlayıcı aktif edilemedi.");
+      showToastSafe({ type: "success", message: `${item.name} artık aktif SMS sağlayıcısı.`, icon: "sms" });
+      reload();
+    } catch (error) {
+      showToastSafe({ type: "error", message: errorMessage(error, "Sağlayıcı aktif edilemedi.") });
     } finally {
-      setTestingId(null);
+      setBusyId(null);
     }
   };
 
-  const submitTestSend = async () => {
-    if (!sendModal || !sendForm.phone.trim() || !sendForm.message.trim()) return;
-    setSending(true);
+  const checkBalance = async (item: Provider) => {
+    setBusyId(item.id);
     try {
-      const res = await fetch("/api/superadmin/sms-provider/test-send", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerId: sendModal.id, phone: sendForm.phone.trim(), message: sendForm.message.trim() }),
-      });
-      const d = await res.json();
-      if (d.ok) {
-        showToastSafe({ title: "Gönderildi", message: `Test SMS gönderildi (${d.providerMessageId ?? "-"})`, type: "success", icon: "sms" });
-        setSendModal(null);
-        setSendForm({ phone: "", message: "" });
-      } else {
-        showToastSafe({ title: "Hata", message: d.error || "Gönderilemedi", type: "error" });
+      const result = await saSend<{ ok: boolean; balance?: string | null; raw?: string; error?: string }>("/api/superadmin/sms-provider/balance", "POST", { providerId: item.id }, "Bakiye sorgulanamadı.");
+      if (result.ok) showToastSafe({ type: "success", message: `${item.name} bakiyesi: ${result.balance ?? result.raw ?? "—"}`, icon: "sms" });
+      else showToastSafe({ type: "error", message: result.error || "Bakiye sorgulanamadı." });
+    } catch (error) {
+      showToastSafe({ type: "error", message: errorMessage(error, "Bakiye sorgulanamadı.") });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const sendTest = async () => {
+    if (!testTarget) return;
+    if (testForm.phone.replace(/\D/g, "").length < 10) return setTestError("Geçerli bir telefon numarası yazın.");
+    if (!testForm.message.trim()) return setTestError("Mesaj yazın.");
+    setSending(true);
+    setTestError(null);
+    try {
+      const result = await saSend<{ ok: boolean; providerMessageId?: string; error?: string }>("/api/superadmin/sms-provider/test-send", "POST", { providerId: testTarget.id, phone: testForm.phone.trim(), message: testForm.message.trim() }, "Deneme SMS'i gönderilemedi.");
+      if (!result.ok) {
+        setTestError(result.error || "Deneme SMS'i gönderilemedi.");
+        return;
       }
-    } catch {
-      showToastSafe({ title: "Hata", message: "Bağlantı hatası", type: "error" });
+      showToastSafe({ type: "success", message: isMock(testTarget) ? "Deneme kaydedildi (deneme sağlayıcısı gerçek SMS göndermez)." : "Deneme SMS'i gönderildi. Telefonunuzu kontrol edin.", icon: "sms" });
+      setTestTarget(null);
+    } catch (error) {
+      setTestError(errorMessage(error, "Deneme SMS'i gönderilemedi."));
     } finally {
       setSending(false);
     }
   };
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center rounded-2xl border border-slate-100 bg-white py-16 shadow-sm">
-        <Spinner className="h-8 w-8 text-primary" />
-      </div>
-    );
-  }
+  const credentialText = (item: Provider) => isMock(item)
+    ? "Deneme sağlayıcısı — gerçek SMS göndermez"
+    : [item.sendUrl ? "Gönderim adresi var" : "Gönderim adresi YOK", item.hasPassword || item.hasApiKey ? "kimlik bilgisi var" : "şifre/anahtar YOK", item.sender ? `başlık: ${item.sender}` : ""].filter(Boolean).join(" · ");
+
+  const actions = (item: Provider) => (
+    <div className="flex flex-wrap items-center justify-end gap-1.5">
+      {!item.isActive && <Button size="sm" variant="secondary" disabled={busyId === item.id} onClick={() => void activate(item)}>Aktif et</Button>}
+      <Button size="sm" variant="ghost" icon={Wallet} disabled={busyId === item.id} onClick={() => void checkBalance(item)}>Bakiye</Button>
+      <Button size="sm" variant="ghost" icon={Send} onClick={() => { setTestTarget(item); setTestError(null); }}>Deneme SMS</Button>
+      <IconButton icon={Pencil} title="Düzenle" size="sm" onClick={() => openEdit(item)} />
+    </div>
+  );
+
+  const columns: ListTableColumn<Provider>[] = [
+    {
+      key: "name",
+      header: "Sağlayıcı",
+      render: (item) => (
+        <div className="min-w-0">
+          <p className="font-semibold text-slate-900">{item.name} <span className="text-xs font-normal text-slate-500">({item.code})</span></p>
+          <p className={`text-xs ${!isMock(item) && (!item.sendUrl || (!item.hasPassword && !item.hasApiKey)) ? "text-amber-700" : "text-slate-500"}`}>{credentialText(item)}</p>
+        </div>
+      ),
+    },
+    { key: "status", header: "Durum", render: (item) => (item.isActive ? <Badge tone="success">Aktif — tüm SMS buradan</Badge> : <Badge tone="neutral">Beklemede</Badge>) },
+    { key: "actions", header: "", align: "right", render: actions },
+  ];
 
   return (
-    <section className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-slate-500">Öncelik sırasına göre çalışan çoklu SMS sağlayıcı yapılandırması. Aynı anda yalnızca bir sağlayıcı aktif olabilir.</p>
-        <Button icon={PlusCircle} size="sm" onClick={openCreate}>Yeni Sağlayıcı</Button>
-      </div>
+    <section className="space-y-3">
+      <TabIntro
+        text="Tüm kliniklerin SMS'leri aktif sağlayıcı üzerinden gider. Aynı anda tek sağlayıcı aktif olabilir."
+        actions={<Button icon={Plus} onClick={openCreate}>Yeni sağlayıcı</Button>}
+      />
 
-      {providers.length === 0 ? (
-        <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
-          <EmptyState icon={ProviderEmptyIcon} illustrative title="Henüz sağlayıcı tanımlanmamış" />
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {providers.map((p, pIdx) => (
-            <div key={p.id} style={{ ["--row-delay" as string]: `${Math.min(pIdx, 14) * 18}ms` }} className="ui-row-in rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="mb-1 flex flex-wrap items-center gap-2">
-                    <span className="font-bold text-slate-900">{p.name}</span>
-                    <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-600">{p.code}</span>
-                    {p.isActive && <Badge tone="success" icon={CheckCircle2}>Aktif</Badge>}
-                    <Badge tone="neutral" size="sm">Öncelik {p.priority}</Badge>
-                  </div>
-                  <p className="truncate font-mono text-xs text-slate-400">{p.sendUrl || "gönderim URL'i tanımlı değil"}</p>
-                  <p className="mt-1 text-xs text-slate-400">
-                    {p.username && <>Kullanıcı: {p.username} · </>}
-                    Şifre: {p.hasPassword ? "tanımlı" : "yok"} · API Anahtarı: {p.hasApiKey ? "tanımlı" : "yok"}
-                  </p>
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-1">
-                  {!p.isActive && (
-                    <Button variant="secondary" size="sm" onClick={() => activate(p)}>Aktif Et</Button>
-                  )}
-                  <IconButton icon={Zap} title="Bakiye Sorgula" tone="primary" onClick={() => testBalance(p)} disabled={testingId === p.id} />
-                  <IconButton icon={Send} title="Test Gönder" tone="neutral" onClick={() => { setSendModal(p); setSendForm({ phone: "", message: "Test mesajı" }); }} />
-                  <IconButton icon={Pencil} title="Düzenle" tone="neutral" onClick={() => openEdit(p)} />
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
+      {!loading && !loadError && (!active || isMock(active)) && (
+        <p className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          {active
+            ? `Aktif sağlayıcı "${active.name}" bir deneme sağlayıcısı: kliniklerin SMS'leri hastalara GİTMİYOR. Gerçek gönderim için bir sağlayıcı ekleyip test edin ve aktif edin.`
+            : "Aktif SMS sağlayıcısı yok: sistem sunucu ayarlarındaki varsayılan sağlayıcıyı dener. Bir sağlayıcı ekleyip aktif edin."}
+        </p>
       )}
 
+      <ListTable<Provider>
+        columns={columns}
+        rows={providers}
+        rowKey={(item) => item.id}
+        loading={loading}
+        error={loadError}
+        onRetry={reload}
+        emptyText="Henüz sağlayıcı yok"
+        emptyDescription="SMS gönderebilmek için sağlayıcınızın (ör. NetGSM) bilgilerini ekleyin."
+        mobileCard={(item) => (
+          <div className="space-y-1.5">
+            <div className="flex items-start justify-between gap-2">
+              <p className="min-w-0 font-semibold text-slate-900">{item.name}</p>
+              {item.isActive ? <Badge tone="success">Aktif</Badge> : <Badge tone="neutral">Beklemede</Badge>}
+            </div>
+            <p className="text-xs text-slate-500">{credentialText(item)}</p>
+            {actions(item)}
+          </div>
+        )}
+      />
+
       <Modal
-        open={showForm}
-        onClose={() => setShowForm(false)}
-        title={editing ? `Düzenle: ${editing.name}` : "Yeni SMS Sağlayıcısı"}
+        open={open}
+        onClose={() => setOpen(false)}
+        title={editing ? "Sağlayıcıyı düzenle" : "Yeni SMS sağlayıcısı"}
+        description="Bilgileri sağlayıcınızın entegrasyon belgesinden alın. Şifre ve anahtar şifreli saklanır, ekranda gösterilmez."
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowForm(false)}>İptal</Button>
-            <Button loading={saving} onClick={submit}>Kaydet</Button>
+            <Button variant="secondary" onClick={() => setOpen(false)}>Vazgeç</Button>
+            <Button loading={saving} onClick={() => void save()}>Kaydet</Button>
           </>
         }
       >
-        <div className="grid gap-3 sm:grid-cols-2">
-          <FormField label="Kod" required>
-            <input className={inputClass} value={form.code} disabled={!!editing} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="NETGSM" />
-          </FormField>
-          <FormField label="Ad" required>
-            <input className={inputClass} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="NetGSM" />
-          </FormField>
-          <FormField label="Öncelik">
-            <input type="number" className={inputClass} value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })} />
-          </FormField>
-          <FormField label="HTTP Metodu">
-            <select className={inputClass} value={form.httpMethod} onChange={(e) => setForm({ ...form, httpMethod: e.target.value })}>
-              <option value="POST">POST</option>
-              <option value="GET">GET</option>
-            </select>
-          </FormField>
-          <div className="sm:col-span-2">
-            <FormField label="Gönderim URL">
-              <input className={inputClass} value={form.sendUrl} onChange={(e) => setForm({ ...form, sendUrl: e.target.value })} placeholder="https://api.provider.com/sms/send" />
+        <div className="space-y-4">
+          <FormErrorBanner message={formError} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField label="Ad" htmlFor="provider-name" required>
+              <Input id="provider-name" value={form.name} onChange={(event) => set("name", event.target.value)} placeholder="NetGSM" />
+            </FormField>
+            <FormField label="Kısa kod" htmlFor="provider-code" required={!editing} hint={editing ? "Değiştirilemez" : "Harf/rakam, ör. NETGSM"}>
+              <Input id="provider-code" value={form.code} disabled={Boolean(editing)} onChange={(event) => set("code", event.target.value.toUpperCase())} />
+            </FormField>
+            <FormField label="Gönderici başlığı" htmlFor="provider-sender" hint="Hastanın telefonunda görünen ad">
+              <Input id="provider-sender" value={form.sender} onChange={(event) => set("sender", event.target.value)} />
+            </FormField>
+            <FormField label="Kullanıcı adı" htmlFor="provider-user">
+              <Input id="provider-user" value={form.username} onChange={(event) => set("username", event.target.value)} autoComplete="off" />
+            </FormField>
+            <FormField label="Şifre" htmlFor="provider-password" hint={editing ? (editing.hasPassword ? "Kayıtlı; değiştirmek için yeni şifreyi yazın" : "Kayıtlı şifre yok") : undefined}>
+              <Input id="provider-password" type="password" value={form.password} onChange={(event) => set("password", event.target.value)} autoComplete="new-password" />
+            </FormField>
+            <FormField label="API anahtarı" htmlFor="provider-key" hint={editing ? (editing.hasApiKey ? "Kayıtlı; değiştirmek için yeni anahtarı yazın" : "Kayıtlı anahtar yok") : undefined}>
+              <Input id="provider-key" type="password" value={form.apiKey} onChange={(event) => set("apiKey", event.target.value)} autoComplete="new-password" />
             </FormField>
           </div>
-          <div className="sm:col-span-2">
-            <FormField label="Bakiye Sorgu URL">
-              <input className={inputClass} value={form.balanceUrl} onChange={(e) => setForm({ ...form, balanceUrl: e.target.value })} placeholder="https://api.provider.com/sms/balance" />
+          <fieldset className="space-y-3 border-t border-slate-100 pt-4">
+            <legend className="mb-1 text-sm font-bold text-slate-900">Teknik bağlantı</legend>
+            <div className="grid gap-3 sm:grid-cols-[1fr_8rem]">
+              <FormField label="Gönderim adresi" htmlFor="provider-send-url">
+                <Input id="provider-send-url" value={form.sendUrl} onChange={(event) => set("sendUrl", event.target.value)} placeholder="https://api.saglayici.com/sms/send" />
+              </FormField>
+              <FormField label="Yöntem" htmlFor="provider-method">
+                <Select id="provider-method" value={form.httpMethod} onChange={(event) => set("httpMethod", event.target.value)}>
+                  <option value="POST">POST</option>
+                  <option value="GET">GET</option>
+                </Select>
+              </FormField>
+            </div>
+            <FormField label="Bakiye sorgu adresi" htmlFor="provider-balance-url">
+              <Input id="provider-balance-url" value={form.balanceUrl} onChange={(event) => set("balanceUrl", event.target.value)} placeholder="https://api.saglayici.com/sms/balance" />
             </FormField>
-          </div>
-          <FormField label="Kullanıcı Adı">
-            <input className={inputClass} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
-          </FormField>
-          <FormField label="Gönderici Başlığı">
-            <input className={inputClass} value={form.sender} onChange={(e) => setForm({ ...form, sender: e.target.value })} placeholder="KlinikPanel" />
-          </FormField>
-          <FormField label="Şifre" hint={editing ? "Değiştirmek istemiyorsanız boş bırakın" : undefined}>
-            <input type="password" className={inputClass} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} placeholder="••••••••" />
-          </FormField>
-          <FormField label="API Anahtarı" hint={editing ? "Değiştirmek istemiyorsanız boş bırakın" : undefined}>
-            <input type="password" className={inputClass} value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder="••••••••" />
-          </FormField>
-          <div className="sm:col-span-2">
-            <FormField label="Ek Header'lar (JSON)" hint="Opsiyonel">
-              <textarea className={inputClass} rows={2} value={form.headersJson} onChange={(e) => setForm({ ...form, headersJson: e.target.value })} placeholder='{"X-Api-Key": "..."}' />
+            <FormField label="Ek başlıklar (JSON)" htmlFor="provider-headers" hint="İsteğe bağlı">
+              <Textarea id="provider-headers" rows={2} value={form.headersJson} onChange={(event) => set("headersJson", event.target.value)} placeholder='{"X-Api-Key": "..."}' />
             </FormField>
-          </div>
-          <div className="sm:col-span-2">
-            <FormField label="İstek Gövde Şablonu" hint="Opsiyonel — {{phone}}, {{message}} yer tutucularını kullanabilirsiniz">
-              <textarea className={inputClass} rows={2} value={form.bodyTemplate} onChange={(e) => setForm({ ...form, bodyTemplate: e.target.value })} />
+            <FormField label="İstek gövdesi şablonu" htmlFor="provider-body" hint="İsteğe bağlı; {{phone}} ve {{message}} yer tutucuları kullanılabilir">
+              <Textarea id="provider-body" rows={2} value={form.bodyTemplate} onChange={(event) => set("bodyTemplate", event.target.value)} />
             </FormField>
-          </div>
-          <div className="sm:col-span-2">
-            <FormField label="Başarı Deseni (regex)" hint="Opsiyonel">
-              <input className={inputClass} value={form.successPattern} onChange={(e) => setForm({ ...form, successPattern: e.target.value })} />
+            <FormField label="Başarılı yanıt deseni" htmlFor="provider-success" hint="İsteğe bağlı; yanıtta bu ifade varsa gönderim başarılı sayılır">
+              <Input id="provider-success" value={form.successPattern} onChange={(event) => set("successPattern", event.target.value)} />
             </FormField>
-          </div>
-          <div className="sm:col-span-2">
-            <label className="flex cursor-pointer items-center gap-2">
-              <input
-                type="checkbox"
-                checked={form.isActive}
-                onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
-                className="rounded border-slate-300 text-primary focus:ring-primary/30"
-              />
-              <span className="text-sm text-slate-700">Kaydettikten sonra bu sağlayıcıyı aktif et</span>
-            </label>
-          </div>
+          </fieldset>
         </div>
       </Modal>
 
       <Modal
-        open={!!sendModal}
-        onClose={() => setSendModal(null)}
-        title={`Test Gönder: ${sendModal?.name ?? ""}`}
+        open={Boolean(testTarget)}
+        onClose={() => setTestTarget(null)}
+        title="Deneme SMS'i gönder"
+        description={testTarget ? `${testTarget.name} üzerinden kendi telefonunuza bir deneme mesajı gönderin.` : undefined}
+        size="sm"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setSendModal(null)}>İptal</Button>
-            <Button loading={sending} onClick={submitTestSend} disabled={!sendForm.phone.trim() || !sendForm.message.trim()}>Gönder</Button>
+            <Button variant="secondary" onClick={() => setTestTarget(null)}>Vazgeç</Button>
+            <Button loading={sending} icon={Send} onClick={() => void sendTest()}>Gönder</Button>
           </>
         }
       >
         <div className="space-y-3">
-          <FormField label="Telefon">
-            <input className={inputClass} value={sendForm.phone} onChange={(e) => setSendForm({ ...sendForm, phone: e.target.value })} placeholder="05xx xxx xx xx" />
+          <FormErrorBanner message={testError} />
+          <FormField label="Telefon" htmlFor="provider-test-phone" required>
+            <Input id="provider-test-phone" type="tel" inputMode="tel" value={testForm.phone} onChange={(event) => setTestForm((current) => ({ ...current, phone: event.target.value }))} placeholder="05xx xxx xx xx" />
           </FormField>
-          <FormField label="Mesaj">
-            <textarea className={inputClass} rows={3} value={sendForm.message} onChange={(e) => setSendForm({ ...sendForm, message: e.target.value })} />
+          <FormField label="Mesaj" htmlFor="provider-test-message" required>
+            <Textarea id="provider-test-message" rows={3} value={testForm.message} onChange={(event) => setTestForm((current) => ({ ...current, message: event.target.value }))} />
           </FormField>
         </div>
       </Modal>

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
+import { packageConflictMessage, parsePackageInput } from "../package-input";
 
 export async function PATCH(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -12,22 +13,27 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
   const existing = await prisma.smsPackage.findUnique({ where: { id: params.id } });
   if (!existing) return NextResponse.json({ message: "Paket bulunamadı" }, { status: 404 });
 
-  const body = (await request.json()) as {
-    name?: string;
-    smsCount?: number;
-    price?: number;
-    isActive?: boolean;
-  };
+  const body = await request.json().catch(() => null);
+  const parsed = parsePackageInput(body, true);
+  if (parsed.error) return NextResponse.json({ message: parsed.error }, { status: 400 });
+  const isActive = body && typeof body === "object" && typeof (body as { isActive?: unknown }).isActive === "boolean"
+    ? (body as { isActive: boolean }).isActive
+    : undefined;
 
-  const updated = await prisma.smsPackage.update({
-    where: { id: params.id },
-    data: {
-      ...(body.name !== undefined && { name: body.name }),
-      ...(body.smsCount !== undefined && { smsCount: body.smsCount }),
-      ...(body.price !== undefined && { price: body.price }),
-      ...(body.isActive !== undefined && { isActive: body.isActive }),
-    },
-  });
+  let updated;
+  try {
+    updated = await prisma.smsPackage.update({
+      where: { id: params.id },
+      data: {
+        ...parsed.data,
+        ...(isActive !== undefined && { isActive }),
+      },
+    });
+  } catch (error) {
+    const conflict = packageConflictMessage(error);
+    if (conflict) return NextResponse.json({ message: conflict }, { status: 409 });
+    throw error;
+  }
 
   await writeAudit(
     auth.user.id,
@@ -35,7 +41,7 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
     `${updated.name}: ${updated.smsCount} SMS / ₺${Number(updated.price).toLocaleString("tr-TR")}${updated.isActive ? "" : " (pasif)"}`
   );
 
-  return NextResponse.json(updated);
+  return NextResponse.json({ ...updated, price: Number(updated.price) });
 }
 
 export async function DELETE(_req: NextRequest, props: { params: Promise<{ id: string }> }) {

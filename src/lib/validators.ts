@@ -63,7 +63,8 @@ export const patientSchema = z.object({
     fullName: z.string().min(3),
     phone: z.string(),
     preferredContactChannel: z.enum(["SMS", "WHATSAPP", "TELEFON", "EPOSTA", "ILETISIM_YOK"]).default("SMS"),
-    whatsappConsent: z.boolean().default(false),
+    // Tüm hastalar WhatsApp için varsayılan izinlidir; istemeyen kapatılır (bkz. src/lib/whatsapp-consent.ts).
+    whatsappConsent: z.boolean().default(true),
     communicationConsentSource: z.string().trim().max(120).optional(),
   address: z.string().optional(),
   profession: z.string().trim().max(120).optional(),

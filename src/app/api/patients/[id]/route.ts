@@ -7,6 +7,7 @@ import { requireActiveBranch } from "@/lib/branch-context";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 import { turkeyTodayStartUtc } from "@/lib/tz";
 import { getClientIpFromHeaders } from "@/lib/edge-rate-limit";
+import { canMessageOnWhatsapp } from "@/lib/whatsapp-consent";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -57,7 +58,7 @@ function normalizeValue(value: unknown): string {
 function formatFieldValue(fieldKey: string, value: unknown): string {
   if (fieldKey === "birthDate") {
     if (!value) return "-";
-    if (value instanceof Date) return value.toLocaleDateString("tr-TR");
+    if (value instanceof Date) return value.toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul" });
     const d = new Date(String(value));
     if (!Number.isNaN(d.getTime())) return d.toLocaleDateString("tr-TR");
   }
@@ -209,7 +210,11 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
           endAt: true,
           type: true,
           status: true,
-          doctor: { select: { fullName: true } },
+          // Randevu detayı penceresi not ve tedavi alanını gösteriyordu ama bu
+          // alanlar hiç dönmediği için pencere hep boş kalıyordu.
+          note: true,
+          clinicUnit: { select: { name: true, code: true } },
+          doctor: { select: { id: true, fullName: true } },
         },
         orderBy: { startAt: "desc" },
       } : false,
@@ -222,6 +227,7 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
           amount: true,
           status: true,
           diagnosedAt: true,
+          note: true,
           doctorId: true,
           doctor: { select: { id: true, fullName: true } },
         },
@@ -243,7 +249,9 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
       } : false,
       prescriptions: canReadPrescriptions ? {
         where: { branchId: branch.branchId },
-        select: { id: true, drugs: true, note: true, createdAt: true },
+        // status: iptal edilmiş reçete listede "İptal edildi" görünsün ve
+        // ikinci kez iptal düğmesi çıkmasın (önceden alan dönmüyordu).
+        select: { id: true, drugs: true, note: true, status: true, createdAt: true, doctor: { select: { id: true, fullName: true } } },
         orderBy: { createdAt: "desc" },
       } : false,
       labOrders: canReadLab ? {
@@ -259,6 +267,20 @@ export const GET = withApiTiming("patients-detail", async function GET(request: 
           invoiceNo: true,
           createdAt: true,
           doctor: { select: { id: true, fullName: true } },
+          // Hasta dosyasındaki lab listesi işin hangi adımda olduğunu (lab'da
+          // mı, geldi mi, gecikti mi) gösterir ve Laboratuvar sayfasıyla aynı
+          // eylemleri (gönder, geldi, fatura, hastaya takıldı) her işi ayrıca
+          // okumadan açabilir.
+          firmaId: true,
+          trips: {
+            select: { id: true, order: true, description: true, sentAt: true, expectedAt: true, receivedAt: true, sentNote: true, receivedNote: true },
+            orderBy: { order: "asc" },
+          },
+          invoices: {
+            where: { status: "ACTIVE" },
+            select: { id: true, item: true, amount: true, invoiceNo: true, issuedAt: true, note: true },
+            orderBy: { issuedAt: "asc" },
+          },
         },
         orderBy: { createdAt: "desc" }
       } : false,
@@ -371,7 +393,7 @@ export async function PUT(request: NextRequest, props: Params) {
       : existing.preferredContactChannel,
     whatsappConsent: typeof body.whatsappConsent === "boolean"
       ? body.whatsappConsent
-      : Boolean(existing.whatsappOptInAt && !existing.whatsappOptOutAt),
+      : canMessageOnWhatsapp(existing),
     communicationConsentSource: normalizeOptional(
       body.communicationConsentSource,
       existing.communicationConsentSource,
@@ -408,7 +430,7 @@ export async function PUT(request: NextRequest, props: Params) {
   let patient;
   try {
     const { whatsappConsent, ...patientData } = parsed.data;
-    const consentChanged = whatsappConsent !== Boolean(existing.whatsappOptInAt && !existing.whatsappOptOutAt);
+    const consentChanged = whatsappConsent !== canMessageOnWhatsapp(existing);
     patient = await prisma.patient.update({
       where: { id: params.id },
       data: {

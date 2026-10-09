@@ -1,15 +1,24 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming } from "@/lib/api";
 import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { turkeyTodayStartUtc } from "@/lib/tz";
 
 /**
  * GET /api/muhasebe/alacaklar
- * Her hasta için: tedavi toplam, ödenen, bakiye (alacak)
- * Sadece pozitif bakiyeli (borçlu) hastaları döner.
+ * Her hasta için: tedavi toplamı (indirimli), ödenen, bakiye.
+ *
+ * Parametreler:
+ * - (yok)            → yalnız borcu olan hastalar (bakiye > 0,5 TL), büyükten küçüğe.
+ * - durum=avans      → fazla ödeme / ön ödeme yapmış hastalar (bakiye < −0,5 TL).
+ * - patientId=…      → tek hasta (borcu olmasa da döner); tahsilat formunda güncel
+ *                      borç, açık taksit ve önerilen hekim için kullanılır.
+ *
+ * Her satırda hekimler (kimlikleriyle), son tedaviyi yapan hekim ve açık taksit
+ * planı özeti (kalan, sonraki vade, gecikmiş taksit sayısı, planın hekimi) döner.
  */
-export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
+export const GET = withApiTiming("muhasebe-alacaklar", async function GET(request: NextRequest) {
   try {
     const auth = await requireAuth("finance:read");
     if (auth.error) return auth.error;
@@ -18,6 +27,9 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
 
     const institutionId = auth.user.institutionId;
     const hidePatientPhone = await shouldHidePatientPhoneForRole(auth.user.role);
+    const params = request.nextUrl.searchParams;
+    const singlePatientId = params.get("patientId")?.trim() || null;
+    const creditMode = params.get("durum") === "avans";
 
     const treatmentOnlyWhere = {
       NOT: [
@@ -27,16 +39,18 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
       ],
     };
 
+    const patientFilter = singlePatientId ? { patientId: singlePatientId } : {};
     const examinationWhere = {
       ...treatmentOnlyWhere,
       ...(institutionId ? { institutionId } : {}),
       branchId: branch.branchId,
+      ...patientFilter,
     };
     const paymentWhere = {
       ...(institutionId ? { institutionId } : {}),
       branchId: branch.branchId,
-      status: "ACTIVE",
-      patientId: { not: null },
+      status: "ACTIVE" as const,
+      patientId: singlePatientId ? singlePatientId : { not: null },
     };
 
     // Birbirinden bağımsız defter sorgularını ardışık bekletmek, hasta sayısı
@@ -48,7 +62,7 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
       examDoctorRows,
       latestTreatmentRows,
       latestPayments,
-      activeTaksitPatientRows,
+      openInstallments,
     ] = await Promise.all([
       prisma.examination.groupBy({
         by: ["patientId"],
@@ -73,6 +87,7 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
         where: examinationWhere,
         select: {
           patientId: true,
+          doctorId: true,
           diagnosedAt: true,
         },
         orderBy: { diagnosedAt: "desc" },
@@ -84,28 +99,35 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
         orderBy: { createdAt: "desc" },
         distinct: ["patientId"],
       }),
-      prisma.taksitPlan.findMany({
+      // Açık (iptal/tamamlanmamış) planların ödenmemiş taksitleri — satırdaki plan özeti için.
+      prisma.taksit.findMany({
         where: {
-          status: { in: ["AKTIF", "DEVAM_EDIYOR"] },
-          ...(institutionId ? { institutionId } : {}),
+          institutionId: institutionId || undefined,
           branchId: branch.branchId,
+          status: { in: ["BEKLIYOR", "GECIKTI"] },
+          kalan: { gt: 0 },
+          plan: {
+            status: { in: ["AKTIF", "DEVAM_EDIYOR"] },
+            branchId: branch.branchId,
+            ...(singlePatientId ? { patientId: singlePatientId } : {}),
+          },
         },
-        select: { patientId: true },
-        distinct: ["patientId"],
+        select: { kalan: true, vadeDate: true, status: true, plan: { select: { id: true, patientId: true, doctorId: true } } },
+        orderBy: { vadeDate: "asc" },
       }),
     ]);
 
-    const doctorMap = new Map<string, Set<string>>();
-    const treatmentDateMap = new Map<string, Date>();
+    const doctorMap = new Map<string, Map<string, string>>();
     examDoctorRows.forEach((exam) => {
-      const doctors = doctorMap.get(exam.patientId) || new Set<string>();
-      if (exam.doctor?.fullName) doctors.add(exam.doctor.fullName);
+      const doctors = doctorMap.get(exam.patientId) || new Map<string, string>();
+      if (exam.doctorId && exam.doctor?.fullName) doctors.set(exam.doctorId, exam.doctor.fullName);
       doctorMap.set(exam.patientId, doctors);
     });
 
+    const treatmentMap = new Map<string, { at: Date; doctorId: string | null }>();
     latestTreatmentRows.forEach((exam) => {
-      const current = treatmentDateMap.get(exam.patientId);
-      if (!current || exam.diagnosedAt > current) treatmentDateMap.set(exam.patientId, exam.diagnosedAt);
+      const current = treatmentMap.get(exam.patientId);
+      if (!current || exam.diagnosedAt > current.at) treatmentMap.set(exam.patientId, { at: exam.diagnosedAt, doctorId: exam.doctorId });
     });
 
     const paymentDateMap = new Map<string, Date>();
@@ -114,11 +136,29 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
       paymentDateMap.set(payment.patientId, payment.createdAt);
     });
 
-    // Aktif veya ödemesi başlamış taksit planı olan hastaları ayrıca işaretle.
-    const activeTaksitPatientIds = new Set(activeTaksitPatientRows.map((r) => r.patientId));
+    // Açık plan özeti: hastanın açık taksitlerinin toplam kalanı, en yakın vade ve gecikmiş taksit sayısı.
+    const todayStart = turkeyTodayStartUtc();
+    const planMap = new Map<string, { kalan: number; nextDueDate: string | null; nextDueAmount: number; overdueCount: number; doctorId: string | null; planIds: Set<string> }>();
+    for (const item of openInstallments) {
+      const patientId = item.plan.patientId;
+      const summary = planMap.get(patientId) || { kalan: 0, nextDueDate: null, nextDueAmount: 0, overdueCount: 0, doctorId: item.plan.doctorId, planIds: new Set<string>() };
+      summary.kalan += Number(item.kalan);
+      summary.planIds.add(item.plan.id);
+      if (!summary.nextDueDate) {
+        summary.nextDueDate = item.vadeDate.toISOString();
+        summary.nextDueAmount = Number(item.kalan);
+        summary.doctorId = item.plan.doctorId;
+      }
+      if (item.status === "GECIKTI" || item.vadeDate < todayStart) summary.overdueCount += 1;
+      planMap.set(patientId, summary);
+    }
 
-    // Patient bilgileri
-    const patientIds = [...new Set(examGroups.map((e) => e.patientId))];
+    // Hasta bilgileri — tedavisi ya da ödemesi olan herkes (yalnız ödemesi olan hasta ön ödeme yapmıştır).
+    const patientIds = [...new Set([
+      ...examGroups.map((e) => e.patientId),
+      ...payGroups.map((p) => p.patientId).filter((id): id is string => Boolean(id)),
+      ...(singlePatientId ? [singlePatientId] : []),
+    ])];
     const patients = await prisma.patient.findMany({
       where: {
         id: { in: patientIds },
@@ -129,43 +169,58 @@ export const GET = withApiTiming("muhasebe-alacaklar", async function GET() {
       select: { id: true, fullName: true, phone: true, discountRate: true },
     });
 
-    const patientMap = new Map(patients.map((p) => [p.id, p]));
+    const examMap = new Map(examGroups.map((e) => [e.patientId, Number(e._sum.amount ?? 0)]));
     const payMap = new Map(
       payGroups.map((p) => [p.patientId as string, Number(p._sum.amount ?? 0)])
     );
 
-    const rows = examGroups
-      .map((e) => {
-        const p = patientMap.get(e.patientId);
-        if (!p) return null;
+    const allRows = patients.map((p) => {
+      const brutTedavi = examMap.get(p.id) ?? 0;
+      const indirim    = brutTedavi * (Number(p.discountRate || 0) / 100);
+      const netTedavi  = brutTedavi - indirim;
+      const odenen     = payMap.get(p.id) ?? 0;
+      const bakiye     = Math.round((netTedavi - odenen) * 100) / 100;
+      const doctors = Array.from(doctorMap.get(p.id)?.entries() || []).map(([id, fullName]) => ({ id, fullName }));
+      const plan = planMap.get(p.id);
+      const lastTreatment = treatmentMap.get(p.id);
 
-        const brutTedavi = Number(e._sum.amount ?? 0);
-        const indirim    = brutTedavi * (Number(p.discountRate || 0) / 100);
-        const netTedavi  = brutTedavi - indirim;
-        const odenen     = payMap.get(e.patientId) ?? 0;
-        const bakiye     = netTedavi - odenen;
+      return {
+        id: p.id,
+        fullName: p.fullName,
+        phone: hidePatientPhone ? "" : p.phone,
+        brutTedavi,
+        indirim,
+        netTedavi,
+        odenen,
+        bakiye,
+        discountRate: p.discountRate,
+        doctors,
+        doctorNames: doctors.map((doctor) => doctor.fullName),
+        lastDoctorId: lastTreatment?.doctorId || null,
+        lastPaymentAt: paymentDateMap.get(p.id)?.toISOString() || null,
+        lastTreatmentAt: lastTreatment?.at.toISOString() || null,
+        hasActiveTaksitPlan: Boolean(plan),
+        plan: plan
+          ? {
+              kalan: Math.round(plan.kalan * 100) / 100,
+              nextDueDate: plan.nextDueDate,
+              nextDueAmount: Math.round(plan.nextDueAmount * 100) / 100,
+              overdueCount: plan.overdueCount,
+              doctorId: plan.doctorId,
+              planCount: plan.planIds.size,
+            }
+          : null,
+      };
+    });
 
-        return {
-          id: p.id,
-          fullName: p.fullName,
-          phone: hidePatientPhone ? "" : p.phone,
-          brutTedavi,
-          indirim,
-          netTedavi,
-          odenen,
-          bakiye,
-          discountRate: p.discountRate,
-          doctorNames: Array.from(doctorMap.get(e.patientId) || []),
-          lastPaymentAt: paymentDateMap.get(e.patientId)?.toISOString() || null,
-          lastTreatmentAt: treatmentDateMap.get(e.patientId)?.toISOString() || null,
-          hasActiveTaksitPlan: activeTaksitPatientIds.has(e.patientId),
-        };
-      })
-      .filter((r): r is NonNullable<typeof r> => r !== null && r.bakiye > 0.5)
-      .sort((a, b) => b.bakiye - a.bakiye);
+    const rows = singlePatientId
+      ? allRows
+      : allRows
+          .filter((r) => (creditMode ? r.bakiye < -0.5 : r.bakiye > 0.5))
+          .sort((a, b) => (creditMode ? a.bakiye - b.bakiye : b.bakiye - a.bakiye));
 
     const toplamAlacak = rows.reduce((s, r) => s + r.bakiye, 0);
-    return NextResponse.json({ rows, toplamAlacak });
+    return NextResponse.json({ rows, toplamAlacak: Math.round(toplamAlacak * 100) / 100 });
   } catch (error) {
     console.error("[muhasebe alacaklar GET]", error);
     return NextResponse.json({ message: "Hasta alacakları hesaplanamadı. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });

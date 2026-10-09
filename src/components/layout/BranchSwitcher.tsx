@@ -63,7 +63,9 @@ export function BranchSwitcher() {
       </button>
     );
   }
-  if (!context || context.branches.length === 0) return null;
+  // Tek şubeli klinikte seçici işe yaramaz ve üst barın en değerli alanını
+  // (hasta aramayı) daraltıyordu; yalnız 2+ şubede gösterilir.
+  if (!context || context.branches.length < 2) return null;
 
   const currentLabel = context.activeBranch?.name || "Şube seçin";
   const choose = async (branchId: string) => {

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireAnyAuth, requireAuth } from "@/lib/api";
 import { isValidDateKey, turkeyDayRangeUtc } from "@/lib/tz";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { auditCategoryWhere, isAuditCategoryKey } from "@/lib/audit-log-taxonomy";
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,7 +26,11 @@ export async function GET(request: NextRequest) {
     const limit = Number.isInteger(rawLimit) ? Math.min(200, Math.max(1, rawLimit)) : 15;
     const q = sp.get("q") || "";
     const action = sp.get("action") || "";
-    const category = requestedCategory;
+    // "Kim yaptı?" filtresi. Kurum sınırı aşağıdaki where.user ile korunur:
+    // başka kurumun kullanıcı kimliği verilse de kayıt dönmez.
+    const userId = sp.get("userId") || "";
+    // Eski bağlantılardaki kategori adları yeni sözlüğe çevrilir.
+    const category = ({ sms: "iletisim", sistem: "guvenlik" } as Record<string, string>)[requestedCategory] || requestedCategory;
 
     if ((from && !isValidDateKey(from)) || (to && !isValidDateKey(to))) {
       return NextResponse.json({ message: "Geçersiz tarih aralığı" }, { status: 400 });
@@ -43,6 +48,7 @@ export async function GET(request: NextRequest) {
       institutionId: auth.user.institutionId,
     };
     where.NOT = [{ actorRole: "SUPERADMIN" }, { isGhost: true }];
+    if (userId) where.userId = userId;
     if (from || to) {
       where.createdAt = {
         ...(fromDate ? { gte: fromDate } : {}),
@@ -56,41 +62,25 @@ export async function GET(request: NextRequest) {
         { user: { fullName: { contains: q, mode: "insensitive" } } }
       ];
     }
+    // Kategori listesi ve satırdaki bölüm etiketi aynı sözlükten okunur
+    // (lib/audit-log-taxonomy). "sms-delivery" yalnız İletişim ekranının
+    // teslimat listesi içindir ve eski davranışıyla kalır.
+    const categoryWhere: Record<string, unknown> | null = action
+      ? null
+      : category === "sms-delivery"
+        ? { action: { startsWith: "SMS_" }, NOT: { action: { startsWith: "SMS_TEMPLATE_" } } }
+        : category && isAuditCategoryKey(category)
+          ? auditCategoryWhere(category)
+          : null;
     if (action) {
       where.action = action;
-    } else if (category) {
-      const prefixes: Record<string, string[]> = {
-        hasta: ["PATIENT_", "PATIENT_FOLLOW_UP", "DOCUMENT_", "PATIENT_CONSENT"],
-        randevu: ["APPOINTMENT_", "BOOKING_REQUEST_", "PUBLIC_BOOKING_", "WAITLIST_", "DOCTOR_BLOCK_"],
-        tedavi: ["EXAM_", "TREATMENT_", "PRESCRIPTION_"],
-        finans: ["PAYMENT_", "KASA_", "GIDER_", "TAKSIT_", "FIRMA_", "PURCHASE_"],
-        lab: ["LAB_"],
-        stok: ["STOCK_"],
-        ayar: ["POS_", "PRICE_", "TREATMENT_TYPE_", "FOLLOW_UP_TYPES_"],
-        sms: ["SMS_"],
-        sistem: ["LOGIN", "LOGOUT", "PROFILE_", "PASSWORD_", "STAFF_", "MESSAGE_", "ANNOUNCEMENT_", "SUPPORT_", "DEV_", "DEMO_"],
-      };
-      const selected = prefixes[category] || [];
-      if (selected.length > 0 || category === "sms-delivery") {
-        const categoryOr: Record<string, unknown>[] = category === "sms-delivery"
-          ? [{ action: { startsWith: "SMS_" }, NOT: { action: { startsWith: "SMS_TEMPLATE_" } } }]
-          : selected.map((prefix) =>
-              prefix.endsWith("_")
-                ? { action: { startsWith: prefix } }
-                : { action: prefix }
-            );
-        if (category === "sms") {
-          categoryOr.push({ action: "SETTINGS_UPDATE", detail: { contains: "SMS", mode: "insensitive" } });
-        } else if (category === "ayar") {
-          categoryOr.push({ action: { startsWith: "SETTINGS_" }, NOT: { detail: { contains: "SMS", mode: "insensitive" } } });
-        }
-        const searchOr = where.OR as unknown[] | undefined;
-        if (searchOr?.length) {
-          delete where.OR;
-          where.AND = [{ OR: searchOr }, { OR: categoryOr }];
-        } else {
-          where.OR = categoryOr;
-        }
+    } else if (categoryWhere) {
+      const searchOr = where.OR as unknown[] | undefined;
+      if (searchOr?.length) {
+        delete where.OR;
+        where.AND = [{ OR: searchOr }, categoryWhere];
+      } else {
+        where.AND = [categoryWhere];
       }
     }
 

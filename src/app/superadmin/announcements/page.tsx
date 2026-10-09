@@ -1,283 +1,364 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Bell, Plus } from "lucide-react";
-import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { EyeOff, Plus } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Tabs, useTabParam } from "@/components/ui/Tabs";
+import { Button, IconButton } from "@/components/ui/Button";
+import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
-import { FormField, inputErrorClass } from "@/components/ui/FormField";
-import { showToastSafe } from "@/lib/toast-client";
+import { Input, Textarea } from "@/components/ui/Input";
+import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { ChoiceCards } from "@/components/ui/ChoiceCards";
+import { SearchableListbox } from "@/components/ui/SearchableListbox";
+import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
 import { confirmDialog } from "@/lib/confirm-client";
-import { LoadErrorState } from "@/components/ui/LoadErrorState";
+import { showToastSafe } from "@/lib/toast-client";
+import { turkeyDayRangeUtc } from "@/lib/tz";
+import { shortDate, todayKey } from "@/components/superadmin/sa-format";
+import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
-type Institution = { id: string; name: string; isActive?: boolean; isDemo?: boolean };
-type Announcement = {
+const AnnouncementEmptyIcon = createModuleEmptyIcon("clipboard");
+const MAX_TEXT = 2000;
+
+type Group = {
+  key: string;
+  ids: string[];
+  text: string;
+  startsAt: string | null;
+  endsAt: string | null;
+  createdAt: string;
+  createdBy: string | null;
+  targets: { id: string; name: string; active: boolean }[];
+  activeCount: number;
+};
+
+type ClinicAnnouncement = {
   id: string;
   text: string;
   isActive: boolean;
+  startsAt: string | null;
+  endsAt: string | null;
   createdAt: string;
-  endsAt?: string | null;
-  startsAt?: string | null;
-  institution?: { id: string; name: string; isDemo?: boolean } | null;
+  institution: { id: string; name: string } | null;
 };
 
+type Clinic = { id: string; name: string; isActive: boolean };
+
+const SCOPE_KEYS = ["platform", "klinik"] as const;
+
+function publishState(item: { isActiveCount: number; startsAt: string | null; endsAt: string | null }): { label: string; tone: BadgeTone } {
+  const now = Date.now();
+  if (item.isActiveCount === 0) return { label: "Yayından kaldırıldı", tone: "neutral" };
+  if (item.endsAt && new Date(item.endsAt).getTime() < now) return { label: "Süresi doldu", tone: "neutral" };
+  if (item.startsAt && new Date(item.startsAt).getTime() > now) return { label: "Zamanlandı", tone: "info" };
+  return { label: "Yayında", tone: "success" };
+}
+
+function rangeText(startsAt: string | null, endsAt: string | null): string {
+  const start = startsAt ? shortDate(startsAt) : "Hemen";
+  const end = endsAt ? shortDate(endsAt) : "süresiz";
+  return `${start} – ${end}`;
+}
+
+/**
+ * Duyurular — platformdan kliniklerin ana sayfasına gönderilen mesajlar. Tüm
+ * kliniklere gönderilen tek duyuru tek satırdır ("Hedef: 7 klinik"), tek
+ * tıkla hepsinden kaldırılır. Kliniklerin kendi iç duyuruları ayrı sekmede.
+ */
 export default function AnnouncementsPage() {
-  const [items, setItems] = useState<Announcement[]>([]);
-  const [institutions, setInstitutions] = useState<Institution[]>([]);
+  const [scope, setScope] = useTabParam(SCOPE_KEYS, "platform", "kapsam");
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [clinicItems, setClinicItems] = useState<ClinicAnnouncement[]>([]);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [activeClinicCount, setActiveClinicCount] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [showForm, setShowForm] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+
+  const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
   const [targetMode, setTargetMode] = useState<"all" | "selected">("all");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [startsAt, setStartsAt] = useState("");
-  const [endsAt, setEndsAt] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
+  const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [clinics, setClinics] = useState<Clinic[]>([]);
+  const [clinicsLoading, setClinicsLoading] = useState(false);
 
-  const selectedCount = useMemo(
-    () => targetMode === "all" ? institutions.filter((i) => i.isActive !== false).length : selectedIds.length,
-    [institutions, selectedIds.length, targetMode],
-  );
+  const reload = useCallback(() => setReloadKey((value) => value + 1), []);
 
-  const load = async () => {
+  useEffect(() => { setPage(1); }, [scope]);
+
+  useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
     setLoadError(null);
-    try {
-      const [annRes, instRes] = await Promise.all([
-        fetch("/api/superadmin/announcements", { cache: "no-store" }),
-        fetch("/api/superadmin/institutions", { cache: "no-store" }),
-      ]);
-      const annData = await annRes.json().catch(() => null);
-      const instData = await instRes.json().catch(() => null);
-      if (!annRes.ok) throw new Error(annData?.message || "Duyurular yüklenemedi.");
-      if (!instRes.ok) throw new Error(instData?.message || "Kurum listesi yüklenemedi.");
-      const nextItems = Array.isArray(annData) ? annData : annData?.announcements;
-      if (!Array.isArray(nextItems) || !Array.isArray(instData)) throw new Error("Sunucudan beklenmeyen veri alındı.");
-      setItems(nextItems);
-      setInstitutions(instData);
-    } catch (loadFailure) {
-      setLoadError(loadFailure instanceof Error ? loadFailure.message : "Duyurular yüklenemedi.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => { void load(); }, []);
-
-  const toggleInstitution = (id: string) => {
-    setSelectedIds((current) => current.includes(id) ? current.filter((x) => x !== id) : [...current, id]);
-  };
-
-  const closeForm = () => {
-    setShowForm(false);
-    setText("");
-    setSelectedIds([]);
-    setTargetMode("all");
-    setStartsAt("");
-    setEndsAt("");
-    setError("");
-  };
-
-  const handleSave = async () => {
-    setError("");
-    if (!text.trim()) {
-      setError("Duyuru metni zorunlu.");
-      return;
-    }
-    if (targetMode === "selected" && selectedIds.length === 0) {
-      setError("En az bir kurum seçin.");
-      return;
-    }
-    if (startsAt && endsAt && startsAt > endsAt) {
-      setError("Başlangıç tarihi bitiş tarihinden sonra olamaz.");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      const res = await fetch("/api/superadmin/announcements", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          text,
-          allInstitutions: targetMode === "all",
-          institutionIds: targetMode === "selected" ? selectedIds : [],
-          startsAt: startsAt || null,
-          endsAt: endsAt || null,
-        }),
+    const apiScope = scope === "klinik" ? "clinic" : "platform";
+    saGet<{ groups?: Group[]; announcements?: ClinicAnnouncement[]; total: number; totalPages: number; activeClinicCount?: number }>(
+      `/api/superadmin/announcements?scope=${apiScope}&page=${page}`, "Duyurular yüklenemedi.", controller.signal,
+    )
+      .then((data) => {
+        setGroups(Array.isArray(data?.groups) ? data.groups : []);
+        setClinicItems(Array.isArray(data?.announcements) ? data.announcements : []);
+        setTotal(data?.total ?? 0);
+        setTotalPages(data?.totalPages ?? 1);
+        if (typeof data?.activeClinicCount === "number") setActiveClinicCount(data.activeClinicCount);
+      })
+      .catch((error) => {
+        if (!isAbort(error)) setLoadError(errorMessage(error, "Duyurular yüklenemedi."));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
       });
-      const responseBody = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(responseBody.message || "Duyuru yayınlanamadı.");
-      showToastSafe({ title: "Yayınlandı", message: "Duyuru başarıyla yayınlandı", type: "success", icon: "log" });
-      closeForm();
-      await load();
-    } catch (saveFailure) {
-      const message = saveFailure instanceof Error ? saveFailure.message : "Duyuru yayınlanamadı.";
-      setError(message);
-      showToastSafe({ title: "Hata", message, type: "error" });
+    return () => controller.abort();
+  }, [scope, page, reloadKey]);
+
+  const loadClinics = () => {
+    if (clinics.length > 0 || clinicsLoading) return;
+    setClinicsLoading(true);
+    saGet<Clinic[]>("/api/superadmin/institutions", "Klinik listesi alınamadı.")
+      .then((data) => setClinics((Array.isArray(data) ? data : []).filter((item) => item.isActive)))
+      .catch((error) => setFormError(errorMessage(error, "Klinik listesi alınamadı.")))
+      .finally(() => setClinicsLoading(false));
+  };
+
+  const openCreate = () => {
+    setFormError(null);
+    setOpen(true);
+  };
+
+  const resetForm = () => {
+    setText("");
+    setTargetMode("all");
+    setSelectedIds([]);
+    setStartDate("");
+    setEndDate("");
+  };
+
+  const publish = async () => {
+    if (!text.trim()) return setFormError("Duyuru metnini yazın.");
+    if (targetMode === "selected" && selectedIds.length === 0) return setFormError("En az bir klinik seçin.");
+    if (startDate && endDate && startDate > endDate) return setFormError("Bitiş tarihi başlangıçtan önce olamaz.");
+    setSaving(true);
+    setFormError(null);
+    try {
+      const result = await saSend<{ created: number; skipped?: number }>("/api/superadmin/announcements", "POST", {
+        text: text.trim(),
+        allInstitutions: targetMode === "all",
+        institutionIds: targetMode === "selected" ? selectedIds : [],
+        startsAt: startDate ? turkeyDayRangeUtc(startDate).start.toISOString() : null,
+        endsAt: endDate ? turkeyDayRangeUtc(endDate).end.toISOString() : null,
+      }, "Duyuru yayınlanamadı.");
+      showToastSafe({ type: "success", message: `Duyuru ${result.created} kliniğe gönderildi.${result.skipped ? ` ${result.skipped} kapalı klinik atlandı.` : ""}`, icon: "log" });
+      resetForm();
+      setOpen(false);
+      if (scope !== "platform") setScope("platform");
+      setPage(1);
+      reload();
+    } catch (error) {
+      setFormError(errorMessage(error, "Duyuru yayınlanamadı."));
     } finally {
       setSaving(false);
     }
   };
 
-  const deactivate = async (id: string) => {
-    const confirmed = await confirmDialog({
-      title: "Duyuruyu pasifleştir",
-      message: "Bu duyuru pasifleştirilecek ve kurumlara artık gösterilmeyecek. Emin misiniz?",
-      confirmText: "Pasifleştir",
+  const unpublish = async (ids: string[], key: string, label: string) => {
+    const ok = await confirmDialog({
+      title: "Duyuru yayından kaldırılsın mı?",
+      message: `${label} Kayıt silinmez, yalnız kliniklerde artık gösterilmez.`,
+      confirmText: "Yayından kaldır",
+      cancelText: "Vazgeç",
       danger: true,
     });
-    if (!confirmed) return;
+    if (!ok) return;
+    setBusyKey(key);
     try {
-      const res = await fetch(`/api/superadmin/announcements?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        showToastSafe({ title: "Hata", message: err.message || "Duyuru pasifleştirilemedi", type: "error" });
-        return;
-      }
-      showToastSafe({ title: "Pasifleştirildi", message: "Duyuru pasife alındı", type: "success" });
-      await load();
-    } catch {
-      showToastSafe({ title: "Hata", message: "Bağlantı hatası — duyuru pasifleştirilemedi.", type: "error" });
+      const result = await saSend<{ deactivated: number }>(`/api/superadmin/announcements?ids=${ids.map(encodeURIComponent).join(",")}`, "DELETE", undefined, "Duyuru kaldırılamadı.");
+      showToastSafe({ type: "success", message: `Duyuru ${result.deactivated} klinikte kaldırıldı.` });
+      reload();
+    } catch (error) {
+      showToastSafe({ type: "error", message: errorMessage(error, "Duyuru kaldırılamadı.") });
+    } finally {
+      setBusyKey(null);
     }
   };
 
-  return (
-    <section className="space-y-5">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div className="flex items-center gap-3">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-            <Bell className="h-4 w-4" />
-          </span>
-          <div>
-            <h1 className="text-lg font-black text-slate-900">Kurum Duyuruları</h1>
-            <p className="text-xs text-slate-500">Duyurular artık global değil; her kayıt hedef kurumla ilişkilidir.</p>
-          </div>
-        </div>
-        <Button icon={Plus} onClick={() => setShowForm(true)}>Yeni Duyuru</Button>
-      </div>
+  const targetText = (group: Group) => {
+    if (activeClinicCount != null && group.targets.length >= activeClinicCount && group.targets.length > 1) return `Tüm klinikler (${group.targets.length})`;
+    if (group.targets.length <= 2) return group.targets.map((target) => target.name).join(", ");
+    return `${group.targets.length} klinik`;
+  };
 
-      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-        {loadError ? (
-          <div className="p-4"><LoadErrorState message={loadError} onRetry={() => void load()} /></div>
-        ) : loading ? (
-          <div className="divide-y divide-slate-100">
-            {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className="h-20 animate-pulse bg-slate-50" style={{ animationDelay: `${i * 40}ms` }} />
-            ))}
-          </div>
-        ) : items.length === 0 ? (
-          <div className="px-6 py-14 text-center text-sm text-slate-400">Duyuru bulunamadı</div>
-        ) : (
-          <div className="divide-y divide-slate-100">
-            {items.map((item) => (
-              <div key={item.id} className="flex items-start justify-between gap-4 p-4 transition hover:bg-slate-50/80">
-                <div className="min-w-0">
-                  <div className="mb-1 flex flex-wrap items-center gap-2">
-                    <span className="font-bold text-slate-900">{item.institution?.name || "Kurum yok"}</span>
-                    {item.institution?.isDemo && <Badge tone="warning">Demo</Badge>}
-                    {!item.isActive && <Badge tone="neutral">Pasif</Badge>}
-                    {item.isActive && item.startsAt && new Date(item.startsAt) > new Date() && <Badge tone="warning">Zamanlanmış</Badge>}
-                  </div>
-                  <p className="text-sm text-slate-600">{item.text}</p>
-                  <p className="mt-1 text-xs text-slate-400">
-                    {new Date(item.createdAt).toLocaleDateString("tr-TR")}
-                    {item.startsAt && new Date(item.startsAt) > new Date() ? ` - ${new Date(item.startsAt).toLocaleDateString("tr-TR")} tarihinden itibaren gösterilecek` : ""}
-                    {item.endsAt ? ` - ${new Date(item.endsAt).toLocaleDateString("tr-TR")} tarihine kadar` : ""}
-                  </p>
+  const groupState = (group: Group) => publishState({ isActiveCount: group.activeCount, startsAt: group.startsAt, endsAt: group.endsAt });
+
+  const groupColumns: ListTableColumn<Group>[] = [
+    { key: "text", header: "Duyuru", render: (group) => <p className="line-clamp-2 max-w-xl text-sm text-slate-800">{group.text}</p> },
+    {
+      key: "target",
+      header: "Hedef",
+      render: (group) => (
+        <span className="text-sm text-slate-700" title={group.targets.map((target) => target.name).join(", ")}>
+          {targetText(group)}
+          {group.activeCount > 0 && group.activeCount < group.targets.length && <span className="block text-xs text-slate-500">{group.activeCount} klinikte yayında</span>}
+        </span>
+      ),
+    },
+    { key: "range", header: "Yayın aralığı", render: (group) => <span className="whitespace-nowrap text-sm text-slate-600">{rangeText(group.startsAt, group.endsAt)}</span> },
+    { key: "status", header: "Durum", render: (group) => { const state = groupState(group); return <Badge tone={state.tone}>{state.label}</Badge>; } },
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      render: (group) => group.activeCount > 0
+        ? <IconButton icon={EyeOff} title="Yayından kaldır" tone="danger" size="sm" disabled={busyKey === group.key} onClick={() => void unpublish(group.ids, group.key, `Duyuru ${group.activeCount} kliniğin ana sayfasından kaldırılacak.`)} />
+        : <span />,
+    },
+  ];
+
+  const clinicColumns: ListTableColumn<ClinicAnnouncement>[] = [
+    { key: "clinic", header: "Klinik", render: (item) => <span className="font-semibold text-slate-900">{item.institution?.name ?? "—"}</span> },
+    { key: "text", header: "Duyuru", render: (item) => <p className="line-clamp-2 max-w-xl text-sm text-slate-700">{item.text}</p> },
+    { key: "createdAt", header: "Tarih", render: (item) => shortDate(item.createdAt) || <EmptyValue /> },
+    { key: "status", header: "Durum", render: (item) => { const state = publishState({ isActiveCount: item.isActive ? 1 : 0, startsAt: item.startsAt, endsAt: item.endsAt }); return <Badge tone={state.tone}>{state.label}</Badge>; } },
+  ];
+
+  const clinicOptions = useMemo(() => clinics.map((item) => ({ id: item.id, label: item.name })), [clinics]);
+  const pager = { page, pageCount: totalPages, pageSize: 20, total, onPageChange: setPage };
+
+  return (
+    <section className="space-y-4">
+      <PageHeader
+        icon="clipboard"
+        title="Duyurular"
+        description="Kliniklerin ana sayfasında görünen platform duyuruları."
+        actions={<Button icon={Plus} onClick={openCreate}>Yeni duyuru</Button>}
+      />
+
+      <Tabs
+        ariaLabel="Duyuru türü"
+        size="sm"
+        value={scope}
+        onChange={setScope}
+        items={[
+          { key: "platform", label: "Platform duyuruları" },
+          { key: "klinik", label: "Kliniklerin kendi duyuruları" },
+        ]}
+      />
+
+      {scope === "platform" ? (
+        <ListTable<Group>
+          columns={groupColumns}
+          rows={groups}
+          rowKey={(group) => group.key}
+          loading={loading}
+          error={loadError}
+          onRetry={reload}
+          emptyText="Henüz duyuru yayınlanmadı"
+          emptyDescription="Tüm kliniklere veya seçtiğiniz kliniklere duyuru göndermek için “Yeni duyuru”yu kullanın."
+          emptyIcon={AnnouncementEmptyIcon}
+          emptyIllustrative
+          pager={pager}
+          mobileCard={(group) => {
+            const state = groupState(group);
+            return (
+              <div className="space-y-1.5">
+                <p className="line-clamp-3 text-sm text-slate-800">{group.text}</p>
+                <div className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                  <span>{targetText(group)} · {rangeText(group.startsAt, group.endsAt)}</span>
+                  <span className="flex items-center gap-1.5">
+                    <Badge tone={state.tone}>{state.label}</Badge>
+                    {group.activeCount > 0 && <IconButton icon={EyeOff} title="Yayından kaldır" tone="danger" size="sm" disabled={busyKey === group.key} onClick={() => void unpublish(group.ids, group.key, `Duyuru ${group.activeCount} kliniğin ana sayfasından kaldırılacak.`)} />}
+                  </span>
                 </div>
-                {item.isActive && (
-                  <Button variant="secondary" size="sm" onClick={() => deactivate(item.id)}>
-                    Pasifleştir
-                  </Button>
-                )}
               </div>
-            ))}
-          </div>
-        )}
-      </div>
+            );
+          }}
+        />
+      ) : (
+        <>
+          <p className="text-sm text-slate-500">Klinik yöneticilerinin kendi personeline yazdığı duyurular (yalnız görüntüleme).</p>
+          <ListTable<ClinicAnnouncement>
+            columns={clinicColumns}
+            rows={clinicItems}
+            rowKey={(item) => item.id}
+            loading={loading}
+            error={loadError}
+            onRetry={reload}
+            emptyText="Kliniklerin iç duyurusu yok"
+            pager={pager}
+            mobileCard={(item) => (
+              <div className="space-y-1">
+                <p className="font-semibold text-slate-900">{item.institution?.name ?? "—"}</p>
+                <p className="line-clamp-2 text-sm text-slate-700">{item.text}</p>
+                <p className="text-xs text-slate-500">{shortDate(item.createdAt)}</p>
+              </div>
+            )}
+          />
+        </>
+      )}
 
       <Modal
-        open={showForm}
-        onClose={closeForm}
-        title="Yeni Duyuru"
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Yeni duyuru"
+        description="Duyuru seçilen kliniklerin ana sayfasında görünür."
         size="lg"
         footer={
           <>
-            <Button variant="secondary" onClick={closeForm}>İptal</Button>
-            <Button onClick={handleSave} loading={saving}>Yayınla</Button>
+            <Button variant="secondary" onClick={() => setOpen(false)}>Vazgeç</Button>
+            <Button loading={saving} onClick={() => void publish()}>Yayınla</Button>
           </>
         }
       >
         <div className="space-y-4">
-          <FormField label="Duyuru Metni" required>
-            <textarea
-              className={`min-h-28 w-full rounded-xl border px-3 py-2.5 text-sm outline-none ${inputErrorClass(false)}`}
-              placeholder="Kurumlara gösterilecek duyuru metni..."
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-            />
+          <FormErrorBanner message={formError} />
+          <FormField label="Duyuru metni" htmlFor="announcement-text" required hint={`${text.length} / ${MAX_TEXT} karakter`}>
+            <Textarea id="announcement-text" rows={4} maxLength={MAX_TEXT} value={text} onChange={(event) => setText(event.target.value)} placeholder="Ör. 12 Ekim gecesi 02:00-03:00 arası bakım çalışması yapılacaktır." />
           </FormField>
-
-          <div>
-            <span className="mb-1 block text-sm font-bold text-slate-700">Hedef Kurumlar</span>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant={targetMode === "all" ? "primary" : "secondary"}
-                size="sm"
-                onClick={() => setTargetMode("all")}
-              >
-                Tüm aktif kurumlar
-              </Button>
-              <Button
-                variant={targetMode === "selected" ? "primary" : "secondary"}
-                size="sm"
-                onClick={() => setTargetMode("selected")}
-              >
-                Seçili kurumlar
-              </Button>
-            </div>
-          </div>
-
+          <ChoiceCards
+            label="Kimlere gönderilsin?"
+            variant="pills"
+            value={targetMode}
+            onChange={(value) => {
+              setTargetMode(value);
+              if (value === "selected") loadClinics();
+            }}
+            options={[
+              { value: "all", label: activeClinicCount != null ? `Tüm açık klinikler (${activeClinicCount})` : "Tüm açık klinikler" },
+              { value: "selected", label: "Seçtiğim klinikler" },
+            ]}
+          />
           {targetMode === "selected" && (
-            <div className="grid max-h-56 grid-cols-1 gap-2 overflow-auto rounded-xl border border-slate-100 p-3 md:grid-cols-2">
-              {institutions.map((institution) => (
-                <label key={institution.id} className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.includes(institution.id)}
-                    onChange={() => toggleInstitution(institution.id)}
-                  />
-                  <span>{institution.name}</span>
-                </label>
-              ))}
-            </div>
+            <FormField label="Klinikler" required hint="Kapalı klinikler listede yer almaz">
+              <SearchableListbox
+                options={clinicOptions}
+                value={selectedIds}
+                onChange={setSelectedIds}
+                multiple
+                loading={clinicsLoading}
+                onOpen={loadClinics}
+                placeholder="Klinik seçin"
+                searchPlaceholder="Klinik ara"
+                selectedLabel="klinik"
+                allSelectedLabel="Tüm açık klinikler seçildi"
+                emptyText="Bu adla klinik yok"
+              />
+            </FormField>
           )}
-
-          <div className="grid gap-3 md:grid-cols-2">
-            <FormField label="Başlangıç Tarihi" hint="Boş bırakılırsa hemen yayınlanır">
-              <input
-                type="date"
-                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ${inputErrorClass(false)}`}
-                value={startsAt}
-                onChange={(e) => setStartsAt(e.target.value)}
-              />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField label="Yayın başlangıcı" htmlFor="announcement-start" hint="Boş = hemen">
+              <Input id="announcement-start" type="date" min={todayKey()} value={startDate} onChange={(event) => setStartDate(event.target.value)} />
             </FormField>
-            <FormField label="Bitiş Tarihi">
-              <input
-                type="date"
-                className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ${inputErrorClass(false)}`}
-                value={endsAt}
-                onChange={(e) => setEndsAt(e.target.value)}
-              />
+            <FormField label="Yayın bitişi" htmlFor="announcement-end" hint="Boş = siz kaldırana kadar">
+              <Input id="announcement-end" type="date" min={startDate || todayKey()} value={endDate} onChange={(event) => setEndDate(event.target.value)} />
             </FormField>
           </div>
-          <div className="flex items-center rounded-xl bg-primary/10 px-3 py-2 text-sm text-primary">
-            Hedef kurum sayısı: <strong className="ml-1">{selectedCount}</strong>
-          </div>
-
-          {error && <p className="text-sm font-semibold text-red-600">{error}</p>}
         </div>
       </Modal>
     </section>

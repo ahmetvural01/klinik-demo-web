@@ -4,6 +4,7 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
 import type { WaitlistStatus } from "@prisma/client";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
+import { shouldHidePatientPhoneForRole } from "@/lib/patient-visibility-server";
 
 const VALID_WAITLIST_STATUSES = new Set(["BEKLIYOR", "ARANDI", "YERLESTIRILDI", "IPTAL"]);
 
@@ -32,6 +33,11 @@ export async function GET(req: NextRequest) {
         doctor: { select: { id: true, fullName: true } },
       },
     });
+    // Randevu listesiyle aynı kural: telefon görme yetkisi olmayan role hasta
+    // telefonu gönderilmez (önceden bekleme listesi telefonu herkese veriyordu).
+    if (await shouldHidePatientPhoneForRole(auth.user.role)) {
+      return NextResponse.json(entries.map((entry) => ({ ...entry, patient: { ...entry.patient, phone: null } })));
+    }
     return NextResponse.json(entries);
   } catch (error) {
     console.error("[waitlist GET]", error);

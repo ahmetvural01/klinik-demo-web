@@ -17,7 +17,8 @@ async function main() {
   assert.equal(normalizeWhatsappPhone("+49 151 12345678"), "4915112345678");
   assert.equal(normalizeWhatsappPhone("12"), null);
 
-  const ui = source("src/app/(panel)/sms/_tabs/WhatsappSettingsTab.tsx");
+  // Klinik numarasını QR kod / eşleştirme koduyla bağlar (bağlı cihaz); teknik alan yok.
+  const ui = source("src/components/whatsapp/WhatsappWebConnect.tsx");
   assert(!ui.includes("Auth Token"), "Klinik ekranı Auth Token istememeli.");
   assert(!ui.includes("Account SID"), "Klinik ekranı Account SID istememeli.");
   for (const technicalField of [
@@ -29,31 +30,28 @@ async function main() {
   ]) {
     assert(!ui.includes(technicalField), `Klinik ekranı teknik alan göstermemeli: ${technicalField}`);
   }
-  assert(ui.includes("WA_EMBEDDED_SIGNUP"), "Embedded Signup istemci olayı işlenmeli.");
-  assert(ui.includes('config_id: data.configId'), "Meta Embedded Signup yapılandırma kimliğiyle başlatılmalı.");
-  assert(ui.includes('sessionInfoVersion: "3"'), "Embedded Signup oturum bilgisi güncel biçimde istenmeli.");
-  assert(ui.includes("Güvenli Meta penceresinde klinik numaranızı girin veya seçin"), "Numara ve sahiplik doğrulama akışı teknik olmayan dille anlatılmalı.");
-  assert(ui.includes("Numaramı Bağla"), "Ana ürün akışı yalnız gerçek Embedded Signup bağlantı düğmesi olmalı.");
-  assert(!ui.includes("WhatsApp bağlantısı henüz sistem yöneticiniz tarafından etkinleştirilmedi."), "Klinik erişim hakkı platform hazırlığıyla karıştırılmamalı.");
-  assert(ui.includes("Numara bağlama hizmeti şu anda kullanılamıyor."), "Klinik kullanıcıya kullanılamayan bağlantı durumu açıkça anlatılmalı.");
-  assert(!ui.includes("bu düğme otomatik olarak etkinleşecek"), "Klinik kullanıcıya belirsiz veya yanıltıcı etkinleşme vaadi gösterilmemeli.");
+  assert(ui.includes("QR kodu göster") && ui.includes("Telefon numarasıyla bağla"), "QR ve telefon numarasıyla bağlama yolları sunulmalı.");
+  assert(ui.includes("/api/whatsapp/web"), "Bağlantı kartı QR bağlantı API'sini kullanmalı.");
+  assert(ui.includes("sohbetleriniz sisteme alınmaz"), "Kişisel sohbetlerin sisteme alınmadığı açıkça söylenmeli.");
 
   const smsPage = source("src/app/(panel)/sms/page.tsx");
   assert(smsPage.includes('hasFeature("whatsapp")'), "SMS ekranı kurum WhatsApp özelliğini kontrol etmeli.");
-  assert(smsPage.includes("WhatsappSettingsTab"), "WhatsApp bağlantısı birleşik İletişim Merkezi'nden yönetilmeli.");
-  assert(smsPage.includes('"baglanti"'), "Birleşik merkezde bağlantı sekmesi bulunmalı.");
+  assert(source("src/app/(panel)/sms/_tabs/SettingsTab.tsx").includes("WhatsappWebConnect"), "WhatsApp bağlantısı İletişim > Ayarlar'dan yönetilmeli.");
+  assert(smsPage.includes("baglanti: { tab: \"ayarlar\""), "Eski bağlantı adresi Ayarlar'a yönlenmeli.");
 
   const settingsPage = source("src/app/(panel)/ayar/page.tsx");
-  assert(!settingsPage.includes("WhatsappSettingsTab"), "WhatsApp ayarları genel klinik ayarlarında tekrar etmemeli.");
+  assert(!settingsPage.includes("WhatsappWebConnect"), "WhatsApp ayarları genel klinik ayarlarında tekrar etmemeli.");
 
   assert(smsPage.includes('searchParams.get("tab")'), "İletişim merkezi doğrudan sekme bağlantısını desteklemeli.");
-  assert(smsPage.includes('activateTab("baglanti")'), "WhatsApp bağlantı derin bağlantısı doğru sekmeyi açmalı.");
+  assert(smsPage.includes("anchor: \"whatsapp-baglanti\""), "WhatsApp bağlantı derin bağlantısı doğru bölümü açmalı.");
 
   const institutionDetail = source("src/app/superadmin/institutions/[id]/page.tsx");
   assert(!institutionDetail.includes("Eksik sunucu ayarları:"), "Kurum ekranı teknik ortam değişkenlerini kullanıcıya dökmemeli.");
   assert(!institutionDetail.includes("Klinik WhatsApp Ekranını Aç"), "Süperadmin kurum formu klinik bağlantı işlemi sunmamalı.");
   assert(!institutionDetail.includes("disabled={!institution.whatsappPlatform.ready"), "Klinik modül yetkisi platform hazırlığından bağımsız yönetilmeli.");
-  assert(institutionDetail.indexOf('window.open("about:blank"') < institutionDetail.indexOf('fetch("/api/auth/superadmin/impersonate"'), "Klinik sekmesi popup engeline takılmadan kullanıcı hareketi sırasında ayrılmalı.");
+  // Gizli giriş penceresi ayrı bileşene taşındı (GhostLoginModal).
+  const ghostLogin = source("src/components/superadmin/GhostLoginModal.tsx");
+  assert(ghostLogin.indexOf('window.open("about:blank"') > -1 && ghostLogin.indexOf('window.open("about:blank"') < ghostLogin.indexOf('fetch("/api/auth/superadmin/impersonate"'), "Klinik sekmesi popup engeline takılmadan kullanıcı hareketi sırasında ayrılmalı.");
 
   const superadminInstitutionApi = source("src/app/api/superadmin/institutions/[id]/route.ts");
   assert(!superadminInstitutionApi.includes("WhatsApp kullanım hakkı verilemez"), "Sunucu klinik modül yetkisini platform hazırlığına bağlamamalı.");

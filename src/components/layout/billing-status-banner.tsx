@@ -1,7 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { AlertTriangle, Lock } from "lucide-react";
+import { usePermissions } from "@/components/auth/PermissionProvider";
 
 type BillingStatus = {
   nextDueDate: string | null;
@@ -13,6 +15,11 @@ type BillingStatus = {
 const APPROACHING_WARNING_DAYS = 7;
 
 export function BillingStatusBanner() {
+  const { can } = usePermissions();
+  // Ödeme hatırlatması yalnız ödemeyle ilgilenebilecek rollere (yönetici,
+  // muhasebe) gösterilir; doktor/asistan her sayfada yapamayacakları bir iş
+  // için uyarı görüyordu. Kısıtlama başladıysa (kayıt yapılamıyor) herkes görür.
+  const canActOnBilling = can("settings:write") || can("finance:center");
   const [status, setStatus] = useState<BillingStatus | null>(null);
 
   useEffect(() => {
@@ -36,7 +43,7 @@ export function BillingStatusBanner() {
     );
   }
 
-  if (status.daysUntilDue !== null && status.daysUntilDue <= APPROACHING_WARNING_DAYS) {
+  if (canActOnBilling && status.daysUntilDue !== null && status.daysUntilDue <= APPROACHING_WARNING_DAYS) {
     const dueLabel = status.nextDueDate ? new Date(status.nextDueDate).toLocaleDateString("tr-TR") : "";
     const timingLabel =
       status.daysUntilDue < 0
@@ -50,7 +57,8 @@ export function BillingStatusBanner() {
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
         <p>
           <span className="font-bold">{timingLabel}</span>
-          {dueLabel ? ` Son ödeme tarihi: ${dueLabel}.` : ""} Kesintisiz kullanım için lütfen ödemenizi tamamlayın.
+          {dueLabel ? ` Son ödeme tarihi: ${dueLabel}.` : ""} Kesintisiz kullanım için lütfen ödemenizi tamamlayın.{" "}
+          {can("support:write") && <Link href="/destek" className="font-semibold underline underline-offset-2 hover:text-amber-900">Ödeme için destek ekibine yazın</Link>}
         </p>
       </div>
     );

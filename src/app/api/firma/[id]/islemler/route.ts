@@ -33,8 +33,18 @@ export const GET = withApiTiming("firma-islemler", async function GET(req: NextR
     const [islemler, sumsRaw] = await Promise.all([
       (prisma as any).firmaIslem.findMany({
         where: { firmaId: params.id, branchId: branch.branchId, status: "AKTIF" },
-        orderBy: { tarih: "asc" },
+        orderBy: [{ tarih: "asc" }, { createdAt: "asc" }],
         take: 20000, // güvenlik sınırı: tek bir cari hesap tüm sorguyu tıkamasın
+        // Alım satırında "1 kalem" yerine ürün adları gösterilebilsin ve
+        // satın alma detayı ayrı liste beklemeden açılabilsin.
+        include: {
+          purchase: {
+            select: {
+              id: true,
+              items: { where: { archivedAt: null }, select: { productName: true, quantity: true, unit: true } },
+            },
+          },
+        },
       }),
       // topBorc/topOdeme/netBakiye artık yukarıdaki listeden bağımsız, DB'de
       // tüm geçmiş üzerinden doğru hesaplanıyor (liste sınırlansa da bakiye doğru kalır).

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { LAB_ORDER_INCLUDE, toPublicLabOrder } from "@/app/api/lab-orders/lab-order-api";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +52,7 @@ export async function PATCH(
     return NextResponse.json({ error: "Adım bulunamadı" }, { status: 404 });
   }
   if (existing.labOrder?.status === "IPTAL") {
-    return NextResponse.json({ error: "İptal edilmiş siparişin laboratuvar adımı düzenlenemez" }, { status: 400 });
+    return NextResponse.json({ error: "İptal edilmiş işin adımı düzenlenemez" }, { status: 400 });
   }
 
   const data: Record<string, any> = {};
@@ -74,6 +75,12 @@ export async function PATCH(
     }
     data.sentNote = body.sentNote || null;
   }
+  if ("expectedAt" in body) {
+    if (body.expectedAt && (typeof body.expectedAt !== "string" || Number.isNaN(new Date(body.expectedAt).getTime()))) {
+      return NextResponse.json({ error: "Beklenen dönüş tarihi geçersiz" }, { status: 400 });
+    }
+    data.expectedAt = body.expectedAt ? new Date(body.expectedAt) : null;
+  }
   if ("receivedAt" in body) {
     if (body.receivedAt && (typeof body.receivedAt !== "string" || Number.isNaN(new Date(body.receivedAt).getTime()))) {
       return NextResponse.json({ error: "Teslim tarihi geçersiz" }, { status: 400 });
@@ -93,7 +100,10 @@ export async function PATCH(
     data.receivedNote = null;
   }
 
+  // Hastaya takılmış işin eski adımı düzeltilirken yeni "prova randevusu"
+  // araması açılmasın (iş zaten bitti).
   const shouldCreateProvaFollowUp =
+    existing.labOrder?.status === "DEVAM_EDIYOR" &&
     Boolean(data.receivedAt) &&
     typeof data.receivedNote === "string" &&
     data.receivedNote.includes("RANDEVU_PROVA_GEREKLI");
@@ -182,18 +192,10 @@ export async function PATCH(
       }
     }
 
-    return tx.labOrder.findUnique({
-      where: { id: params.id },
-      include: {
-        invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
-        patient: { select: { id: true, fullName: true, phone: true } },
-        doctor: { select: { id: true, fullName: true } },
-        trips: { orderBy: { order: "asc" } },
-      },
-    });
+    return tx.labOrder.findUnique({ where: { id: params.id }, include: LAB_ORDER_INCLUDE });
   });
 
   await writeAudit(auth.user.id, "LAB_TRIP_UPDATE", `Laboratuvar gidiş adımı güncellendi (${params.tripId})`);
   await bumpRealtimeInstitution(auth.user.institutionId || null);
-  return NextResponse.json(updatedOrder);
+  return NextResponse.json(await toPublicLabOrder(updatedOrder, auth.user.role));
 }

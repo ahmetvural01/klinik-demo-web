@@ -11,6 +11,9 @@ import { checkDoctorWorkingHoursInterval } from "@/lib/working-hours-core";
 import { renderCommunicationTemplate, resolveSmsTemplate } from "@/lib/sms-templates";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
+import { formatAppointmentDateTime } from "@/lib/appointment-change-notify";
+
+const APPOINTMENT_LIST_LIMIT = 500;
 
 type AppointmentSmsStatus = {
   info: "sent" | "skipped" | "failed";
@@ -53,7 +56,8 @@ async function sendAppointmentInfoSms(params: {
   if (!institution) return { status: "failed", message: "Kurum bilgisi bulunamadı." };
   if (!appointment.patient.phone) return { status: "failed", message: "Hastanın telefon numarası yok." };
 
-  const dateText = new Date(appointment.startAt).toLocaleString("tr-TR");
+  // Sunucu saat dilimi ne olursa olsun mesajda Türkiye saati yazmalı.
+  const dateText = formatAppointmentDateTime(new Date(appointment.startAt));
   const institutionName = settings?.institutionName || institution.name;
   const institutionPhone = settings?.institutionPhone || institution.phone || "";
   const fallbackMessage = `${institutionName}: Sayın ${appointment.patient.fullName}, randevunuz oluşturuldu. Tarih: ${dateText}, Doktor: ${appointment.doctor.fullName}.`;
@@ -176,12 +180,18 @@ export const GET = withApiTiming("appointments", async function GET(request: Nex
         branch: { select: { id: true, name: true, code: true, colorCode: true } },
       },
       orderBy: { startAt: "asc" },
-      take: 500, // Güvenlik limiti
+      // Güvenlik limiti. Bir fazlası okunur; sınır aşıldıysa yanıt başlığında
+      // bildirilir ki takvim "liste kısaltıldı" diyebilsin (önceden ayın ikinci
+      // yarısı sessizce boş görünüyordu).
+      take: APPOINTMENT_LIST_LIMIT + 1,
     });
   } catch (error) {
     console.error("[appointments GET] fallback:", error);
     return NextResponse.json({ message: "Randevular yüklenemedi. Lütfen sistem yöneticinize bildiriniz." }, { status: 503 });
   }
+
+  const truncated = appointments.length > APPOINTMENT_LIST_LIMIT;
+  if (truncated) appointments = appointments.slice(0, APPOINTMENT_LIST_LIMIT);
 
   const hidePhone = await shouldHidePatientPhoneForRole(auth.user.role);
   const result = hidePhone
@@ -191,7 +201,7 @@ export const GET = withApiTiming("appointments", async function GET(request: Nex
       }))
     : appointments;
 
-  return NextResponse.json(result);
+  return NextResponse.json(result, truncated ? { headers: { "X-Result-Truncated": "1" } } : undefined);
 });
 
 export async function POST(request: NextRequest) {
@@ -280,8 +290,8 @@ export async function POST(request: NextRequest) {
   });
 
   if (conflict && !overrideDoctorConflict) {
-    const cs = conflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
-    const ce = conflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+    const cs = conflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
+    const ce = conflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
     return NextResponse.json({
       message: `Bu doktorun ${cs}–${ce} saatleri arası randevusu mevcut (${conflict.patient?.fullName ?? "—"}). Yine de oluşturmak istiyor musunuz?`,
       conflictId: conflict.id,
@@ -300,8 +310,8 @@ export async function POST(request: NextRequest) {
       select: { id: true, startAt: true, endAt: true, patient: { select: { fullName: true } } },
     });
     if (unitConflict) {
-      const cs = unitConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
-      const ce = unitConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+      const cs = unitConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
+      const ce = unitConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
       return NextResponse.json({
         message: `${selectedUnit.name} tedavi alanı ${cs}–${ce} saatleri arasında dolu (${unitConflict.patient?.fullName ?? "—"}).`,
         conflictId: unitConflict.id,
@@ -333,8 +343,8 @@ export async function POST(request: NextRequest) {
   });
 
   if (patientConflict) {
-    const cs = patientConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
-    const ce = patientConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+    const cs = patientConflict.startAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
+    const ce = patientConflict.endAt.toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Istanbul" });
     return NextResponse.json({
       message: `Bu hastanın ${cs}–${ce} saatleri arası başka bir randevusu mevcut`,
       conflictId: patientConflict.id,

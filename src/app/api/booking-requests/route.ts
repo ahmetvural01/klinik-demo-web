@@ -24,7 +24,9 @@ export async function GET(req: NextRequest) {
         branchId: branch.branchId,
         ...(status ? { status: status as BookingRequestStatus } : { status: "BEKLIYOR" as BookingRequestStatus }),
       },
-      orderBy: { createdAt: "desc" },
+      // En yakın tercih tarihi en üstte (önceden en yeni gelen üstteydi; en
+      // acil talep listenin dibinde kalıyordu).
+      orderBy: [{ preferredFrom: "asc" }, { createdAt: "asc" }],
       include: { doctor: { select: { id: true, fullName: true } } },
     });
     return NextResponse.json(requests);

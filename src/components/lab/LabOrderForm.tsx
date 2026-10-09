@@ -2,23 +2,16 @@
 
 import { SearchSelect } from "@/components/ui/SearchSelect";
 import { FormField } from "@/components/ui/FormField";
+import { Input, Select, Textarea } from "@/components/ui/Input";
+import { LAB_LABELS } from "@/lib/lab-workflow";
 
 type Option = { id: string; label: string; meta?: string };
 
-function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
-  return (
-    <FormField label={label} hint={hint}>
-      {children}
-    </FormField>
-  );
-}
-
-const fieldClass = "w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none";
-
 /**
- * Laboratuvar iş oluşturma formunun ortak alanları — hasta detayı ve
- * laboratuvar sayfası aynı bileşeni kullanır, aralarında sadece Hasta
- * alanının görünürlüğü (hidePatientField) değişir.
+ * Hasta dosyasındaki "Yeni lab işi" formunun alanları (eski arama kutulu
+ * sürüm). Laboratuvar sayfası artık LabNewOrderModal kullanır; hasta dosyası
+ * da ona geçince bu bileşen kaldırılabilir. Alan adları ve görünüm ortak
+ * bileşenlerle (FormField, Input, Select) aynı tutulur.
  */
 export function LabOrderForm({
   hidePatientField,
@@ -88,88 +81,81 @@ export function LabOrderForm({
   return (
     <div className="space-y-3">
       {!hidePatientField && (
-        <Field label="Hasta *">
+        <FormField label="Hasta" required>
           <SearchSelect
             query={patientSearch || ""}
             onQueryChange={onPatientSearchChange || (() => {})}
             options={patientOptions || []}
             onSelect={onPatientSelect || (() => {})}
-            placeholder="Hasta adı yazın..."
+            placeholder="Hasta adı yazın…"
             emptyText="Hasta bulunamadı"
             loading={patientLoading}
             error={patientError}
-            className={fieldClass}
+            className="ui-control"
           />
-        </Field>
+        </FormField>
       )}
-      <Field label="Doktor *">
-        <SearchSelect
-          query={doctorSearch}
-          onQueryChange={onDoctorSearchChange}
-          options={doctorOptions}
-          onSelect={onDoctorSelect}
-          placeholder="Doktor adı yazın..."
-          emptyText="Doktor bulunamadı"
-          className={fieldClass}
-        />
-      </Field>
-      <Field
-        label="Laboratuvar Adı *"
-        hint="Liste, Firma Kartları ekranında Laboratuvar olarak işaretlenen firmalardan gelir."
-      >
-        <SearchSelect
-          query={labSearch}
-          onQueryChange={onLabSearchChange}
-          options={labOptions}
-          onSelect={onLabSelect}
-          placeholder={hasKnownLabs ? "Laboratuvar adı yazın..." : "Firma kartlarında laboratuvar tanımlı değil"}
-          emptyText="Firma Kartları'nda laboratuvar olarak işaretli firma yok"
-          className={fieldClass}
-        />
-      </Field>
-      <Field label="İş Türü *">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <FormField label={LAB_LABELS.doctor} required hint="Lab gideri bu hekimin hakedişinden düşülür.">
+          <SearchSelect
+            query={doctorSearch}
+            onQueryChange={onDoctorSearchChange}
+            options={doctorOptions}
+            onSelect={onDoctorSelect}
+            placeholder="Hekim adı yazın…"
+            emptyText="Hekim bulunamadı"
+            className="ui-control"
+          />
+        </FormField>
+        <FormField
+          label={LAB_LABELS.lab}
+          required
+          hint={hasKnownLabs ? undefined : `Laboratuvarlar “${LAB_LABELS.firmScreen}” ekranında Laboratuvar türünde firma olarak tanımlanır.`}
+        >
+          <SearchSelect
+            query={labSearch}
+            onQueryChange={onLabSearchChange}
+            options={labOptions}
+            onSelect={onLabSelect}
+            placeholder={hasKnownLabs ? "Laboratuvar adı yazın…" : "Tanımlı laboratuvar yok"}
+            emptyText="Bu adla laboratuvar yok"
+            className="ui-control"
+          />
+        </FormField>
+      </div>
+      <FormField label="İş türü" required>
         <SearchSelect
           query={labTypeSearch}
           onQueryChange={onLabTypeSearchChange}
           options={labTypeOptions}
           onSelect={onLabTypeSelect}
-          placeholder="İş türü yazın..."
+          placeholder="İş türü yazın…"
           emptyText="İş türü bulunamadı"
-          className={fieldClass}
+          className="ui-control"
         />
-      </Field>
-      {teethSelector && <Field label="Diş Seçimi (opsiyonel)">{teethSelector}</Field>}
+      </FormField>
+      {teethSelector && <FormField label="Dişler" hint="İsteğe bağlı">{teethSelector}</FormField>}
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Gönderilen *">
-          <input
-            value={sentItem}
-            onChange={(e) => onSentItemChange(e.target.value)}
-            className={fieldClass}
-            placeholder="Ölçü, kaşık…"
-          />
+        <FormField label="Gönderilen" required>
+          <Input value={sentItem} onChange={(e) => onSentItemChange(e.target.value)} placeholder="Ölçü, kaşık…" maxLength={80} />
           {sentItemQuickPicks}
-        </Field>
-        <Field label="Laboratuvardan Beklenen">
-          <input
-            value={requestedItem}
-            onChange={(e) => onRequestedItemChange(e.target.value)}
-            className={fieldClass}
-            placeholder="Metal alt yapı, prova…"
-          />
-        </Field>
+        </FormField>
+        <FormField label="Laboratuvardan beklenen">
+          <Input value={requestedItem} onChange={(e) => onRequestedItemChange(e.target.value)} placeholder="Alt yapı, prova…" maxLength={80} />
+        </FormField>
       </div>
       {showImpressionMethod && (
-        <Field label="Ölçü Yöntemi">
-          <select value={impressionMethod} onChange={(e) => onImpressionMethodChange(e.target.value)} className={fieldClass}>
-            <option value="">Seçiniz</option>
-            <option value="KLASIK_OLCU">Klasik Ölçü</option>
-            <option value="DIJITAL_TARAMA">Dijital Tarama</option>
-          </select>
-        </Field>
+        <FormField label="Ölçü yöntemi">
+          <Select value={impressionMethod} onChange={(e) => onImpressionMethodChange(e.target.value)}>
+            <option value="">Belirtilmedi</option>
+            <option value="KLASIK_OLCU">Klasik ölçü</option>
+            <option value="DIJITAL_TARAMA">Dijital tarama</option>
+          </Select>
+        </FormField>
       )}
-      <Field label="Not">
-        <textarea value={notes} onChange={(e) => onNotesChange(e.target.value)} rows={2} className={fieldClass} />
-      </Field>
+      <FormField label="Not">
+        <Textarea value={notes} onChange={(e) => onNotesChange(e.target.value)} rows={2} maxLength={1500} />
+      </FormField>
     </div>
   );
 }

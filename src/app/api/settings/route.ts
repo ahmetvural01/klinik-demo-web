@@ -1,7 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, writeAudit } from "@/lib/api";
-import { validateWorkingHoursSettings } from "@/lib/working-hours-core";
+import { checkWorkingHoursInterval, normalizeDailySchedules, validateWorkingHoursSettings } from "@/lib/working-hours-core";
 
 function fmt(v: unknown): string {
   if (v === null || v === undefined || v === "") return "-";
@@ -22,6 +22,8 @@ const SETTING_LABELS: Record<string, string> = {
   paymentReminderOverdueEnabled: "Geciken Ödeme Hatırlatma",
   paymentReminderOverdueEveryDays: "Gecikme Tekrar Aralığı",
   birthdaySmsEnabled: "Doğum Günü Otomasyonu",
+  appointmentChangeNotifyEnabled: "Randevu Değişiklik Mesajı",
+  appointmentCancelNotifyEnabled: "Randevu İptal Mesajı",
   defaultNotificationChannel: "Öncelikli İletişim Kanalı",
   reminderLeadHours: "Hatırlatma Süresi (saat)",
   logoUrl: "Kurum Logosu",
@@ -39,6 +41,7 @@ function normalizeSettingsPayload(body: Record<string, unknown>) {
     "paymentReminderOverdueEveryDays", "reviewLink", "birthdaySmsEnabled",
     "defaultNotificationChannel", "whatsappSmsFallback", "whatsappAppointmentEnabled",
     "whatsappPaymentEnabled", "whatsappInfoEnabled", "activePriceList", "logoUrl",
+    "appointmentChangeNotifyEnabled", "appointmentCancelNotifyEnabled",
   ] as const;
   const data: Record<string, unknown> = {};
   for (const key of mutableFields) {
@@ -84,10 +87,17 @@ export async function GET() {
       institutionName: settings?.institutionName || institution?.name || "",
       institutionPhone: settings?.institutionPhone || institution?.phone || "",
       institutionEmail: institution?.email || "",
-      institutionAddress: institution?.address || "",
+      // Ayarlar ekranı adres ve web sitesini Setting kaydına yazar (PUT);
+      // önceden okuma Institution kaydından yapıldığı için kaydedilen adres /
+      // web sitesi sayfa yenilenince eski haline dönmüş görünüyor, reçete ve
+      // onam çıktısına da yansımıyordu. Ad/telefon gibi önce Setting okunur.
+      institutionAddress: settings?.institutionAddress ?? institution?.address ?? "",
       institutionTaxNo: institution?.taxNo || "",
       institutionRegistryNo: institution?.registryNo || "",
-      institutionWebsite: institution?.website || "",
+      institutionWebsite: settings?.institutionWebsite ?? institution?.website ?? "",
+      // Giriş ekranında yazılan kurum adı (Institution.name). Ayarlardaki
+      // "Klinik adı" belgelerde görünen addır; değiştirilmesi girişi etkilemez.
+      loginInstitutionName: institution?.name || "",
       logoUrl: institution?.logo || "",
     });
   } catch (error) {
@@ -118,6 +128,11 @@ export async function PUT(request: NextRequest) {
       && data.defaultNotificationChannel !== "SMS"
       && data.defaultNotificationChannel !== "WHATSAPP") {
       return NextResponse.json({ message: "Geçersiz iletişim kanalı." }, { status: 400 });
+    }
+    for (const key of ["appointmentChangeNotifyEnabled", "appointmentCancelNotifyEnabled"] as const) {
+      if (data[key] !== undefined && typeof data[key] !== "boolean") {
+        return NextResponse.json({ message: "Otomatik mesaj ayarı geçersiz." }, { status: 400 });
+      }
     }
     const requestedLogo = data.logoUrl;
     delete data.logoUrl;
@@ -186,6 +201,44 @@ export async function PUT(request: NextRequest) {
     });
     if (workingHoursError) {
       return NextResponse.json({ message: workingHoursError }, { status: 400 });
+    }
+
+    // Çalışma saatleri daraltılır, öğle arası eklenir ya da bir gün kapatılırsa
+    // gelecekteki randevular sessizce kapalı saatte kalmasın (personel mesaisi
+    // için aynı kontrol api/staff/[id]'de var). Kullanıcı bilerek onaylarsa
+    // (allowOutsideAppointments) yine kaydedilir; randevular silinmez.
+    const scheduleTouched = data.dailySchedules !== undefined || data.lunchStart !== undefined || data.lunchEnd !== undefined;
+    if (scheduleTouched && (body as Record<string, unknown>).allowOutsideAppointments !== true) {
+      let currentSchedulesRaw: unknown = [];
+      try {
+        currentSchedulesRaw = current?.dailySchedules ? JSON.parse(current.dailySchedules) : [];
+      } catch {
+        currentSchedulesRaw = [];
+      }
+      const oldSchedules = normalizeDailySchedules(currentSchedulesRaw, current?.lunchStart || "", current?.lunchEnd || "");
+      const newSchedules = normalizeDailySchedules(
+        parsedDailySchedules,
+        String(data.lunchStart ?? current?.lunchStart ?? ""),
+        String(data.lunchEnd ?? current?.lunchEnd ?? ""),
+      );
+      if (JSON.stringify(oldSchedules) !== JSON.stringify(newSchedules)) {
+        const upcoming = await prisma.appointment.findMany({
+          where: { institutionId, startAt: { gte: new Date() }, status: { notIn: ["IPTAL", "GELMEDI"] } },
+          select: { startAt: true, endAt: true },
+          take: 5000,
+        });
+        const newlyOutside = upcoming.filter((appointment) =>
+          !checkWorkingHoursInterval(appointment.startAt, appointment.endAt, oldSchedules)
+          && Boolean(checkWorkingHoursInterval(appointment.startAt, appointment.endAt, newSchedules)),
+        ).length;
+        if (newlyOutside > 0) {
+          return NextResponse.json({
+            message: `Yeni çalışma saatlerine göre ${newlyOutside} gelecek randevu kapalı saate veya kapalı güne düşüyor. Bu randevular silinmez ama takvimde çalışma saati dışında görünür.`,
+            requiresConfirmation: true,
+            outsideCount: newlyOutside,
+          }, { status: 409 });
+        }
+      }
     }
 
     const updated = await prisma.$transaction(async (tx) => {

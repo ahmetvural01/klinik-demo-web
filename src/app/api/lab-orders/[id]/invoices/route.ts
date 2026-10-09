@@ -5,6 +5,20 @@ import { applyLabInvoiceFirmaIntegration } from "@/lib/lab-firma-integration";
 import { requireActiveBranch } from "@/lib/branch-context";
 import { formatZodError, labInvoiceCreateSchema } from "@/lib/validators";
 import { publicErrorResponse } from "@/lib/public-error";
+import { isReworkOrder } from "@/lib/lab-workflow";
+import { toPublicLabOrder } from "@/app/api/lab-orders/lab-order-api";
+
+/**
+ * Yeniden yapım (ücretsiz) işi mi? Yalnız sistemin yazdığı işarete bakılır;
+ * önceden notunda herhangi bir yerde "RPT" kelimesi geçen normal iş de
+ * ücretsiz sayılıyor, faturalanamıyor ve bu yüzden hiç kapatılamıyordu.
+ */
+function isFreeRework(order: { notes: string | null; trips: { sentNote: string | null; description: string; sentAt: Date }[] }) {
+  return isReworkOrder({
+    notes: order.notes,
+    trips: order.trips.map((trip) => ({ ...trip, sentAt: trip.sentAt.toISOString() })),
+  });
+}
 
 export const dynamic = "force-dynamic";
 
@@ -48,20 +62,22 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       institutionId: auth.user.institutionId,
       branchId: branch.branchId,
     },
-    select: { notes: true, status: true },
+    select: { notes: true, status: true, trips: { select: { sentNote: true, description: true, sentAt: true } } },
   });
 
   if (!orderMeta) {
-    return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
+    return NextResponse.json({ error: "Laboratuvar işi bulunamadı" }, { status: 404 });
   }
 
-  if (/(^|\s|\[)RPT(\]|\s|$)/i.test(orderMeta.notes || "")) {
-    return NextResponse.json({ error: "RPT işlerde laboratuvar ücreti/fatura eklenemez" }, { status: 400 });
+  if (isFreeRework(orderMeta)) {
+    return NextResponse.json({ error: "Yeniden yapım (ücretsiz) işine lab faturası eklenmez." }, { status: 400 });
   }
 
   if (orderMeta.status === "IPTAL" || orderMeta.status === "HASTAYA_TAKILDI") {
     return NextResponse.json(
-      { error: "İptal edilmiş veya hastaya teslim edilmiş siparişe yeni fatura eklenemez. Önce sipariş durumunu değiştirin." },
+      { error: orderMeta.status === "IPTAL"
+        ? "İptal edilmiş işe fatura eklenemez."
+        : "Hastaya takılmış işe yeni fatura eklenemez. Mevcut faturanın tutarını “Faturayı düzenle” ile düzeltebilirsiniz." },
       { status: 400 }
     );
   }
@@ -72,12 +88,12 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       await tx.$queryRaw`SELECT "id" FROM "LabOrder" WHERE "id" = ${params.id} FOR UPDATE`;
       const lockedOrder = await tx.labOrder.findUnique({
         where: { id: params.id },
-        select: { notes: true, status: true },
+        select: { notes: true, status: true, trips: { select: { sentNote: true, description: true, sentAt: true } } },
       });
       if (!lockedOrder || lockedOrder.status === "IPTAL" || lockedOrder.status === "HASTAYA_TAKILDI") {
         throw new Error("LAB_ORDER_NOT_INVOICEABLE");
       }
-      if (/(^|\s|\[)RPT(\]|\s|$)/i.test(lockedOrder.notes || "")) {
+      if (isFreeRework(lockedOrder)) {
         throw new Error("LAB_ORDER_RPT");
       }
       const createdInvoice = await tx.labOrderInvoice.create({
@@ -153,10 +169,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     });
   } catch (error) {
     if (error instanceof Error && error.message === "LAB_ORDER_NOT_INVOICEABLE") {
-      return NextResponse.json({ error: "Sipariş artık fatura eklemeye uygun değil" }, { status: 409 });
+      return NextResponse.json({ error: "İşin durumu değişti; fatura eklenemedi. Listeyi yenileyin." }, { status: 409 });
     }
     if (error instanceof Error && error.message === "LAB_ORDER_RPT") {
-      return NextResponse.json({ error: "RPT işlerde laboratuvar ücreti/fatura eklenemez" }, { status: 409 });
+      return NextResponse.json({ error: "Yeniden yapım (ücretsiz) işine lab faturası eklenmez." }, { status: 409 });
     }
     if (
       requestKey
@@ -195,11 +211,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   await writeAudit(auth.user.id, "LAB_ORDER_INVOICE_CREATE", `Laboratuvar faturası eklendi (${params.id})`);
   await bumpRealtimeInstitution(auth.user.institutionId || null);
   if (fresh) {
-    const publicFresh = {
-      ...fresh,
-      invoices: fresh.invoices.map(({ requestKey: _requestKey, ...publicInvoice }: any) => publicInvoice),
-    };
-    return NextResponse.json(publicFresh, { status: 201 });
+    return NextResponse.json(await toPublicLabOrder(fresh, auth.user.role), { status: 201 });
   }
   const { requestKey: _requestKey, ...publicInvoice } = invoice;
   return NextResponse.json(publicInvoice, { status: 201 });

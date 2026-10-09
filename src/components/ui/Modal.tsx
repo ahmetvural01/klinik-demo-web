@@ -192,8 +192,7 @@ export function Modal({
           <div className="flex min-w-0 items-start gap-3">
             {module && <span className="ui-modal-module-icon"><ModuleIcon module={module} size="md" className="shrink-0" /></span>}
             <div className="min-w-0">
-              <span className="ui-page-header-eyebrow">Klinik işlemi</span>
-              <h2 id={titleId} className="mt-0.5 font-display text-[17px] font-bold text-slate-900">{title}</h2>
+              <h2 id={titleId} className="font-display text-[17px] font-bold text-slate-900">{title}</h2>
               {description && <p id={descriptionId} className="mt-1 text-xs leading-5 text-slate-500">{description}</p>}
               {dirtyDismissWarning && effectiveDirty && (
                 <p role="status" aria-live="polite" className="mt-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-700">
@@ -214,7 +213,9 @@ export function Modal({
         <div className="min-h-0 flex-1 overscroll-contain overflow-y-auto px-4 py-4 sm:px-5">
           {children}
           {footer && (
-            <div className="ui-modal-footer mt-5 flex flex-wrap justify-end gap-2 border-t border-slate-100 pt-3 sm:hidden">
+            // Mobilde Kaydet/Vazgeç uzun formun en altında kayboluyordu; kaydırma
+            // alanının altına yapışık durur (klavye açıkken de erişilebilir).
+            <div className="ui-modal-footer sticky bottom-0 z-10 -mx-4 mt-5 flex flex-wrap justify-end gap-2 border-t border-slate-100 bg-[rgb(var(--app-surface))] px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:hidden">
               {footer}
             </div>
           )}

@@ -1,1022 +1,466 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Download, Eye, Pencil, Plus, Power, ShieldAlert, UploadCloud } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { CheckCircle2, Circle, Download, FileText, LogIn, MessageSquarePlus, Pencil, Power, SlidersHorizontal, UploadCloud } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Tabs, useTabParam } from "@/components/ui/Tabs";
 import { Button } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
-import { FormField, FormSection, inputErrorClass } from "@/components/ui/FormField";
-import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { Badge } from "@/components/ui/Badge";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
+import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
+import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
 import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
-import { cachedGet } from "@/lib/client-cache";
-import {
-  SUBSCRIPTION_PLANS,
-  getPlanPrice,
-  type SubscriptionPlanId,
-  type BillingCycleId,
-} from "@/lib/subscription-plans";
-import { BranchControlPanel } from "@/components/superadmin/BranchControlPanel";
-
-type ServiceMode = "NORMAL" | "LIMITED" | "READ_ONLY" | "SUSPENDED";
-type AdIntensity = "LOW" | "MEDIUM" | "HIGH";
-type InvoiceStatus = "PENDING" | "PAID" | "OVERDUE" | "CANCELLED";
-
-type UserRow = {
-  id: string;
-  fullName: string;
-  email: string;
-  role: string;
-  isActive: boolean;
-  createdAt: string;
-  identityNo: string | null;
-};
+import { formatPhoneNumber } from "@/lib/format";
+import { getPlanPrice, type BillingCycleId, type SubscriptionPlanId } from "@/lib/subscription-plans";
+import { BranchesPanel } from "@/components/superadmin/BranchesPanel";
+import { GhostLoginModal } from "@/components/superadmin/GhostLoginModal";
+import { InstitutionEditModal, type EditableInstitution } from "@/components/superadmin/InstitutionEditModal";
+import { InstitutionUsersPanel, type InstitutionUser } from "@/components/superadmin/InstitutionUsersPanel";
+import { InvoiceCreateModal } from "@/components/superadmin/InvoiceCreateModal";
+import { InvoiceRowActions } from "@/components/superadmin/InvoiceRowActions";
+import { SmsAdjustModal, SmsSaleModal } from "@/components/superadmin/SmsCreditModals";
+import type { InvoiceViewStatus } from "@/components/superadmin/invoice-status";
+import { INVOICE_STATUS_META, WHATSAPP_STATUS_META, cycleLabel, institutionState, planLabel } from "@/components/superadmin/sa-labels";
+import { count, dateTime, daysUntil, money, shortDate } from "@/components/superadmin/sa-format";
+import { SaRequestError, errorMessage, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
 type InvoiceRow = {
   id: string;
   invoiceNo: string;
   amount: number;
   description: string | null;
-  status: InvoiceStatus;
+  status: InvoiceViewStatus;
   dueDate: string | null;
   paidAt: string | null;
   createdAt: string;
+  lastReminderAt: string | null;
+  reminderCount: number;
 };
 
-type SmsTransactionRow = {
+type SmsRow = {
   id: string;
   createdAt: string;
-  smsPackage: { name: string; smsCount: number } | null;
-  amount?: number | null;
-  smsCount?: number | null;
+  packageName: string | null;
+  quantity: number;
+  smsCount: number;
+  totalPrice: number;
+  balanceAfter: number;
 };
 
-type Institution = {
-  id: string;
-  name: string;
-  email: string;
-  phone: string | null;
-  address: string | null;
-  taxNo: string | null;
-  registryNo: string | null;
-  website: string | null;
-  logo: string | null;
-  subscriptionPlan: SubscriptionPlanId;
-  billingCycle: BillingCycleId;
+type Institution = EditableInstitution & {
   smsBalance: number;
   isActive: boolean;
-  ownerId: string | null;
-  createdAt: string;
-  updatedAt: string;
-  adIntensity: AdIntensity;
-  adsEnabled: boolean;
-  whatsappEnabled: boolean;
-  whatsappPlatform: { ready: boolean; missing: string[] };
-  maxActiveDoctors: number | null;
-  maxActiveUsers: number | null;
-  paymentGraceUntil: string | null;
-  serviceMode: ServiceMode;
-  serviceNote: string | null;
-  suspendedUntil: string | null;
-  throttleMs: number;
   isDemo: boolean;
   demoExpiresAt: string | null;
-  owner: { id: string; fullName: string; email: string; role: string } | null;
-  users: UserRow[];
-  smsTransactions: SmsTransactionRow[];
-  invoices: InvoiceRow[];
-  whatsappProvider?:
-    | {
-        exists: true;
-        id: string;
-        code: string;
-        name: string;
-        providerType: string;
-        isActive: boolean;
-        connectionStatus: "NOT_CONNECTED" | "CONNECTING" | "CONNECTED" | "ERROR" | "DISCONNECTED";
-        displayPhoneNumber: string | null;
-        verifiedName: string | null;
-        updatedAt: string;
-      }
-    | { exists: false };
-  paymentSummary: { overdueCount: number; pendingCount: number; paidCount: number; unpaidTotal: number };
-};
-
-type EditForm = {
-  name: string;
-  email: string;
-  phone: string;
-  address: string;
-  taxNo: string;
-  website: string;
-  subscriptionPlan: SubscriptionPlanId;
-  billingCycle: BillingCycleId;
-  isActive: boolean;
-  serviceMode: ServiceMode;
-  serviceNote: string;
-  suspendedUntil: string;
-  maxActiveUsers: string;
-  maxActiveDoctors: string;
-  adsEnabled: boolean;
-  adIntensity: AdIntensity;
+  paymentGraceUntil: string | null;
+  createdAt: string;
   whatsappEnabled: boolean;
-};
-
-const SERVICE_MODE_HINTS: Record<ServiceMode, string> = {
-  NORMAL: "Kısıtlama yok, klinik tüm işlemleri normal şekilde yapabilir.",
-  LIMITED: "LIMITED: randevu/ödeme/hasta/personel yazma işlemleri kapalı, okuma açık.",
-  READ_ONLY: "READ_ONLY: tüm yazma işlemleri kapalı, klinik sadece mevcut kayıtları görüntüleyebilir.",
-  SUSPENDED: "SUSPENDED: klinik erişimi tamamen askıya alınmış.",
-};
-
-const SERVICE_MODE_TONE: Record<ServiceMode, BadgeTone> = {
-  NORMAL: "success",
-  LIMITED: "warning",
-  READ_ONLY: "warning",
-  SUSPENDED: "critical",
-};
-
-const INVOICE_STATUS_TONE: Record<InvoiceStatus, BadgeTone> = {
-  PENDING: "warning",
-  OVERDUE: "critical",
-  PAID: "success",
-  CANCELLED: "neutral",
-};
-
-const INVOICE_STATUS_LABEL: Record<InvoiceStatus, string> = {
-  PENDING: "Bekliyor",
-  OVERDUE: "Gecikti",
-  PAID: "Ödendi",
-  CANCELLED: "İptal",
-};
-
-function formToInstitution(i: Institution): EditForm {
-  return {
-    name: i.name || "",
-    email: i.email || "",
-    phone: i.phone || "",
-    address: i.address || "",
-    taxNo: i.taxNo || "",
-    website: i.website || "",
-    subscriptionPlan: i.subscriptionPlan,
-    billingCycle: i.billingCycle,
-    isActive: i.isActive,
-    serviceMode: i.serviceMode,
-    serviceNote: i.serviceNote || "",
-    suspendedUntil: i.suspendedUntil ? i.suspendedUntil.slice(0, 16) : "",
-    maxActiveUsers: i.maxActiveUsers != null ? String(i.maxActiveUsers) : "",
-    maxActiveDoctors: i.maxActiveDoctors != null ? String(i.maxActiveDoctors) : "",
-    adsEnabled: i.adsEnabled,
-    adIntensity: i.adIntensity,
-    whatsappEnabled: i.whatsappEnabled,
+  owner: { id: string; fullName: string; email: string | null } | null;
+  users: InstitutionUser[];
+  invoices: InvoiceRow[];
+  smsTransactions: SmsRow[];
+  whatsappProvider?: { exists: boolean; connectionStatus?: string; verifiedName?: string | null; name?: string; displayPhoneNumber?: string | null };
+  usage: { activeUsers: number; activeDoctors: number };
+  paymentSummary: {
+    overdueCount: number;
+    overdueAmount: number;
+    pendingCount: number;
+    openCount: number;
+    paidCount: number;
+    unpaidTotal: number;
+    upcomingAmount: number;
+    nextDueDate: string | null;
+    totalInvoices: number;
   };
+};
+
+const TAB_KEYS = ["ozet", "faturalar", "sms", "personel", "subeler"] as const;
+
+function InfoRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 py-2">
+      <dt className="text-sm text-slate-500">{label}</dt>
+      <dd className="text-right text-sm font-semibold text-slate-900">{children}</dd>
+    </div>
+  );
 }
 
-function formatDate(value: string | null | undefined) {
-  if (!value) return "-";
-  try {
-    return new Date(value).toLocaleDateString("tr-TR");
-  } catch {
-    return "-";
-  }
+function Panel({ title, action, children }: { title: string; action?: ReactNode; children: ReactNode }) {
+  return (
+    <section className="ui-surface p-4">
+      <div className="mb-1 flex items-center justify-between gap-2">
+        <h2 className="text-sm font-bold text-slate-900">{title}</h2>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
 }
 
-function formatMoney(value: number) {
-  return value.toLocaleString("tr-TR", { style: "currency", currency: "TRY", maximumFractionDigits: 0 });
-}
-
+/**
+ * Klinik dosyası. Önceden abonelik, şube, fatura, personel ve SMS tek uzun
+ * sayfada alt alta; başlıkta beş eylem yan yanaydı. Şimdi sekmeler (adres
+ * çubuğunda ?tab=), başlıkta tek birincil eylem (Düzenle) + gizli giriş;
+ * seyrek ve riskli işler Özet › Diğer işlemler altında, onaylı.
+ */
 export default function InstitutionDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id as string;
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const [tab, setTab] = useTabParam(TAB_KEYS, "ozet");
 
   const [institution, setInstitution] = useState<Institution | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState<{ message: string; notFound: boolean } | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const [editOpen, setEditOpen] = useState(false);
-  const [editForm, setEditForm] = useState<EditForm | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const [invoiceOpen, setInvoiceOpen] = useState(false);
-  const [invoiceAmount, setInvoiceAmount] = useState("");
-  const [invoiceDueDate, setInvoiceDueDate] = useState("");
-  const [invoiceDescription, setInvoiceDescription] = useState("");
-  const [invoiceSaving, setInvoiceSaving] = useState(false);
-
   const [ghostOpen, setGhostOpen] = useState(false);
-  const [ghostPassword, setGhostPassword] = useState("");
-  const [ghostLoading, setGhostLoading] = useState(false);
-  const [ghostError, setGhostError] = useState<string | null>(null);
+  const [invoiceOpen, setInvoiceOpen] = useState(false);
+  const [saleOpen, setSaleOpen] = useState(false);
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [toggling, setToggling] = useState(false);
+  const [justCreated] = useState(() => searchParams.get("yeni") === "1");
 
-  const [deactivating, setDeactivating] = useState(false);
-  const [markingPaidId, setMarkingPaidId] = useState<string | null>(null);
-
-  const [smsCreditAmount, setSmsCreditAmount] = useState("");
-  const [smsCreditSaving, setSmsCreditSaving] = useState(false);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    const res = await fetch(`/api/superadmin/institutions/${id}`);
-    if (res.status === 404) {
-      setNotFound(true);
-      setLoading(false);
-      return;
-    }
-    if (!res.ok) {
-      showToastSafe({ message: "Klinik bilgisi alınamadı", type: "error" });
-      setLoading(false);
-      return;
-    }
-    const data: Institution = await res.json();
-    setInstitution(data);
-    setLoading(false);
-  }, [id]);
+  const reload = useCallback(() => setReloadKey((value) => value + 1), []);
 
   useEffect(() => {
-    const bootstrap = async () => {
-      const meData = await cachedGet<{ role?: string } | null>("/api/auth/me?surface=superadmin", 60_000);
-      if (!meData || meData.role !== "SUPERADMIN") {
-        router.replace("/superadmin");
-        return;
-      }
-      await load();
-    };
-    void bootstrap();
-  }, [load, router]);
-
-  const nextDue = useMemo(() => {
-    if (!institution) return null;
-    const unpaid = institution.invoices
-      .filter((inv) => inv.status !== "PAID" && inv.status !== "CANCELLED" && inv.dueDate)
-      .sort((a, b) => new Date(a.dueDate as string).getTime() - new Date(b.dueDate as string).getTime());
-    if (unpaid.length === 0) return null;
-    const dueDate = new Date(unpaid[0].dueDate as string);
-    const days = Math.ceil((dueDate.getTime() - Date.now()) / 86_400_000);
-    return { dueDate, days };
-  }, [institution]);
-
-  const dueBadge = useMemo(() => {
-    if (!nextDue) return { tone: "success" as BadgeTone, label: "Güncel" };
-    if (nextDue.days < 0) return { tone: "critical" as BadgeTone, label: "Gecikti — kısıtlı erişim" };
-    if (nextDue.days <= 7) return { tone: "warning" as BadgeTone, label: `${nextDue.days} gün içinde dolacak` };
-    return { tone: "success" as BadgeTone, label: "Güncel" };
-  }, [nextDue]);
-
-  const openEdit = () => {
-    if (!institution) return;
-    setEditForm(formToInstitution(institution));
-    setEditOpen(true);
-  };
-
-  const saveEdit = async () => {
-    if (!editForm || !institution) return;
-    setSaving(true);
-    try {
-      const body: Record<string, unknown> = {
-        name: editForm.name,
-        email: editForm.email,
-        phone: editForm.phone,
-        address: editForm.address,
-        taxNo: editForm.taxNo,
-        website: editForm.website,
-        subscriptionPlan: editForm.subscriptionPlan,
-        billingCycle: editForm.billingCycle,
-        isActive: editForm.isActive,
-        serviceMode: editForm.serviceMode,
-        serviceNote: editForm.serviceNote,
-        suspendedUntil: editForm.suspendedUntil ? new Date(editForm.suspendedUntil).toISOString() : null,
-        maxActiveUsers: editForm.maxActiveUsers ? Number(editForm.maxActiveUsers) : null,
-        maxActiveDoctors: editForm.maxActiveDoctors ? Number(editForm.maxActiveDoctors) : null,
-        adsEnabled: editForm.adsEnabled,
-        adIntensity: editForm.adIntensity,
-        whatsappEnabled: editForm.whatsappEnabled,
-      };
-      const res = await fetch(`/api/superadmin/institutions/${institution.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+    const controller = new AbortController();
+    setLoadError(null);
+    saGet<Institution>(`/api/superadmin/institutions/${id}`, "Klinik bilgisi yüklenemedi.", controller.signal)
+      .then(setInstitution)
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setLoadError({ message: errorMessage(error, "Klinik bilgisi yüklenemedi."), notFound: error instanceof SaRequestError && error.status === 404 });
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ message: "Güncelleme başarısız" }));
-        showToastSafe({ message: err.message || "Güncelleme başarısız", type: "error" });
-        return;
-      }
-      showToastSafe({ message: "Klinik güncellendi", type: "success", icon: "institutions" });
-      setEditOpen(false);
-      void load();
-    } catch {
-      showToastSafe({ message: "Bağlantı hatası — klinik güncellenemedi. Lütfen tekrar deneyin.", type: "error" });
-    } finally {
-      setSaving(false);
-    }
-  };
+    return () => controller.abort();
+  }, [id, reloadKey]);
 
-  const openInvoiceModal = () => {
-    if (!institution) return;
-    const price = getPlanPrice(institution.subscriptionPlan, institution.billingCycle);
-    setInvoiceAmount(price != null ? String(price) : "");
-    const due = new Date();
-    if (institution.billingCycle === "YILLIK") due.setFullYear(due.getFullYear() + 1);
-    else due.setMonth(due.getMonth() + 1);
-    setInvoiceDueDate(due.toISOString().slice(0, 10));
-    const planLabel = SUBSCRIPTION_PLANS[institution.subscriptionPlan].label;
-    const cycleLabel = institution.billingCycle === "YILLIK" ? "Yıllık" : "Aylık";
-    setInvoiceDescription(`${planLabel} Plan — ${cycleLabel}`);
-    setInvoiceOpen(true);
-  };
+  // ?yeni=1 yalnız ilk açılışta "kurulum adımları"nı vurgulamak için; adres temizlenir.
+  useEffect(() => {
+    if (searchParams.get("yeni") === "1") {
+      const next = new URLSearchParams(searchParams.toString());
+      next.delete("yeni");
+      router.replace(`/superadmin/institutions/${id}${next.toString() ? `?${next.toString()}` : ""}`, { scroll: false });
+    }
+  }, [id, router, searchParams]);
 
-  const submitInvoice = async () => {
-    if (!institution) return;
-    const amountNum = Number(invoiceAmount);
-    if (!amountNum || amountNum <= 0) {
-      showToastSafe({ message: "Geçerli bir tutar girin", type: "error" });
-      return;
-    }
-    if (!invoiceDueDate) {
-      showToastSafe({ message: "Vade tarihi girin", type: "error" });
-      return;
-    }
-    setInvoiceSaving(true);
-    try {
-      const res = await fetch("/api/superadmin/invoices", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          institutionId: institution.id,
-          amount: amountNum,
-          description: invoiceDescription,
-          dueDate: new Date(invoiceDueDate).toISOString(),
-          status: "PENDING",
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ message: "Fatura oluşturulamadı" }));
-        showToastSafe({ message: err.message || "Fatura oluşturulamadı", type: "error" });
-        return;
-      }
-      showToastSafe({ message: "Fatura oluşturuldu", type: "success", icon: "finance" });
-      setInvoiceOpen(false);
-      void load();
-    } catch {
-      showToastSafe({ message: "Bağlantı hatası — fatura oluşturulamadı. Lütfen tekrar deneyin.", type: "error" });
-    } finally {
-      setInvoiceSaving(false);
-    }
-  };
+  const state = useMemo(() => (institution ? institutionState(institution) : null), [institution]);
 
-  const markPaid = async (invoiceId: string) => {
+  if (loadError && !institution) {
+    return (
+      <section className="space-y-4">
+        <PageHeader icon="institutions" title={loadError.notFound ? "Klinik bulunamadı" : "Klinik dosyası"} back={{ href: "/superadmin/institutions", label: "Klinikler" }} />
+        {loadError.notFound ? (
+          <EmptyState title="Bu klinik bulunamadı" description="Klinik silinmiş ya da bağlantı hatalı olabilir." action={<Button variant="secondary" href="/superadmin/institutions">Klinik listesine dön</Button>} />
+        ) : (
+          <LoadErrorState message={loadError.message} onRetry={reload} />
+        )}
+      </section>
+    );
+  }
+
+  if (!institution || !state) {
+    return (
+      <section className="space-y-4">
+        <PageHeader icon="institutions" title="Klinik dosyası" back={{ href: "/superadmin/institutions", label: "Klinikler" }} />
+        <div className="ui-surface overflow-hidden"><ListRowSkeleton rows={5} /></div>
+      </section>
+    );
+  }
+
+  const summary = institution.paymentSummary;
+  const planPrice = getPlanPrice(institution.subscriptionPlan as SubscriptionPlanId, (institution.billingCycle || "AYLIK") as BillingCycleId);
+  const nextDueDays = daysUntil(summary.nextDueDate);
+  const clinicForModals = { id: institution.id, name: institution.name, smsBalance: institution.smsBalance };
+
+  const exportData = async () => {
     const ok = await confirmDialog({
-      title: "Fatura Ödendi İşaretle",
-      message: "Bu fatura ödendi olarak işaretlensin mi? Klinik hizmet kısıtlaması varsa bu işlem kısıtlamayı kaldırabilir.",
-      confirmText: "Ödendi İşaretle",
+      title: "Klinik verisi indirilsin mi?",
+      message: `${institution.name} kliniğinin tüm hasta, ödeme, tedavi ve reçete kayıtları Excel dosyası olarak bilgisayarınıza inecek. Bu kişisel sağlık verisidir (KVKK): yalnız klinik istediyse indirin, güvenli saklayın, işiniz bitince silin. İndirme Denetim Günlüğü'ne yazılır.`,
+      confirmText: "İndir",
+      cancelText: "Vazgeç",
     });
-    if (!ok) return;
-    setMarkingPaidId(invoiceId);
-    try {
-      const res = await fetch(`/api/superadmin/invoices/${invoiceId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "PAID" }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ message: "İşlem başarısız" }));
-        showToastSafe({ message: err.message || "İşlem başarısız", type: "error" });
-        return;
-      }
-      showToastSafe({ message: "Fatura ödendi olarak işaretlendi", type: "success", icon: "finance" });
-      void load();
-    } catch {
-      showToastSafe({ message: "Bağlantı hatası — işlem yapılamadı. Lütfen tekrar deneyin.", type: "error" });
-    } finally {
-      setMarkingPaidId(null);
-    }
+    if (ok) window.location.href = `/api/superadmin/institutions/${institution.id}/export`;
   };
 
-  const adjustSmsCredit = async () => {
-    if (!institution) return;
-    const amount = Math.trunc(Number(smsCreditAmount));
-    if (!amount || Number.isNaN(amount)) {
-      showToastSafe({ message: "Geçerli bir miktar girin (ör. 500 veya -100)", type: "error" });
-      return;
-    }
-    const ok = await confirmDialog({
-      title: amount > 0 ? "SMS Kredisi Ekle" : "SMS Kredisi Azalt",
-      message: amount > 0
-        ? `"${institution.name}" kliniğine ${amount} SMS kredisi eklensin mi? Bu miktar platform stoğundan düşülür.`
-        : `"${institution.name}" kliniğinden ${Math.abs(amount)} SMS kredisi düşülsün mü? Bu miktar platform stoğuna geri eklenir.`,
-      confirmText: amount > 0 ? "Ekle" : "Azalt",
-      danger: amount < 0,
-    });
-    if (!ok) return;
-    setSmsCreditSaving(true);
-    try {
-      const res = await fetch(`/api/superadmin/institutions/${institution.id}/sms-credit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ amount }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        showToastSafe({ message: data.message || "SMS kredisi güncellenemedi", type: "error" });
-        return;
-      }
-      showToastSafe({ message: `SMS bakiyesi güncellendi: ${data.smsBalance}`, type: "success", icon: "sms" });
-      setSmsCreditAmount("");
-      void load();
-    } catch {
-      showToastSafe({ message: "Bağlantı hatası — SMS kredisi güncellenemedi. Lütfen tekrar deneyin.", type: "error" });
-    } finally {
-      setSmsCreditSaving(false);
-    }
-  };
-
-  const deactivate = async () => {
-    if (!institution) return;
-    const ok = await confirmDialog({
-      title: "Kliniği Pasife Al",
-      message: `"${institution.name}" kliniğini pasife almak istediğinize emin misiniz? Klinik kullanıcıları giriş yapamayacak.`,
-      confirmText: "Pasife Al",
+  const toggleActive = async () => {
+    const closing = institution.isActive;
+    const ok = await confirmDialog(closing ? {
+      title: "Klinik kapatılsın mı?",
+      message: `${institution.name} kliniğinin tüm kullanıcıları hemen sisteme giremez olur. Kayıtlar silinmez; istediğiniz zaman yeniden açabilirsiniz. Ödeme gecikmesi için kapatmak yerine fatura vadesinin işlemesini bekleyin ya da Düzenle › Hizmet durumu'nu kullanın.`,
+      confirmText: "Kliniği kapat",
+      cancelText: "Vazgeç",
       danger: true,
+    } : {
+      title: "Klinik yeniden açılsın mı?",
+      message: `${institution.name} kliniğinin kullanıcıları yeniden giriş yapabilir.`,
+      confirmText: "Yeniden aç",
+      cancelText: "Vazgeç",
     });
     if (!ok) return;
-    setDeactivating(true);
+    setToggling(true);
     try {
-      const res = await fetch(`/api/superadmin/institutions/${institution.id}`, { method: "DELETE" });
-      if (!res.ok) {
-        showToastSafe({ message: "İşlem başarısız", type: "error" });
-        return;
-      }
-      showToastSafe({ message: "Klinik pasife alındı", type: "success", icon: "institutions" });
-      void load();
-    } catch {
-      showToastSafe({ message: "Bağlantı hatası — işlem yapılamadı. Lütfen tekrar deneyin.", type: "error" });
+      if (closing) await saSend(`/api/superadmin/institutions/${institution.id}`, "DELETE", undefined, "Klinik kapatılamadı.");
+      else await saSend(`/api/superadmin/institutions/${institution.id}`, "PUT", { isActive: true }, "Klinik açılamadı.");
+      showToastSafe({ type: "success", message: closing ? `${institution.name} kapatıldı.` : `${institution.name} yeniden açıldı.`, icon: "institutions" });
+      reload();
+    } catch (error) {
+      showToastSafe({ type: "error", message: errorMessage(error, "İşlem yapılamadı.") });
     } finally {
-      setDeactivating(false);
+      setToggling(false);
     }
   };
 
-  const activate = async () => {
-    if (!institution) return;
-    setDeactivating(true);
-    try {
-      const res = await fetch(`/api/superadmin/institutions/${institution.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive: true }),
-      });
-      if (!res.ok) {
-        showToastSafe({ message: "İşlem başarısız", type: "error" });
-        return;
-      }
-      showToastSafe({ message: "Klinik aktif edildi", type: "success", icon: "institutions" });
-      void load();
-    } catch {
-      showToastSafe({ message: "Bağlantı hatası — işlem yapılamadı. Lütfen tekrar deneyin.", type: "error" });
-    } finally {
-      setDeactivating(false);
-    }
-  };
-
-  const openGhostLogin = () => {
-    setGhostPassword("");
-    setGhostError(null);
-    setGhostOpen(true);
-  };
-
-  const enterAsGhost = async () => {
-    if (!institution || !ghostPassword) return;
-    const clinicWindow = window.open("about:blank", "_blank");
-    setGhostLoading(true);
-    setGhostError(null);
-    try {
-      const res = await fetch("/api/auth/superadmin/impersonate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ institutionId: institution.id, password: ghostPassword }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ message: "Hata" }));
-        clinicWindow?.close();
-        setGhostError(err.message || "Giriş başarısız");
-        return;
-      }
-      if (clinicWindow && !clinicWindow.closed) clinicWindow.location.replace("/anasayfa");
-      else window.location.assign("/anasayfa");
-      setGhostOpen(false);
-      setGhostPassword("");
-    } catch {
-      clinicWindow?.close();
-      setGhostError("Bağlantı hatası — giriş yapılamadı. Lütfen tekrar deneyin.");
-    } finally {
-      setGhostLoading(false);
-    }
-  };
-
-  const userColumns: ListTableColumn<UserRow>[] = [
-    { key: "fullName", header: "Ad Soyad", render: (u) => <span className="font-semibold text-slate-900">{u.fullName}</span> },
-    { key: "email", header: "E-posta", render: (u) => u.email },
-    { key: "role", header: "Rol", render: (u) => u.role },
-    {
-      key: "isActive",
-      header: "Durum",
-      align: "center",
-      render: (u) => <Badge tone={u.isActive ? "success" : "critical"}>{u.isActive ? "Aktif" : "Pasif"}</Badge>,
-    },
-    { key: "createdAt", header: "Kayıt Tarihi", render: (u) => formatDate(u.createdAt) },
+  // Yeni açılan klinik için sıradaki adımlar (ölü uç kalmasın).
+  const setupSteps = [
+    { key: "invoice", done: summary.totalInvoices > 0, label: "İlk dönem faturasını kesin", action: <Button size="sm" variant="secondary" icon={FileText} onClick={() => setInvoiceOpen(true)}>Fatura kes</Button> },
+    { key: "sms", done: institution.smsTransactions.length > 0 || institution.smsBalance > 0, label: "SMS paketi satın (hatırlatma SMS'leri için)", action: <Button size="sm" variant="secondary" icon={MessageSquarePlus} onClick={() => setSaleOpen(true)}>Paket sat</Button> },
+    { key: "login", done: false, label: `Klinik yöneticisine giriş bilgisini iletin: klinik adı "${institution.name}", TC kimlik no ve geçici şifre`, action: <Button size="sm" variant="ghost" onClick={() => setTab("personel")}>Personel</Button> },
   ];
+  const showSetup = justCreated || summary.totalInvoices === 0;
 
   const invoiceColumns: ListTableColumn<InvoiceRow>[] = [
-    { key: "invoiceNo", header: "Fatura No", render: (inv) => <span className="font-semibold text-slate-900">{inv.invoiceNo}</span> },
-    { key: "description", header: "Açıklama", render: (inv) => inv.description || "-" },
-    { key: "amount", header: "Tutar", align: "right", render: (inv) => formatMoney(inv.amount) },
-    { key: "dueDate", header: "Vade", render: (inv) => formatDate(inv.dueDate) },
+    {
+      key: "invoice",
+      header: "Fatura",
+      render: (row) => (
+        <div className="min-w-0">
+          <p className="font-semibold text-slate-900">{row.description || "Platform faturası"}</p>
+          <p className="text-xs text-slate-500">{row.invoiceNo}</p>
+        </div>
+      ),
+    },
+    { key: "amount", header: "Tutar", align: "right", render: (row) => <span className="font-semibold tabular-nums">{money(row.amount)}</span> },
+    { key: "dueDate", header: "Vade", render: (row) => shortDate(row.dueDate) || <EmptyValue /> },
     {
       key: "status",
       header: "Durum",
-      align: "center",
-      render: (inv) => <Badge tone={INVOICE_STATUS_TONE[inv.status]}>{INVOICE_STATUS_LABEL[inv.status]}</Badge>,
+      render: (row) => (
+        <div>
+          <Badge tone={INVOICE_STATUS_META[row.status].tone}>{INVOICE_STATUS_META[row.status].label}</Badge>
+          {row.status === "PAID" && row.paidAt && <p className="mt-0.5 text-xs text-slate-500">{shortDate(row.paidAt)}</p>}
+        </div>
+      ),
     },
-    { key: "paidAt", header: "Ödeme Tarihi", render: (inv) => formatDate(inv.paidAt) },
-    {
-      key: "action",
-      header: "İşlem",
-      align: "center",
-      render: (inv) =>
-        inv.status !== "PAID" ? (
-          <Button size="sm" variant="secondary" loading={markingPaidId === inv.id} onClick={() => void markPaid(inv.id)}>
-            Ödendi İşaretle
-          </Button>
-        ) : (
-          <span className="text-xs text-slate-400">-</span>
-        ),
-    },
+    { key: "actions", header: "", align: "right", render: (row) => <InvoiceRowActions invoice={{ ...row, institutionName: institution.name }} onChanged={reload} /> },
   ];
 
-  const smsColumns: ListTableColumn<SmsTransactionRow>[] = [
-    { key: "createdAt", header: "Tarih", render: (t) => formatDate(t.createdAt) },
-    { key: "package", header: "Paket", render: (t) => t.smsPackage?.name || "-" },
-    { key: "smsCount", header: "SMS Adedi", align: "right", render: (t) => (t.smsPackage?.smsCount ?? t.smsCount ?? "-").toLocaleString?.("tr-TR") ?? (t.smsPackage?.smsCount ?? t.smsCount ?? "-") },
-    { key: "amount", header: "Tutar", align: "right", render: (t) => (t.amount != null ? formatMoney(t.amount) : "-") },
+  const smsColumns: ListTableColumn<SmsRow>[] = [
+    { key: "createdAt", header: "Tarih", render: (row) => shortDate(row.createdAt) || <EmptyValue /> },
+    { key: "package", header: "Paket", render: (row) => <span>{row.packageName || "—"}{row.quantity > 1 ? ` × ${row.quantity}` : ""}</span> },
+    { key: "smsCount", header: "SMS", align: "right", render: (row) => <span className="font-semibold tabular-nums">+{count(row.smsCount)}</span> },
+    { key: "totalPrice", header: "Tutar", align: "right", render: (row) => <span className="tabular-nums">{money(row.totalPrice)}</span> },
+    { key: "balanceAfter", header: "Sonraki bakiye", align: "right", render: (row) => <span className="tabular-nums text-slate-600">{count(row.balanceAfter)}</span> },
   ];
 
-  if (loading) {
-    return (
-      <main className="min-h-screen bg-slate-100 p-6">
-        <div className="mx-auto max-w-7xl">
-          <p className="text-sm text-slate-400">Yükleniyor...</p>
-        </div>
-      </main>
-    );
-  }
-
-  if (notFound || !institution) {
-    return (
-      <main className="min-h-screen bg-slate-100 p-6">
-        <div className="mx-auto max-w-7xl space-y-4">
-          <Button variant="secondary" size="sm" icon={ArrowLeft} href="/superadmin/institutions">
-            Geri
-          </Button>
-          <div className="rounded-2xl border bg-white p-8 text-center text-sm text-slate-500 shadow-sm">
-            Klinik bulunamadı.
-          </div>
-        </div>
-      </main>
-    );
-  }
-
-  const price = getPlanPrice(institution.subscriptionPlan, institution.billingCycle);
+  const whatsappStatus = institution.whatsappProvider?.exists
+    ? WHATSAPP_STATUS_META[institution.whatsappProvider.connectionStatus || ""]?.label || "Durum bilinmiyor"
+    : "Bağlanmadı";
 
   return (
-    <main className="min-h-screen bg-slate-100 p-6">
-      <div className="mx-auto max-w-7xl space-y-4">
-        {/* Header */}
-        <header className="rounded-2xl bg-white p-5 shadow-sm border space-y-3">
-          <Button variant="ghost" size="sm" icon={ArrowLeft} href="/superadmin/institutions">
-            Geri
-          </Button>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h1 className="text-2xl font-black text-slate-900">{institution.name}</h1>
-                <Badge tone={institution.isActive ? "success" : "critical"}>{institution.isActive ? "Aktif" : "Pasif"}</Badge>
-                {institution.serviceMode !== "NORMAL" && (
-                  <Badge
-                    tone={SERVICE_MODE_TONE[institution.serviceMode]}
-                    solid={institution.serviceMode === "SUSPENDED"}
-                    className={institution.serviceMode === "SUSPENDED" ? "ui-badge-pulse" : ""}
-                    title={SERVICE_MODE_HINTS[institution.serviceMode]}
-                  >
-                    {institution.serviceMode}
-                  </Badge>
+    <section className="space-y-4">
+      <PageHeader
+        icon="institutions"
+        back={{ href: "/superadmin/institutions", label: "Klinikler" }}
+        title={institution.name}
+        description={`${planLabel(institution.subscriptionPlan, institution.billingCycle)} · ${institution.owner?.fullName || "Klinik yöneticisi atanmamış"}`}
+        actions={
+          <>
+            <Badge tone={state.tone} size="md" title={state.detail}>{state.label}</Badge>
+            <Button variant="secondary" icon={LogIn} disabled={!institution.isActive} onClick={() => setGhostOpen(true)}>Gizli giriş</Button>
+            <Button icon={Pencil} onClick={() => setEditOpen(true)}>Düzenle</Button>
+          </>
+        }
+      />
+
+      <Tabs
+        ariaLabel="Klinik dosyası bölümleri"
+        value={tab}
+        onChange={setTab}
+        items={[
+          { key: "ozet", label: "Özet" },
+          { key: "faturalar", label: "Faturalar", count: summary.overdueCount || summary.openCount, countTone: summary.overdueCount > 0 ? "critical" : "neutral" },
+          { key: "sms", label: "SMS" },
+          { key: "personel", label: "Personel", count: institution.usage.activeUsers },
+          { key: "subeler", label: "Şubeler" },
+        ]}
+      />
+
+      {tab === "ozet" && (
+        <div className="space-y-4">
+          {showSetup && (
+            <section className="ui-surface border-primary/30 p-4">
+              <h2 className="text-sm font-bold text-slate-900">{justCreated ? "Klinik açıldı — sıradaki adımlar" : "Kurulum adımları"}</h2>
+              <ol className="mt-2 divide-y divide-slate-100">
+                {setupSteps.map((step) => (
+                  <li key={step.key} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                    <span className="flex min-w-0 items-start gap-2 text-sm text-slate-700">
+                      {step.done ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-label="Tamam" /> : <Circle className="mt-0.5 h-4 w-4 shrink-0 text-slate-300" aria-hidden="true" />}
+                      <span className={step.done ? "text-slate-500 line-through" : ""}>{step.label}</span>
+                    </span>
+                    {!step.done && step.action}
+                  </li>
+                ))}
+              </ol>
+            </section>
+          )}
+
+          {state.key !== "NORMAL" && (
+            <p className={`rounded-lg border px-4 py-3 text-sm ${state.tone === "critical" ? "border-red-200 bg-red-50 text-red-800" : state.tone === "warning" ? "border-amber-200 bg-amber-50 text-amber-800" : "border-primary/20 bg-primary/5 text-slate-700"}`}>
+              <strong>{state.label}:</strong> {state.detail}
+              {institution.serviceNote ? <><br /><span className="text-xs">Kliniğe gösterilen not: {institution.serviceNote}</span></> : null}
+            </p>
+          )}
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Panel title="Abonelik ve borç" action={<Button size="sm" variant="ghost" onClick={() => setTab("faturalar")}>Faturalar</Button>}>
+              <dl className="divide-y divide-slate-100">
+                <InfoRow label="Plan">{planLabel(institution.subscriptionPlan, institution.billingCycle)}</InfoRow>
+                <InfoRow label={`Plan ücreti (${cycleLabel(institution.billingCycle).toLocaleLowerCase("tr-TR")})`}>{planPrice != null ? money(planPrice) : "Özel teklif"}</InfoRow>
+                <InfoRow label="Açık borç">
+                  {summary.openCount === 0 ? <span className="text-emerald-700">Borç yok</span> : <>{money(summary.unpaidTotal)} <span className="text-xs font-normal text-slate-500">({summary.openCount} fatura)</span></>}
+                </InfoRow>
+                {summary.overdueCount > 0 && (
+                  <InfoRow label="Gecikmiş"><span className="text-red-700">{money(summary.overdueAmount)} · {summary.overdueCount} fatura</span></InfoRow>
                 )}
-                {institution.isDemo && <Badge tone="info">Demo</Badge>}
-              </div>
-              <p className="mt-1 text-sm text-slate-500">
-                Sahip: <span className="font-semibold text-slate-700">{institution.owner?.fullName || "-"}</span>
-                {" · "}{institution.email}
-                {institution.phone ? ` · ${institution.phone}` : ""}
-              </p>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={Eye}
-                onClick={() => openGhostLogin()}
-              >
-                Kliniğe Gir
-              </Button>
-              <Button variant="secondary" size="sm" icon={UploadCloud} href={`/superadmin/institutions/${institution.id}/import`}>
-                Toplu Veri Aktarımı
-              </Button>
-              <Button
-                variant="secondary"
-                size="sm"
-                icon={Download}
-                onClick={() => { window.location.href = `/api/superadmin/institutions/${institution.id}/export`; }}
-              >
-                Veriyi Dışa Aktar
-              </Button>
-              <Button variant="primary" size="sm" icon={Pencil} onClick={openEdit}>
-                Düzenle
-              </Button>
-              {institution.isActive ? (
-                <Button variant="danger" size="sm" icon={Power} loading={deactivating} onClick={() => void deactivate()}>
-                  Kliniği Pasife Al
-                </Button>
-              ) : (
-                <Button variant="primary" size="sm" icon={Power} loading={deactivating} onClick={() => void activate()}>
-                  Kliniği Aktif Et
-                </Button>
-              )}
-            </div>
-          </div>
-        </header>
+                <InfoRow label="Sıradaki vade">
+                  {summary.nextDueDate ? (
+                    <>{shortDate(summary.nextDueDate)} {nextDueDays != null && <span className={`text-xs font-normal ${nextDueDays < 0 ? "text-red-700" : nextDueDays <= 7 ? "text-amber-700" : "text-slate-500"}`}>({nextDueDays < 0 ? `${-nextDueDays} gün geçti` : nextDueDays === 0 ? "bugün" : `${nextDueDays} gün kaldı`})</span>}</>
+                  ) : <EmptyValue />}
+                </InfoRow>
+                <InfoRow label="Aktif kullanıcı">{institution.usage.activeUsers} / {institution.maxActiveUsers ?? "sınırsız"}</InfoRow>
+                <InfoRow label="Aktif doktor">{institution.usage.activeDoctors} / {institution.maxActiveDoctors ?? "sınırsız"}</InfoRow>
+                {institution.isDemo && <InfoRow label="Demo bitişi">{shortDate(institution.demoExpiresAt) || "Süresiz"}</InfoRow>}
+              </dl>
+            </Panel>
 
-        {/* Payment / subscription status card */}
-        <section className="rounded-2xl bg-white p-5 shadow-sm border">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-black text-slate-900">Abonelik ve Ödeme Durumu</h2>
-            <Button variant="secondary" size="sm" icon={Plus} onClick={openInvoiceModal}>
-              Yeni Dönem Faturası Oluştur
-            </Button>
+            <Panel title="İletişim" action={<Button size="sm" variant="ghost" icon={Pencil} onClick={() => setEditOpen(true)}>Düzenle</Button>}>
+              <dl className="divide-y divide-slate-100">
+                <InfoRow label="Klinik yöneticisi">{institution.owner?.fullName || <EmptyValue />}</InfoRow>
+                <InfoRow label="E-posta">{institution.email || <EmptyValue />}</InfoRow>
+                <InfoRow label="Telefon">{institution.phone ? formatPhoneNumber(institution.phone) : <EmptyValue />}</InfoRow>
+                <InfoRow label="Adres">{institution.address || <EmptyValue />}</InfoRow>
+                <InfoRow label="Vergi no">{institution.taxNo || <EmptyValue />}</InfoRow>
+                <InfoRow label="SMS bakiyesi">{count(institution.smsBalance)} SMS</InfoRow>
+                <InfoRow label="WhatsApp">
+                  {institution.whatsappEnabled ? whatsappStatus : "Kapalı"}{" "}
+                  <Link href="/superadmin/sms?tab=whatsapp" className="text-xs font-semibold text-primary hover:underline">Yönet</Link>
+                </InfoRow>
+                <InfoRow label="Açılış">{shortDate(institution.createdAt) || <EmptyValue />}</InfoRow>
+              </dl>
+            </Panel>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <StatBox label="Plan" value={`${SUBSCRIPTION_PLANS[institution.subscriptionPlan].label} · ${institution.billingCycle === "YILLIK" ? "Yıllık" : "Aylık"}`} />
-            <StatBox label="Tutar" value={price != null ? formatMoney(price) : "Özel Teklif"} />
-            <StatBox label="Gecikmiş Fatura" value={String(institution.paymentSummary.overdueCount)} tone={institution.paymentSummary.overdueCount > 0 ? "critical" : "neutral"} />
-            <StatBox label="Bekleyen Fatura" value={String(institution.paymentSummary.pendingCount)} tone={institution.paymentSummary.pendingCount > 0 ? "warning" : "neutral"} />
-            <StatBox label="Ödenmemiş Toplam" value={formatMoney(institution.paymentSummary.unpaidTotal)} tone={institution.paymentSummary.unpaidTotal > 0 ? "critical" : "neutral"} />
-          </div>
-          <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-slate-50 px-4 py-3">
-            <span className="text-xs font-semibold text-slate-500">Sıradaki Vade:</span>
-            <span className="text-sm font-semibold text-slate-800">{nextDue ? formatDate(nextDue.dueDate.toISOString()) : "-"}</span>
-            <Badge tone={dueBadge.tone}>{dueBadge.label}</Badge>
-          </div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            <StatBox
-              label="Doktor Kullanımı"
-              value={`${institution.users.filter((u) => u.role === "DOKTOR" && u.isActive).length} / ${institution.maxActiveDoctors ?? "∞"}`}
-            />
-            <StatBox
-              label="Personel Kullanımı"
-              value={`${institution.users.filter((u) => u.isActive).length} / ${institution.maxActiveUsers ?? "∞"}`}
-            />
-          </div>
-        </section>
 
-        <BranchControlPanel institutionId={institution.id} />
-
-        {/* Invoices */}
-        <section className="space-y-2">
-          <h2 className="text-sm font-black text-slate-900">Faturalar</h2>
-          <ListTable columns={invoiceColumns} rows={institution.invoices} rowKey={(r) => r.id} emptyText="Fatura bulunamadı" />
-        </section>
-
-        {/* Users */}
-        <section className="space-y-2">
-          <h2 className="text-sm font-black text-slate-900">Personel</h2>
-          <ListTable columns={userColumns} rows={institution.users} rowKey={(r) => r.id} emptyText="Personel bulunamadı" />
-        </section>
-
-        {/* SMS transactions */}
-        <section className="space-y-2">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="text-sm font-black text-slate-900">SMS İşlemleri — Bakiye: {institution.smsBalance}</h2>
-            <div className="flex items-center gap-2">
-              <input aria-label={"SMS bakiyesi değişimi"}
-                type="number"
-                value={smsCreditAmount}
-                onChange={(e) => setSmsCreditAmount(e.target.value)}
-                placeholder="ör. 500 veya -100"
-                className="h-9 w-40 rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-              />
-              <Button size="sm" onClick={() => void adjustSmsCredit()} loading={smsCreditSaving} disabled={!smsCreditAmount.trim()}>
-                Uygula
+          <Panel title="Diğer işlemler">
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button variant="secondary" size="sm" icon={UploadCloud} href={`/superadmin/institutions/${institution.id}/import`}>Toplu veri aktarımı</Button>
+              <Button variant="secondary" size="sm" icon={Download} onClick={() => void exportData()}>Verileri indir</Button>
+              <Button variant="secondary" size="sm" icon={SlidersHorizontal} href={`/superadmin/audit?institutionId=${institution.id}`}>Bu kliniğin işlem kayıtları</Button>
+              <Button variant={institution.isActive ? "danger" : "secondary"} size="sm" icon={Power} loading={toggling} onClick={() => void toggleActive()}>
+                {institution.isActive ? "Kliniği kapat" : "Kliniği yeniden aç"}
               </Button>
             </div>
-          </div>
-          <ListTable columns={smsColumns} rows={institution.smsTransactions} rowKey={(r) => r.id} emptyText="SMS işlemi bulunamadı" />
-        </section>
-      </div>
-
-      {/* Edit modal */}
-      {editForm && (
-        <Modal
-          open={editOpen}
-          onClose={() => setEditOpen(false)}
-          title="Klinik Bilgilerini Düzenle"
-          size="lg"
-          footer={
-            <>
-              <Button variant="secondary" onClick={() => setEditOpen(false)}>İptal</Button>
-              <Button variant="primary" loading={saving} onClick={() => void saveEdit()}>Kaydet</Button>
-            </>
-          }
-        >
-          <div className="space-y-4">
-            <FormSection icon={Pencil} title="Genel Bilgiler">
-              <div className="grid gap-3 md:grid-cols-2">
-                <FormField label="Klinik Adı" required>
-                  <input
-                    className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-                    value={editForm.name}
-                    onChange={(e) => setEditForm((f) => f && { ...f, name: e.target.value })}
-                  />
-                </FormField>
-                <FormField label="E-posta" required>
-                  <input
-                    className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-                    value={editForm.email}
-                    onChange={(e) => setEditForm((f) => f && { ...f, email: e.target.value })}
-                  />
-                </FormField>
-                <FormField label="Telefon">
-                  <input
-                    className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-                    value={editForm.phone}
-                    onChange={(e) => setEditForm((f) => f && { ...f, phone: e.target.value })}
-                  />
-                </FormField>
-                <FormField label="Vergi No">
-                  <input
-                    className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-                    value={editForm.taxNo}
-                    onChange={(e) => setEditForm((f) => f && { ...f, taxNo: e.target.value })}
-                  />
-                </FormField>
-                <FormField label="Web Sitesi">
-                  <input
-                    className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-                    value={editForm.website}
-                    onChange={(e) => setEditForm((f) => f && { ...f, website: e.target.value })}
-                  />
-                </FormField>
-                <FormField label="Adres">
-                  <input
-                    className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-                    value={editForm.address}
-                    onChange={(e) => setEditForm((f) => f && { ...f, address: e.target.value })}
-                  />
-                </FormField>
-              </div>
-            </FormSection>
-
-            <FormSection icon={ShieldAlert} title="Abonelik">
-              <div className="grid gap-3 md:grid-cols-2">
-                <FormField label="Plan" hint={`Bu plan en fazla ${SUBSCRIPTION_PLANS[editForm.subscriptionPlan].maxDoctors ?? "sınırsız"} doktor / ${SUBSCRIPTION_PLANS[editForm.subscriptionPlan].maxUsers ?? "sınırsız"} kullanıcı içerir`}>
-                  <select
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
-                    value={editForm.subscriptionPlan}
-                    onChange={(e) => {
-                      const nextPlan = e.target.value as SubscriptionPlanId;
-                      const limits = SUBSCRIPTION_PLANS[nextPlan];
-                      setEditForm((f) => f && {
-                        ...f,
-                        subscriptionPlan: nextPlan,
-                        // Plan değişince limitler otomatik yeni planın varsayılanına
-                        // döner — süperadmin isterse aşağıdan elle özelleştirebilir.
-                        maxActiveUsers: limits.maxUsers != null ? String(limits.maxUsers) : "",
-                        maxActiveDoctors: limits.maxDoctors != null ? String(limits.maxDoctors) : "",
-                      });
-                    }}
-                  >
-                    <option value="TEMEL">Temel</option>
-                    <option value="PROFESYONEL">Profesyonel</option>
-                    <option value="KURUMSAL">Kurumsal</option>
-                  </select>
-                </FormField>
-                <FormField label="Fatura Periyodu">
-                  <select
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
-                    value={editForm.billingCycle}
-                    onChange={(e) => setEditForm((f) => f && { ...f, billingCycle: e.target.value as BillingCycleId })}
-                  >
-                    <option value="AYLIK">Aylık</option>
-                    <option value="YILLIK">Yıllık</option>
-                  </select>
-                </FormField>
-                <FormField label="Maks. Aktif Personel" hint="Boş bırakılırsa sınırsız — plan değişince otomatik dolar, elle de değiştirebilirsiniz">
-                  <input
-                    type="number"
-                    className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-                    value={editForm.maxActiveUsers}
-                    onChange={(e) => setEditForm((f) => f && { ...f, maxActiveUsers: e.target.value })}
-                  />
-                </FormField>
-                <FormField label="Maks. Aktif Doktor" hint="Boş bırakılırsa sınırsız — plan değişince otomatik dolar, elle de değiştirebilirsiniz">
-                  <input
-                    type="number"
-                    className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-                    value={editForm.maxActiveDoctors}
-                    onChange={(e) => setEditForm((f) => f && { ...f, maxActiveDoctors: e.target.value })}
-                  />
-                </FormField>
-                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={editForm.isActive}
-                    onChange={(e) => setEditForm((f) => f && { ...f, isActive: e.target.checked })}
-                  />
-                  Klinik Aktif
-                </label>
-              </div>
-            </FormSection>
-
-            <FormSection icon={ShieldAlert} title="Servis Modu">
-              <div className="grid gap-3 md:grid-cols-2">
-                <FormField label="Servis Modu" hint={SERVICE_MODE_HINTS[editForm.serviceMode]}>
-                  <select
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
-                    value={editForm.serviceMode}
-                    onChange={(e) => setEditForm((f) => f && { ...f, serviceMode: e.target.value as ServiceMode })}
-                  >
-                    <option value="NORMAL">NORMAL</option>
-                    <option value="LIMITED">LIMITED</option>
-                    <option value="READ_ONLY">READ_ONLY</option>
-                    <option value="SUSPENDED">SUSPENDED</option>
-                  </select>
-                </FormField>
-                <FormField label="Askıya Alma Bitiş Tarihi" hint="SUSPENDED modunda otomatik geri dönüş için">
-                  <input
-                    type="datetime-local"
-                    className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-                    value={editForm.suspendedUntil}
-                    onChange={(e) => setEditForm((f) => f && { ...f, suspendedUntil: e.target.value })}
-                  />
-                </FormField>
-                <div className="md:col-span-2">
-                  <FormField label="Servis Notu" hint="Klinik yönetici panelinde gösterilebilir">
-                    <textarea
-                      className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-                      rows={2}
-                      value={editForm.serviceNote}
-                      onChange={(e) => setEditForm((f) => f && { ...f, serviceNote: e.target.value })}
-                    />
-                  </FormField>
-                </div>
-              </div>
-            </FormSection>
-
-            <FormSection icon={ShieldAlert} title="WhatsApp Bildirim Kanalı">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={editForm.whatsappEnabled}
-                    onChange={(e) => setEditForm((f) => f && { ...f, whatsappEnabled: e.target.checked })}
-                  />
-                  Bu kliniğe WhatsApp modülü erişimi ver
-                </label>
-              </div>
-              <p className="mt-1.5 text-xs text-slate-500">
-                Bu ayar yalnızca kliniğin WhatsApp modülüne erişim hakkını yönetir. Bağlantı, numara ve mesajlaşma ayarlarını yetkili klinik yöneticisi kendi panelinden yönetir.
-              </p>
-              <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-600">
-                {institution.whatsappProvider?.exists ? (
-                  <p>
-                    Bağlantı: <strong>{institution.whatsappProvider.verifiedName || institution.whatsappProvider.name}</strong>
-                    {institution.whatsappProvider.displayPhoneNumber ? ` · ${institution.whatsappProvider.displayPhoneNumber}` : ""}, durum: <strong>{institution.whatsappProvider.connectionStatus}</strong>.
-                  </p>
-                ) : (
-                  <p>
-                    Bu klinik henüz kendi WhatsApp Business hesabını bağlamadı.
-                  </p>
-                )}
-              </div>
-            </FormSection>
-
-            <FormSection icon={ShieldAlert} title="Reklamlar">
-              <div className="grid gap-3 md:grid-cols-2">
-                <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
-                  <input
-                    type="checkbox"
-                    checked={editForm.adsEnabled}
-                    onChange={(e) => setEditForm((f) => f && { ...f, adsEnabled: e.target.checked })}
-                  />
-                  Reklamlar Aktif
-                </label>
-                <FormField label="Reklam Yoğunluğu">
-                  <select
-                    className="w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm"
-                    value={editForm.adIntensity}
-                    onChange={(e) => setEditForm((f) => f && { ...f, adIntensity: e.target.value as AdIntensity })}
-                  >
-                    <option value="LOW">Düşük</option>
-                    <option value="MEDIUM">Orta</option>
-                    <option value="HIGH">Yüksek</option>
-                  </select>
-                </FormField>
-              </div>
-            </FormSection>
-          </div>
-        </Modal>
+          </Panel>
+        </div>
       )}
 
-      {/* Invoice creation modal */}
-      <Modal
+      {tab === "faturalar" && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-end justify-between gap-2">
+            <p className="text-sm text-slate-500">
+              Açık faturaların tamamı ve son kapanan 20 fatura. {summary.totalInvoices > institution.invoices.length && (
+                <Link href={`/superadmin/invoices?institutionId=${institution.id}`} className="font-semibold text-primary hover:underline">Tüm faturalar ({summary.totalInvoices})</Link>
+              )}
+            </p>
+            <Button variant="secondary" icon={FileText} onClick={() => setInvoiceOpen(true)}>Dönem faturası kes</Button>
+          </div>
+          <ListTable<InvoiceRow>
+            columns={invoiceColumns}
+            rows={institution.invoices}
+            rowKey={(row) => row.id}
+            emptyText="Henüz fatura yok"
+            emptyDescription="İlk dönem faturasını “Dönem faturası kes” ile oluşturun."
+            rowClassName={(row) => (row.status === "CANCELLED" ? "opacity-60" : "")}
+            mobileCard={(row) => (
+              <div className="space-y-1.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-slate-900">{row.description || "Platform faturası"}</p>
+                    <p className="text-xs text-slate-500">{row.invoiceNo} · vade {shortDate(row.dueDate) || "—"}</p>
+                  </div>
+                  <Badge tone={INVOICE_STATUS_META[row.status].tone}>{INVOICE_STATUS_META[row.status].label}</Badge>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold tabular-nums text-slate-900">{money(row.amount)}</span>
+                  <InvoiceRowActions invoice={{ ...row, institutionName: institution.name }} onChanged={reload} />
+                </div>
+              </div>
+            )}
+          />
+        </div>
+      )}
+
+      {tab === "sms" && (
+        <div className="space-y-3">
+          <div className="ui-surface flex flex-wrap items-center justify-between gap-3 p-4">
+            <div>
+              <p className="text-sm text-slate-500">SMS bakiyesi</p>
+              <p className={`text-2xl font-black tabular-nums ${institution.smsBalance < 50 ? "text-amber-700" : "text-slate-900"}`}>{count(institution.smsBalance)} SMS</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="ghost" onClick={() => setAdjustOpen(true)}>Bakiyeyi düzelt</Button>
+              <Button variant="secondary" icon={MessageSquarePlus} onClick={() => setSaleOpen(true)}>Paket sat</Button>
+            </div>
+          </div>
+          <ListTable<SmsRow>
+            columns={smsColumns}
+            rows={institution.smsTransactions}
+            rowKey={(row) => row.id}
+            emptyText="Henüz SMS satışı yok"
+            emptyDescription="Paket satışları burada listelenir. Faturasız düzeltmeler Denetim Günlüğü'nde görünür."
+            mobileCard={(row) => (
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="truncate font-semibold text-slate-900">{row.packageName || "SMS paketi"}{row.quantity > 1 ? ` × ${row.quantity}` : ""}</p>
+                  <p className="text-xs text-slate-500">{dateTime(row.createdAt)}</p>
+                </div>
+                <div className="text-right text-sm">
+                  <p className="font-semibold tabular-nums">+{count(row.smsCount)} SMS</p>
+                  <p className="text-xs text-slate-500">{money(row.totalPrice)}</p>
+                </div>
+              </div>
+            )}
+          />
+        </div>
+      )}
+
+      {tab === "personel" && (
+        <InstitutionUsersPanel
+          institutionId={institution.id}
+          users={institution.users}
+          limits={{ activeUsers: institution.usage.activeUsers, maxUsers: institution.maxActiveUsers, activeDoctors: institution.usage.activeDoctors, maxDoctors: institution.maxActiveDoctors }}
+          onChanged={reload}
+        />
+      )}
+
+      {tab === "subeler" && <BranchesPanel institutionId={institution.id} onChanged={reload} />}
+
+      <InstitutionEditModal open={editOpen} institution={institution} onClose={() => setEditOpen(false)} onSaved={reload} />
+      <GhostLoginModal institution={ghostOpen ? institution : null} onClose={() => setGhostOpen(false)} />
+      <InvoiceCreateModal
         open={invoiceOpen}
         onClose={() => setInvoiceOpen(false)}
-        title="Yeni Dönem Faturası Oluştur"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setInvoiceOpen(false)}>İptal</Button>
-            <Button variant="primary" loading={invoiceSaving} onClick={() => void submitInvoice()}>Fatura Oluştur</Button>
-          </>
-        }
-      >
-        <div className="space-y-3">
-          <FormField label="Tutar (TL)" required>
-            <input
-              type="number"
-              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-              value={invoiceAmount}
-              onChange={(e) => setInvoiceAmount(e.target.value)}
-            />
-          </FormField>
-          <FormField label="Vade Tarihi" required>
-            <input
-              type="date"
-              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-              value={invoiceDueDate}
-              onChange={(e) => setInvoiceDueDate(e.target.value)}
-            />
-          </FormField>
-          <FormField label="Açıklama">
-            <input
-              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-              value={invoiceDescription}
-              onChange={(e) => setInvoiceDescription(e.target.value)}
-            />
-          </FormField>
-        </div>
-      </Modal>
-
-      {/* Ghost login modal */}
-      <Modal
-        open={ghostOpen}
-        onClose={() => setGhostOpen(false)}
-        title="Kliniğe Gizli Giriş"
-        description={`${institution.name} kliniğine güvenli geçiş yapmak için superadmin şifrenizi girin.`}
-        size="sm"
-        footer={
-          <>
-            <Button variant="secondary" onClick={() => setGhostOpen(false)}>İptal</Button>
-            <Button variant="primary" loading={ghostLoading} disabled={!ghostPassword} onClick={() => void enterAsGhost()}>
-              Giriş Yap
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-3">
-          <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-            Bu giriş denetim günlüğüne (Denetim Günlüğü) &quot;gizli giriş&quot; olarak kaydedilir.
-          </p>
-          <FormField label="Superadmin Şifresi" required>
-            <input
-              type="password"
-              autoFocus
-              className={`w-full rounded-xl border px-3 py-2.5 text-sm ${inputErrorClass(false)}`}
-              value={ghostPassword}
-              onChange={(e) => setGhostPassword(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && void enterAsGhost()}
-            />
-          </FormField>
-          {ghostError && <p className="text-sm text-red-600">{ghostError}</p>}
-        </div>
-      </Modal>
-    </main>
-  );
-}
-
-function StatBox({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "warning" | "critical" }) {
-  const toneClass = tone === "critical" ? "ui-surface-critical" : tone === "warning" ? "ui-surface-warning" : "border border-slate-100 bg-slate-50";
-  return (
-    <div className={`ui-kpi-in rounded-xl px-3 py-2.5 ${toneClass}`}>
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{label}</p>
-      <p className="mt-0.5 text-sm font-black text-slate-900">{value}</p>
-    </div>
+        onCreated={reload}
+        lockedClinic={{ id: institution.id, name: institution.name, subscriptionPlan: institution.subscriptionPlan, billingCycle: institution.billingCycle, isActive: institution.isActive }}
+        existingInvoices={institution.invoices.map((row) => ({ institutionId: institution.id, description: row.description, status: row.status, invoiceNo: row.invoiceNo }))}
+      />
+      <SmsSaleModal clinic={saleOpen ? clinicForModals : null} onClose={() => setSaleOpen(false)} onDone={reload} />
+      <SmsAdjustModal clinic={adjustOpen ? clinicForModals : null} onClose={() => setAdjustOpen(false)} onDone={reload} />
+    </section>
   );
 }

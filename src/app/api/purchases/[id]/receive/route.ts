@@ -61,7 +61,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     );
   }
 
-  const parsed = purchaseReceiveSchema.safeParse(await req.json());
+  const rawBody = await req.json().catch(() => null);
+  const parsed = purchaseReceiveSchema.safeParse(rawBody);
   if (!parsed.success) {
     return NextResponse.json(
       { error: "Teslim alma bilgileri geçersiz", errors: formatZodError(parsed.error) },
@@ -69,6 +70,12 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     );
   }
 
+  // Siparişte henüz olmayan fatura numarası teslimde girilebilir; boş
+  // bırakılırsa siparişteki numara korunur.
+  const rawFaturaNo = rawBody && typeof rawBody === "object" && typeof (rawBody as { faturaNo?: unknown }).faturaNo === "string"
+    ? ((rawBody as { faturaNo: string }).faturaNo.trim().slice(0, 80) || null)
+    : null;
+  const faturaNo: string | null = rawFaturaNo || purchase.faturaNo || null;
   const total = Math.round(
     purchase.items.reduce((sum: number, item: any) => sum + Number(item.lineTotal || 0), 0) * 100,
   ) / 100;
@@ -112,7 +119,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
           urunHizmet: `${purchase.items.length} kalem`,
           aciklama: purchase.aciklama || null,
           tutar: total,
-          faturaNo: purchase.faturaNo || null,
+          faturaNo: faturaNo,
           dueDate: null,
           kdvOrani: purchase.kdvOrani,
           status: "AKTIF",
@@ -135,7 +142,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
           userId: auth.user.id,
           type: "GIRIS",
           quantity: Number(item.quantity),
-          note: `${purchase.firma.name} sipariş teslimi${purchase.faturaNo ? ` (Fatura: ${purchase.faturaNo})` : ""}`,
+          note: `${purchase.firma.name} sipariş teslimi${faturaNo ? ` (Fatura: ${faturaNo})` : ""}`,
           supplier: purchase.firma.name,
           unitPrice: Number(item.unitPrice),
           purchaseItemId: item.id,
@@ -160,6 +167,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
           receiptStatus: "TESLIM_ALINDI",
           receivedAt,
           receiptRequestKey: requestKey,
+          faturaNo,
         },
       });
 
@@ -173,9 +181,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
             tarih: new Date(parsed.data.paymentDate || parsed.data.receivedAt),
             islemTipi: "ODEME",
             urunHizmet: "Satın alma ödemesi",
-            aciklama: `${purchase.faturaNo ? `Fatura ${purchase.faturaNo} ` : ""}satın alma ödemesi ${purchasePaymentToken(purchase.id)}`,
+            aciklama: `${faturaNo ? `Fatura ${faturaNo} ` : ""}satın alma ödemesi ${purchasePaymentToken(purchase.id)}`,
             tutar: paymentAmount,
-            faturaNo: purchase.faturaNo || null,
+            faturaNo: faturaNo,
             yontem: parsed.data.paymentMethod,
             dueDate: null,
             kdvOrani: purchase.kdvOrani,

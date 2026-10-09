@@ -70,6 +70,8 @@ model Institution {
   supportTickets         SupportTicket[]
   whatsappProviders      WhatsappProviderConfig[]
   whatsappSignupSessions WhatsappSignupSession[]
+  whatsappWebSession     WhatsappWebSession?
+  whatsappWebAuthKeys    WhatsappWebAuthKey[]
   whatsappMessages       WhatsappMessage[]
   messages               Message[]
   documents              Document[]
@@ -467,6 +469,37 @@ model WhatsappTemplate {
   @@unique([id, institutionId])
   @@index([institutionId])
   @@index([providerId, status])
+}
+
+// Kliniğin kendi telefonundaki WhatsApp'ın QR kod / eşleştirme koduyla
+// "bağlı cihaz" olarak bağlanması (WhatsApp Web protokolü; bkz.
+// src/lib/whatsapp-web). Oturum anahtarları field-crypto ile şifreli saklanır.
+// leaseOwner/leaseUntil: aynı oturumu aynı anda yalnız TEK sunucu süreci
+// açabilsin diye (iki süreç aynı oturumu açarsa WhatsApp bağlantıyı düşürür).
+model WhatsappWebSession {
+  id             String      @id @default(cuid())
+  institutionId  String      @unique
+  credsEncrypted String?
+  leaseOwner     String?
+  leaseUntil     DateTime?
+  dailySentDate  String?
+  dailySentCount Int         @default(0)
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  institution    Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+}
+
+model WhatsappWebAuthKey {
+  id             String      @id @default(cuid())
+  institutionId  String
+  category       String
+  keyId          String
+  valueEncrypted String
+  updatedAt      DateTime    @updatedAt
+  institution    Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@unique([institutionId, category, keyId])
+  @@index([institutionId, category])
 }
 
 model WhatsappMessage {
@@ -1217,6 +1250,11 @@ model Setting {
   whatsappAppointmentEnabled      Boolean             @default(true)
   whatsappPaymentEnabled          Boolean             @default(true)
   whatsappInfoEnabled             Boolean             @default(true)
+  // Randevunun tarihi/saati/doktoru değişince ve randevu iptal edilince hastaya
+  // otomatik bilgi mesajı (kliniğin kanal tercihine göre WhatsApp veya SMS).
+  // Klinik İletişim > Otomatik Mesajlar ekranından kapatabilir.
+  appointmentChangeNotifyEnabled  Boolean             @default(true)
+  appointmentCancelNotifyEnabled  Boolean             @default(true)
   updatedAt                       DateTime            @updatedAt
   institutionId                   String              @unique
   activePriceList                 String              @default("standard")

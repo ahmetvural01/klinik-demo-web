@@ -81,7 +81,17 @@ function scanSourceContracts() {
     `(?:\\bprisma|\\(prisma as any\\))\\.(?:${branchOwnedAlternation})\\.(?:update|delete)\\s*\\(\\s*\\{\\s*where:\\s*\\{\\s*id\\s*:\\s*[^,}]+\\s*\\}`,
     "s",
   );
-  const branchContextRouteExceptions = new Set(["src/app/api/branches/route.ts"]);
+  const branchContextRouteExceptions = new Set([
+    "src/app/api/branches/route.ts",
+    // Kurum geneli ayarlar bütün şubeler için geçerlidir; bu uçlar şube
+    // kaydını yalnız kurum filtresiyle SAYAR (kişisel veri dönmez): mesai
+    // daraltılınca kaç gelecek randevunun dışarıda kalacağı, tedavi türünün
+    // kaç randevuda kullanıldığı, hekimin kendi gelecek randevuları.
+    "src/app/api/settings/route.ts",
+    "src/app/api/profile/route.ts",
+    "src/app/api/treatment-types/route.ts",
+    "src/app/api/treatment-types/[id]/route.ts",
+  ]);
   for (const file of routeFiles) {
     const name = relative(file);
     if (name.startsWith("src/app/api/superadmin/") || name.startsWith("src/app/api/webhooks/")) continue;
@@ -184,9 +194,9 @@ function scanSourceContracts() {
     "src/app/(panel)/hasta-takip/page.tsx",
     "src/app/(panel)/log/page.tsx",
     "src/app/(panel)/rapor/page.tsx",
-    "src/app/(panel)/sms/_tabs/WhatsappMessagesTab.tsx",
     "src/app/(panel)/hasta-detay/hasta-detay-content.tsx",
-    "src/app/(panel)/sms/_tabs/BulkSendTab.tsx",
+    "src/app/(panel)/sms/_tabs/HistoryTab.tsx",
+    "src/app/(panel)/sms/_tabs/SendRecipientList.tsx",
     "src/app/superadmin/invoices/page.tsx",
   ]) requireSource(file, ["useLatestRequest"]);
 }

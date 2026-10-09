@@ -49,27 +49,27 @@ const normalizeBody = (body: AdPayload) => {
   const hasImageUrl = body.imageUrl !== undefined;
   const rawImageUrl = hasImageUrl ? body.imageUrl?.trim() || null : null;
   const safeImageUrl = hasImageUrl ? ensureHttpUrl(rawImageUrl) : null;
-  if (rawImageUrl && !safeImageUrl) return { error: "Gorsel URL http/https formatinda olmalidir" };
+  if (rawImageUrl && !safeImageUrl) return { error: "Görsel adresi http:// veya https:// ile başlamalı" };
 
   const hasCtaUrl = body.ctaUrl !== undefined;
   const rawCtaUrl = hasCtaUrl ? body.ctaUrl?.trim() || null : null;
   const safeCtaUrl = hasCtaUrl ? ensureHttpUrl(rawCtaUrl) : null;
-  if (rawCtaUrl && !safeCtaUrl) return { error: "CTA URL http/https formatinda olmalidir" };
+  if (rawCtaUrl && !safeCtaUrl) return { error: "Bağlantı adresi http:// veya https:// ile başlamalı" };
 
   const hasStartAt = body.startAt !== undefined;
   const hasEndAt = body.endAt !== undefined;
   const startAt = parseOptionalDate(body.startAt);
   const endAt = parseOptionalDate(body.endAt);
-  if (body.startAt && !startAt) return { error: "Baslangic tarihi gecersiz" };
-  if (body.endAt && !endAt) return { error: "Bitis tarihi gecersiz" };
-  if (startAt && endAt && endAt <= startAt) return { error: "Bitis tarihi baslangictan sonra olmalidir" };
+  if (body.startAt && !startAt) return { error: "Başlangıç tarihi geçersiz" };
+  if (body.endAt && !endAt) return { error: "Bitiş tarihi geçersiz" };
+  if (startAt && endAt && endAt <= startAt) return { error: "Bitiş tarihi başlangıçtan sonra olmalı" };
 
   const priority = Number.isFinite(Number(body.priority)) ? Math.max(1, Math.min(10000, Number(body.priority))) : 100;
   const maxImpressions = parseOptionalPositiveInt(body.maxImpressions);
   const dailyCap = parseOptionalPositiveInt(body.dailyCap);
 
   if (maxImpressions && dailyCap && dailyCap > maxImpressions) {
-    return { error: "Gunluk limit toplam gosterim limitinden buyuk olamaz" };
+    return { error: "Günlük sınır toplam gösterim sınırından büyük olamaz" };
   }
 
   return {
@@ -113,7 +113,7 @@ export async function POST(request: NextRequest) {
   const body = await request.json() as AdPayload;
 
   if (!body.title?.trim() || !body.content?.trim()) {
-    return NextResponse.json({ message: "Baslik ve icerik zorunlu" }, { status: 400 });
+    return NextResponse.json({ message: "Başlık ve metin zorunlu" }, { status: 400 });
   }
 
   const normalized = normalizeBody(body);
@@ -134,8 +134,8 @@ export async function PUT(request: NextRequest) {
   const body = await request.json() as AdPayload;
 
   if (!body.id) return NextResponse.json({ message: "id zorunlu" }, { status: 400 });
-  if (body.title !== undefined && !body.title.trim()) return NextResponse.json({ message: "Baslik bos olamaz" }, { status: 400 });
-  if (body.content !== undefined && !body.content.trim()) return NextResponse.json({ message: "Icerik bos olamaz" }, { status: 400 });
+  if (body.title !== undefined && !body.title.trim()) return NextResponse.json({ message: "Başlık boş olamaz" }, { status: 400 });
+  if (body.content !== undefined && !body.content.trim()) return NextResponse.json({ message: "Metin boş olamaz" }, { status: 400 });
 
   const normalized = normalizeBody(body);
   if ("error" in normalized) {

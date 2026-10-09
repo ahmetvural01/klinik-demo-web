@@ -3,6 +3,7 @@ import { requireAuth, writeAudit } from "@/lib/api";
 import { decryptField } from "@/lib/field-crypto";
 import { getMetaWhatsappReadiness, unsubscribeMetaWaba } from "@/lib/meta-whatsapp";
 import { prisma } from "@/lib/prisma";
+import { findConnectedWhatsapp } from "@/lib/whatsapp-connection";
 
 const PROVIDER_CODE = "META_EMBEDDED";
 
@@ -102,11 +103,9 @@ export async function PUT(request: NextRequest) {
     if (typeof body[key] !== "boolean") return NextResponse.json({ message: "Bildirim tercihi geçersiz." }, { status: 400 });
   }
   if (mode !== "SMS") {
-    const provider = await prisma.whatsappProviderConfig.findUnique({
-      where: { institutionId_code: { institutionId, code: PROVIDER_CODE } },
-      select: { isActive: true, connectionStatus: true },
-    });
-    if (!provider?.isActive || provider.connectionStatus !== "CONNECTED") {
+    // QR ile bağlı numara (WHATSAPP_WEB) ya da Meta bağlantısı yeterli.
+    const provider = await findConnectedWhatsapp(institutionId);
+    if (!provider) {
       return NextResponse.json({ message: "WhatsApp kanalını seçmeden önce bağlantıyı tamamlayın." }, { status: 409 });
     }
   }

@@ -2,6 +2,8 @@ import crypto from "crypto";
 import { prisma } from "@/lib/prisma";
 import { sendSms } from "@/lib/sms";
 import { sendWhatsapp } from "@/lib/whatsapp";
+import { WHATSAPP_WEB_DAILY_LIMIT_MARKER } from "@/lib/whatsapp-web/types";
+import { canMessageOnWhatsapp } from "@/lib/whatsapp-consent";
 
 /**
  * Sistemdeki TEK hasta bildirim çıkışı. Hiçbir modül `sendSms`/`sendWhatsapp`'ı
@@ -219,8 +221,7 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
     institution.whatsappEnabled &&
     wantsWhatsapp &&
     eventWhatsappEnabled &&
-    Boolean(patient.whatsappOptInAt) &&
-    !patient.whatsappOptOutAt;
+    canMessageOnWhatsapp(patient);
 
   // WhatsApp başarısız olursa gerekçesi burada tutulur ve SMS'e düşüldüğünde
   // (başarılı ya da SUPPRESSED) kayda açıkça yazılır — sessiz düşüş yok.
@@ -232,8 +233,8 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
       ? "WhatsApp modülü kurum için açık değil."
       : !eventWhatsappEnabled
         ? "Bu bildirim türü için WhatsApp gönderimi kapalı."
-        : !patient.whatsappOptInAt || patient.whatsappOptOutAt
-          ? "Hastanın WhatsApp iletişim izni bulunmuyor."
+        : !canMessageOnWhatsapp(patient)
+          ? "Hasta WhatsApp'tan mesaj almak istemiyor."
           : "WhatsApp kullanılamıyor.";
     if (!allowSmsFallback) {
       await logDispatch({ channel: "WHATSAPP", status: "SUPPRESSED", lastError: unavailableReason });
@@ -283,6 +284,18 @@ export async function dispatchPatientMessage(params: DispatchParams): Promise<Di
     // bağlantı hatası, geçersiz şablon vb.) — hastaya bilgilendirme hiç
     // gitmemesindense SMS'e düşülür; gerekçe aşağıdaki her kayıtta belirtilir.
     whatsappFailureNote = `WhatsApp denendi, başarısız oldu (${waResult.error || "sağlayıcı hatası"}).`;
+    // QR ile bağlı numaranın günlük sınırı dolduysa doğum günü/kutlama mesajı
+    // SMS'e aktarılmaz: kutlama için sürpriz SMS maliyeti çıkmasın.
+    if (
+      purpose === "GREETING"
+      && "providerRaw" in waResult
+      && typeof waResult.providerRaw === "string"
+      && waResult.providerRaw.includes(WHATSAPP_WEB_DAILY_LIMIT_MARKER)
+    ) {
+      const reason = "Günlük WhatsApp gönderim sınırına ulaşıldı; kutlama mesajı SMS ile gönderilmedi.";
+      await logDispatch({ channel: "WHATSAPP", status: "SUPPRESSED", lastError: reason });
+      return { success: false, channel: "WHATSAPP", suppressed: true, reason };
+    }
     if (!allowSmsFallback) {
       await logDispatch({ channel: "WHATSAPP", status: "FAILED", lastError: whatsappFailureNote });
       return { success: false, channel: "WHATSAPP", error: whatsappFailureNote };

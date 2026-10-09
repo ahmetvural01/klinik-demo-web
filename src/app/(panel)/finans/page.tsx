@@ -1,104 +1,100 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
-import { HakedisMonthlyPanel } from "@/components/hakedis/HakedisMonthlyPanel";
-import { cachedGet } from "@/lib/client-cache";
-import { ModuleIcon } from "@/components/ui/ModuleIcon";
+import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { PageHeader } from "@/components/ui/PageHeader";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { FormField } from "@/components/ui/FormField";
+import { usePermissions } from "@/components/auth/PermissionProvider";
+import { HakedisMonthlyPanel } from "@/components/hakedis/HakedisMonthlyPanel";
+import { FinanceDoctorSelect } from "@/components/muhasebe/FinanceDoctorSelect";
+import { cachedGet } from "@/lib/client-cache";
 
 type CurrentUser = { id?: string; role?: string; fullName?: string };
-type Doctor = { id: string; fullName: string; role: string; profile?: { hideAsDoctor?: boolean | null } | null };
-
-const isEffectiveDoctor = (user: Doctor) =>
-  user.role === "DOKTOR" || (user.role === "YONETICI" && user.profile?.hideAsDoctor === false);
 
 /**
- * Doktorun ekranı, Muhasebe > Hakediş ile aynı aylık hesabı kullanır. Eski
- * finans özeti ayrı API hesaplarıyla tekrar üretildiği için iki ekranda farklı
- * bakiye görünebilirdi; burada tek kaynak HakedisMonthlyPanel'dir.
+ * "Hakedişim": doktorun kendi aylık hakediş dökümü. Muhasebe > Hakediş ile aynı
+ * hesap (HakedisMonthlyPanel → /api/hakedis) kullanılır.
+ *
+ * Muhasebe yetkisi olan kullanıcı aynı bilgiyi ödeme düğmeleriyle birlikte
+ * Muhasebe > Hakediş'te görür; bu adres onu oraya yönlendirir (aynı bilgi iki
+ * ayrı ekranda iki farklı doktor listesiyle görünmesin).
  */
 export default function FinansPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const { can } = usePermissions();
+  const hasFinanceCenter = can("finance:center") && can("finance:read");
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
-  const [doctors, setDoctors] = useState<Doctor[]>([]);
-  const [selectedDoctorId, setSelectedDoctorId] = useState("");
+  const [selectedDoctorId, setSelectedDoctorId] = useState(searchParams.get("doctorId") || "");
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
+    if (!hasFinanceCenter) return;
+    const doctorId = searchParams.get("doctorId");
+    router.replace(`/muhasebe?tab=hakedis${doctorId ? `&doctorId=${encodeURIComponent(doctorId)}` : ""}`);
+  }, [hasFinanceCenter, router, searchParams]);
+
+  useEffect(() => {
+    if (hasFinanceCenter) return;
     let active = true;
     setLoading(true);
     setLoadError("");
-    Promise.all([
-      cachedGet<CurrentUser>("/api/auth/me", 60_000, { throwOnError: true, force: reloadKey > 0 }),
-      cachedGet<Doctor[]>("/api/staff", 60_000, { throwOnError: true, force: reloadKey > 0 }),
-    ])
-      .then(([user, staff]) => {
+    cachedGet<CurrentUser>("/api/auth/me", 60_000, { throwOnError: true, force: reloadKey > 0 })
+      .then((user) => {
         if (!active) return;
         setCurrentUser(user || null);
-        const eligible = (Array.isArray(staff) ? staff : []).filter(isEffectiveDoctor);
-        setDoctors(eligible);
         if (user?.role === "DOKTOR" && user.id) setSelectedDoctorId(user.id);
-        else if (eligible.length === 1) setSelectedDoctorId(eligible[0].id);
       })
       .catch((error) => {
         if (!active) return;
         setCurrentUser(null);
-        setDoctors([]);
         setLoadError(error instanceof Error ? error.message : "Hakediş bilgileri yüklenemedi.");
       })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [reloadKey]);
+  }, [hasFinanceCenter, reloadKey]);
+
+  if (hasFinanceCenter) {
+    return (
+      <div className="space-y-3">
+        <PageHeader icon="hakediş" title="Hakediş" description="Muhasebe > Hakediş ekranına yönlendiriliyorsunuz…" />
+      </div>
+    );
+  }
 
   const isDoctorView = currentUser?.role === "DOKTOR";
-  const selectedDoctor = useMemo(
-    () => doctors.find((doctor) => doctor.id === selectedDoctorId),
-    [doctors, selectedDoctorId],
-  );
 
   return (
-    <section className="space-y-4" aria-busy={loading}>
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
-        <div className="flex items-center gap-3">
-          <ModuleIcon module="hakediş" size="lg" />
-          <div>
-            <h1 className="font-display text-xl font-black tracking-tight text-slate-900">{isDoctorView ? "Hakedişim" : "Doktor Hakedişi"}</h1>
-            <p className="text-xs font-medium text-slate-500">Aylık üretim, tahsilat, laboratuvar gideri ve kurum ödemeleri aynı hesapta izlenir.</p>
-          </div>
-        </div>
-        {!isDoctorView && (
-          <Link href="/muhasebe?tab=hakedis" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50">
-            Muhasebe Hakedişlerine Git
-          </Link>
-        )}
-      </header>
+    <section className="space-y-3" aria-busy={loading}>
+      <PageHeader
+        icon="hakediş"
+        title="Hakedişim"
+        description="Her ayın tedavilerinden doktor payı, size yapılan ödemeler ve kalan tutar. Ay kapanınca ödenir."
+      />
 
-      {loadError && <LoadErrorState message={loadError} onRetry={() => setReloadKey((value) => value + 1)} />}
-
-      {!loadError && !isDoctorView && (
-        <div className="max-w-md">
-          <label className="mb-1 block text-xs font-bold text-slate-600">Doktor</label>
-          <select aria-label={"Doktor"}
-            value={selectedDoctorId}
-            onChange={(event) => setSelectedDoctorId(event.target.value)}
-            className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
-          >
-            <option value="">Doktor seçin</option>
-            {doctors.map((doctor) => <option key={doctor.id} value={doctor.id}>{doctor.fullName}</option>)}
-          </select>
-        </div>
-      )}
-
-      {loadError ? null : loading ? (
-        <div className="rounded-xl border border-slate-200 bg-white py-12 text-center text-sm text-slate-500">Hakediş bilgileri yükleniyor…</div>
-      ) : selectedDoctorId ? (
-        <HakedisMonthlyPanel doctorId={selectedDoctorId} canPay={false} />
+      {loadError ? (
+        <LoadErrorState message={loadError} onRetry={() => setReloadKey((value) => value + 1)} />
+      ) : loading ? (
+        <p className="py-12 text-center text-sm text-slate-500">Hakediş bilgileri yükleniyor…</p>
       ) : (
-        <div className="rounded-xl border border-dashed border-slate-300 bg-white py-12 text-center text-sm text-slate-500">
-          {selectedDoctor ? "Hakediş kaydı bulunamadı." : "Hakediş dökümünü görmek için doktor seçin."}
-        </div>
+        <>
+          {!isDoctorView && (
+            <div className="max-w-sm">
+              <FormField label="Doktor" htmlFor="finans-doctor">
+                <FinanceDoctorSelect id="finans-doctor" value={selectedDoctorId} onChange={setSelectedDoctorId} emptyLabel="Doktor seçin" aria-label="Doktor" />
+              </FormField>
+            </div>
+          )}
+          {selectedDoctorId ? (
+            <HakedisMonthlyPanel doctorId={selectedDoctorId} canPay={false} />
+          ) : (
+            <EmptyState title="Doktor seçin" description="Hakediş dökümünü görmek için yukarıdan doktor seçin." compact />
+          )}
+        </>
       )}
     </section>
   );

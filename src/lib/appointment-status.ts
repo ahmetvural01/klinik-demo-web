@@ -25,6 +25,19 @@ export const APPOINTMENT_DISPLAY_STATUS_LABELS: Record<DisplayAppointmentStatus,
   IPTAL: "İptal",
 };
 
+/**
+ * Randevu durumunun HER ekranda aynı rengi (Badge tonu). Önceden anasayfada
+ * "Planlandı" ile "Tamamlandı" aynı renge düşüyor, "İptal" lejantta kırmızı
+ * çipte gri görünüyordu. Ton adları Badge bileşeninin tonlarıyla aynıdır.
+ */
+export const APPOINTMENT_DISPLAY_STATUS_TONE: Record<DisplayAppointmentStatus, "info" | "warning" | "success" | "critical" | "neutral"> = {
+  PLANLANDI: "info",
+  BEKLIYOR: "warning",
+  TAMAMLANDI: "success",
+  GELMEDI: "critical",
+  IPTAL: "neutral",
+};
+
 const RAW_TO_DISPLAY: Record<string, DisplayAppointmentStatus> = {
   BEKLIYOR: "PLANLANDI",
   GELDI: "BEKLIYOR",

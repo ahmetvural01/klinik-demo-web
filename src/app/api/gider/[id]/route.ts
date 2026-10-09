@@ -5,6 +5,15 @@ import { computeDoctorMonthlyHakedis, computeDoctorMonthlyOdenen, monthRangeUtc 
 import { turkeyYearMonth } from "@/lib/tz";
 import { requireActiveBranch } from "@/lib/branch-context";
 
+// Firma ödemesinden (FirmaIslem ODEME) otomatik oluşan gider, firmanın cari
+// hesabıyla bağlıdır. Burada silinir/değiştirilirse firma ekstresi "ödendi"
+// derken kasa çıkışı kaybolur ya da iki ekran farklı tutar gösterir. Bu
+// kayıtlar yalnız firma ekranından (işlem iptali) yönetilir.
+const LINKED_FIRMA_MESSAGE = "Bu gider bir firma ödemesinden otomatik oluştu. Değiştirmek veya iptal etmek için firmanın ekstresinden ödemeyi iptal edin.";
+function isLinkedFirmaExpense(expense: { sourceType?: string | null; description?: string | null }) {
+  return expense.sourceType === "FIRMA_ISLEM" || /\[SISTEM:FIRMA_ISLEM:/.test(expense.description || "");
+}
+
 export async function GET(req: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
   try {
@@ -46,9 +55,14 @@ export async function PATCH(req: NextRequest, props: { params: Promise<{ id: str
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
         branchId: branch.branchId,
       },
-      select: { id: true, doctorId: true, tarih: true, tutar: true, categoryId: true, category: true, periodYear: true, periodMonth: true },
+      // institutionId/branchId seçilmezse aşağıdaki bileşik anahtarlı update tanımsız alanla
+      // çağrılıyor ve HER düzenleme 500 ile düşüyordu.
+      select: { id: true, institutionId: true, branchId: true, doctorId: true, tarih: true, tutar: true, categoryId: true, category: true, periodYear: true, periodMonth: true, sourceType: true, description: true },
     });
     if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
+    if (isLinkedFirmaExpense(existing)) {
+      return NextResponse.json({ error: LINKED_FIRMA_MESSAGE }, { status: 409 });
+    }
 
     const validMethods = new Set(["NAKIT", "KREDI_KARTI", "HAVALE_EFT", "MAIL_ORDER", "DIGER"]);
     if (body.yontem !== undefined && (typeof body.yontem !== "string" || !validMethods.has(body.yontem))) {
@@ -205,9 +219,12 @@ export async function DELETE(req: NextRequest, props: { params: Promise<{ id: st
         ...(auth.user.institutionId ? { institutionId: auth.user.institutionId } : {}),
         branchId: branch.branchId,
       },
-      select: { id: true },
+      select: { id: true, institutionId: true, branchId: true, sourceType: true, description: true },
     });
     if (!existing) return NextResponse.json({ error: "Bulunamadı" }, { status: 404 });
+    if (isLinkedFirmaExpense(existing)) {
+      return NextResponse.json({ error: LINKED_FIRMA_MESSAGE }, { status: 409 });
+    }
 
     await (prisma as any).expense.update({
       where: {

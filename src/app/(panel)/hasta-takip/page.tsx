@@ -1,540 +1,178 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  FollowUpKey,
-  appointmentNeedsFollowUp,
-  buildAppointmentNote,
-  getFollowUpMeta,
-  parseAppointmentNote,
-} from "@/lib/appointment-follow-up";
-import { getDisplayAppointmentStatus } from "@/lib/appointment-status";
-import { Plus } from "lucide-react";
-import { useToast } from "@/components/ui/ToastProvider";
-import { cachedGet } from "@/lib/client-cache";
-import { confirmDialog } from "@/lib/confirm-client";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { CalendarPlus, FileDown, FileSpreadsheet, Phone, Plus } from "lucide-react";
 import { usePermissions } from "@/components/auth/PermissionProvider";
-import { Button } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
+import { DoctorSelect } from "@/components/staff/DoctorSelect";
+import { Badge } from "@/components/ui/Badge";
+import { Button, IconButton } from "@/components/ui/Button";
+import { Select } from "@/components/ui/Input";
+import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { formatDateText } from "@/components/ui/Money";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { Badge, type BadgeTone } from "@/components/ui/Badge";
-import { FormField } from "@/components/ui/FormField";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { Tabs, useTabParam } from "@/components/ui/Tabs";
+import { ActiveFilters, Toolbar, type ActiveFilter } from "@/components/ui/Toolbar";
+import { DueLabel } from "@/components/takip/takip-labels";
+import { formatPhoneNumber } from "@/lib/format";
+import { downloadCsv } from "@/lib/csv-export";
+import { showToastSafe } from "@/lib/toast-client";
 import { isAbortError, useLatestRequest } from "@/lib/use-latest-request";
+import type { PickedPatient } from "@/components/patient/PatientPicker";
+import {
+  appointmentLink,
+  buildItems,
+  isDueToday,
+  isOverdue,
+  parseCustomType,
+  phoneDigitsForTel,
+  type ApiAppointment,
+  type ApiFollowUp,
+  type FollowItem,
+  type PatientVisit,
+} from "./_components/follow-up-model";
+import { FollowUpDetailModal } from "./_components/FollowUpDetailModal";
+import { FollowUpCreateModal } from "./_components/FollowUpCreateModal";
 
-type Appointment = {
-  id: string;
-  startAt: string;
-  endAt: string;
-  status: string;
-  note?: string | null;
-  patient?: { id: string; fullName: string; phone?: string | null; whatsappOptInAt?: string | null; whatsappOptOutAt?: string | null };
-  doctor?: { id: string; fullName: string };
-};
+const TAB_KEYS = ["acik", "gecikmis", "bugun", "kapali"] as const;
+type TabKey = (typeof TAB_KEYS)[number];
 
-type ManualFollowUp = {
-  id: string;
-  patientId: string;
-  appointmentId?: string | null;
-  doctorId?: string | null;
-  type: "GERI_ARA" | "ULASILAMADI" | "DONUS_BEKLENIYOR" | "DIGER";
-  priority: number;
-  status: "ACIK" | "KAPALI";
-  note?: string | null;
-  resolutionNote?: string | null;
-  nextActionAt?: string | null;
-  lastContactAt?: string | null;
-  closedAt?: string | null;
-  createdAt: string;
-  updatedAt: string;
-  patient?: { id: string; fullName: string; phone?: string | null; whatsappOptInAt?: string | null; whatsappOptOutAt?: string | null };
-  appointment?: {
-    id: string;
-    startAt: string;
-    endAt: string;
-    status: string;
-    doctor?: { id: string; fullName: string } | null;
-  } | null;
-  assignedDoctor?: { id: string; fullName: string } | null;
-  createdBy?: { id: string; fullName: string } | null;
-  labOrderId?: string | null;
-  labTripId?: string | null;
-  labOrder?: { id: string; labName: string; labType: string } | null;
-};
-
-type Staff = { id: string; fullName: string; role: string; profile?: { hideAsDoctor?: boolean | null } | null };
-type PatientOption = { id: string; fullName: string; phone?: string | null };
-
-type FollowUpEvent = {
-  id: string;
-  followUpId: string;
-  patientId: string;
-  occurredAt: string;
-  channel?: string | null;
-  summary: string;
-  detail?: string | null;
-  patientResponse?: string | null;
-  nextStep?: string | null;
-  createdAt: string;
-  updatedAt: string;
-  createdBy?: { id: string; fullName: string } | null;
-  updatedBy?: { id: string; fullName: string } | null;
-};
-
-type FollowItem = {
-  key: string;
-  source: "APPOINTMENT" | "MANUAL";
-  appointmentId?: string;
-  followUpId?: string;
-  patientId: string;
-  patientName: string;
-  patientPhone?: string | null;
-  patientWhatsappConsent?: boolean;
-  doctorId?: string;
-  doctorName: string;
-  type: string;
-  followUpLabel: string;
-  statusLabel: string;
-  note: string;
-  isOpen: boolean;
-  priority: number;
-  createdAt: string;
-  nextActionAt?: string | null;
-  ageDays: number;
-  appointmentDateLabel: string;
-  followBadgeClass: string;
-  isLabProva?: boolean;
-  labContext?: {
-    orderToken?: string;
-    tripToken?: string;
-    groupKey?: string;
-    labName?: string;
-    labType?: string;
-    receivedStep?: string;
-    title: string;
-  };
-};
-
-// getDisplayAppointmentStatus'un döndüğü değerlerle anahtarlanır (bkz.
-// src/lib/appointment-status.ts) — ham "GELDI" artık "Bekliyor" (hasta geldi)
-// olarak gösterilir, ham "BEKLIYOR" ise "Planlandı".
-const STATUS_LABELS: Record<string, string> = {
-  PLANLANDI: "Planlandı",
-  BEKLIYOR: "Bekliyor",
-  TAMAMLANDI: "Tamamlandı",
-  GELMEDI: "Gelmedi",
-  IPTAL: "İptal",
-};
-
-const FOLLOW_LABELS: Record<string, string> = {
-  GELMEDI: "Gelmedi",
-  GERI_ARA: "Tekrar aranacak",
-  ULASILAMADI: "Ulaşılamadı",
-  DONUS_BEKLENIYOR: "Dönüş bekleniyor",
-  DIGER: "Diğer",
-};
-
-const MANUAL_TYPE_OPTIONS = [
-  "Tekrar aranacak",
-  "Ulaşılamadı",
-  "Dönüş bekleniyor",
-  "Randevu verildi",
-  "Ertelendi",
-  "Fiyat bilgisi bekleniyor",
-  "Tedavi onayı bekleniyor",
-  "Diğer",
+// Randevudan türeyen "Gelmedi" satırları son 90 günün randevularından gelir;
+// açık takipler tarihten bağımsız her zaman gelir (API). Kapalı takipler için
+// süre seçilebilir.
+const DERIVED_RANGE_DAYS = 90;
+const CLOSED_RANGES = [
+  { value: "30", label: "Son 30 günde kapananlar" },
+  { value: "90", label: "Son 90 günde kapananlar" },
+  { value: "365", label: "Son 1 yılda kapananlar" },
 ] as const;
 
-const CUSTOM_TYPE_PREFIX = "Takip Tipi:";
+type DashboardCache = { appointments: ApiAppointment[]; followUps: ApiFollowUp[]; visits?: Record<string, PatientVisit> };
 
-const EVENT_PRESETS = [
-  {
-    label: "Arandı, açmadı",
-    channel: "Telefon",
-    summary: "Hasta arandı, telefonu açmadı.",
-    patientResponse: "",
-    nextStep: "Daha sonra tekrar aranacak.",
-    detail: "Arama yapıldı ancak ulaşılamadı.",
-  },
-  {
-    label: "Başka zaman gelmek istiyor",
-    channel: "Telefon",
-    summary: "Hasta bu hafta gelemeyeceğini, başka bir zamanda gelmek istediğini belirtti.",
-    patientResponse: "Şu an uygun değilim, daha sonra gelmek istiyorum.",
-    nextStep: "Yeni uygun tarih için tekrar görüşülecek.",
-    detail: "Takvim uygunluğuna göre yeni randevu önerilecek.",
-  },
-  {
-    label: "Bilgi aldı, düşünecek",
-    channel: "Telefon",
-    summary: "Hasta süreç hakkında bilgi aldı, düşünüp dönüş yapacağını söyledi.",
-    patientResponse: "Bilgileri aldım, düşünüp size döneceğim.",
-    nextStep: "2-3 gün içinde geri dönüş için tekrar aranacak.",
-    detail: "Karar süreci bekleniyor.",
-  },
-  {
-    label: "Fiyat sordu",
-    channel: "Telefon",
-    summary: "Hasta fiyat bilgisi talep etti.",
-    patientResponse: "Fiyat bilgisini öğrenmek istiyorum.",
-    nextStep: "Fiyat bilgisi paylaşılıp takip araması yapılacak.",
-    detail: "Tedavi/fiyat detayları aktarıldı veya aktarılacak.",
-  },
-  {
-    label: "Randevuya yakın",
-    channel: "Telefon",
-    summary: "Hasta gelmeye yakın olduğunu ve randevu planlayabileceğini belirtti.",
-    patientResponse: "Uygun gün olursa gelebilirim.",
-    nextStep: "Uygun tarih seçilerek randevuya yönlendirilecek.",
-    detail: "Randevu planlama için olumlu geri bildirim alındı.",
-  },
-] as const;
-
-const EVENT_CHANNEL_OPTIONS = ["Telefon", "WhatsApp", "Yüz yüze", "SMS", "E-posta", "Diğer"] as const;
-
-function toIsoInputValue(date: Date) {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+function cacheKeyFor(scopeKey: string, closedRange: string) {
+  // Kurum/şube/kullanıcı kapsamlı oturum önbelleği: sayfaya dönüşte liste anında görünür.
+  return `hasta-takip:dashboard:${scopeKey}:${closedRange}`;
 }
 
-function defaultManualNextActionAt() {
-  const date = new Date();
-  date.setDate(date.getDate() + 1);
-  return toIsoInputValue(date);
-}
-
-function dayDiff(iso: string) {
-  const now = Date.now();
-  const target = new Date(iso).getTime();
-  return Math.max(0, Math.floor((now - target) / 86_400_000));
-}
-
-function getAgeTone(days: number): BadgeTone {
-  if (days <= 3) return "success";
-  if (days <= 7) return "warning";
-  return "critical";
-}
-
-function getPriorityTone(priority: number): BadgeTone {
-  if (priority >= 3) return "critical";
-  if (priority === 2) return "warning";
-  return "info";
-}
-
-function shortText(value: string, max = 110) {
-  const trimmed = value.trim();
-  if (trimmed.length <= max) return trimmed;
-  return `${trimmed.slice(0, max).trim()}...`;
-}
-
-function parseCustomTypeFromNote(note?: string | null) {
-  const raw = (note || "").trim();
-  if (!raw) return { customType: "", cleanNote: "" };
-  const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const first = lines[0] || "";
-  if (!first.toLocaleLowerCase("tr-TR").startsWith(CUSTOM_TYPE_PREFIX.toLocaleLowerCase("tr-TR"))) {
-    return { customType: "", cleanNote: raw };
-  }
-  const customType = first.slice(CUSTOM_TYPE_PREFIX.length).trim();
-  const cleanNote = lines.slice(1).join("\n").trim();
-  return { customType, cleanNote };
-}
-
-// structured: PatientFollowUp.labOrderId/labTripId (gerçek FK) doluysa oradan
-// gelir ve önceliklidir; not metni yalnızca eski (backfill edilememiş) kayıtlar
-// için yedek kaynaktır (bkz. denetim raporu Tema 3 — legacy uyum: Tema 8).
-function parseLabFollowUpNote(
-  note?: string | null,
-  structured?: { labOrderId?: string | null; labTripId?: string | null; labOrder?: { labName?: string | null; labType?: string | null } | null }
-) {
-  const lines = (note || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const orderToken = lines.find((line) => line.startsWith("LAB_ORDER:"));
-  const tripToken = lines.find((line) => line.startsWith("LAB_PROVA:"));
-  const legacyLabLine = lines.find((line) => line.includes(" - ") && !line.startsWith("Adım #"));
-  const [legacyLabType, legacyLabName] = legacyLabLine ? legacyLabLine.split(" - ").map((part) => part.trim()) : ["", ""];
-  const legacyStepLine = lines.find((line) => line.startsWith("Adım #"));
-  const legacyDescription = legacyStepLine?.split(":").slice(1).join(":").trim() || "";
-  const legacyReceivedStep = legacyDescription.includes(" → ") ? legacyDescription.split(" → ")[1].trim() : "";
-  const labType = structured?.labOrder?.labType || lines.find((line) => line.startsWith("İş:"))?.slice(3).trim() || legacyLabType;
-  const labName = structured?.labOrder?.labName || lines.find((line) => line.startsWith("Laboratuvar:"))?.slice("Laboratuvar:".length).trim() || legacyLabName;
-  const receivedStep = lines.find((line) => line.startsWith("Gelen/Prova:"))?.slice("Gelen/Prova:".length).trim() || legacyReceivedStep;
-  const isLabProva = Boolean(
-    structured?.labOrderId || structured?.labTripId || orderToken || tripToken || receivedStep ||
-    lines.some((line) => line.toLocaleLowerCase("tr-TR").includes("laboratuvardan gelen prova"))
-  );
-
-  if (!isLabProva) return null;
-
-  return {
-    orderToken,
-    tripToken,
-    labName,
-    labType,
-    receivedStep,
-    groupKey: structured?.labOrderId || orderToken || `${labType || "-"}::${labName || "-"}`,
-    title: `${receivedStep || "Laboratuvar provası"} için randevu planlanacak`,
-  };
-}
-
-function buildManualNote(customType: string, note: string) {
-  const t = customType.trim();
-  const n = note.trim();
-  if (t && n) return `${CUSTOM_TYPE_PREFIX} ${t}\n${n}`;
-  if (t) return `${CUSTOM_TYPE_PREFIX} ${t}`;
-  return n;
-}
-
-function normalizeCustomTypes(values: unknown[]) {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  values.forEach((value) => {
-    const label = String(value || "").trim().replace(/\s+/g, " ").slice(0, 60);
-    const key = label.toLocaleLowerCase("tr-TR");
-    if (!label || seen.has(key)) return;
-    seen.add(key);
-    result.push(label);
-  });
-  return result.slice(0, 80);
-}
-
-function resolveManualType(input: string): { apiType: "GERI_ARA" | "ULASILAMADI" | "DONUS_BEKLENIYOR" | "DIGER"; label: string } {
-  const raw = input.trim();
-  const low = raw.toLocaleLowerCase("tr-TR");
-  if (!raw) return { apiType: "GERI_ARA", label: "Tekrar aranacak" };
-  if (low === "tekrar aranacak" || low.includes("geri") || low.includes("ara")) return { apiType: "GERI_ARA", label: "Tekrar aranacak" };
-  if (low === "ulasilamadi" || low.includes("ulasi") || low.includes("ulaşı")) return { apiType: "ULASILAMADI", label: "Ulaşılamadı" };
-  if (low === "donus bekleniyor" || low.includes("donus") || low.includes("dönüş") || low.includes("beklen")) return { apiType: "DONUS_BEKLENIYOR", label: "Dönüş bekleniyor" };
-  if (low === "diger" || low === "diğer") return { apiType: "DIGER", label: "Diğer" };
-  return { apiType: "DIGER", label: raw };
-}
-
-function followBadgeClassByType(type: string) {
-  if (type === "GELMEDI") return "bg-red-100 text-red-700";
-  if (type === "GERI_ARA") return "bg-rose-100 text-rose-700";
-  if (type === "ULASILAMADI") return "bg-red-100 text-red-700";
-  if (type === "DONUS_BEKLENIYOR") return "bg-violet-100 text-violet-700";
-  if (type === "DIGER" || type === "OZEL") return "bg-slate-200 text-slate-700";
-  return "bg-slate-100 text-slate-600";
-}
-
-function readCachedDashboard(rangeDays: string, scopeKey: string) {
-  if (typeof window === "undefined") {
-    return {
-      appointments: [] as Appointment[],
-      manualFollowUps: [] as ManualFollowUp[],
-      staff: [] as Staff[],
-    };
-  }
-
-  const cacheKey = `hasta-takip:dashboard:${scopeKey}:${rangeDays}`;
-  const raw = sessionStorage.getItem(cacheKey);
-  if (!raw) {
-    return {
-      appointments: [] as Appointment[],
-      manualFollowUps: [] as ManualFollowUp[],
-      staff: [] as Staff[],
-    };
-  }
-
+function readCache(key: string): DashboardCache | null {
+  if (typeof window === "undefined") return null;
   try {
-    const cached = JSON.parse(raw) as {
-      appointments?: Appointment[];
-      followUps?: ManualFollowUp[];
-      staff?: Staff[];
-    };
-
-    return {
-      appointments: Array.isArray(cached.appointments) ? cached.appointments : [],
-      manualFollowUps: Array.isArray(cached.followUps) ? cached.followUps : [],
-      staff: Array.isArray(cached.staff) ? cached.staff : [],
-    };
+    const raw = window.sessionStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as DashboardCache;
+    return Array.isArray(parsed.appointments) && Array.isArray(parsed.followUps) ? parsed : null;
   } catch {
-    return {
-      appointments: [] as Appointment[],
-      manualFollowUps: [] as ManualFollowUp[],
-      staff: [] as Staff[],
-    };
+    return null;
   }
 }
 
-export default function HastaTakipPage() {
+function writeCache(key: string, value: DashboardCache) {
+  try {
+    window.sessionStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Önbellek yardımcıdır; yazılamazsa liste yine çalışır.
+  }
+}
+
+function TelLink({ phone, countryCode, large = false }: { phone: string; countryCode: string; large?: boolean }) {
+  return (
+    <a
+      href={`tel:${phoneDigitsForTel(phone, countryCode)}`}
+      className={large
+        ? "inline-flex min-h-9 items-center gap-1.5 text-sm font-semibold tabular-nums text-primary"
+        : "inline-flex items-center gap-1 text-xs tabular-nums text-slate-600 hover:text-primary hover:underline"}
+    >
+      <Phone className={large ? "h-4 w-4" : "h-3 w-3"} aria-hidden="true" />
+      {formatPhoneNumber(phone)}
+    </a>
+  );
+}
+
+function HastaTakipContent() {
   const { can, hasFeature, scopeKey } = usePermissions();
+  const searchParams = useSearchParams();
   const startDashboardRequest = useLatestRequest();
-  const canWriteFollowUps = can("hastatracking:write");
+  const canWrite = can("hastatracking:write");
   const canUseWhatsapp = hasFeature("whatsapp") && can("whatsapp:write");
-  const eventChannelOptions = canUseWhatsapp
-    ? EVENT_CHANNEL_OPTIONS
-    : EVENT_CHANNEL_OPTIONS.filter((option) => option !== "WhatsApp");
-  const [rangeDays, setRangeDays] = useState<"30" | "60" | "90">("90");
-  const cached = useMemo(() => readCachedDashboard(rangeDays, scopeKey), [rangeDays, scopeKey]);
-  const [appointments, setAppointments] = useState<Appointment[]>(() => cached.appointments);
-  const [manualFollowUps, setManualFollowUps] = useState<ManualFollowUp[]>(() => cached.manualFollowUps);
-  const [staff, setStaff] = useState<Staff[]>(() => cached.staff);
-  const [loading, setLoading] = useState(() => cached.appointments.length === 0 && cached.manualFollowUps.length === 0 && cached.staff.length === 0);
-  const [busyId, setBusyId] = useState("");
-  const [query, setQuery] = useState("");
-  const [followFilter, setFollowFilter] = useState<"TUMU" | "GELMEDI" | "GERI_ARA" | "ULASILAMADI" | "DONUS_BEKLENIYOR" | "DIGER">("TUMU");
-  const [followTypeQuery, setFollowTypeQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState<"TUMU" | "ACIK" | "KAPALI">("ACIK");
-  const [onlyOverdue, setOnlyOverdue] = useState(false);
-  const [doctorFilter, setDoctorFilter] = useState("");
-  const [showManualCreate, setShowManualCreate] = useState(false);
-  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
-  const [denseView, setDenseView] = useState(true);
-  const [selectedDetailKey, setSelectedDetailKey] = useState("");
-  const [error, setError] = useState("");
-  const [success, setSuccess] = useState("");
-  const { showToast } = useToast();
-
-  const setSuccessWithToast = (msg: string) => {
-    setSuccess(msg);
-    if (msg) {
-      try { showToast({ title: 'Başarılı', message: msg, duration: 3000, type: 'success' }); } catch {}
-    }
-  };
-
-  const [patientSearch, setPatientSearch] = useState("");
-  const [patientResults, setPatientResults] = useState<PatientOption[]>([]);
-  const [patientSearchLoading, setPatientSearchLoading] = useState(false);
-  const [patientSearchError, setPatientSearchError] = useState("");
-  const [selectedPatient, setSelectedPatient] = useState<PatientOption | null>(null);
-  const [manualDoctorId, setManualDoctorId] = useState("");
-  const [manualTypeInput, setManualTypeInput] = useState("Tekrar aranacak");
-  const [customTypeOptions, setCustomTypeOptions] = useState<string[]>([]);
-  const [manualPriority, setManualPriority] = useState<1 | 2 | 3>(2);
-  const [manualNextActionAt, setManualNextActionAt] = useState(() => defaultManualNextActionAt());
-  const [manualNote, setManualNote] = useState("");
-  const [closeNote, setCloseNote] = useState("");
-  const [creatingManual, setCreatingManual] = useState(false);
-  const [activeHistoryFollowUpId, setActiveHistoryFollowUpId] = useState("");
-  const [followUpEvents, setFollowUpEvents] = useState<FollowUpEvent[]>([]);
-  const [eventsLoading, setEventsLoading] = useState(false);
-  const [eventBusy, setEventBusy] = useState(false);
-  const [editingEventId, setEditingEventId] = useState("");
-  const eventFormSnapshotRef = useRef("");
-  const [eventForm, setEventForm] = useState(() => ({
-    occurredAt: toIsoInputValue(new Date()),
-    channel: "Telefon",
-    summary: "",
-    detail: "",
-    patientResponse: "",
-    nextStep: "",
-  }));
-
-  const resetManualCreateForm = () => {
-    setSelectedPatient(null);
-    setPatientSearch("");
-    setPatientResults([]);
-    setPatientSearchError("");
-    setManualDoctorId("");
-    setManualTypeInput("Tekrar aranacak");
-    setManualPriority(2);
-    setManualNextActionAt(defaultManualNextActionAt());
-    setManualNote("");
-  };
-
-  const openManualCreate = () => {
-    resetManualCreateForm();
-    setShowManualCreate(true);
-  };
-
-  const closeManualCreate = () => {
-    setShowManualCreate(false);
-    resetManualCreateForm();
-  };
-
+  const canBookAppointments = can("appointments:write");
   const hidePhone = !can("patients:phone");
+
+  const [tab, setTab] = useTabParam<TabKey>(TAB_KEYS, "acik");
+  const [closedRange, setClosedRange] = useState<string>("90");
+  const [appointments, setAppointments] = useState<ApiAppointment[]>([]);
+  const [followUps, setFollowUps] = useState<ApiFollowUp[]>([]);
+  const [visits, setVisits] = useState<Record<string, PatientVisit>>({});
+  const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [customReasons, setCustomReasons] = useState<string[]>([]);
+  const [query, setQuery] = useState("");
+  const [reasonFilter, setReasonFilter] = useState("");
+  const [doctorFilter, setDoctorFilter] = useState("");
+  const [doctorFilterName, setDoctorFilterName] = useState("");
+  const [detailKey, setDetailKey] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createPatient, setCreatePatient] = useState<PickedPatient | null>(null);
+  const [nowTick, setNowTick] = useState(() => Date.now());
 
   const loadData = useCallback(async () => {
     const request = startDashboardRequest();
-    const cacheKey = `hasta-takip:dashboard:${scopeKey}:${rangeDays}`;
-    let hadCached = false;
-    if (typeof window !== "undefined") {
-      const raw = sessionStorage.getItem(cacheKey);
-      if (raw) {
-        try {
-          const cached = JSON.parse(raw) as {
-            appointments?: Appointment[];
-            followUps?: ManualFollowUp[];
-            staff?: Staff[];
-          };
-
-          if (Array.isArray(cached?.appointments) && Array.isArray(cached?.followUps)) {
-            setAppointments(cached.appointments);
-            setManualFollowUps(cached.followUps);
-            if (Array.isArray(cached.staff)) setStaff(cached.staff);
-            hadCached = true;
-          }
-        } catch {}
-      }
+    const cacheKey = cacheKeyFor(scopeKey, closedRange);
+    const cached = readCache(cacheKey);
+    if (cached) {
+      setAppointments(cached.appointments);
+      setFollowUps(cached.followUps);
+      if (cached.visits) setVisits(cached.visits);
+      setLoaded(true);
     }
-
-    setLoading(!hadCached);
+    setLoading(true);
     setError("");
-    const to = new Date();
-    const from = new Date();
-    from.setDate(from.getDate() - Number(rangeDays));
-
+    const now = new Date();
+    const derivedFrom = new Date(now.getTime() - DERIVED_RANGE_DAYS * 86_400_000);
+    const closedFrom = new Date(now.getTime() - Number(closedRange) * 86_400_000);
     try {
-      const [apptRes, followRes] = await Promise.all([
-        fetch(`/api/appointments?from=${from.toISOString()}&to=${to.toISOString()}`, { cache: "no-store", signal: request.signal }),
-        fetch(`/api/patient-follow-ups?from=${from.toISOString()}&to=${to.toISOString()}`, { cache: "no-store", signal: request.signal }),
+      const [appointmentResponse, followUpResponse] = await Promise.all([
+        can("appointments:read")
+          ? fetch(`/api/appointments?from=${derivedFrom.toISOString()}&to=${now.toISOString()}`, { cache: "no-store", signal: request.signal })
+          : Promise.resolve(null),
+        fetch(`/api/patient-follow-ups?from=${closedFrom.toISOString()}&to=${now.toISOString()}`, { cache: "no-store", signal: request.signal }),
       ]);
-
-      const apptData = await apptRes.json();
-      const followData = await followRes.json();
-
-      if (!apptRes.ok) {
-        throw new Error(apptData?.message || "Randevu takip verileri yüklenemedi.");
-      }
-      if (!followRes.ok) {
-        throw new Error(followData?.message || "Manuel takip verileri yüklenemedi.");
-      }
-
-      const nextAppointments = Array.isArray(apptData) ? apptData : [];
-      const nextFollowUps = Array.isArray(followData) ? followData : [];
-
+      const followUpData = await followUpResponse.json().catch(() => null);
+      if (!followUpResponse.ok) throw new Error(followUpData?.message || "Takip listesi yüklenemedi.");
+      // Randevu listesi yalnız "Gelmedi" satırları içindir; okunamazsa takipler yine gösterilir.
+      const appointmentData = appointmentResponse && appointmentResponse.ok ? await appointmentResponse.json().catch(() => []) : [];
       if (!request.isLatest()) return;
+      const nextFollowUps: ApiFollowUp[] = Array.isArray(followUpData) ? followUpData : [];
+      const nextAppointments: ApiAppointment[] = Array.isArray(appointmentData) ? appointmentData : [];
+      setFollowUps(nextFollowUps);
       setAppointments(nextAppointments);
-      setManualFollowUps(nextFollowUps);
+      setLoaded(true);
+      setNowTick(Date.now());
 
-      void Promise.allSettled([
-        cachedGet<unknown>("/api/staff", 60_000, { throwOnError: true })
-          .then((staffData) => {
-            const nextStaff = Array.isArray(staffData) ? staffData : [];
-            setStaff(nextStaff);
-            if (typeof window !== "undefined") {
-              const raw = sessionStorage.getItem(cacheKey);
-              if (raw) {
-                try {
-                  const cached = JSON.parse(raw) as Record<string, unknown>;
-                  sessionStorage.setItem(cacheKey, JSON.stringify({
-                    ...cached,
-                    staff: nextStaff,
-                  }));
-                } catch {}
-              }
-            }
-          })
-          .catch((staffError) => {
-            setError((current) => current || (staffError instanceof Error ? staffError.message : "Personel listesi yüklenemedi."));
-          }),
-      ]);
-
-      if (typeof window !== "undefined") {
-        sessionStorage.setItem(cacheKey, JSON.stringify({
-          appointments: nextAppointments,
-          followUps: nextFollowUps,
-        }));
+      // Randevusu verilmiş / sonradan gelmiş hastalar (Gelmedi satırını düşürmek ve
+      // "Randevusu var" göstermek için) — liste bunu beklemeden çizilir.
+      const patientIds = Array.from(new Set([
+        ...nextFollowUps.filter((followUp) => followUp.status === "ACIK").map((followUp) => followUp.patientId),
+        ...nextAppointments.map((appointment) => appointment.patient?.id).filter(Boolean) as string[],
+      ])).slice(0, 300);
+      let nextVisits: Record<string, PatientVisit> = {};
+      if (patientIds.length > 0) {
+        const visitResponse = await fetch(`/api/patient-follow-ups/patient-visits?ids=${patientIds.join(",")}`, { cache: "no-store", signal: request.signal }).catch(() => null);
+        const visitData = visitResponse?.ok ? await visitResponse.json().catch(() => null) : null;
+        nextVisits = visitData?.patients && typeof visitData.patients === "object" ? visitData.patients : {};
       }
-    } catch (e) {
-      if (isAbortError(e) || !request.isLatest()) return;
-      setError(e instanceof Error ? e.message : "Takip verileri yuklenemedi.");
-      setAppointments([]);
-      setManualFollowUps([]);
+      if (!request.isLatest()) return;
+      setVisits(nextVisits);
+      writeCache(cacheKey, { appointments: nextAppointments, followUps: nextFollowUps, visits: nextVisits });
+    } catch (loadError) {
+      if (isAbortError(loadError) || !request.isLatest()) return;
+      // Önceki (önbellekteki) liste ekranda kalır; hata ve "Yeniden dene" gösterilir.
+      setError(loadError instanceof Error ? loadError.message : "Takip listesi yüklenemedi.");
     } finally {
       if (request.isLatest()) setLoading(false);
     }
-  }, [rangeDays, scopeKey, startDashboardRequest]);
+  }, [can, closedRange, scopeKey, startDashboardRequest]);
 
   useEffect(() => {
     void loadData();
@@ -542,1156 +180,413 @@ export default function HastaTakipPage() {
 
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const onRealtime = () => {
+    const refresh = () => {
+      if (document.hidden) return;
       if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        void loadData();
-      }, 300);
+      timer = setTimeout(() => void loadData(), 400);
     };
-
-    window.addEventListener("ks:realtime-sync", onRealtime);
+    // Başka ekrandan gelen değişiklik (gerçek zamanlı olay) ya da sekmeye dönüş.
+    window.addEventListener("ks:realtime-sync", refresh);
+    document.addEventListener("visibilitychange", refresh);
     return () => {
       if (timer) clearTimeout(timer);
-      window.removeEventListener("ks:realtime-sync", onRealtime);
+      window.removeEventListener("ks:realtime-sync", refresh);
+      document.removeEventListener("visibilitychange", refresh);
     };
   }, [loadData]);
-
-  // Sekmeye geri dönüldüğünde (arka planda kaçırılmış olabilecek olayları) tazele.
-  useEffect(() => {
-    const refreshVisible = () => {
-      if (typeof document !== "undefined" && document.hidden) return;
-      void loadData();
-    };
-    window.addEventListener("focus", refreshVisible);
-    document.addEventListener("visibilitychange", refreshVisible);
-    return () => {
-      window.removeEventListener("focus", refreshVisible);
-      document.removeEventListener("visibilitychange", refreshVisible);
-    };
-  }, [loadData]);
-
-  const persistCustomTypes = useCallback(async (types: string[]) => {
-    const normalized = normalizeCustomTypes(types);
-    setCustomTypeOptions(normalized);
-    const res = await fetch("/api/patient-follow-up-types", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ types: normalized }),
-    }).catch(() => null);
-    if (!res?.ok) {
-      const body = await res?.json().catch(() => ({}));
-      throw new Error(body?.message || "Takip tipleri kurum ayarına kaydedilemedi.");
-    }
-  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    const loadTypes = async () => {
-      try {
-        const res = await fetch("/api/patient-follow-up-types", { cache: "no-store" });
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(body?.message || "Takip tipleri yüklenemedi.");
-        const serverTypes = normalizeCustomTypes(Array.isArray(body?.types) ? body.types : []);
-        if (cancelled) return;
-        setCustomTypeOptions(serverTypes);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : "Takip tipleri yüklenemedi.");
-      }
-    };
-    void loadTypes();
+    fetch("/api/patient-follow-up-types", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => {
+        if (cancelled || !body) return;
+        setCustomReasons(Array.isArray(body.types) ? body.types.filter((value: unknown): value is string => typeof value === "string") : []);
+      })
+      .catch(() => {});
     return () => { cancelled = true; };
-  }, [persistCustomTypes]);
-
-  useEffect(() => {
-    if (patientSearch.trim().length < 2) {
-      setPatientResults([]);
-      setPatientSearchError("");
-      setPatientSearchLoading(false);
-      return;
-    }
-    const timer = setTimeout(() => {
-      setPatientSearchLoading(true);
-      setPatientSearchError("");
-      fetch(`/api/patients?q=${encodeURIComponent(patientSearch.trim())}&take=8&summary=false`)
-        .then(async (r) => {
-          const body = await r.json().catch(() => ({}));
-          if (!r.ok) {
-            throw new Error(body?.message || "Hasta arama için yetki veya erişim hatası oluştu.");
-          }
-          return body;
-        })
-        .then((d) => {
-          const rows = Array.isArray(d?.patients)
-            ? d.patients
-            : Array.isArray(d)
-              ? d
-              : Array.isArray(d?.items)
-                ? d.items
-                : [];
-          setPatientResults(rows.map((p: PatientOption) => ({ id: p.id, fullName: p.fullName, phone: p.phone })));
-          if (rows.length === 0) {
-            setPatientSearchError("Hasta bulunamadı. Farklı bir anahtar kelime deneyin.");
-          }
-        })
-        .catch((e: unknown) => {
-          setPatientResults([]);
-          setPatientSearchError(e instanceof Error ? e.message : "Hasta arama yapılamadı.");
-        })
-        .finally(() => setPatientSearchLoading(false));
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [patientSearch]);
-
-  const openManualByAppointment = useMemo(() => {
-    const set = new Set<string>();
-    manualFollowUps.forEach((f) => {
-      if (f.status === "ACIK" && f.appointmentId) set.add(f.appointmentId);
-    });
-    return set;
-  }, [manualFollowUps]);
-
-  const followTypeOptions = useMemo(() => {
-    const derived = manualFollowUps
-      .map((f) => parseCustomTypeFromNote(f.note).customType)
-      .filter(Boolean);
-    return Array.from(new Set([...MANUAL_TYPE_OPTIONS, ...derived, ...customTypeOptions]));
-  }, [manualFollowUps, customTypeOptions]);
-
-  const items = useMemo<FollowItem[]>(() => {
-    const fromAppointments: FollowItem[] = appointments
-      .filter((a) => appointmentNeedsFollowUp(a.status, a.note))
-      .filter((a) => !openManualByAppointment.has(a.id))
-      .map((a) => {
-        const parsed = parseAppointmentNote(a.note);
-        const followType = a.status === "GELMEDI" ? "GELMEDI" : parsed.followUp;
-        const createdAt = a.startAt;
-        const ageDays = dayDiff(createdAt);
-        return {
-          key: `appt-${a.id}`,
-          source: "APPOINTMENT",
-          appointmentId: a.id,
-          patientId: a.patient?.id || "",
-          patientName: a.patient?.fullName || "Hasta",
-          patientPhone: a.patient?.phone || null,
-          patientWhatsappConsent: Boolean(a.patient?.whatsappOptInAt && !a.patient?.whatsappOptOutAt),
-          doctorId: a.doctor?.id,
-          doctorName: a.doctor?.fullName || "Doktor atanmamis",
-          type: followType,
-          followUpLabel: FOLLOW_LABELS[followType] || getFollowUpMeta(parsed.followUp).label,
-          statusLabel: STATUS_LABELS[getDisplayAppointmentStatus(a.status, a.startAt)] || a.status,
-          note: parsed.detail || "Randevu notu bulunmuyor.",
-          isOpen: true,
-          priority: ageDays > 7 ? 3 : ageDays > 3 ? 2 : 1,
-          createdAt,
-          nextActionAt: null,
-          ageDays,
-          appointmentDateLabel: new Date(a.startAt).toLocaleString("tr-TR"),
-          followBadgeClass: followBadgeClassByType(followType),
-        };
-      });
-
-    const fromManual: FollowItem[] = manualFollowUps.map((f) => {
-      const sourceDate = f.appointment?.startAt || f.createdAt;
-      const custom = parseCustomTypeFromNote(f.note);
-      const labContext = parseLabFollowUpNote(f.note, { labOrderId: f.labOrderId, labTripId: f.labTripId, labOrder: f.labOrder });
-      const resolvedLabel = custom.customType || FOLLOW_LABELS[f.type] || f.type;
-      return {
-        key: `manual-${f.id}`,
-        source: "MANUAL",
-        followUpId: f.id,
-        appointmentId: f.appointmentId || undefined,
-        patientId: f.patientId,
-        patientName: f.patient?.fullName || "Hasta",
-        patientPhone: f.patient?.phone || null,
-        patientWhatsappConsent: Boolean(f.patient?.whatsappOptInAt && !f.patient?.whatsappOptOutAt),
-        doctorId: f.doctorId || f.appointment?.doctor?.id || undefined,
-        doctorName: f.assignedDoctor?.fullName || f.appointment?.doctor?.fullName || "Doktor atanmamis",
-        type: f.type,
-        followUpLabel: labContext ? "Lab Prova Randevusu" : resolvedLabel,
-        statusLabel: f.status === "KAPALI" ? "Kapalı" : "Açık",
-        note: labContext?.title || custom.cleanNote || f.resolutionNote || "Takip notu girilmedi.",
-        isOpen: f.status === "ACIK",
-        priority: f.priority,
-        createdAt: sourceDate,
-        nextActionAt: f.nextActionAt || null,
-        ageDays: dayDiff(sourceDate),
-        appointmentDateLabel: f.appointment?.startAt ? new Date(f.appointment.startAt).toLocaleString("tr-TR") : "Manuel takip",
-        followBadgeClass: labContext ? "bg-violet-100 text-violet-800" : followBadgeClassByType(f.type),
-        isLabProva: Boolean(labContext),
-        labContext: labContext || undefined,
-      };
-    });
-
-    const mergedRaw = [...fromManual, ...fromAppointments];
-    const newestOpenLabProvaByGroup = new Map<string, FollowItem>();
-    for (const item of mergedRaw) {
-      if (!item.isOpen || !item.isLabProva || !item.labContext?.groupKey) continue;
-      const key = `${item.patientId}::${item.labContext.groupKey}`;
-      const previous = newestOpenLabProvaByGroup.get(key);
-      if (!previous || new Date(item.createdAt).getTime() > new Date(previous.createdAt).getTime()) {
-        newestOpenLabProvaByGroup.set(key, item);
-      }
-    }
-    const merged = mergedRaw.filter((item) => {
-      if (!item.isOpen || !item.isLabProva || !item.labContext?.groupKey) return true;
-      const key = `${item.patientId}::${item.labContext.groupKey}`;
-      return newestOpenLabProvaByGroup.get(key)?.key === item.key;
-    });
-    const normalizedQuery = query.trim().toLocaleLowerCase("tr-TR");
-
-    return merged
-      .filter((item) => {
-        if (statusFilter === "ACIK") return item.isOpen;
-        if (statusFilter === "KAPALI") return !item.isOpen;
-        return true;
-      })
-      .filter((item) => {
-        if (followFilter === "TUMU") return true;
-        return item.type === followFilter;
-      })
-      .filter((item) => {
-        const q = followTypeQuery.trim().toLocaleLowerCase("tr-TR");
-        if (!q) return true;
-        return item.followUpLabel.toLocaleLowerCase("tr-TR").includes(q);
-      })
-      .filter((item) => (doctorFilter ? item.doctorId === doctorFilter : true))
-      .filter((item) => {
-        if (!normalizedQuery) return true;
-        const haystack = [
-          item.patientName,
-          hidePhone ? null : item.patientPhone,
-          item.doctorName,
-          item.note,
-          item.followUpLabel,
-        ].filter(Boolean).join(" ").toLocaleLowerCase("tr-TR");
-        return haystack.includes(normalizedQuery);
-      })
-      .filter((item) => (onlyOverdue ? item.isOpen && Boolean(item.nextActionAt) && new Date(item.nextActionAt!).getTime() < Date.now() : true))
-      .sort((a, b) => {
-        if (a.isOpen !== b.isOpen) return a.isOpen ? -1 : 1;
-        const aOverdue = a.isOpen && Boolean(a.nextActionAt) && new Date(a.nextActionAt!).getTime() < Date.now();
-        const bOverdue = b.isOpen && Boolean(b.nextActionAt) && new Date(b.nextActionAt!).getTime() < Date.now();
-        if (aOverdue !== bOverdue) return aOverdue ? -1 : 1;
-        if (a.isLabProva !== b.isLabProva) return a.isLabProva ? -1 : 1;
-        if (a.priority !== b.priority) return b.priority - a.priority;
-        return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
-      });
-  }, [appointments, manualFollowUps, openManualByAppointment, query, followFilter, followTypeQuery, statusFilter, doctorFilter, hidePhone, onlyOverdue]);
-
-  const stats = useMemo(() => {
-    const all = [...manualFollowUps, ...appointments.filter((a) => appointmentNeedsFollowUp(a.status, a.note))];
-    return {
-      total: all.length,
-      open: items.filter((i) => i.isOpen).length,
-      noShow: items.filter((i) => i.type === "GELMEDI").length,
-      callBack: items.filter((i) => i.type === "GERI_ARA").length,
-      unreachable: items.filter((i) => i.type === "ULASILAMADI").length,
-      waitingReturn: items.filter((i) => i.type === "DONUS_BEKLENIYOR").length,
-      highPriority: items.filter((i) => i.priority === 3 && i.isOpen).length,
-      overdue: items.filter((i) => i.isOpen && i.nextActionAt && new Date(i.nextActionAt).getTime() < Date.now()).length,
-    };
-  }, [manualFollowUps, appointments, items]);
-
-  const detailItem = useMemo(() => items.find((item) => item.key === selectedDetailKey) || null, [items, selectedDetailKey]);
-
-  const updateManual = async (id: string, payload: Record<string, unknown>) => {
-    setBusyId(id);
-    setError("");
-    setSuccessWithToast("");
-    try {
-      const res = await fetch(`/api/patient-follow-ups/${id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data?.message || "Takip güncellenemedi.");
-        return;
-      }
-      setManualFollowUps((prev) => prev.map((f) => (f.id === id ? (data as ManualFollowUp) : f)));
-      setSuccessWithToast("Takip kaydı güncellendi.");
-    } catch {
-      setError("Takip güncelleme sırasında hata oluştu.");
-    } finally {
-      setBusyId("");
-    }
-  };
-
-  const convertAppointmentToManual = async (item: FollowItem, type?: ManualFollowUp["type"]) => {
-    if (!item.appointmentId || !item.patientId) return;
-    setBusyId(item.key);
-    setError("");
-    setSuccessWithToast("");
-    try {
-      const payload = {
-        patientId: item.patientId,
-        appointmentId: item.appointmentId,
-        doctorId: item.doctorId,
-        type: type || (item.type === "GELMEDI" ? "GERI_ARA" : item.type === "DIGER" ? "DIGER" : item.type),
-        priority: item.priority,
-        note: item.note,
-        nextActionAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
-      };
-      const res = await fetch("/api/patient-follow-ups", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data?.message || "Manuel takibe donusturulemedi.");
-        return;
-      }
-      setManualFollowUps((prev) => [data as ManualFollowUp, ...prev]);
-      setSuccessWithToast("Kayıt manuel takibe dönüştürüldü.");
-    } catch {
-      setError("Dönüştürme sırasında hata oluştu.");
-    } finally {
-      setBusyId("");
-    }
-  };
-
-  const markAppointmentNote = async (item: FollowItem, followUp: FollowUpKey, detail: string) => {
-    if (!item.appointmentId) return;
-    setBusyId(item.key);
-    setError("");
-    setSuccessWithToast("");
-    try {
-      const appt = appointments.find((a) => a.id === item.appointmentId);
-      const parsed = parseAppointmentNote(appt?.note);
-      const note = buildAppointmentNote(followUp, detail, parsed.treatment);
-      const res = await fetch(`/api/appointments/${item.appointmentId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ note }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data?.message || "Randevu notu güncellenemedi.");
-        return;
-      }
-      setAppointments((prev) => prev.map((a) => (a.id === item.appointmentId ? { ...a, note } : a)));
-      setSuccessWithToast("Randevu notu güncellendi.");
-    } catch {
-      setError("Randevu notu güncellenirken hata oluştu.");
-    } finally {
-      setBusyId("");
-    }
-  };
-
-  const createManualFollowUp = async () => {
-    if (!selectedPatient) {
-      setError("Lütfen bir hasta seçin.");
-      return;
-    }
-    const resolvedType = resolveManualType(manualTypeInput);
-    const finalNote = buildManualNote(resolvedType.apiType === "DIGER" ? resolvedType.label : "", manualNote);
-    setCreatingManual(true);
-    setError("");
-    setSuccessWithToast("");
-    try {
-      const res = await fetch("/api/patient-follow-ups", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          patientId: selectedPatient.id,
-          doctorId: manualDoctorId || undefined,
-          type: resolvedType.apiType,
-          priority: manualPriority,
-          note: finalNote.trim() || undefined,
-          nextActionAt: manualNextActionAt ? new Date(manualNextActionAt).toISOString() : undefined,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data?.message || "Manuel takip oluşturulamadı.");
-        return;
-      }
-      setManualFollowUps((prev) => [data as ManualFollowUp, ...prev]);
-      if (resolvedType.apiType === "DIGER" && resolvedType.label && resolvedType.label !== "Diğer") {
-        const nextTypes = normalizeCustomTypes([...customTypeOptions, resolvedType.label]);
-        if (nextTypes.length !== customTypeOptions.length) {
-          await persistCustomTypes(nextTypes).catch((e) => {
-            setError(e instanceof Error ? e.message : "Takip tipi kurum ayarına kaydedilemedi.");
-          });
-        }
-      }
-      setSuccessWithToast("Manuel takip kaydı oluşturuldu.");
-      setSelectedPatient(null);
-      setPatientSearch("");
-      setPatientResults([]);
-      setPatientSearchError("");
-      setManualNote("");
-      setManualTypeInput("Tekrar aranacak");
-      setManualNextActionAt(defaultManualNextActionAt());
-      setManualPriority(2);
-      setShowManualCreate(false);
-    } catch {
-      setError("Manuel takip oluşturma sırasında hata oluştu.");
-    } finally {
-      setCreatingManual(false);
-    }
-  };
-
-  const reportRows = useMemo(() => {
-    return items.map((i) => ({
-      hasta: i.patientName,
-      doktor: i.doctorName,
-      takip: i.followUpLabel,
-      durum: i.statusLabel,
-      randevu: i.appointmentDateLabel,
-      sonrakiAdim: i.nextActionAt ? new Date(i.nextActionAt).toLocaleString("tr-TR") : "-",
-      yas: `${i.ageDays} gün`,
-      not: i.note,
-      kaynak: i.source === "MANUAL" ? "Manuel" : "Randevu",
-    }));
-  }, [items]);
-
-  const downloadExcelReport = () => {
-    const esc = (v: string) => v.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
-    const rows = reportRows.map((r, i) => {
-      const bg = i % 2 === 0 ? "#F8FAFC" : "#FFFFFF";
-      return `<tr style="background:${bg};font-size:12px;">
-        <td style="border:1px solid #CBD5E1;padding:7px 10px;">${esc(r.hasta)}</td>
-        <td style="border:1px solid #CBD5E1;padding:7px 10px;">${esc(r.doktor)}</td>
-        <td style="border:1px solid #CBD5E1;padding:7px 10px;">${esc(r.takip)}</td>
-        <td style="border:1px solid #CBD5E1;padding:7px 10px;">${esc(r.durum)}</td>
-        <td style="border:1px solid #CBD5E1;padding:7px 10px;">${esc(r.randevu)}</td>
-        <td style="border:1px solid #CBD5E1;padding:7px 10px;">${esc(r.sonrakiAdim)}</td>
-        <td style="border:1px solid #CBD5E1;padding:7px 10px;">${esc(r.yas)}</td>
-        <td style="border:1px solid #CBD5E1;padding:7px 10px;">${esc(r.kaynak)}</td>
-        <td style="border:1px solid #CBD5E1;padding:7px 10px;">${esc(r.not)}</td>
-      </tr>`;
-    }).join("");
-
-    const html = `
-<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel">
-<head><meta charset="UTF-8"></head>
-<body>
-<table style="width:100%;border-collapse:collapse;font-family:Calibri,Arial,sans-serif;">
-  <tr><td colspan="9" style="background:#1E3A5F;color:#fff;font-size:18px;font-weight:700;padding:12px 14px;">Hasta Takip Raporu</td></tr>
-  <tr><td colspan="9" style="background:#F1F5F9;border:1px solid #E2E8F0;padding:8px 14px;color:#475569;">Oluşturma: ${new Date().toLocaleString("tr-TR")} | Kayıt: ${reportRows.length}</td></tr>
-  <tr style="background:#1E3A5F;color:#fff;">
-    <th style="border:1px solid #2D4F7C;padding:8px;">Hasta</th>
-    <th style="border:1px solid #2D4F7C;padding:8px;">Doktor</th>
-    <th style="border:1px solid #2D4F7C;padding:8px;">Takip</th>
-    <th style="border:1px solid #2D4F7C;padding:8px;">Durum</th>
-    <th style="border:1px solid #2D4F7C;padding:8px;">Randevu</th>
-    <th style="border:1px solid #2D4F7C;padding:8px;">Sonraki Adim</th>
-    <th style="border:1px solid #2D4F7C;padding:8px;">Yas</th>
-    <th style="border:1px solid #2D4F7C;padding:8px;">Kaynak</th>
-    <th style="border:1px solid #2D4F7C;padding:8px;">Not</th>
-  </tr>
-  ${rows || `<tr><td colspan="9" style="padding:14px;text-align:center;color:#64748B;">Kayıt bulunamadı</td></tr>`}
-</table>
-</body>
-</html>`;
-
-    const blob = new Blob(["\uFEFF" + html], { type: "application/vnd.ms-excel;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `hasta-takip-${new Date().toISOString().slice(0, 10)}.xls`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const printReport = () => {
-    const esc = (v: string) => v.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
-    const rowsHtml = reportRows.length ? reportRows.map((r, i) => `
-      <tr style="background:${i % 2 === 0 ? "#F8FAFC" : "#FFFFFF"};">
-        <td>${esc(r.hasta)}</td><td>${esc(r.doktor)}</td><td>${esc(r.takip)}</td><td>${esc(r.durum)}</td>
-        <td>${esc(r.randevu)}</td><td>${esc(r.sonrakiAdim)}</td><td>${esc(r.yas)}</td><td>${esc(r.kaynak)}</td><td>${esc(r.not)}</td>
-      </tr>
-    `).join("") : `<tr><td colspan="9" style="text-align:center;padding:18px;color:#94A3B8;">Kayıt bulunamadı</td></tr>`;
-
-    const win = window.open("", "_blank", "width=1200,height=820");
-    if (!win) {
-      setError("Yazdırma penceresi açılamadı. Tarayıcınızın açılır pencere (pop-up) engelleyicisini bu site için kapatıp tekrar deneyin.");
-      return;
-    }
-
-    win.document.write(`<!DOCTYPE html>
-<html lang="tr"><head><meta charset="UTF-8"><title>Hasta Takip Raporu</title>
-<style>
-body{font-family:'Segoe UI',Arial,sans-serif;color:#0F172A;margin:0}.page{padding:16mm}
-.head{display:flex;justify-content:space-between;border-bottom:3px solid #1E3A5F;padding-bottom:10px;margin-bottom:10px}
-.h1{font-size:22px;font-weight:800;color:#1E3A5F}.sub{font-size:11px;color:#64748B}
-.stats{display:flex;gap:10px;margin-bottom:10px}.box{flex:1;border:1px solid #E2E8F0;border-radius:6px;padding:8px 10px;background:#F8FAFC}
-.num{font-size:20px;font-weight:800}.lbl{font-size:10px;text-transform:uppercase;color:#64748B}
-table{width:100%;border-collapse:collapse;font-size:11px}thead tr{background:#1E3A5F;color:#fff}
-th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:top}th{border-color:#2D4F7C}
-.foot{margin-top:12px;font-size:10px;color:#94A3B8;display:flex;justify-content:space-between}
-@media print{thead{display:table-header-group}tr{page-break-inside:avoid}}
-</style></head><body>
-<div class="page">
-  <div class="head"><div><div class="h1">Hasta Takip Raporu</div><div class="sub">Klinik Yönetim Paneli</div></div><div class="sub">Oluşturma: ${new Date().toLocaleString("tr-TR")}</div></div>
-  <div class="stats">
-    <div class="box"><div class="num">${stats.total}</div><div class="lbl">Toplam</div></div>
-    <div class="box"><div class="num">${stats.open}</div><div class="lbl">Açık</div></div>
-    <div class="box"><div class="num">${stats.highPriority}</div><div class="lbl">Yüksek Öncelik</div></div>
-    <div class="box"><div class="num">${stats.noShow}</div><div class="lbl">Gelmedi</div></div>
-    <div class="box"><div class="num">${stats.waitingReturn}</div><div class="lbl">Dönüş Bekliyor</div></div>
-  </div>
-  <table>
-    <thead><tr><th>Hasta</th><th>Doktor</th><th>Takip</th><th>Durum</th><th>Randevu</th><th>Sonraki Adim</th><th>Yas</th><th>Kaynak</th><th>Not</th></tr></thead>
-    <tbody>${rowsHtml}</tbody>
-  </table>
-  <div class="foot"><span>Bu çıktı klinik takip panelinden oluşturuldu.</span><span>${new Date().toLocaleString("tr-TR")}</span></div>
-</div>
-<script>window.onload=function(){window.print();}<\/script>
-</body></html>`);
-    win.document.close();
-    win.focus();
-  };
-
-  const doctors = useMemo(
-    () => staff.filter((s) => s.role === "DOKTOR" || (s.role === "YONETICI" && s.profile?.hideAsDoctor === false)),
-    [staff],
-  );
-  const manualSubmitDisabledReason = creatingManual
-    ? "Kayıt oluşturuluyor..."
-    : !selectedPatient
-      ? "Kaydetmek için önce hasta seçin."
-      : !manualTypeInput.trim()
-        ? "Takip tipi seçin."
-        : "";
-
-  const manualCreateDirty = Boolean(
-    selectedPatient
-    || patientSearch.trim()
-    || manualDoctorId
-    || manualTypeInput !== "Tekrar aranacak"
-    || manualPriority !== 2
-    || manualNextActionAt !== defaultManualNextActionAt()
-    || manualNote.trim()
-  );
-  const eventFormDirty = JSON.stringify(eventForm) !== eventFormSnapshotRef.current;
-  const detailModalDirty = Boolean(closeNote.trim()) || eventFormDirty;
-
-  const resetListFilters = () => {
-    setQuery("");
-    setFollowFilter("TUMU");
-    setFollowTypeQuery("");
-    setStatusFilter("ACIK");
-    setDoctorFilter("");
-    setOnlyOverdue(false);
-  };
-
-  const openDetailModal = async (item: FollowItem) => {
-    setSelectedDetailKey(item.key);
-    if (item.source === "MANUAL" && item.followUpId) {
-      setActiveHistoryFollowUpId(item.followUpId);
-      await loadFollowUpEvents(item.followUpId);
-      return;
-    }
-    setActiveHistoryFollowUpId("");
-    setFollowUpEvents([]);
-    resetEventForm();
-  };
-
-  const closeDetailModal = () => {
-    setSelectedDetailKey("");
-    setActiveHistoryFollowUpId("");
-    setFollowUpEvents([]);
-    setCloseNote("");
-    resetEventForm();
-  };
-
-  const resetEventForm = () => {
-    setEditingEventId("");
-    const nextForm = {
-      occurredAt: toIsoInputValue(new Date()),
-      channel: "Telefon",
-      summary: "",
-      detail: "",
-      patientResponse: "",
-      nextStep: "",
-    };
-    setEventForm(nextForm);
-    eventFormSnapshotRef.current = JSON.stringify(nextForm);
-  };
-
-  const applyEventPreset = (preset: (typeof EVENT_PRESETS)[number]) => {
-    setEditingEventId("");
-    setEventForm((prev) => ({
-      ...prev,
-      channel: preset.channel,
-      summary: preset.summary,
-      patientResponse: preset.patientResponse,
-      nextStep: preset.nextStep,
-      detail: preset.detail,
-    }));
-  };
-
-  const loadFollowUpEvents = useCallback(async (followUpId: string) => {
-    setEventsLoading(true);
-    try {
-      const res = await fetch(`/api/patient-follow-ups/${followUpId}/events`);
-      const data = await res.json().catch(() => []);
-      if (!res.ok) {
-        setError(data?.message || "Süreç notları yüklenemedi.");
-        setFollowUpEvents([]);
-        return;
-      }
-      setFollowUpEvents(Array.isArray(data) ? (data as FollowUpEvent[]) : []);
-    } catch {
-      setError("Süreç notları yüklenirken hata oluştu.");
-      setFollowUpEvents([]);
-    } finally {
-      setEventsLoading(false);
-    }
   }, []);
 
-  const saveFollowUpEvent = async () => {
-    if (!activeHistoryFollowUpId) return;
-    if (!eventForm.summary.trim()) {
-      setError("Süreç özeti boş bırakılamaz.");
-      return;
-    }
+  // Derin bağlantı: /hasta-takip?yeni=1&patientId=…&patientName=… formu hasta seçili açar
+  // (Görevler'deki "Hasta Takip'te takip açın" bağlantısı ve sözleşme §5).
+  useEffect(() => {
+    if (searchParams.get("yeni") !== "1" || !canWrite) return;
+    const patientId = searchParams.get("patientId");
+    const patientName = searchParams.get("patientName");
+    setCreatePatient(patientId && patientName ? { id: patientId, fullName: patientName } : null);
+    setCreateOpen(true);
+    const params = new URLSearchParams(window.location.search);
+    params.delete("yeni");
+    params.delete("patientId");
+    params.delete("patientName");
+    window.history.replaceState(null, "", window.location.pathname + (params.toString() ? `?${params.toString()}` : ""));
+  }, [searchParams, canWrite]);
 
-    const occurredAt = new Date(eventForm.occurredAt);
-    if (Number.isNaN(occurredAt.getTime())) {
-      setError("Geçersiz tarih/saat seçildi. Lütfen tarihi tekrar seçin.");
-      return;
-    }
+  const allItems = useMemo(() => buildItems(followUps, appointments, visits), [followUps, appointments, visits]);
 
-    setEventBusy(true);
-    setError("");
-    setSuccessWithToast("");
-    try {
-      const url = editingEventId
-        ? `/api/patient-follow-ups/${activeHistoryFollowUpId}/events/${editingEventId}`
-        : `/api/patient-follow-ups/${activeHistoryFollowUpId}/events`;
-      const method = editingEventId ? "PUT" : "POST";
-      const res = await fetch(url, {
-        method,
+  const todayEnd = useMemo(() => {
+    const end = new Date(nowTick);
+    end.setHours(23, 59, 59, 999);
+    return end.getTime();
+  }, [nowTick]);
+
+  const openItems = useMemo(() => allItems.filter((item) => item.isOpen), [allItems]);
+  const counts = useMemo(() => ({
+    acik: openItems.length,
+    gecikmis: openItems.filter((item) => isOverdue(item, nowTick)).length,
+    bugun: openItems.filter((item) => isDueToday(item, todayEnd, nowTick)).length,
+  }), [openItems, nowTick, todayEnd]);
+
+  const openCountByPatient = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const item of openItems) map.set(item.patientId, (map.get(item.patientId) || 0) + 1);
+    return map;
+  }, [openItems]);
+
+  const reasonOptions = useMemo(
+    () => Array.from(new Set(allItems.map((item) => item.reasonLabel))).sort((a, b) => a.localeCompare(b, "tr")),
+    [allItems],
+  );
+
+  const items = useMemo(() => {
+    const normalizedQuery = query.trim().toLocaleLowerCase("tr-TR");
+    const queryDigits = query.replace(/\D/g, "").replace(/^0+/, "");
+    const filtered = allItems.filter((item) => {
+      if (tab === "kapali") { if (item.isOpen) return false; }
+      else if (!item.isOpen) return false;
+      if (tab === "gecikmis" && !isOverdue(item, nowTick)) return false;
+      if (tab === "bugun" && !isDueToday(item, todayEnd, nowTick)) return false;
+      if (reasonFilter && item.reasonLabel !== reasonFilter) return false;
+      if (doctorFilter && item.doctorId !== doctorFilter) return false;
+      if (normalizedQuery) {
+        const haystack = [item.patientName, item.doctorName, item.noteText, item.reasonLabel, item.lastEvent?.summary]
+          .filter(Boolean).join(" ").toLocaleLowerCase("tr-TR");
+        const phoneMatch = !hidePhone && queryDigits.length >= 3 && (item.patientPhone || "").replace(/\D/g, "").includes(queryDigits);
+        if (!haystack.includes(normalizedQuery) && !phoneMatch) return false;
+      }
+      return true;
+    });
+    if (tab === "kapali") {
+      return filtered.sort((a, b) => new Date(b.closedAt || b.createdAt).getTime() - new Date(a.closedAt || a.createdAt).getTime());
+    }
+    // Önce gecikenler (en eski önce), sonra bugün/ tarihsiz (hemen aranacak), sonra ileri tarihliler.
+    const rank = (item: FollowItem) => (isOverdue(item, nowTick) ? 0 : !item.nextActionAt ? 1 : 2);
+    return filtered.sort((a, b) => {
+      const byRank = rank(a) - rank(b);
+      if (byRank !== 0) return byRank;
+      if (a.priority !== b.priority) return b.priority - a.priority;
+      const aTime = new Date(a.nextActionAt || a.createdAt).getTime();
+      const bTime = new Date(b.nextActionAt || b.createdAt).getTime();
+      return aTime - bTime;
+    });
+  }, [allItems, tab, reasonFilter, doctorFilter, query, hidePhone, nowTick, todayEnd]);
+
+  const detailItem = useMemo(() => allItems.find((item) => item.key === detailKey) || null, [allItems, detailKey]);
+
+  const onDetailChanged = (updated: ApiFollowUp | null, message: string) => {
+    if (updated) {
+      setFollowUps((current) => {
+        const exists = current.some((followUp) => followUp.id === updated.id);
+        return exists ? current.map((followUp) => (followUp.id === updated.id ? updated : followUp)) : [updated, ...current];
+      });
+    }
+    setDetailKey("");
+    showToastSafe({ title: "Kaydedildi", message, type: "success" });
+    void loadData();
+  };
+
+  const onCreated = async (created: ApiFollowUp, customLabel: string) => {
+    setFollowUps((current) => [created, ...current]);
+    setCreateOpen(false);
+    setCreatePatient(null);
+    showToastSafe({ title: "Takip açıldı", message: `${created.patient?.fullName || "Hasta"} aranacaklar listesine eklendi.`, type: "success" });
+    // Yeni özel neden kurum listesine eklenir; bir sonraki takipte seçilebilir.
+    if (customLabel && !customReasons.some((reason) => reason.toLocaleLowerCase("tr-TR") === customLabel.toLocaleLowerCase("tr-TR"))) {
+      const nextReasons = [...customReasons, customLabel].slice(0, 80);
+      setCustomReasons(nextReasons);
+      await fetch("/api/patient-follow-up-types", {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          occurredAt: occurredAt.toISOString(),
-          channel: eventForm.channel.trim() || undefined,
-          summary: eventForm.summary.trim(),
-          detail: eventForm.detail.trim() || undefined,
-          patientResponse: eventForm.patientResponse.trim() || undefined,
-          nextStep: eventForm.nextStep.trim() || undefined,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data?.message || "Süreç notu kaydedilemedi.");
-        return;
-      }
-      await loadFollowUpEvents(activeHistoryFollowUpId);
-      resetEventForm();
-      setSuccessWithToast(editingEventId ? "Süreç notu güncellendi." : "Süreç notu eklendi.");
-    } catch {
-      setError("Süreç notu kaydetme sırasında hata oluştu.");
-    } finally {
-      setEventBusy(false);
+        body: JSON.stringify({ types: nextReasons }),
+      }).catch(() => null);
     }
+    if (tab === "kapali") setTab("acik");
   };
 
-  const startEditFollowUpEvent = (event: FollowUpEvent) => {
-    setEditingEventId(event.id);
-    const nextForm = {
-      occurredAt: toIsoInputValue(new Date(event.occurredAt)),
-      channel: event.channel || "",
-      summary: event.summary || "",
-      detail: event.detail || "",
-      patientResponse: event.patientResponse || "",
-      nextStep: event.nextStep || "",
-    };
-    setEventForm(nextForm);
-    eventFormSnapshotRef.current = JSON.stringify(nextForm);
+  const resetFilters = () => {
+    setQuery("");
+    setReasonFilter("");
+    setDoctorFilter("");
+    setDoctorFilterName("");
   };
 
-  const deleteFollowUpEvent = async (eventId: string) => {
-    if (!activeHistoryFollowUpId) return;
-    if (!(await confirmDialog({ message: "Bu süreç notu silinsin mi? Bu işlem geri alınamaz.", danger: true, confirmText: "Sil" }))) return;
-    setEventBusy(true);
-    setError("");
-    setSuccessWithToast("");
-    try {
-      const res = await fetch(`/api/patient-follow-ups/${activeHistoryFollowUpId}/events/${eventId}`, {
-        method: "DELETE",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data?.message || "Süreç notu silinemedi.");
-        return;
-      }
-      await loadFollowUpEvents(activeHistoryFollowUpId);
-      if (editingEventId === eventId) resetEventForm();
-      setSuccessWithToast("Süreç notu silindi.");
-    } catch {
-      setError("Süreç notu silinirken hata oluştu.");
-    } finally {
-      setEventBusy(false);
-    }
+  const activeFilters: ActiveFilter[] = [
+    ...(reasonFilter ? [{ key: "reason", label: `Neden: ${reasonFilter}`, onRemove: () => setReasonFilter("") }] : []),
+    ...(doctorFilter ? [{ key: "doctor", label: `Doktor: ${doctorFilterName || "Seçili"}`, onRemove: () => { setDoctorFilter(""); setDoctorFilterName(""); } }] : []),
+  ];
+
+  const exportRows = () => items.map((item) => ({
+    Hasta: item.patientName,
+    ...(hidePhone ? {} : { Telefon: item.patientPhone ? formatPhoneNumber(item.patientPhone) : "" }),
+    Neden: item.reasonLabel,
+    Doktor: item.doctorName || "",
+    "Son görüşme": item.lastEvent ? `${formatDateText(item.lastEvent.occurredAt, "datetime")} ${item.lastEvent.summary}` : "",
+    "Sonraki arama": item.nextActionAt ? formatDateText(item.nextActionAt, "datetime") : "",
+    Durum: item.isOpen ? (isOverdue(item, nowTick) ? "Gecikmiş" : "Açık") : "Kapalı",
+    Not: item.isOpen ? item.noteText : item.resolutionNote || "",
+  }));
+
+  const downloadExcel = () => {
+    downloadCsv(`hasta-takip-${formatDateText(new Date()).replace(/\./g, "-")}`, exportRows());
   };
 
-  const printFollowUpHistory = async (item: FollowItem) => {
-    if (!item.followUpId) {
-      setError("Süreç PDF çıkarmak için kayıt manuel takip olmalıdır.");
-      return;
-    }
-    try {
-      const res = await fetch(`/api/patient-follow-ups/${item.followUpId}/events`);
-      const data = await res.json().catch(() => []);
-      if (!res.ok) {
-        setError((data as { message?: string })?.message || "Süreç notları alınıp PDF oluşturulamadı.");
-        return;
-      }
-      const events = Array.isArray(data) ? (data as FollowUpEvent[]) : [];
-      const esc = (v: string) => v.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
-      const rows = events.length
-        ? events.map((ev, i) => `
-          <tr style="background:${i % 2 === 0 ? "#F8FAFC" : "#FFFFFF"};">
-            <td>${esc(new Date(ev.occurredAt).toLocaleString("tr-TR"))}</td>
-            <td>${esc(ev.channel || "-")}</td>
-            <td>${esc(ev.summary || "-")}</td>
-            <td>${esc(ev.patientResponse || "-")}</td>
-            <td>${esc(ev.nextStep || "-")}</td>
-            <td>${esc(ev.detail || "-")}</td>
-          </tr>
-        `).join("")
-        : `<tr><td colspan="6" style="text-align:center;padding:18px;color:#94A3B8;">Süreç notu bulunamadı</td></tr>`;
-
-      const win = window.open("", "_blank", "width=1200,height=820");
-      if (!win) {
-        setError("PDF penceresi açılamadı. Tarayıcınızın açılır pencere (pop-up) engelleyicisini bu site için kapatıp tekrar deneyin.");
-        return;
-      }
-
-      win.document.write(`<!DOCTYPE html>
-<html lang="tr"><head><meta charset="UTF-8"><title>Hasta Süreç Takibi</title>
-<style>
-body{font-family:'Segoe UI',Arial,sans-serif;color:#0F172A;margin:0}.page{padding:16mm}
-.head{display:flex;justify-content:space-between;border-bottom:3px solid #1E3A5F;padding-bottom:10px;margin-bottom:10px}
-.h1{font-size:22px;font-weight:800;color:#1E3A5F}.sub{font-size:11px;color:#64748B}
-table{width:100%;border-collapse:collapse;font-size:11px}thead tr{background:#1E3A5F;color:#fff}
-th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:top}th{border-color:#2D4F7C}
-</style></head><body>
-<div class="page">
-  <div class="head">
-    <div><div class="h1">Hasta Süreç Takip Özeti</div><div class="sub">Klinik Yönetim Paneli</div></div>
-    <div class="sub">Oluşturma: ${new Date().toLocaleString("tr-TR")}</div>
-  </div>
-  <p><strong>Hasta:</strong> ${esc(item.patientName)} | <strong>Takip:</strong> ${esc(item.followUpLabel)} | <strong>Durum:</strong> ${esc(item.statusLabel)}</p>
-  <table>
-    <thead><tr><th>Tarih</th><th>Kanal</th><th>Süreç Özeti</th><th>Hasta Cevabı</th><th>Sonraki Adım</th><th>Detay</th></tr></thead>
-    <tbody>${rows}</tbody>
-  </table>
-</div>
-<script>window.onload=function(){window.print();}<\/script>
-</body></html>`);
-      win.document.close();
-      win.focus();
-    } catch {
-      setError("Süreç PDF oluşturma sırasında hata oluştu.");
-    }
+  const downloadPdf = async () => {
+    const { createPdfDoc, addPdfTitle, addPdfSection } = await import("@/lib/pdf-export");
+    const rows = exportRows();
+    const headers = rows.length > 0 ? Object.keys(rows[0]) : ["Hasta"];
+    const doc = createPdfDoc("l");
+    addPdfTitle(doc, "Hasta takip listesi", `${TAB_LABELS[tab]} · ${rows.length} kayıt · ${formatDateText(new Date(), "datetime")}`);
+    addPdfSection(doc, 30, TAB_LABELS[tab], headers, rows.map((row) => headers.map((header) => String((row as Record<string, string>)[header] ?? ""))));
+    doc.save(`hasta-takip-${formatDateText(new Date()).replace(/\./g, "-")}.pdf`);
   };
+
+  // Arama: satırdaki telefon numarasına dokunmak/tıklamak hastayı arar (ayrı düğme yok).
+  const rowActions = (item: FollowItem) => (
+    <div className="flex items-center justify-end gap-1.5">
+      {canBookAppointments && item.isOpen && (
+        <IconButton icon={CalendarPlus} title="Randevu ver" href={appointmentLink(item.patientId, item.patientName)} />
+      )}
+      {canWrite && item.isOpen ? (
+        <Button size="sm" variant="secondary" onClick={() => setDetailKey(item.key)}>Görüşme kaydet</Button>
+      ) : (
+        <Button size="sm" variant="ghost" onClick={() => setDetailKey(item.key)}>Aç</Button>
+      )}
+    </div>
+  );
+
+  const patientCell = (item: FollowItem) => {
+    const visit = visits[item.patientId];
+    const others = (openCountByPatient.get(item.patientId) || 0) - (item.isOpen ? 1 : 0);
+    return (
+      <div className="min-w-0">
+        <p className="font-bold text-slate-900">{item.patientName}</p>
+        {!hidePhone && item.patientPhone && <TelLink phone={item.patientPhone} countryCode={item.phoneCountryCode} />}
+        {(visit?.nextAppointment && item.isOpen) || others > 0 ? (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {visit?.nextAppointment && item.isOpen && (
+              <Badge tone="success">Randevusu var · {formatDateText(visit.nextAppointment.startAt, "datetime")}</Badge>
+            )}
+            {others > 0 && <Badge tone="neutral">+{others} takip</Badge>}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
+  // Lab satırında provanın geliş günü de yazılır: aynı işin iki provası ayırt edilir (HL-28).
+  const reasonDetail = (item: FollowItem) => item.labContext
+    ? [`${item.labContext.receivedStep || "Prova"} geldi (${formatDateText(item.createdAt)})`, item.labContext.labType, item.labContext.labName].filter(Boolean).join(" · ")
+    : item.type === "GELMEDI" && item.appointmentStartAt
+      ? `Kaçırdığı randevu: ${formatDateText(item.appointmentStartAt, "datetime")}`
+      : item.noteText || "";
+
+  const reasonCell = (item: FollowItem) => (
+    <div className="min-w-0 max-w-[260px]">
+      <div className="flex flex-wrap items-center gap-1">
+        <Badge tone={item.reasonTone}>{item.reasonLabel}</Badge>
+        {item.priority >= 3 && <Badge tone="critical">Yüksek</Badge>}
+      </div>
+      <p className="mt-0.5 truncate text-xs text-slate-500" title={[item.doctorName, reasonDetail(item)].filter(Boolean).join(" · ") || undefined}>
+        {[item.doctorName, reasonDetail(item)].filter(Boolean).join(" · ")}
+      </p>
+    </div>
+  );
+
+  const lastContactCell = (item: FollowItem) => item.lastEvent ? (
+    <div className="min-w-0 max-w-[220px]">
+      <p className="text-xs tabular-nums text-slate-500">{formatDateText(item.lastEvent.occurredAt, "datetime")}</p>
+      <p className="truncate text-sm text-slate-700" title={item.lastEvent.summary}>{item.lastEvent.summary}</p>
+    </div>
+  ) : <span className="text-xs text-slate-400">Görüşülmedi</span>;
+
+  const columns: ListTableColumn<FollowItem>[] = [
+    { key: "patient", header: "Hasta", cellClassName: "min-w-[190px] whitespace-nowrap", render: patientCell },
+    { key: "reason", header: "Neden · Doktor", render: reasonCell },
+    { key: "last", header: "Son görüşme", render: lastContactCell },
+    tab === "kapali"
+      ? {
+          key: "closed",
+          header: "Kapanış",
+          render: (item: FollowItem) => (
+            <div className="min-w-0 max-w-[240px]">
+              <p className="text-xs tabular-nums text-slate-500">{item.closedAt ? formatDateText(item.closedAt, "datetime") : "—"}</p>
+              <p className="truncate text-sm text-slate-700" title={item.resolutionNote || undefined}>{item.resolutionNote || ""}</p>
+            </div>
+          ),
+        }
+      : {
+          key: "next",
+          header: "Sonraki arama",
+          render: (item: FollowItem) => item.nextActionAt
+            ? <DueLabel at={item.nextActionAt} open={item.isOpen} now={new Date(nowTick)} />
+            : <span className="text-xs font-semibold text-amber-700">Hemen aranacak</span>,
+        },
+    { key: "islem", header: "İşlem", align: "right", render: rowActions },
+  ];
+
+  const mobileCard = (item: FollowItem) => {
+    const visit = visits[item.patientId];
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-start justify-between gap-2">
+          <p className="min-w-0 font-bold text-slate-900">{item.patientName}</p>
+          <Badge tone={item.reasonTone}>{item.reasonLabel}</Badge>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+          {item.isOpen
+            ? (item.nextActionAt ? <DueLabel at={item.nextActionAt} open now={new Date(nowTick)} /> : <span className="font-semibold text-amber-700">Hemen aranacak</span>)
+            : <span>Kapandı {item.closedAt ? formatDateText(item.closedAt) : ""}</span>}
+          {item.doctorName && <span>{item.doctorName}</span>}
+        </div>
+        {item.lastEvent && <p className="truncate text-xs text-slate-600">Son görüşme: {item.lastEvent.summary}</p>}
+        {visit?.nextAppointment && item.isOpen && (
+          <p className="text-xs font-semibold text-emerald-700">Randevusu var · {formatDateText(visit.nextAppointment.startAt, "datetime")}</p>
+        )}
+        <div className="flex items-center gap-1.5 pt-0.5">
+          {!hidePhone && item.patientPhone ? <TelLink phone={item.patientPhone} countryCode={item.phoneCountryCode} large /> : null}
+          <span className="flex-1" />
+          {rowActions(item)}
+        </div>
+      </div>
+    );
+  };
+
+  const isFiltered = Boolean(query.trim() || reasonFilter || doctorFilter);
+  const emptyText = isFiltered
+    ? "Aramanıza uyan takip yok"
+    : tab === "gecikmis" ? "Geciken takip yok"
+      : tab === "bugun" ? "Bugün aranacak hasta yok"
+        : tab === "kapali" ? "Bu dönemde kapanan takip yok"
+          : "Açık takip yok";
 
   return (
-    <section className="space-y-2">
+    <section className="space-y-3">
       <PageHeader
         icon="follow"
         title="Hasta Takip"
-        description="Açık takip kayıtlarını, sıradaki adımları ve gecikmiş takipleri buradan yönetin."
-        stats={[
-          { label: "Açık Kayıt", value: items.length },
-          ...(stats.overdue > 0 ? [{ label: "Gecikmiş", value: stats.overdue, color: "text-red-700" }] : []),
-        ]}
-        actions={
-          <>
-            {stats.overdue > 0 && (
-              <button
-                type="button"
-                onClick={() => setOnlyOverdue((v) => !v)}
-                title="Sonraki adım tarihi geçmiş, hâlâ açık takipler"
-                className={"rounded-full px-3 py-1.5 text-xs font-bold transition " + (onlyOverdue ? "bg-red-600 text-white" : "bg-red-50 text-red-700 hover:bg-red-100")}
-              >
-                ⚠ Yalnız Gecikmişler
-              </button>
-            )}
-            <Button variant="secondary" size="sm" onClick={printReport}>PDF</Button>
-            <Button variant="secondary" size="sm" onClick={downloadExcelReport}>Excel</Button>
-            <Button variant="secondary" size="sm" href="/gorevler">Görev Merkezi</Button>
-            <Button size="sm" href="/randevu">Randevular</Button>
-          </>
-        }
+        description="Aranacak ve dönüşü beklenen hastalar. Görüşmeyi kaydedin, randevu verin; iş bitince takip kapanır."
+        actions={canWrite ? <Button icon={Plus} onClick={() => { setCreatePatient(null); setCreateOpen(true); }}>Yeni takip</Button> : undefined}
       />
 
-      {(error || success) && (
-        <div className={"rounded-lg border px-3 py-2 text-sm " + (error ? "border-rose-200 bg-rose-50 text-rose-700" : "border-emerald-200 bg-emerald-50 text-emerald-700")}>
-          {error || success}
-        </div>
+      <Tabs
+        ariaLabel="Takip listesi"
+        value={tab}
+        onChange={setTab}
+        items={[
+          { key: "acik", label: "Açık", count: loaded ? counts.acik : undefined },
+          { key: "gecikmis", label: "Gecikmiş", count: loaded ? counts.gecikmis : undefined, countTone: "critical" },
+          { key: "bugun", label: "Bugün aranacak", count: loaded ? counts.bugun : undefined, countTone: "warning" },
+          { key: "kapali", label: "Kapalı" },
+        ]}
+      />
+
+      <Toolbar
+        actions={(
+          <>
+            {/* Dışa aktarım masaüstü işidir; telefonda listeyi aşağı itmesin. */}
+            <Button size="sm" variant="secondary" icon={FileSpreadsheet} onClick={downloadExcel} disabled={items.length === 0} className="hidden sm:inline-flex">Excel&apos;e aktar</Button>
+            <Button size="sm" variant="secondary" icon={FileDown} onClick={() => void downloadPdf()} disabled={items.length === 0} className="hidden sm:inline-flex">PDF indir</Button>
+          </>
+        )}
+      >
+        <SearchInput
+          value={query}
+          onChange={setQuery}
+          placeholder="Hasta adı, telefon veya not ara"
+          wrapperClassName="flex-1 min-w-[220px]"
+        />
+        <Select aria-label="Takip nedeni" value={reasonFilter} onChange={(event) => setReasonFilter(event.target.value)} className="sm:w-52">
+          <option value="">Tüm nedenler</option>
+          {reasonOptions.map((reason) => <option key={reason} value={reason}>{reason}</option>)}
+        </Select>
+        <DoctorSelect
+          value={doctorFilter}
+          onChange={(id, doctor) => { setDoctorFilter(id); setDoctorFilterName(doctor?.fullName || ""); }}
+          emptyLabel="Tüm doktorlar"
+          className="sm:w-52"
+        />
+        {tab === "kapali" && (
+          <Select aria-label="Kapanış dönemi" value={closedRange} onChange={(event) => setClosedRange(event.target.value)} className="sm:w-56">
+            {CLOSED_RANGES.map((range) => <option key={range.value} value={range.value}>{range.label}</option>)}
+          </Select>
+        )}
+      </Toolbar>
+      <ActiveFilters filters={activeFilters} onClearAll={resetFilters} />
+
+      <ListTable<FollowItem>
+        columns={columns}
+        rows={items}
+        rowKey={(item) => item.key}
+        loading={loading && !loaded}
+        error={error && !loaded ? error : null}
+        onRetry={() => void loadData()}
+        onRowClick={(item) => setDetailKey(item.key)}
+        getRowAriaLabel={(item) => `${item.patientName} takibini aç`}
+        mobileCard={mobileCard}
+        emptyText={emptyText}
+        emptyDescription={isFiltered ? "Arama veya filtreyi değiştirin." : tab === "kapali" ? undefined : "Aranacak hasta kalmadı."}
+        emptyAction={isFiltered ? <Button size="sm" variant="secondary" onClick={resetFilters}>Filtreleri temizle</Button> : undefined}
+        header={error && loaded ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-red-100 bg-red-50 px-4 py-2 text-sm text-red-800">
+            <span>Liste yenilenemedi: {error}</span>
+            <Button size="sm" variant="secondary" onClick={() => void loadData()}>Yeniden dene</Button>
+          </div>
+        ) : undefined}
+      />
+
+      {detailItem && (
+        <FollowUpDetailModal
+          key={detailItem.key}
+          item={detailItem}
+          onClose={() => setDetailKey("")}
+          onChanged={onDetailChanged}
+          canWrite={canWrite}
+          canUseWhatsapp={canUseWhatsapp}
+          canBookAppointments={canBookAppointments}
+          hidePhone={hidePhone}
+          visit={visits[detailItem.patientId]}
+          otherOpenCount={Math.max(0, (openCountByPatient.get(detailItem.patientId) || 0) - (detailItem.isOpen ? 1 : 0))}
+        />
       )}
 
-      <>
-          <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-            <div className="flex flex-wrap items-center gap-2">
-              <input aria-label={"Hasta, doktor, not veya takip tipi ara..."}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Hasta, doktor, not veya takip tipi ara..."
-                className="min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:outline-none"
-              />
-              <Button variant="secondary" size="sm" onClick={() => setShowAdvancedFilters((v) => !v)}>{showAdvancedFilters ? "Filtreleri Gizle" : "Gelişmiş Filtreler"}</Button>
-              <Button variant="secondary" size="sm" onClick={() => setDenseView((v) => !v)}>{denseView ? "Detaylı Görünüm" : "Sade Görünüm"}</Button>
-              <Button variant="secondary" size="sm" onClick={resetListFilters}>Temizle</Button>
-              {canWriteFollowUps && <Button size="sm" icon={Plus} onClick={openManualCreate}>Manuel Takip Ekle</Button>}
-            </div>
-
-            {showAdvancedFilters && (
-              <div className="mt-3 grid gap-3 lg:grid-cols-5">
-                <select value={followFilter} onChange={(e) => setFollowFilter(e.target.value as typeof followFilter)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                  <option value="TUMU">Tüm Takipler</option>
-                  <option value="GELMEDI">Gelmedi</option>
-                  <option value="GERI_ARA">Tekrar Aranacak</option>
-                  <option value="ULASILAMADI">Ulaşılamayanlar</option>
-                  <option value="DONUS_BEKLENIYOR">Dönüş Beklenenler</option>
-                  <option value="DIGER">Diğer</option>
-                </select>
-                <input aria-label={"Takip tipi icinde metin ara..."} value={followTypeQuery} onChange={(e) => setFollowTypeQuery(e.target.value)} placeholder="Takip tipi icinde metin ara..." className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
-                <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                  <option value="ACIK">Açık Takipler</option>
-                  <option value="KAPALI">Kapalı Takipler</option>
-                  <option value="TUMU">Tümü</option>
-                </select>
-                <select value={doctorFilter} onChange={(e) => setDoctorFilter(e.target.value)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                  <option value="">Tüm Doktorlar</option>
-                  {doctors.map((d) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
-                </select>
-                <select value={rangeDays} onChange={(e) => setRangeDays(e.target.value as typeof rangeDays)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                  <option value="30">Son 30 gün</option>
-                  <option value="60">Son 60 gün</option>
-                  <option value="90">Son 90 gün</option>
-                </select>
-              </div>
-            )}
-          </div>
-
-          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
-            <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2.5">
-              <h2 className="text-base font-bold text-slate-900">Aksiyon Gerektiren Hasta Listesi</h2>
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">{items.length} kayıt</span>
-            </div>
-
-            {items.length === 0 ? (
-              <div className="px-4 py-10 text-center">
-                <p className="text-sm font-semibold text-slate-700">Seçili filtrede takip kaydı bulunmuyor.</p>
-                <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
-                  <Button variant="secondary" size="sm" onClick={resetListFilters}>Filtreleri Temizle</Button>
-                  <Button variant="secondary" size="sm" onClick={() => setStatusFilter("TUMU")}>Tüm Durumlar</Button>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-2 p-3" aria-busy={loading}>
-                {items.map((item) => (
-                  <div key={item.key} className={`rounded-xl border p-2.5 shadow-sm transition hover:border-slate-300 ${item.isLabProva ? "border-violet-200 bg-violet-50/45" : "border-slate-200 bg-white"}`}>
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <p className="text-sm font-semibold text-slate-900">{item.patientName}</p>
-                          <span className={"rounded-full px-2 py-0.5 text-xs font-semibold " + item.followBadgeClass}>{item.followUpLabel}</span>
-                          <Badge tone={item.isOpen ? "success" : "neutral"}>{item.statusLabel}</Badge>
-                        </div>
-                        <p className="mt-0.5 text-xs text-slate-500">{item.doctorName} · {item.ageDays} gün · Öncelik {item.priority}</p>
-                        {item.isLabProva && item.labContext && (
-                          <p className="mt-1 text-xs font-semibold text-violet-800">
-                            {item.labContext.receivedStep || "Prova"} için randevu verilecek
-                            {item.labContext.labType ? ` · ${item.labContext.labType}` : ""}
-                            {item.labContext.labName ? ` · ${item.labContext.labName}` : ""}
-                          </p>
-                        )}
-                        {/* "Bu hasta neden burada?" cevabı sade görünümde de görünür kalmalı
-                            (bkz. denetim raporu Tema 6) — sade modda kısa, detaylı modda uzun. */}
-                        <p className="mt-1 text-xs text-slate-700">{shortText(item.note || "Not bulunmuyor.", denseView ? 40 : 65)}</p>
-                        {item.nextActionAt && (() => {
-                          const isOverdue = item.isOpen && new Date(item.nextActionAt).getTime() < Date.now();
-                          return (
-                            <p className={"mt-0.5 text-xs font-semibold " + (isOverdue ? "text-red-700" : "text-amber-700")}>
-                              {isOverdue ? "⚠ Gecikti — " : "Sonraki adım: "}{new Date(item.nextActionAt).toLocaleString("tr-TR")}
-                            </p>
-                          );
-                        })()}
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <Button variant="secondary" size="sm" onClick={() => void openDetailModal(item)}>Detay</Button>
-                        {!hidePhone && item.patientPhone && <a href={`tel:${item.patientPhone}`} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Ara</a>}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </>
-
-      <Modal
-        open={showManualCreate}
-        onClose={closeManualCreate}
-        isDirty={manualCreateDirty}
-        title="Manuel Takip Ekle"
-        size="xl"
-        footer={
-          <>
-            <Button variant="secondary" onClick={closeManualCreate}>İptal</Button>
-            <Button onClick={() => void createManualFollowUp()} disabled={Boolean(manualSubmitDisabledReason)} loading={creatingManual}>Kaydet</Button>
-          </>
-        }
-      >
-        <div className="grid gap-3 lg:grid-cols-5">
-          <div className="lg:col-span-2">
-            <FormField label="Hasta">
-              <input value={patientSearch} onChange={(e) => { setPatientSearch(e.target.value); setSelectedPatient(null); setPatientSearchError(""); }} placeholder="Ad, telefon veya TC ile ara" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
-              {patientSearchLoading && <p className="mt-2 text-xs text-slate-600">Hasta aranıyor...</p>}
-              {selectedPatient ? (
-                <div className="mt-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">Seçili hasta: <span className="font-semibold">{selectedPatient.fullName}</span>{!hidePhone && selectedPatient.phone ? ` - ${selectedPatient.phone}` : ""}</div>
-              ) : patientResults.length > 0 ? (
-                <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-200 bg-white">
-                  {patientResults.map((p) => (
-                    <button key={p.id} type="button" onClick={() => { setSelectedPatient(p); setPatientSearch(p.fullName); setPatientResults([]); }} className="flex w-full items-center justify-between border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50">
-                      <span>{p.fullName}</span>
-                      {!hidePhone && <span className="text-xs text-slate-400">{p.phone || "-"}</span>}
-                    </button>
-                  ))}
-                </div>
-              ) : patientSearch.trim().length >= 2 && patientSearchError ? (
-                <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{patientSearchError}</div>
-              ) : null}
-            </FormField>
-          </div>
-          <FormField label="Doktor">
-            <select value={manualDoctorId} onChange={(e) => setManualDoctorId(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-              <option value="">Seçilmedi</option>
-              {doctors.map((d) => <option key={d.id} value={d.id}>{d.fullName}</option>)}
-            </select>
-          </FormField>
-          <FormField label="Takip Tipi">
-            <select value={manualTypeInput} onChange={(e) => setManualTypeInput(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-white px-2 py-2 text-sm">
-              {followTypeOptions.length === 0 ? <option value={manualTypeInput}>{manualTypeInput || "Sonuç bulunamadı"}</option> : followTypeOptions.map((opt) => (<option key={opt} value={opt}>{opt}</option>))}
-            </select>
-          </FormField>
-          <FormField label="Öncelik">
-            <select value={manualPriority} onChange={(e) => setManualPriority(Number(e.target.value) as 1 | 2 | 3)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-              <option value={1}>Düşük</option>
-              <option value={2}>Orta</option>
-              <option value={3}>Yüksek</option>
-            </select>
-          </FormField>
-        </div>
-
-        <div className="mt-3 grid gap-3 lg:grid-cols-[1fr_220px]">
-          <FormField label="Takip Notu">
-            <textarea value={manualNote} onChange={(e) => setManualNote(e.target.value)} rows={2} placeholder="Takip notu" className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:outline-none" />
-          </FormField>
-          <FormField label="Sonraki Aksiyon">
-            <input type="datetime-local" value={manualNextActionAt} onChange={(e) => setManualNextActionAt(e.target.value)} className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
-          </FormField>
-        </div>
-        {manualSubmitDisabledReason && <p className="mt-2 text-xs font-medium text-amber-700">{manualSubmitDisabledReason}</p>}
-      </Modal>
-
-      <Modal
-        open={Boolean(detailItem)}
-        onClose={closeDetailModal}
-        isDirty={detailModalDirty}
-        title={detailItem?.patientName ?? ""}
-        description={detailItem ? `${detailItem.followUpLabel} · ${detailItem.statusLabel}` : undefined}
-        size="xl"
-      >
-        {detailItem && (() => {
-          const isManual = detailItem.source === "MANUAL" && Boolean(detailItem.followUpId);
-          const noteDuplicatesLabTitle = detailItem.isLabProva && detailItem.labContext && detailItem.note === detailItem.labContext.title;
-          return (
-          <div className="space-y-4">
-            {/* Üst satır: durum özeti + sayfa gezinme aksiyonları aynı hizada */}
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge tone={getPriorityTone(detailItem.priority)}>Öncelik {detailItem.priority}</Badge>
-                <Badge tone={getAgeTone(detailItem.ageDays)}>{detailItem.ageDays} gün önce</Badge>
-                <span className="text-xs text-slate-400">{detailItem.source === "MANUAL" ? "Manuel takip" : "Randevu kaynaklı"}</span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {isManual && (
-                  <Button variant="secondary" size="sm" onClick={() => void printFollowUpHistory(detailItem)}>PDF Al</Button>
-                )}
-                {detailItem.patientId && <Button size="sm" href={`/hasta-detay?id=${detailItem.patientId}`}>Hasta Kartı</Button>}
-                <Button variant="secondary" size="sm" href={detailItem.patientId ? `/randevu?patientId=${detailItem.patientId}` : "/randevu"}>Randevuya Git</Button>
-              </div>
-            </div>
-
-            <p className="text-xs text-slate-500">{detailItem.appointmentDateLabel} · {detailItem.doctorName}</p>
-
-            {detailItem.isLabProva && detailItem.labContext ? (
-              <div className="rounded-xl border border-primary/20 bg-primary/5 px-3 py-3">
-                <p className="text-[11px] font-black uppercase tracking-wide text-primary">Laboratuvar Prova Takibi</p>
-                <p className="mt-1 text-sm font-bold text-primary-strong">{detailItem.labContext.title}</p>
-                <div className="mt-2 grid gap-2 text-xs text-primary-strong sm:grid-cols-3">
-                  <p><span className="font-bold">İş:</span> {detailItem.labContext.labType || "-"}</p>
-                  <p><span className="font-bold">Laboratuvar:</span> {detailItem.labContext.labName || "-"}</p>
-                  <p><span className="font-bold">Prova:</span> {detailItem.labContext.receivedStep || "-"}</p>
-                </div>
-                {!noteDuplicatesLabTitle && detailItem.note && (
-                  <p className="mt-2 border-t border-primary/10 pt-2 text-sm text-primary-strong">{detailItem.note}</p>
-                )}
-              </div>
-            ) : detailItem.note ? (
-              <div className="rounded-xl bg-slate-50 px-3 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Not</p>
-                <p className="mt-1 text-sm text-slate-700">{detailItem.note}</p>
-              </div>
-            ) : null}
-
-            {detailItem.nextActionAt && (() => {
-              const isOverdue = detailItem.isOpen && new Date(detailItem.nextActionAt).getTime() < Date.now();
-              return (
-                <p className={"text-xs font-semibold " + (isOverdue ? "text-red-700" : "text-amber-700")}>
-                  {isOverdue ? "⚠ Gecikti — " : "Sonraki adım: "}{new Date(detailItem.nextActionAt).toLocaleString("tr-TR")}
-                </p>
-              );
-            })()}
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="rounded-xl border border-slate-100 bg-slate-50 px-3 py-3">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">İletişim</p>
-                {hidePhone ? (
-                  <p className="mt-1 text-sm text-slate-400 italic">Telefon gizli</p>
-                ) : (
-                  <p className="mt-1 text-sm font-medium text-slate-700">{detailItem.patientPhone || "Kayıtlı telefon yok"}</p>
-                )}
-                {!hidePhone && detailItem.patientPhone && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <a href={`tel:${detailItem.patientPhone}`} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50">Ara</a>
-                    {canUseWhatsapp && (detailItem.patientWhatsappConsent ? (
-                      <a href={`https://wa.me/90${detailItem.patientPhone.replace(/\D/g, "").replace(/^0/, "")}`} target="_blank" rel="noreferrer" className="rounded-lg border border-emerald-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50">WhatsApp</a>
-                    ) : (
-                      // Hasta WhatsApp/mesajlaşma iznini vermemiş (veya hiç sorulmamış) —
-                      // önceden bu buton rıza kontrolünü tamamen atlayıp doğrudan
-                      // WhatsApp'ı açıyordu (bkz. denetim raporu, KVKK/rıza mimarisi
-                      // ihlali). İzin yoksa buton devre dışı, nedeni tooltip'te.
-                      <span
-                        title="Bu hasta WhatsApp ile iletişim için onay vermemiş"
-                        className="cursor-not-allowed rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-xs font-semibold text-slate-400"
-                      >
-                        WhatsApp (izin yok)
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {canWriteFollowUps && <div className="rounded-xl border border-slate-100 px-3 py-3">
-                <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Bu görüşmenin sonucu</p>
-                {isManual ? (
-                  <div className="flex flex-wrap gap-2">
-                    <Button variant="secondary" size="sm" disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { type: "GERI_ARA", note: buildManualNote("", detailItem.note), lastContactAt: new Date().toISOString(), nextActionAt: new Date(Date.now() + 86400000).toISOString() })}>Tekrar Ara</Button>
-                    <Button variant="secondary" size="sm" disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { type: "ULASILAMADI", note: buildManualNote("", detailItem.note), lastContactAt: new Date().toISOString(), nextActionAt: new Date(Date.now() + 2 * 86400000).toISOString() })}>Ulaşılamadı</Button>
-                    <Button variant="secondary" size="sm" disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { type: "DONUS_BEKLENIYOR", note: buildManualNote("", detailItem.note), nextActionAt: new Date(Date.now() + 3 * 86400000).toISOString() })}>Dönüş Bekleniyor</Button>
-                    <div className="mt-1 w-full space-y-1.5">
-                      <textarea aria-label={"Takibi kapatmadan önce sonucu yazın (örn. hasta ile görüşüldü, randevu planlandı)…"}
-                        value={closeNote}
-                        onChange={(e) => setCloseNote(e.target.value)}
-                        rows={2}
-                        placeholder="Takibi kapatmadan önce sonucu yazın (örn. hasta ile görüşüldü, randevu planlandı)…"
-                        className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:outline-none"
-                      />
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        disabled={busyId === detailItem.followUpId || !closeNote.trim()}
-                        title={!closeNote.trim() ? "Kapatmadan önce sonucu yazmanız gerekir" : undefined}
-                        onClick={() => void updateManual(detailItem.followUpId!, { close: true, resolutionNote: closeNote.trim(), lastContactAt: new Date().toISOString() }).then(() => setCloseNote(""))}
-                      >
-                        Takibi Kapat
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    <Button variant="secondary" size="sm" disabled={busyId === detailItem.key} onClick={() => void convertAppointmentToManual(detailItem)}>Manuel Takibe Dönüştür</Button>
-                    <Button variant="secondary" size="sm" disabled={busyId === detailItem.key} onClick={() => void markAppointmentNote(detailItem, "GERI_ARA", detailItem.note)}>Notu Geri Ara Yap</Button>
-                  </div>
-                )}
-              </div>}
-            </div>
-
-            {isManual && (
-              <div className="rounded-xl border border-slate-100 p-4">
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                  <h3 className="text-sm font-bold text-slate-800">Hasta Bazlı Görüşme ve Süreç Notları</h3>
-                  <span className="text-xs text-slate-500">{followUpEvents.length} kayıt</span>
-                </div>
-
-                {canWriteFollowUps && <div className="mb-3 flex flex-wrap gap-2">
-                  {EVENT_PRESETS.map((preset) => (
-                    <button key={preset.label} type="button" onClick={() => applyEventPreset(preset)} className="rounded-full border border-slate-200 bg-white px-3 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-50">{preset.label}</button>
-                  ))}
-                </div>}
-
-                {canWriteFollowUps && <div className="grid gap-2 md:grid-cols-3">
-                  <input type="datetime-local" value={eventForm.occurredAt} onChange={(e) => setEventForm((prev) => ({ ...prev, occurredAt: e.target.value }))} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
-                  <select value={eventForm.channel} onChange={(e) => setEventForm((prev) => ({ ...prev, channel: e.target.value }))} className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
-                    {eventChannelOptions.map((opt) => (
-                      <option key={opt} value={opt}>{opt}</option>
-                    ))}
-                  </select>
-                  <input aria-label={"Kısa sonuç, örnek: Arandı, açmadı"} value={eventForm.summary} onChange={(e) => setEventForm((prev) => ({ ...prev, summary: e.target.value }))} placeholder="Kısa sonuç, örnek: Arandı, açmadı" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm md:col-span-1" />
-                  <textarea aria-label={"Hasta ne söyledi?"} value={eventForm.patientResponse} onChange={(e) => setEventForm((prev) => ({ ...prev, patientResponse: e.target.value }))} rows={2} placeholder="Hasta ne söyledi?" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
-                  <textarea aria-label={"Bu hastada sonraki adım ne olacak?"} value={eventForm.nextStep} onChange={(e) => setEventForm((prev) => ({ ...prev, nextStep: e.target.value }))} rows={2} placeholder="Bu hastada sonraki adım ne olacak?" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
-                  <textarea aria-label={"Detaylı görüşme notu"} value={eventForm.detail} onChange={(e) => setEventForm((prev) => ({ ...prev, detail: e.target.value }))} rows={2} placeholder="Detaylı görüşme notu" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
-                </div>}
-
-                {canWriteFollowUps && <div className="mt-2 flex flex-wrap gap-2">
-                  <Button size="sm" onClick={() => void saveFollowUpEvent()} disabled={eventBusy || eventsLoading} loading={eventBusy}>{editingEventId ? "Hasta Notunu Güncelle" : "Hasta Notu Ekle"}</Button>
-                  {editingEventId && <Button variant="secondary" size="sm" onClick={resetEventForm}>Düzenlemeyi İptal Et</Button>}
-                </div>}
-
-                {eventsLoading ? (
-                  <div className="mt-3 space-y-2" aria-busy="true">
-                    <div className="h-3 w-44 animate-pulse rounded bg-slate-100" />
-                    <div className="h-3 w-56 animate-pulse rounded bg-slate-100" />
-                  </div>
-                ) : followUpEvents.length === 0 ? (
-                  <p className="mt-3 text-xs text-slate-500">Bu hasta için henüz görüşme notu yok. İlk hasta notunu ekleyin.</p>
-                ) : (
-                  <div className="mt-3 rounded-xl border border-slate-100 bg-white">
-                    <div className="border-b border-slate-100 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-                      Kayıt Geçmişi
-                    </div>
-                    <div className="max-h-[34vh] space-y-2 overflow-y-auto p-3">
-                      {followUpEvents.map((ev, idx) => (
-                        <div key={ev.id} className="rounded-lg border border-slate-100 bg-slate-50/70 p-3">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <p className="text-xs font-semibold text-slate-700">
-                              #{followUpEvents.length - idx} · {new Date(ev.occurredAt).toLocaleString("tr-TR")} {ev.channel ? `· ${ev.channel}` : ""}
-                            </p>
-                            {canWriteFollowUps && <div className="flex gap-2">
-                              <Button variant="secondary" size="sm" onClick={() => startEditFollowUpEvent(ev)}>Düzenle</Button>
-                              <Button variant="danger" size="sm" onClick={() => void deleteFollowUpEvent(ev.id)}>Sil</Button>
-                            </div>}
-                          </div>
-                          <p className="mt-1 text-sm font-semibold text-slate-800">{ev.summary}</p>
-                          {ev.patientResponse && <p className="mt-1 text-xs text-slate-700"><span className="font-semibold">Hasta söyledi:</span> {ev.patientResponse}</p>}
-                          {ev.nextStep && <p className="mt-1 text-xs text-slate-700"><span className="font-semibold">Planlanan sonraki adım:</span> {ev.nextStep}</p>}
-                          {ev.detail && <p className="mt-1 text-xs text-slate-600">{ev.detail}</p>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-          );
-        })()}
-      </Modal>
-
+      {createOpen && (
+        <FollowUpCreateModal
+          onClose={() => { setCreateOpen(false); setCreatePatient(null); }}
+          onCreated={(created, customLabel) => void onCreated(created, customLabel)}
+          initialPatient={createPatient}
+          customReasons={Array.from(new Set([
+            ...customReasons,
+            ...followUps.map((followUp) => parseCustomType(followUp.note).customType).filter(Boolean),
+          ]))}
+          openItemsForPatient={(patientId) => openItems.filter((item) => item.patientId === patientId)}
+          onOpenExisting={(item) => { setCreateOpen(false); setCreatePatient(null); setDetailKey(item.key); }}
+        />
+      )}
     </section>
+  );
+}
+
+const TAB_LABELS: Record<TabKey, string> = {
+  acik: "Açık takipler",
+  gecikmis: "Gecikmiş takipler",
+  bugun: "Bugün aranacaklar",
+  kapali: "Kapalı takipler",
+};
+
+export default function HastaTakipPage() {
+  return (
+    <Suspense fallback={<div className="py-20" aria-hidden="true" />}>
+      <HastaTakipContent />
+    </Suspense>
   );
 }

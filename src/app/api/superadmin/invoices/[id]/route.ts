@@ -2,6 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { invalidateInstitutionCache, requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
 import { syncInstitutionPaymentGate } from "@/lib/billing";
+import { isValidDateKey, turkeyDateKey, turkeyLocalDateTimeToUtc } from "@/lib/tz";
+
+const STATUS_LABEL: Record<string, string> = {
+  PENDING: "Bekliyor",
+  OVERDUE: "Gecikti",
+  PAID: "Ödendi",
+  CANCELLED: "İptal edildi",
+};
+
+function cleanText(value: unknown, max: number): string {
+  return typeof value === "string" ? value.trim().replace(/\s+/g, " ").slice(0, max) : "";
+}
 
 export async function PATCH(request: NextRequest, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -22,7 +34,27 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
     return NextResponse.json({ message: "Geçersiz fatura durumu" }, { status: 400 });
   }
 
-  const existing = await prisma.invoice.findUnique({ where: { id: params.id }, select: { status: true, amount: true, institutionId: true } });
+  // Tahsilat tarihi isteğe bağlıdır (varsayılan: şimdi). Geçmiş bir gün
+  // seçilirse o günün öğlesi (Türkiye saati) yazılır; gelecekteki tarih kabul
+  // edilmez. Not ve iptal nedeni yalnız denetim kaydına yazılır.
+  let paidAt = new Date();
+  if (body.status === "PAID" && body.paidDate !== undefined && body.paidDate !== null && body.paidDate !== "") {
+    if (typeof body.paidDate !== "string" || !isValidDateKey(body.paidDate)) {
+      return NextResponse.json({ message: "Geçerli bir ödeme tarihi girin" }, { status: 400 });
+    }
+    const today = turkeyDateKey();
+    if (body.paidDate > today) {
+      return NextResponse.json({ message: "Ödeme tarihi bugünden ileri olamaz" }, { status: 400 });
+    }
+    if (body.paidDate !== today) paidAt = turkeyLocalDateTimeToUtc(body.paidDate, "12:00");
+  }
+  const note = cleanText(body.note, 300);
+  const reason = cleanText(body.reason, 300);
+
+  const existing = await prisma.invoice.findUnique({
+    where: { id: params.id },
+    select: { status: true, amount: true, institutionId: true, invoiceNo: true, institution: { select: { name: true } } },
+  });
   if (!existing) {
     return NextResponse.json({ message: "Fatura bulunamadı" }, { status: 404 });
   }
@@ -37,7 +69,12 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
     CANCELLED: new Set(),
   };
   if (!allowedTransitions[existing.status]?.has(body.status)) {
-    return NextResponse.json({ message: "Bu fatura durum geçişine izin verilmiyor" }, { status: 409 });
+    const message = existing.status === "PAID"
+      ? "Bu fatura zaten ödendi olarak kayıtlı; durumu değiştirilemez."
+      : existing.status === "CANCELLED"
+        ? "Bu fatura iptal edilmiş; durumu değiştirilemez."
+        : "Bu fatura durum geçişine izin verilmiyor";
+    return NextResponse.json({ message }, { status: 409 });
   }
 
   // Fatura durumu güncellemesi ile kurumun paymentGraceUntil senkronu TEK
@@ -52,7 +89,7 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
       where: { id: params.id, status: existing.status },
       data: {
         status: body.status,
-        paidAt: body.status === "PAID" ? new Date() : null,
+        paidAt: body.status === "PAID" ? paidAt : null,
       },
     });
     if (changed.count !== 1) return null;
@@ -76,13 +113,17 @@ export async function PATCH(request: NextRequest, props: { params: Promise<{ id:
   invalidateInstitutionCache(invoice.institutionId);
 
   // Bir faturanın ödendi/iptal olarak işaretlenmesi elle yapılan, gerçek
-  // ödeme doğrulaması olmayan bir işlemdir ve önceden hiçbir denetim
-  // kaydına yazılmıyordu (bkz. denetim raporu — fatura oluşturma zaten
-  // loglanıyordu ama durum değişikliği loglanmıyordu).
+  // ödeme doğrulaması olmayan bir işlemdir ve denetim kaydına yazılır.
+  // Kayıtta ham kimlik yerine klinik adı ve fatura numarası bulunur.
+  const extra = [
+    invoice.status === "PAID" ? `ödeme tarihi ${turkeyDateKey(paidAt)}` : "",
+    note ? `not: ${note}` : "",
+    reason ? `neden: ${reason}` : "",
+  ].filter(Boolean).join(" · ");
   await writeAudit(
     auth.user.id,
     "SUPERADMIN_INVOICE_STATUS_UPDATE",
-    `Fatura durumu değişti: ${existing.status} → ${invoice.status} (${Number(existing.amount)} TL, kurum: ${existing.institutionId})`,
+    `${existing.institution.name} / ${existing.invoiceNo}: ${STATUS_LABEL[existing.status] || existing.status} → ${STATUS_LABEL[invoice.status] || invoice.status} (${Number(existing.amount).toLocaleString("tr-TR")} TL)${extra ? ` — ${extra}` : ""}`,
   );
 
   return NextResponse.json(invoice);

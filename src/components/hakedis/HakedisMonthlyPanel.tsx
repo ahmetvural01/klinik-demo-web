@@ -1,19 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { FileText, Wallet } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
+import { ListTable, EmptyValue, type ListTableColumn } from "@/components/ui/ListTable";
 import { LoadErrorState } from "@/components/ui/LoadErrorState";
-import { showToastSafe } from "@/lib/toast-client";
-
-const MONEY = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 2 });
-const fmt = (n: number | string | null | undefined) => MONEY.format(Number(n) || 0);
-const fmtDate = (d: string) => { try { return new Date(d).toLocaleDateString("tr-TR"); } catch { return d; } };
-const AY_ADLARI = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"];
-const METHOD_LABELS: Record<string, string> = {
-  NAKIT: "Nakit", KREDI_KARTI: "Kredi Kartı", HAVALE: "Havale/EFT", MAIL_ORDER: "Mail Order", DIGER: "Diğer",
-};
-
-const showToast = (type: "success" | "error", message: string) => showToastSafe({ type, message });
+import { Badge } from "@/components/ui/Badge";
+import { Button, IconButton } from "@/components/ui/Button";
+import { downloadCsv } from "@/lib/csv-export";
+import { ExportMenu } from "@/components/muhasebe/ExportMenu";
+import { methodLabel, money, monthName, shortDate, todayKey } from "@/components/muhasebe/muhasebe-utils";
 
 type HakedisMonth = { year: number; month: number; hakedilen: number; odenen: number; kalan: number };
 
@@ -29,29 +25,42 @@ type HakedisDetail = {
   payoutExpenses: { id: string; tarih: string; tutar: number; aciklama: string | null; yontem: string }[];
 };
 
-const escapeCell = (value: unknown) => String(value ?? "")
-  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const monthKey = (year: number, month: number) => `${year}-${String(month).padStart(2, "0")}`;
 
-const hakedisBreakdownRows = (d: HakedisDetail): (string | number)[][] => [
-  ["Toplam Ciro (Muayene/Tedavi, KDV dahil tutar)", fmt(d.breakdown.ciro)],
-  [`Kredi Kartı Tahsilatı (KK masrafı %${d.rates.kkYuzde} üzerinden hesaplanır)`, fmt(d.breakdown.kk)],
-  [`KK Masrafı (Kredi Kartı Tahsilatı × %${d.rates.kkYuzde})`, "-" + fmt(d.breakdown.kkMasraf)],
-  [`Genel Gider Payı (Ciro × %${d.rates.genelYuzde})`, "-" + fmt(d.breakdown.genelMasraf)],
-  ["Laboratuvar Gideri", "-" + fmt(d.breakdown.labCost)],
-  ["Toplam Gider", "-" + fmt(d.breakdown.toplamGider)],
-  ["Brüt Kâr (Ciro - Toplam Gider)", fmt(d.breakdown.brut)],
-  [`Hakediş (Brüt Kâr × %${d.rates.maasYuzde})`, fmt(d.breakdown.hakedilen)],
+/** Hesap dökümü satırları: ekranda, Excel'de ve PDF'te aynı sözcükler. */
+const breakdownRows = (d: HakedisDetail): [string, string][] => [
+  ["Tedavi tutarı (üretim)", money(d.breakdown.ciro)],
+  [`Kredi kartıyla alınan tahsilat`, money(d.breakdown.kk)],
+  [`Kredi kartı komisyonu (%${d.rates.kkYuzde})`, `−${money(d.breakdown.kkMasraf)}`],
+  [`Genel gider payı (tedavi tutarının %${d.rates.genelYuzde}'i)`, `−${money(d.breakdown.genelMasraf)}`],
+  ["Laboratuvar gideri", `−${money(d.breakdown.labCost)}`],
+  ["Toplam kesinti", `−${money(d.breakdown.toplamGider)}`],
+  ["Kesintiden sonra kalan", money(d.breakdown.brut)],
+  [`Doktor payı — hakediş (%${d.rates.maasYuzde})`, money(d.breakdown.hakedilen)],
 ];
+
+/** Ay satırının durumu: kim kime ne borçlu, sade sözcükle. */
+function monthStatus(row: HakedisMonth, isCurrent: boolean) {
+  if (isCurrent) return { label: "Ay sürüyor", tone: "info" as const, hint: "Ay kapanınca ödenebilir." };
+  if (row.kalan > 0.5) return { label: "Ödenecek", tone: "warning" as const, hint: "" };
+  if (row.odenen > Math.max(row.hakedilen, 0) + 0.5) return { label: "Fazla ödendi", tone: "critical" as const, hint: "Bu ay için hakedişten fazla ödeme yapılmış." };
+  if (row.hakedilen < -0.5) return { label: "Eksi hakediş", tone: "neutral" as const, hint: "Laboratuvar gideri bu ayın doktor payını aştı." };
+  return { label: "Ödendi", tone: "success" as const, hint: "" };
+}
 
 export interface HakedisMonthlyPanelProps {
   doctorId: string;
-  /** Muhasebe rolü için "Öde" butonu gösterilsin mi? Doktorun kendi görünümünde false. */
+  /** "Öde" düğmesi gösterilsin mi? Doktorun kendi görünümünde false. */
   canPay?: boolean;
   onPay?: (doctorId: string, year: number, month: number, kalan: number) => void;
-  /** Bir "Öde" işlemi sonrası veya dışarıdan tetiklenen yenilemede artan sayaç. */
+  /** Bir ödeme sonrası veya dışarıdan tetiklenen yenilemede artan sayaç. */
   refreshToken?: number;
 }
 
+/**
+ * Doktorun son 12 aylık hakediş dökümü — Muhasebe > Hakediş ile doktorun kendi
+ * "Hakedişim" ekranı aynı hesabı (tek kaynak: /api/hakedis) gösterir.
+ */
 export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshToken }: HakedisMonthlyPanelProps) {
   const [months, setMonths] = useState<HakedisMonth[]>([]);
   const [loading, setLoading] = useState(false);
@@ -61,15 +70,22 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
   const [detailOpen, setDetailOpen] = useState(false);
   const [detail, setDetail] = useState<HakedisDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
+  const [detailTarget, setDetailTarget] = useState<{ year: number; month: number } | null>(null);
 
   useEffect(() => {
     if (!doctorId) { setMonths([]); return; }
     let cancelled = false;
     setLoading(true);
     setLoadError("");
-    fetch(`/api/hakedis?doctorId=${doctorId}&months=12`, { cache: "no-store" })
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then(data => { if (!cancelled) setMonths(data.months || []); })
+    fetch(`/api/hakedis?doctorId=${encodeURIComponent(doctorId)}&months=12`, { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : Promise.reject()))
+      .then((data) => {
+        if (cancelled) return;
+        // En yeni ay üstte: kullanıcı önce güncel durumu görür.
+        const list: HakedisMonth[] = Array.isArray(data?.months) ? data.months : [];
+        setMonths([...list].sort((a, b) => b.year * 12 + b.month - (a.year * 12 + a.month)));
+      })
       .catch(() => {
         if (!cancelled) {
           setMonths([]);
@@ -81,53 +97,38 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
   }, [doctorId, refreshToken, reloadKey]);
 
   const openDetail = async (year: number, month: number) => {
+    setDetailTarget({ year, month });
     setDetailOpen(true);
     setDetailLoading(true);
+    setDetailError("");
     setDetail(null);
-    const r = await fetch(`/api/hakedis/detay?doctorId=${doctorId}&year=${year}&month=${month}`, { cache: "no-store" }).catch(() => null);
-    if (r?.ok) setDetail(await r.json());
-    else showToast("error", "Hakediş detayı yüklenemedi");
+    const response = await fetch(`/api/hakedis/detay?doctorId=${encodeURIComponent(doctorId)}&year=${year}&month=${month}`, { cache: "no-store" }).catch(() => null);
+    if (response?.ok) setDetail(await response.json());
+    else setDetailError("Hakediş detayı yüklenemedi.");
     setDetailLoading(false);
   };
 
+  const currentKey = todayKey().slice(0, 7);
+  const isCurrent = (row: HakedisMonth) => monthKey(row.year, row.month) === currentKey;
+  const payable = months.filter((row) => !isCurrent(row) && row.kalan > 0.5);
+  const totalPayable = payable.reduce((sum, row) => sum + row.kalan, 0);
+  const current = months.find(isCurrent);
+
   const detailFileName = detail
-    ? `hakedis-${detail.doctor.fullName.replace(/\s+/g, "-")}-${detail.year}-${String(detail.month).padStart(2, "0")}`
+    ? `hakedis-${detail.doctor.fullName.replace(/\s+/g, "-")}-${monthKey(detail.year, detail.month)}`
     : "hakedis-detay";
 
   const exportExcel = () => {
     if (!detail) return;
     const d = detail;
-    const section = (title: string, headers: string[], rows: (string | number)[][]) => `
-      <p style="font-weight:700;font-size:13pt;margin:16px 0 6px">${escapeCell(title)}</p>
-      <table><thead><tr>${headers.map(h => `<th>${escapeCell(h)}</th>`).join("")}</tr></thead>
-      <tbody>${rows.length === 0
-        ? `<tr><td colspan="${headers.length}">Kayıt yok</td></tr>`
-        : rows.map(row => `<tr>${row.map((c, i) => `<td class="${i === row.length - 1 ? "amount" : ""}">${escapeCell(c)}</td>`).join("")}</tr>`).join("")
-      }</tbody></table>`;
-    const html = `
-      <html><head><meta charset="UTF-8" />
-      <style>
-        table{border-collapse:collapse;font-family:Arial,sans-serif;font-size:10pt;width:100%;margin-bottom:8px}
-        th{background:#111827;color:#fff;text-align:left;padding:6px;border:1px solid #d1d5db}
-        td{padding:6px;border:1px solid #d1d5db;mso-number-format:"\\@";}
-        .amount{text-align:right;font-weight:700}
-        .title{font-size:16pt;font-weight:700}
-        .meta{color:#475569;margin-bottom:10px}
-      </style></head><body>
-      <div class="title">Hakediş Detayı — ${escapeCell(d.doctor.fullName)}</div>
-      <div class="meta">${AY_ADLARI[d.month - 1]} ${d.year} · Hakedilen: ${fmt(d.summary.hakedilen)} · Ödenen: ${fmt(d.summary.odenen)} · Kalan: ${fmt(d.summary.kalan)}</div>
-      ${section("Hakediş Hesaplama Dökümü", ["Kalem", "Tutar"], hakedisBreakdownRows(d))}
-      ${section("Muayeneler / Tedaviler", ["Tarih", "Hasta", "Tedavi", "Diş", "Tutar"], d.examinations.map(e => [fmtDate(e.tarih), e.hasta, e.tedavi, e.dis || "-", fmt(e.tutar)]))}
-      ${section("Hasta Ödemeleri", ["Tarih", "Hasta", "Yöntem", "Tutar"], d.patientPayments.map(p => [fmtDate(p.tarih), p.hasta, METHOD_LABELS[p.yontem] || p.yontem, fmt(p.tutar)]))}
-      ${section("Laboratuvar Faturaları", ["Tarih", "Lab", "Kalem", "Tutar"], d.labInvoices.map(i => [fmtDate(i.tarih), i.lab, i.kalem, fmt(i.tutar)]))}
-      ${section("Doktora Yapılan Hakediş Ödemeleri", ["Tarih", "Açıklama", "Yöntem", "Tutar"], d.payoutExpenses.map(p => [fmtDate(p.tarih), p.aciklama || "-", METHOD_LABELS[p.yontem] || p.yontem, fmt(p.tutar)]))}
-      </body></html>`;
-    const blob = new Blob(["﻿" + html], { type: "application/vnd.ms-excel;charset=utf-8" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = `${detailFileName}.xls`;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    const rows: Record<string, string>[] = [
+      ...breakdownRows(d).map(([label, value]) => ({ Bölüm: "Hesap dökümü", Tarih: "", Açıklama: label, Yöntem: "", Tutar: value })),
+      ...d.examinations.map((e) => ({ Bölüm: "Tedaviler", Tarih: shortDate(e.tarih), Açıklama: `${e.hasta} — ${e.tedavi}${e.dis ? ` (diş ${e.dis})` : ""}`, Yöntem: "", Tutar: money(e.tutar) })),
+      ...d.patientPayments.map((p) => ({ Bölüm: "Hasta tahsilatları", Tarih: shortDate(p.tarih), Açıklama: p.hasta, Yöntem: methodLabel(p.yontem), Tutar: money(p.tutar) })),
+      ...d.labInvoices.map((i) => ({ Bölüm: "Laboratuvar faturaları", Tarih: shortDate(i.tarih), Açıklama: `${i.lab} — ${i.kalem}`, Yöntem: "", Tutar: money(i.tutar) })),
+      ...d.payoutExpenses.map((p) => ({ Bölüm: "Doktora yapılan ödemeler", Tarih: shortDate(p.tarih), Açıklama: p.aciklama || "", Yöntem: methodLabel(p.yontem), Tutar: money(p.tutar) })),
+    ];
+    downloadCsv(`${detailFileName}.csv`, rows);
   };
 
   const exportPdf = async () => {
@@ -135,240 +136,202 @@ export function HakedisMonthlyPanel({ doctorId, canPay = false, onPay, refreshTo
     const { addPdfSection, addPdfTitle, createPdfDoc } = await import("@/lib/pdf-export");
     const d = detail;
     const doc = createPdfDoc("l");
-    addPdfTitle(doc, `Hakediş Detayı — ${d.doctor.fullName}`,
-      `${AY_ADLARI[d.month - 1]} ${d.year} · Hakedilen: ${fmt(d.summary.hakedilen)} · Ödenen: ${fmt(d.summary.odenen)} · Kalan: ${fmt(d.summary.kalan)}`);
+    addPdfTitle(doc, `Hakediş — ${d.doctor.fullName}`,
+      `${monthName(d.year, d.month)} · Hakediş: ${money(d.summary.hakedilen)} · Ödenen: ${money(d.summary.odenen)} · Kalan: ${money(d.summary.kalan)}`);
     let y = 28;
-    y = addPdfSection(doc, y, "Dönem Özeti", ["Kalem", "Tutar"], [
-      ["Toplam hakediş", fmt(d.summary.hakedilen)],
-      ["Ödenen", fmt(d.summary.odenen)],
-      ["Kalan", fmt(d.summary.kalan)],
-      ["Muayene / tedavi kaydı", d.examinations.length],
-      ["Hasta ödeme kaydı", d.patientPayments.length],
-      ["Laboratuvar faturası", d.labInvoices.length],
-    ]);
-    y = addPdfSection(doc, y, "Hakediş Hesaplama Dökümü", ["Kalem", "Tutar"], hakedisBreakdownRows(d));
-    y = addPdfSection(doc, y, "Muayeneler / Tedaviler", ["Tarih", "Hasta", "Tedavi", "Diş", "Tutar"],
-      d.examinations.map(e => [fmtDate(e.tarih), e.hasta, e.tedavi, e.dis || "-", fmt(e.tutar)]));
-    y = addPdfSection(doc, y, "Hasta Ödemeleri", ["Tarih", "Hasta", "Yöntem", "Tutar"],
-      d.patientPayments.map(p => [fmtDate(p.tarih), p.hasta, METHOD_LABELS[p.yontem] || p.yontem, fmt(p.tutar)]));
-    y = addPdfSection(doc, y, "Laboratuvar Faturaları", ["Tarih", "Lab", "Kalem", "Tutar"],
-      d.labInvoices.map(i => [fmtDate(i.tarih), i.lab, i.kalem, fmt(i.tutar)]));
-    addPdfSection(doc, y, "Doktora Yapılan Hakediş Ödemeleri", ["Tarih", "Açıklama", "Yöntem", "Tutar"],
-      d.payoutExpenses.map(p => [fmtDate(p.tarih), p.aciklama || "-", METHOD_LABELS[p.yontem] || p.yontem, fmt(p.tutar)]));
+    y = addPdfSection(doc, y, "Hesap dökümü", ["Kalem", "Tutar"], breakdownRows(d));
+    y = addPdfSection(doc, y, "Tedaviler", ["Tarih", "Hasta", "Tedavi", "Diş", "Tutar"],
+      d.examinations.map((e) => [shortDate(e.tarih), e.hasta, e.tedavi, e.dis || "", money(e.tutar)]));
+    y = addPdfSection(doc, y, "Hasta tahsilatları", ["Tarih", "Hasta", "Yöntem", "Tutar"],
+      d.patientPayments.map((p) => [shortDate(p.tarih), p.hasta, methodLabel(p.yontem), money(p.tutar)]));
+    y = addPdfSection(doc, y, "Laboratuvar faturaları", ["Tarih", "Laboratuvar", "Kalem", "Tutar"],
+      d.labInvoices.map((i) => [shortDate(i.tarih), i.lab, i.kalem, money(i.tutar)]));
+    addPdfSection(doc, y, "Doktora yapılan ödemeler", ["Tarih", "Açıklama", "Yöntem", "Tutar"],
+      d.payoutExpenses.map((p) => [shortDate(p.tarih), p.aciklama || "", methodLabel(p.yontem), money(p.tutar)]));
     doc.save(`${detailFileName}.pdf`);
   };
 
-  const totalKalan = months.reduce((s, m) => s + m.kalan, 0);
-  const now = new Date();
+  const pay = (row: HakedisMonth) => {
+    if (!onPay) return;
+    onPay(doctorId, row.year, row.month, row.kalan);
+  };
+
+  const statusBadge = (row: HakedisMonth) => {
+    const status = monthStatus(row, isCurrent(row));
+    return <Badge tone={status.tone} title={status.hint || undefined}>{status.label}</Badge>;
+  };
+
+  const rowActions = (row: HakedisMonth) => (
+    <div className="flex items-center justify-end gap-1.5">
+      <IconButton icon={FileText} title={`${monthName(row.year, row.month)} dökümünü aç`} size="sm" onClick={() => void openDetail(row.year, row.month)} />
+      {canPay && onPay && !isCurrent(row) && row.kalan > 0.5 && (
+        <Button size="sm" variant="secondary" icon={Wallet} onClick={() => pay(row)}>Öde</Button>
+      )}
+    </div>
+  );
+
+  const columns: ListTableColumn<HakedisMonth>[] = [
+    {
+      key: "ay",
+      header: "Ay",
+      render: (row) => <span className="font-semibold text-slate-900">{monthName(row.year, row.month)}</span>,
+    },
+    { key: "hakedilen", header: "Hakediş", align: "right", render: (row) => <span className={`tabular-nums ${row.hakedilen < 0 ? "text-red-700" : "text-slate-700"}`}>{money(row.hakedilen)}</span> },
+    { key: "odenen", header: "Ödenen", align: "right", render: (row) => (row.odenen > 0 ? <span className="tabular-nums text-slate-700">{money(row.odenen)}</span> : <EmptyValue />) },
+    {
+      key: "kalan",
+      header: "Kalan",
+      align: "right",
+      render: (row) => (isCurrent(row)
+        ? <span className="text-xs text-slate-400">Ay kapanınca</span>
+        : <span className={`font-bold tabular-nums ${row.kalan > 0.5 ? "text-slate-900" : "text-slate-500"}`}>{money(row.kalan)}</span>),
+    },
+    { key: "durum", header: "Durum", render: statusBadge },
+    { key: "islem", header: "", align: "right", render: rowActions },
+  ];
+
+  const summary = months.length > 0 ? (
+    <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 border-b border-slate-100 px-4 py-3 text-sm">
+      <span className="text-slate-500">
+        Ödenecek{" "}
+        <b className={`tabular-nums ${totalPayable > 0.5 ? "text-slate-900" : "text-slate-500"}`}>{money(totalPayable)}</b>
+        {payable.length > 0 && <span className="ml-1 text-xs text-slate-400">({payable.length} kapanmış ay)</span>}
+      </span>
+      {current && (
+        <span className="text-slate-500">
+          Bu ay biriken <b className="tabular-nums text-slate-700">{money(current.hakedilen)}</b>
+          <span className="ml-1 text-xs text-slate-400">(ay kapanınca ödenir)</span>
+        </span>
+      )}
+    </div>
+  ) : null;
+
+  const detailSections = detail ? [
+    {
+      title: `Tedaviler (${detail.examinations.length})`,
+      rows: detail.examinations.map((e) => ({ id: e.id, tarih: e.tarih, ad: e.hasta, aciklama: [e.tedavi, e.dis ? `diş ${e.dis}` : ""].filter(Boolean).join(" · "), yontem: "", tutar: e.tutar })),
+      tone: "text-slate-900",
+    },
+    {
+      title: `Hasta tahsilatları (${detail.patientPayments.length})`,
+      rows: detail.patientPayments.map((p) => ({ id: p.id, tarih: p.tarih, ad: p.hasta, aciklama: "", yontem: methodLabel(p.yontem), tutar: p.tutar })),
+      tone: "text-emerald-700",
+    },
+    {
+      title: `Laboratuvar faturaları (${detail.labInvoices.length})`,
+      rows: detail.labInvoices.map((i) => ({ id: i.id, tarih: i.tarih, ad: i.lab, aciklama: i.kalem, yontem: "", tutar: i.tutar })),
+      tone: "text-red-700",
+    },
+    {
+      title: `Doktora yapılan ödemeler (${detail.payoutExpenses.length})`,
+      rows: detail.payoutExpenses.map((p) => ({ id: p.id, tarih: p.tarih, ad: "", aciklama: p.aciklama || "", yontem: methodLabel(p.yontem), tutar: p.tutar })),
+      tone: "text-slate-900",
+    },
+  ] : [];
+
+  type DetailRow = { id: string; tarih: string; ad: string; aciklama: string; yontem: string; tutar: number };
+  const detailColumns = (tone: string): ListTableColumn<DetailRow>[] => [
+    { key: "tarih", header: "Tarih", cellClassName: "whitespace-nowrap text-sm text-slate-600", render: (row) => shortDate(row.tarih) },
+    {
+      key: "ad",
+      header: "Kayıt",
+      render: (row) => (
+        <div className="min-w-0">
+          {row.ad ? <p className="text-sm font-semibold text-slate-800">{row.ad}</p> : null}
+          {row.aciklama ? <p className="text-xs text-slate-500">{row.aciklama}</p> : null}
+          {!row.ad && !row.aciklama && <EmptyValue />}
+        </div>
+      ),
+    },
+    { key: "yontem", header: "Yöntem", cellClassName: "text-sm text-slate-600", render: (row) => row.yontem || <EmptyValue /> },
+    { key: "tutar", header: "Tutar", align: "right", render: (row) => <span className={`font-semibold tabular-nums ${tone}`}>{money(row.tutar)}</span> },
+  ];
 
   return (
     <div className="space-y-4">
-      <div className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 px-5 py-4">
-          <div>
-            <h3 className="text-sm font-black text-slate-900">Aylık Hakediş Dökümü (son 12 ay)</h3>
-            <p className="mt-0.5 text-xs text-slate-500">Hakedilen: o ayki cirodan hesaplanan hakediş tutarı. Ödenen: o aya etiketlenmiş gider kayıtlarının toplamı. Kalan: hakedilen − ödenen.</p>
-          </div>
-          {months.length > 0 && (
-            <span className={`rounded-full px-3 py-1 text-xs font-black ${totalKalan > 0.5 ? "bg-amber-100 text-amber-700" : totalKalan < -0.5 ? "bg-red-100 text-red-700" : "bg-slate-100 text-slate-500"}`}>
-              Toplam kalan: {fmt(totalKalan)}
-            </span>
+      {loadError ? (
+        <LoadErrorState message={loadError} onRetry={() => setReloadKey((value) => value + 1)} />
+      ) : (
+        <ListTable
+          columns={columns}
+          rows={months}
+          rowKey={(row) => monthKey(row.year, row.month)}
+          loading={loading}
+          header={summary}
+          emptyText="Bu doktor için son 12 ayda hakediş yok"
+          emptyDescription="Doktorun tedavi kaydı oluştukça aylık hakediş burada görünür."
+          rowClassName={(row) => (isCurrent(row) ? "bg-slate-50/60" : "")}
+          mobileCard={(row) => (
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-900">{monthName(row.year, row.month)}</p>
+                <p className="text-xs text-slate-500">Hakediş {money(row.hakedilen)} · Ödenen {money(row.odenen)}</p>
+                <div className="mt-1">{statusBadge(row)}</div>
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-1.5">
+                {!isCurrent(row) && <span className="font-bold tabular-nums text-slate-900">{money(row.kalan)}</span>}
+                {rowActions(row)}
+              </div>
+            </div>
           )}
-        </div>
-        {loading ? (
-          <div className="p-8 text-center text-sm text-slate-400">Yükleniyor…</div>
-        ) : loadError ? (
-          <LoadErrorState compact message={loadError} onRetry={() => setReloadKey((value) => value + 1)} />
-        ) : months.length === 0 ? (
-          <div className="p-8 text-center text-sm text-slate-400">Bu doktor için hakediş verisi yok</div>
-        ) : (
-          <table className="w-full text-xs">
-            <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-              <th className="px-4 py-3 text-left">Ay</th>
-              <th className="px-4 py-3 text-right">Hakedilen</th>
-              <th className="px-4 py-3 text-right">Ödenen</th>
-              <th className="px-4 py-3 text-right">Kalan</th>
-              <th className="px-4 py-3 text-right">İşlem</th>
-            </tr></thead>
-            <tbody className="divide-y divide-slate-100">
-              {months.map(m => {
-                const isCurrentMonth = m.year === now.getFullYear() && m.month === now.getMonth() + 1;
-                const isPayable = canPay && !isCurrentMonth && m.kalan > 0.5;
-                return (
-                  <tr key={`${m.year}-${m.month}`} className="hover:bg-slate-50">
-                    <td className="px-4 py-3 font-bold text-slate-800">
-                      {AY_ADLARI[m.month - 1]} {m.year}
-                      {isCurrentMonth && <span className="ml-1.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary">devam ediyor</span>}
-                    </td>
-                    <td className="px-4 py-3 text-right font-medium text-slate-700">{fmt(m.hakedilen)}</td>
-                    <td className="px-4 py-3 text-right font-medium text-emerald-700">{fmt(m.odenen)}</td>
-                    <td className={`px-4 py-3 text-right font-black ${isCurrentMonth ? "text-slate-400" : m.kalan > 0.5 ? "text-amber-700" : m.kalan < -0.5 ? "text-red-700" : "text-emerald-600"}`}>
-                      {isCurrentMonth ? "—" : (
-                        <span className="inline-flex items-center gap-1">
-                          {fmt(m.kalan)}
-                          {m.kalan > 0.5 && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold text-amber-700">borçlu</span>}
-                          {m.kalan < -0.5 && <span className="rounded-full bg-red-100 px-1.5 py-0.5 text-[9px] font-bold text-red-700">fazla ödendi</span>}
-                          {Math.abs(m.kalan) <= 0.5 && <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[9px] font-bold text-emerald-700">kapandı</span>}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button onClick={() => openDetail(m.year, m.month)} className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-bold text-slate-600 hover:bg-slate-50">Detay</button>
-                        {isPayable && onPay && (
-                          <button onClick={() => onPay(doctorId, m.year, m.month, m.kalan)} className="rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-[11px] font-bold text-primary hover:bg-primary/20">Öde</button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
+        />
+      )}
+      <p className="px-1 text-xs text-slate-500">
+        Hakediş: o ayın tedavilerinden doktorun payı (kart komisyonu, genel gider payı ve laboratuvar gideri düşüldükten sonra). Ödenen: o ay için doktora yapılan ödemeler.
+      </p>
 
       <Modal
         open={detailOpen}
         onClose={() => setDetailOpen(false)}
-        title={`Hakediş Detayı${detail ? ` — ${detail.doctor.fullName}` : ""}`}
-        description={detail ? `${AY_ADLARI[detail.month - 1]} ${detail.year}` : undefined}
+        title={detail ? `${detail.doctor.fullName} — ${monthName(detail.year, detail.month)}` : detailTarget ? `Hakediş — ${monthName(detailTarget.year, detailTarget.month)}` : "Hakediş dökümü"}
+        description={detail ? `Hakediş ${money(detail.summary.hakedilen)} · Ödenen ${money(detail.summary.odenen)} · Kalan ${money(detail.summary.kalan)}` : undefined}
         size="xl"
+        module="hakediş"
+        trackFormChanges={false}
+        footer={(
+          <>
+            <ExportMenu onExcel={exportExcel} onPdf={exportPdf} disabled={!detail} />
+            <Button variant="secondary" onClick={() => setDetailOpen(false)}>Kapat</Button>
+          </>
+        )}
       >
-        <div className="mb-4 flex flex-wrap items-center gap-2">
-          <button onClick={exportExcel} disabled={!detail} className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-xs font-bold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50">Excel</button>
-          <button onClick={exportPdf} disabled={!detail} className="rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">PDF</button>
-        </div>
-
         {detailLoading ? (
-          <div className="py-16 text-center text-sm text-slate-400">Yükleniyor…</div>
-        ) : !detail ? (
-          <div className="py-16 text-center text-sm text-slate-400">Detay yüklenemedi</div>
+          <p className="py-12 text-center text-sm text-slate-500">Döküm hazırlanıyor…</p>
+        ) : detailError || !detail ? (
+          <LoadErrorState message={detailError || "Hakediş detayı yüklenemedi."} onRetry={detailTarget ? () => void openDetail(detailTarget.year, detailTarget.month) : undefined} />
         ) : (
-          <div className="mt-4 space-y-5">
-            <div className="grid divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-              <div className="p-4">
-                <p className="text-xs font-bold uppercase text-slate-500">Hakedilen</p>
-                <p className="mt-1 text-xl font-black text-primary">{fmt(detail.summary.hakedilen)}</p>
-              </div>
-              <div className="p-4">
-                <p className="text-xs font-bold uppercase text-slate-500">Ödenen</p>
-                <p className="mt-1 text-xl font-black text-emerald-700">{fmt(detail.summary.odenen)}</p>
-              </div>
-              <div className="p-4">
-                <p className="text-xs font-bold uppercase text-slate-500">Kalan</p>
-                <p className="mt-1 text-xl font-black text-amber-700">{fmt(detail.summary.kalan)}</p>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="mb-2 text-sm font-black text-slate-900">Hakediş Hesaplama Dökümü</h3>
-              <div className="overflow-hidden rounded-xl border border-slate-100">
-                <table className="w-full text-xs">
-                  <tbody className="divide-y divide-slate-100">
-                    {hakedisBreakdownRows(detail).map(([label, value], i, arr) => (
-                      <tr key={label} className={i === arr.length - 1 ? "bg-primary/10" : ""}>
-                        <td className="px-4 py-2 text-slate-600">{label}</td>
-                        <td className={`px-4 py-2 text-right font-bold ${i === arr.length - 1 ? "text-primary" : "text-slate-800"}`}>{value}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="mb-2 text-sm font-black text-slate-900">Muayeneler / Tedaviler ({detail.examinations.length})</h3>
-              <div className="overflow-hidden rounded-xl border border-slate-100">
-                <table className="w-full text-xs">
-                  <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                    <th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Hasta</th><th className="px-3 py-2 text-left">Tedavi</th><th className="px-3 py-2 text-left">Diş</th><th className="px-3 py-2 text-right">Tutar</th>
-                  </tr></thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {detail.examinations.length === 0
-                      ? <tr><td colSpan={5} className="px-3 py-4 text-center text-slate-400">Kayıt yok</td></tr>
-                      : detail.examinations.map(e => (
-                        <tr key={e.id} className="hover:bg-slate-50">
-                          <td className="whitespace-nowrap px-3 py-2 text-slate-500">{fmtDate(e.tarih)}</td>
-                          <td className="px-3 py-2 font-medium text-slate-700">{e.hasta}</td>
-                          <td className="px-3 py-2 text-slate-600">{e.tedavi}</td>
-                          <td className="px-3 py-2 text-slate-500">{e.dis || "—"}</td>
-                          <td className="px-3 py-2 text-right font-bold text-slate-900">{fmt(e.tutar)}</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="mb-2 text-sm font-black text-slate-900">Hasta Ödemeleri ({detail.patientPayments.length})</h3>
-              <div className="overflow-hidden rounded-xl border border-slate-100">
-                <table className="w-full text-xs">
-                  <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                    <th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Hasta</th><th className="px-3 py-2 text-left">Yöntem</th><th className="px-3 py-2 text-right">Tutar</th>
-                  </tr></thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {detail.patientPayments.length === 0
-                      ? <tr><td colSpan={4} className="px-3 py-4 text-center text-slate-400">Kayıt yok</td></tr>
-                      : detail.patientPayments.map(p => (
-                        <tr key={p.id} className="hover:bg-slate-50">
-                          <td className="whitespace-nowrap px-3 py-2 text-slate-500">{fmtDate(p.tarih)}</td>
-                          <td className="px-3 py-2 font-medium text-slate-700">{p.hasta}</td>
-                          <td className="px-3 py-2 text-slate-600">{METHOD_LABELS[p.yontem] || p.yontem}</td>
-                          <td className="px-3 py-2 text-right font-bold text-emerald-700">{fmt(p.tutar)}</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="mb-2 text-sm font-black text-slate-900">Laboratuvar Faturaları ({detail.labInvoices.length})</h3>
-              <div className="overflow-hidden rounded-xl border border-slate-100">
-                <table className="w-full text-xs">
-                  <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                    <th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Lab</th><th className="px-3 py-2 text-left">Kalem</th><th className="px-3 py-2 text-right">Tutar</th>
-                  </tr></thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {detail.labInvoices.length === 0
-                      ? <tr><td colSpan={4} className="px-3 py-4 text-center text-slate-400">Kayıt yok</td></tr>
-                      : detail.labInvoices.map(i => (
-                        <tr key={i.id} className="hover:bg-slate-50">
-                          <td className="whitespace-nowrap px-3 py-2 text-slate-500">{fmtDate(i.tarih)}</td>
-                          <td className="px-3 py-2 font-medium text-slate-700">{i.lab}</td>
-                          <td className="px-3 py-2 text-slate-600">{i.kalem}</td>
-                          <td className="px-3 py-2 text-right font-bold text-red-700">{fmt(i.tutar)}</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div>
-              <h3 className="mb-2 text-sm font-black text-slate-900">Doktora Yapılan Hakediş Ödemeleri ({detail.payoutExpenses.length})</h3>
-              <div className="overflow-hidden rounded-xl border border-slate-100">
-                <table className="w-full text-xs">
-                  <thead><tr className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                    <th className="px-3 py-2 text-left">Tarih</th><th className="px-3 py-2 text-left">Açıklama</th><th className="px-3 py-2 text-left">Yöntem</th><th className="px-3 py-2 text-right">Tutar</th>
-                  </tr></thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {detail.payoutExpenses.length === 0
-                      ? <tr><td colSpan={4} className="px-3 py-4 text-center text-slate-400">Kayıt yok</td></tr>
-                      : detail.payoutExpenses.map(p => (
-                        <tr key={p.id} className="hover:bg-slate-50">
-                          <td className="whitespace-nowrap px-3 py-2 text-slate-500">{fmtDate(p.tarih)}</td>
-                          <td className="px-3 py-2 text-slate-600">{p.aciklama || "—"}</td>
-                          <td className="px-3 py-2 text-slate-600">{METHOD_LABELS[p.yontem] || p.yontem}</td>
-                          <td className="px-3 py-2 text-right font-bold text-primary">{fmt(p.tutar)}</td>
-                        </tr>
-                      ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+          <div className="space-y-5">
+            <section>
+              <h3 className="mb-2 text-sm font-bold text-slate-900">Hesap dökümü</h3>
+              <dl className="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200 bg-white text-sm">
+                {breakdownRows(detail).map(([label, value], index, list) => (
+                  <div key={label} className={`flex items-center justify-between gap-3 px-4 py-2 ${index === list.length - 1 ? "bg-primary/5 font-bold text-primary" : "text-slate-700"}`}>
+                    <dt>{label}</dt>
+                    <dd className="tabular-nums">{value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </section>
+            {detailSections.map((section) => (
+              <section key={section.title}>
+                <h3 className="mb-2 text-sm font-bold text-slate-900">{section.title}</h3>
+                <ListTable
+                  columns={detailColumns(section.tone)}
+                  rows={section.rows}
+                  rowKey={(row) => row.id}
+                  emptyText="Kayıt yok"
+                  mobileCard={(row) => (
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-slate-800">{row.ad || row.aciklama || "—"}</p>
+                        <p className="text-xs text-slate-500">{[shortDate(row.tarih), row.ad ? row.aciklama : "", row.yontem].filter(Boolean).join(" · ")}</p>
+                      </div>
+                      <span className={`shrink-0 font-semibold tabular-nums ${section.tone}`}>{money(row.tutar)}</span>
+                    </div>
+                  )}
+                />
+              </section>
+            ))}
           </div>
         )}
       </Modal>

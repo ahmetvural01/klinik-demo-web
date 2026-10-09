@@ -2,6 +2,12 @@ import { isIP } from "net";
 import { prisma } from "@/lib/prisma";
 import { decryptField, encryptField } from "@/lib/field-crypto";
 import { getMetaWhatsappReadiness } from "@/lib/meta-whatsapp";
+import {
+  WHATSAPP_WEB_PROVIDER_CODE,
+  WHATSAPP_WEB_PROVIDER_TYPE,
+  WHATSAPP_WEB_RAW_PREFIX,
+} from "@/lib/whatsapp-web/types";
+import { canMessageOnWhatsapp } from "@/lib/whatsapp-consent";
 
 export type WhatsappSendResult = {
   success: boolean;
@@ -365,6 +371,56 @@ async function sendWithCustomProvider(
   }
 }
 
+/**
+ * Kliniğin kendi telefonundaki WhatsApp'ı (bağlı cihaz, QR/kod ile) kullanır.
+ * Şablon yoktur, düz metin gider (24 saat kuralı bu yöntemde yoktur).
+ * Sohbet kaydı (WhatsappMessage) YAZILMAZ: panelde sohbet ekranı yok ve
+ * içerik saklanmaz; gönderim kaydı dispatch tarafındaki SmsDispatch'tir
+ * (providerMessageId = WhatsApp mesaj kimliği). Baileys yalnız bu yol
+ * kullanılırken dinamik olarak yüklenir.
+ */
+async function sendWithWhatsappWebProvider(
+  provider: { id: string; institutionId: string | null; code: string },
+  phone: string,
+  message: string,
+  options: WhatsappSendOptions,
+): Promise<WhatsappSendResult> {
+  if (!provider.institutionId) {
+    return {
+      success: false,
+      deliveryCertainty: "REJECTED",
+      providerRaw: `${WHATSAPP_WEB_RAW_PREFIX}NO_INSTITUTION`,
+      error: "WhatsApp bağlantısı bir kliniğe bağlı değil.",
+      providerCode: provider.code,
+    };
+  }
+  const { sendText } = await import("@/lib/whatsapp-web");
+  const result = await sendText(provider.institutionId, phone, message, {
+    patientId: options.patientId,
+    appointmentId: options.appointmentId,
+  });
+  if (result.ok) {
+    await prisma.whatsappProviderConfig
+      .update({ where: { id: provider.id }, data: { lastSuccessfulSendAt: new Date() } })
+      .catch(() => undefined);
+    return {
+      success: true,
+      deliveryCertainty: "ACCEPTED",
+      providerMessageId: result.messageId,
+      providerRaw: `${WHATSAPP_WEB_RAW_PREFIX}ACCEPTED`,
+      providerCode: provider.code,
+    };
+  }
+  return {
+    success: false,
+    // Yalnız gönderimin sonucu belirsizse UNKNOWN: dispatch çift mesaj olmasın diye SMS'e düşmez.
+    deliveryCertainty: result.code === "SEND_UNCERTAIN" ? "UNKNOWN" : "REJECTED",
+    providerRaw: `${WHATSAPP_WEB_RAW_PREFIX}${result.code}`,
+    error: result.error,
+    providerCode: provider.code,
+  };
+}
+
 async function sendWithProvider(
   provider: ProviderConfig,
   phone: string,
@@ -373,6 +429,9 @@ async function sendWithProvider(
 ) {
   if (provider.code === "MOCK" || provider.providerType === "MOCK") {
     return sendWithMockProvider(provider, phone, message);
+  }
+  if (provider.providerType === WHATSAPP_WEB_PROVIDER_TYPE) {
+    return sendWithWhatsappWebProvider(provider, phone, message, options);
   }
   if (provider.providerType === "META_CLOUD") {
     return sendWithMetaProvider(provider, phone, message, options);
@@ -434,11 +493,11 @@ export async function sendWhatsapp(
       where: { id: options.patientId, institutionId: options.institutionId || undefined, archivedAt: null },
       select: { whatsappOptInAt: true, whatsappOptOutAt: true, homeBranchId: true },
     });
-    if (patient?.whatsappOptOutAt || !patient?.whatsappOptInAt) {
+    if (!patient || !canMessageOnWhatsapp(patient)) {
       return {
         success: false,
         providerRaw: "WHATSAPP_CONSENT_REQUIRED",
-        error: "Hastanın WhatsApp iletişim izni bulunmuyor.",
+        error: "Hasta WhatsApp'tan mesaj almak istemiyor.",
       };
     }
     patientBranchId = patient.homeBranchId;
@@ -452,8 +511,30 @@ export async function sendWhatsapp(
     };
   }
 
+  // 1) Kliniğin QR/kod ile bağladığı kendi numarası varsa ÖNCE o kullanılır.
+  // Bu yol Meta platform ayarı gerektirmez. Kesin başarısızlıkta (bağlı değil,
+  // numara WhatsApp'ta değil, günlük sınır, kısıtlama...) varsa Meta denenir,
+  // yoksa sonuç REJECTED döner ve dispatch kurala göre SMS'e düşer.
+  const webProvider = await prisma.whatsappProviderConfig.findFirst({
+    where: {
+      institutionId: options.institutionId,
+      code: WHATSAPP_WEB_PROVIDER_CODE,
+      providerType: WHATSAPP_WEB_PROVIDER_TYPE,
+      isActive: true,
+      connectionStatus: "CONNECTED",
+    },
+    select: { id: true, institutionId: true, code: true },
+  });
+  let webFailure: WhatsappSendResult | null = null;
+  if (webProvider) {
+    const webResult = await sendWithWhatsappWebProvider(webProvider, normalizedPhone, message, options);
+    if (webResult.success || webResult.deliveryCertainty === "UNKNOWN") return webResult;
+    webFailure = webResult;
+  }
+
+  // 2) Meta (resmi Cloud API) bağlantısı — platform hazırlık kontrolü yalnız bu yol için.
   if (!getMetaWhatsappReadiness().ready) {
-    return {
+    return webFailure ?? {
       success: false,
       providerRaw: "META_PLATFORM_NOT_READY",
       error: "WhatsApp bağlantı hizmeti henüz kullanıma hazır değil.",
@@ -474,7 +555,7 @@ export async function sendWhatsapp(
     orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
   });
   if (providers.length === 0) {
-    return {
+    return webFailure ?? {
       success: false,
       providerRaw: "NO_ACTIVE_PROVIDER",
       error: "Bu klinik için aktif bir WhatsApp sağlayıcısı tanımlı değil.",
@@ -488,14 +569,18 @@ export async function sendWhatsapp(
       }))?.branchId
     : null);
   if (!messageBranchId) {
-    return {
+    return webFailure ?? {
       success: false,
       providerRaw: "NO_MESSAGE_BRANCH",
       error: "WhatsApp mesajının şube kapsamı belirlenemedi.",
     };
   }
 
-  const errors: string[] = [];
+  // QR bağlantısının ham kodu (ör. WA_WEB_DAILY_LIMIT) birleşik sonuçta korunur;
+  // dispatch günlük sınır kuralını bu işarete göre uygular.
+  const errors: string[] = webFailure
+    ? [`${webFailure.providerCode || WHATSAPP_WEB_PROVIDER_CODE}: ${webFailure.providerRaw} (${webFailure.error || "başarısız"})`]
+    : [];
   for (const provider of providers) {
     const result = classifyDelivery(await sendWithProvider(provider, normalizedPhone, message, options));
     if (options.institutionId) {

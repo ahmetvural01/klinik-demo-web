@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { bumpRealtimeInstitution, requireAuth, writeAudit } from "@/lib/api";
 import { requireActiveBranch } from "@/lib/branch-context";
+import { LAB_ORDER_INCLUDE, closeOpenLabFollowUps, toPublicLabOrder } from "@/app/api/lab-orders/lab-order-api";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return NextResponse.json({ error: "Geçersiz istek gövdesi" }, { status: 400 });
   }
-  const { description, sentAt, sentNote } = body;
+  const { description, sentAt, sentNote, expectedAt } = body;
 
   if (typeof description !== "string" || !description.trim() || description.length > 180) return NextResponse.json({ error: "Gönderilen iş bilgisi zorunludur." }, { status: 400 });
   if (sentNote !== undefined && sentNote !== null && (typeof sentNote !== "string" || sentNote.length > 1000)) {
@@ -24,6 +25,16 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
   }
   if (sentAt !== undefined && sentAt !== null && (typeof sentAt !== "string" || Number.isNaN(new Date(sentAt).getTime()))) {
     return NextResponse.json({ error: "Gönderim tarihi geçersiz" }, { status: 400 });
+  }
+  // Beklenen dönüş: bu tarih geçince iş "Gecikiyor" görünür (önceden her iş
+  // türü için sabit 4 gün sayılıyordu; şemadaki alan hiç kullanılmıyordu).
+  if (expectedAt !== undefined && expectedAt !== null && expectedAt !== "" && (typeof expectedAt !== "string" || Number.isNaN(new Date(expectedAt).getTime()))) {
+    return NextResponse.json({ error: "Beklenen dönüş tarihi geçersiz" }, { status: 400 });
+  }
+  const sentDate = sentAt ? new Date(sentAt) : new Date();
+  const expectedDate = typeof expectedAt === "string" && expectedAt ? new Date(expectedAt) : null;
+  if (expectedDate && expectedDate.getTime() < new Date(sentDate.toISOString().slice(0, 10)).getTime()) {
+    return NextResponse.json({ error: "Beklenen dönüş tarihi gönderimden önce olamaz" }, { status: 400 });
   }
 
   const order = await (prisma as any).labOrder.findFirst({
@@ -34,9 +45,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     },
     select: { id: true, status: true },
   });
-  if (!order) return NextResponse.json({ error: "Sipariş bulunamadı" }, { status: 404 });
+  if (!order) return NextResponse.json({ error: "Laboratuvar işi bulunamadı" }, { status: 404 });
   if (order.status !== "DEVAM_EDIYOR") {
-    return NextResponse.json({ error: "Tamamlanmış veya iptal edilmiş siparişe yeni laboratuvar adımı eklenemez" }, { status: 400 });
+    return NextResponse.json({ error: "Hastaya takılmış veya iptal edilmiş işe yeni gönderim eklenemez" }, { status: 400 });
   }
 
   for (let attempt = 1; attempt <= 4; attempt += 1) {
@@ -50,6 +61,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         if (!currentOrder || currentOrder.status !== "DEVAM_EDIYOR") {
           throw new Error("LAB_ORDER_NOT_ACTIVE");
         }
+        // Aynı işte iki açık gönderim olmasın (önceki hiç "geldi" işaretlenmeden
+        // kalıyordu); çift tıklama da ikinci gönderimi açamaz.
+        const pending = await tx.labTrip.count({ where: { labOrderId: params.id, receivedAt: null } });
+        if (pending > 0) throw new Error("LAB_TRIP_PENDING");
         const last = await tx.labTrip.findFirst({
           where: { labOrderId: params.id },
           orderBy: { order: "desc" },
@@ -64,30 +79,29 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
             labOrderId: params.id,
             order: nextOrder,
             description: description.trim(),
-            sentAt: sentAt ? new Date(sentAt) : new Date(),
+            sentAt: sentDate,
+            expectedAt: expectedDate,
             sentNote: sentNote || null,
           },
         });
 
-        return tx.labOrder.findUnique({
-          where: { id: params.id },
-          include: {
-            invoices: { where: { status: "ACTIVE" }, orderBy: { issuedAt: "asc" } },
-            patient: { select: { id: true, fullName: true, phone: true } },
-            doctor: { select: { id: true, fullName: true } },
-            trips: { orderBy: { order: "asc" } },
-          },
-        });
+        // Prova yapıldı ve iş laboratuvara geri gitti: "hastayı prova için ara" kaydı kapanır.
+        await closeOpenLabFollowUps(tx, params.id, "Prova yapıldı; iş laboratuvara yeniden gönderildi.");
+
+        return tx.labOrder.findUnique({ where: { id: params.id }, include: LAB_ORDER_INCLUDE });
       });
 
       await writeAudit(auth.user.id, "LAB_TRIP_CREATE", `Laboratuvar gidiş adımı eklendi (${params.id})`);
       await bumpRealtimeInstitution(auth.user.institutionId || null);
-      return NextResponse.json(updatedOrder, { status: 201 });
+      return NextResponse.json(await toPublicLabOrder(updatedOrder, auth.user.role), { status: 201 });
     } catch (error: any) {
       // Unique(labOrderId, order) çakışırsa yeniden sıra hesaplayıp tekrar dene.
       if (error?.code === "P2002" && attempt < 4) continue;
+      if (error instanceof Error && error.message === "LAB_TRIP_PENDING") {
+        return NextResponse.json({ error: "Bu iş zaten laboratuvarda. Önce “Laboratuvardan geldi” kaydedin." }, { status: 409 });
+      }
       if (error instanceof Error && error.message === "LAB_ORDER_NOT_ACTIVE") {
-        return NextResponse.json({ error: "Tamamlanmış veya iptal edilmiş siparişe yeni laboratuvar adımı eklenemez" }, { status: 400 });
+        return NextResponse.json({ error: "Hastaya takılmış veya iptal edilmiş işe yeni gönderim eklenemez" }, { status: 400 });
       }
       throw error;
     }

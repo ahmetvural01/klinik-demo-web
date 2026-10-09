@@ -34,6 +34,8 @@ export const GET = withApiTiming("purchases", async function GET(req: NextReques
     const from = searchParams.get("from");
     const to = searchParams.get("to");
     const q = searchParams.get("q");
+    // ?receiptStatus=SIPARIS_VERILDI: teslimat bekleyen siparişler listesi.
+    const receiptStatus = searchParams.get("receiptStatus");
     if ((from && !isValidDateKey(from)) || (to && !isValidDateKey(to))) {
       return NextResponse.json({ message: "Geçersiz tarih aralığı" }, { status: 400 });
     }
@@ -47,6 +49,7 @@ export const GET = withApiTiming("purchases", async function GET(req: NextReques
       branchId: branch.branchId,
     };
     if (firmaId) where.firmaId = firmaId;
+    if (receiptStatus === "SIPARIS_VERILDI" || receiptStatus === "TESLIM_ALINDI") where.receiptStatus = receiptStatus;
     if (from || to) {
       where.tarih = {
         ...(from ? { gte: turkeyDayRangeUtc(from).start } : {}),
@@ -65,7 +68,7 @@ export const GET = withApiTiming("purchases", async function GET(req: NextReques
       include: {
         firma: { select: { id: true, name: true } },
         firmaIslem: { select: { tutar: true, dueDate: true } },
-        items: { where: { archivedAt: null }, select: { lineTotal: true } },
+        items: { where: { archivedAt: null }, select: { lineTotal: true, productName: true, quantity: true, unit: true, stockItemId: true } },
         _count: { select: { items: true } },
       },
       orderBy: { tarih: "desc" },
@@ -77,6 +80,13 @@ export const GET = withApiTiming("purchases", async function GET(req: NextReques
       const { items, ...summary } = publicPurchase;
       return {
         ...summary,
+        // Listede "ne sipariş edildi" görünsün diye kısa kalem özeti.
+        lines: items.map((item: any) => ({
+          productName: item.productName,
+          quantity: Number(item.quantity || 0),
+          unit: item.unit,
+          stockItemId: item.stockItemId,
+        })),
         total: Math.round(
           Number(
             purchase.firmaIslem?.tutar

@@ -133,7 +133,7 @@ async function countPurchaseTotalMismatches(institutionId?: string | null, branc
   });
 
   const records: ConsistencyRecordRef[] = mismatched.slice(0, 20).map((purchase) => ({
-    label: `${purchase.firma?.name || "Bilinmeyen firma"} — ${new Date(purchase.createdAt).toLocaleDateString("tr-TR")}`,
+    label: `${purchase.firma?.name || "Bilinmeyen firma"} — ${new Date(purchase.createdAt).toLocaleDateString("tr-TR", { timeZone: "Europe/Istanbul" })}`,
     href: purchase.firmaId ? `/firma-detay?id=${purchase.firmaId}` : "/firma",
   }));
 

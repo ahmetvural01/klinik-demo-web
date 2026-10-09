@@ -3,7 +3,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming } from "@/lib/api";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
-import { buildDataConsistencyReport } from "@/lib/data-consistency";
 import { turkeyDayRangeUtc, turkeyDateKey, turkeyTodayStartUtc } from "@/lib/tz";
 import { requireActiveBranch } from "@/lib/branch-context";
 
@@ -192,8 +191,14 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
     firmaByName[n] = (firmaByName[n] || 0) + Number(f.tutar);
   }
 
-  // ── Net Kasa (VBA: Gelir - Gider - Alım) ──────────────────────────────────
-  const netCash = totalRevenue - totalExpenses - totalFirmaAlim;
+  // ── Net nakit akışı: tahsilat − fiilen ödenen giderler ────────────────────
+  // Önceden "Net Kasa" = gelir − gider − firma ALIMI idi: firmaya yapılan ödeme
+  // zaten "Firma Ödemesi" gideri olarak giderlerde olduğu için aynı tedarikçi
+  // maliyeti iki kez düşülüyor, ödenmemiş alım faturası da kasadan çıkmış
+  // sayılıyordu. Firma alımları (fatura) artık ayrı bilgi satırıdır.
+  const netCash = totalRevenue - totalExpenses;
+  // Çekmecedeki nakit değişimi: nakit tahsilat − nakit ödenen giderler.
+  const cashExpenses = expenses.reduce((s: number, e: any) => s + ((e.yontem || "NAKIT") === "NAKIT" ? Number(e.tutar) : 0), 0);
 
   // ── KDV Özeti ────────────────────────────────────────────────────────────
   // Çıkan KDV (tahsil edilen): gelirden %10 KDV hesapla
@@ -202,6 +207,9 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
   // Girdi KDV (ödenen): giderlerin kdvOrani alanından
   let inputVAT = 0;
   for (const e of expenses) {
+    // Firma ödemesinden oluşan giderin KDV'si alım faturasında (firma işlemi) zaten
+    // sayılır; ödeme satırındaki KDV ikinci kez eklenmez.
+    if (e.sourceType === "FIRMA_ISLEM") continue;
     const rate = Number(e.kdvOrani || 0) / 100;
     if (rate > 0) inputVAT += Number(e.tutar) - Number(e.tutar) / (1 + rate);
   }
@@ -225,6 +233,8 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
       _sum: { amount: true },
       where: {
         status: "ACTIVE",
+        // Dönem tahsilatıyla aynı kapsam: hastasız eski hakediş ödemeleri gelir değildir.
+        patientId: { not: null },
         createdAt: { gte: yearStart, lte: yearEnd },
         ...(institutionId ? { institutionId } : {}),
         branchId: branch.branchId,
@@ -262,7 +272,9 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
     .filter(([patientId, total]) => total - (patientPaymentTotal[patientId] || 0) > 0.01)
     .length;
 
-  const [openLabCount, openFollowUpCount, consistency] = await Promise.all([
+  // Veri tutarlılığı denetimi (stok, lab bağlantıları vb.) Sistem Durumu ekranının işidir;
+  // rapor her açıldığında yeniden hesaplanıp rapor sekmesine uyarı rozeti eklemesin.
+  const [openLabCount, openFollowUpCount] = await Promise.all([
     (prisma as any).labOrder.count({
       where: {
         status: "DEVAM_EDIYOR",
@@ -276,17 +288,12 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
         ...(institutionId ? { patient: { institutionId, homeBranchId: branch.branchId } } : {}),
       },
     }),
-    buildDataConsistencyReport(institutionId, branch.branchId),
   ]);
 
+  // Not: önceden burada her zaman "Tamam" dönen bir "Kasa ve tahsilat defteri"
+  // kontrolü vardı (koşul totalRevenue >= 0); hiç tahsilat yokken bile "Tamam"
+  // dediği için kaldırıldı. Kasa özeti dayClose.cash* alanlarında.
   const dayCloseChecks = [
-    {
-      key: "cash-ledger",
-      label: "Kasa ve tahsilat defteri",
-      status: totalRevenue >= 0 ? "ok" : "critical",
-      detail: `Seçili dönemde ${payments.length} tahsilat, ${totalRevenue.toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} TL gelir kaydı var.`,
-      href: "/muhasebe",
-    },
     {
       key: "open-lab",
       label: "Açık laboratuvar işleri",
@@ -306,16 +313,7 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
       label: "Gecikmiş taksit",
       status: taksitler.length === 0 ? "ok" : "warning",
       detail: taksitler.length === 0 ? "Gecikmiş taksit yok." : `${taksitler.length} gecikmiş taksit var.`,
-      href: "/muhasebe?tab=alacak",
-    },
-    {
-      key: "data-consistency",
-      label: "Veri tutarlılığı",
-      status: consistency.summary.critical > 0 ? "critical" : consistency.summary.warning > 0 ? "warning" : "ok",
-      detail: consistency.summary.total === 0
-        ? "Kritik veri bağlantısı sorunu bulunmadı."
-        : `${consistency.summary.critical} kritik, ${consistency.summary.warning} uyarı, ${consistency.summary.info} bilgi kontrolü var.`,
-      href: "/sistem-izleme",
+      href: "/muhasebe?tab=taksit&durum=GECIKTI",
     },
   ];
 
@@ -368,11 +366,13 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
     labStatusSummary: labStatusMap,
     totalLabOrders: labOrders.length,
     overdueInstallments: taksitler.length,
-    consistency,
     dayClose: {
       income: totalRevenue,
-      expense: totalExpenses + totalFirmaAlim,
+      expense: totalExpenses,
       net: netCash,
+      cashIn: cashTotal,
+      cashOut: Math.round(cashExpenses * 100) / 100,
+      cashNet: Math.round((cashTotal - cashExpenses) * 100) / 100,
       cash: cashTotal,
       card: cardTotal,
       transfer: transferTotal,

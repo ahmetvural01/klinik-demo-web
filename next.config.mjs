@@ -12,7 +12,9 @@ const nextConfig = {
     },
     optimizePackageImports: ["lucide-react", "@radix-ui/react-icons"],
   },
-  serverExternalPackages: ["exceljs"],
+  // Baileys (WhatsApp QR bağlantısı) yalnız ESM ve çalışma anında Node ile
+  // yüklenmeli; paketlenirse WASM/protobuf dosyaları bozulur.
+  serverExternalPackages: ["exceljs", "@whiskeysockets/baileys"],
   poweredByHeader: false,
   compress: true,
   images: {

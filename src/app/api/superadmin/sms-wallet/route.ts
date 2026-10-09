@@ -31,11 +31,8 @@ export async function GET() {
 
   return NextResponse.json({
     wallet,
-    providerSync: { ok: false, message: "Senkronizasyon GET sırasında yapılmaz." },
     totals: {
       totalAssignedToClinics: institutions.reduce((sum, i) => sum + i.smsBalance, 0),
-      totalProviderBalance: wallet.availableBalance + institutions.reduce((sum, i) => sum + i.smsBalance, 0),
-      totalSystemSms: wallet.availableBalance + institutions.reduce((sum, i) => sum + i.smsBalance, 0),
       clinicCountWithSms: institutions.filter((i) => i.smsBalance > 0).length,
     },
     institutions,
@@ -68,7 +65,7 @@ export async function POST(request: NextRequest) {
   const note = (body.note || "").trim();
 
   if (!Number.isInteger(quantity) || quantity < 1 || quantity > 5000000) {
-    return NextResponse.json({ message: "Geçersiz SMS adedi" }, { status: 400 });
+    return NextResponse.json({ message: "SMS adedi 1 ile 5.000.000 arasında tam sayı olmalı" }, { status: 400 });
   }
 
   if (unitCost != null && (Number.isNaN(unitCost) || unitCost < 0 || unitCost > 100)) {
@@ -76,11 +73,11 @@ export async function POST(request: NextRequest) {
   }
 
   if (!provider) {
-    return NextResponse.json({ message: "Saglayici zorunludur" }, { status: 400 });
+    return NextResponse.json({ message: "Sağlayıcıyı seçin" }, { status: 400 });
   }
 
   if (!note || note.length < 3 || note.length > 500) {
-    return NextResponse.json({ message: "Not alani zorunlu (3-500 karakter)" }, { status: 400 });
+    return NextResponse.json({ message: "Not zorunlu (3-500 karakter): ör. sağlayıcı fatura veya sipariş no" }, { status: 400 });
   }
 
   const totalCost = unitCost == null ? null : Number((unitCost * quantity).toFixed(2));
@@ -114,7 +111,7 @@ export async function POST(request: NextRequest) {
   await writeAudit(
     auth.user.id,
     "PLATFORM_SMS_PURCHASE",
-    `Platforma ${quantity} SMS stok kaydı eklendi. Sağlayıcı: ${provider}`
+    `Platforma ${quantity.toLocaleString("tr-TR")} SMS stok eklendi. Sağlayıcı: ${provider}. Not: ${note.slice(0, 120)}`
   );
 
   return NextResponse.json({

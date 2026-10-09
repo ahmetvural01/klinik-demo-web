@@ -1,788 +1,531 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { ColumnDef } from "@tanstack/react-table";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Download, MinusCircle, Plus, RotateCcw, ShoppingCart } from "lucide-react";
 import { showToastSafe } from "@/lib/toast-client";
 import { confirmDialog } from "@/lib/confirm-client";
-import { useSlashFocus } from "@/lib/use-slash-focus";
-import { stripSystemTags } from "@/lib/format-text";
 import { downloadCsv } from "@/lib/csv-export";
-import JsBarcode from "jsbarcode";
-import { ProfessionalDataTable } from "@/components/ui/ProfessionalDataTable";
-import { Button } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
-import { Badge } from "@/components/ui/Badge";
-import { FormField } from "@/components/ui/FormField";
-import { Download, Plus, Printer, TriangleAlert, CalendarClock, PackageX, Wallet } from "lucide-react";
+import { formatCurrency } from "@/lib/format";
 import { PageHeader } from "@/components/ui/PageHeader";
-import { StatsCard } from "@/components/ui/Premium";
+import { Tabs, useTabParam } from "@/components/ui/Tabs";
+import { Toolbar, ActiveFilters } from "@/components/ui/Toolbar";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { Select } from "@/components/ui/Input";
+import { Button, IconButton } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { ListTable, EmptyValue, type ListSort, type ListTableColumn } from "@/components/ui/ListTable";
+import { DateText, Money, formatDateText } from "@/components/ui/Money";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
-import { CountUp } from "@/components/ui/CountUp";
-import { Spinner } from "@/components/ui/Spinner";
 import { usePermissions } from "@/components/auth/PermissionProvider";
-import { LoadErrorState } from "@/components/ui/LoadErrorState";
+import { StockItemFormModal } from "@/components/stock/StockItemFormModal";
+import { StockMovementModal } from "@/components/stock/StockMovementModal";
+import { StockItemDetailModal } from "@/components/stock/StockItemDetailModal";
+import { printBarcodeLabel } from "@/components/stock/barcode-print";
+import {
+  STOCK_CATEGORIES,
+  STOCK_STATUS_META,
+  expiryState,
+  formatQuantity,
+  itemExpiry,
+  matchesSearch,
+  optionsWithCurrent,
+  stockStatus,
+  suggestedOrderQuantity,
+  type StockItem,
+  type StockStatusKey,
+} from "@/components/stock/stock-shared";
+import { usePurchaseModals, type PurchaseFirmaOption } from "../firma/purchase-shared";
 
 const StockEmptyIcon = createSceneIllustration("stok");
 
-type StockItem = {
-  id: string; name: string; category: string; unit: string;
-  quantity: number; minQuantity: number; unitPrice?: number | null; supplier?: string | null;
-  barcode?: string | null; expiresAt?: string | null; storageLocation?: string | null;
-  averageUnitPrice?: number | null;
-  lastPurchase?: {
-    date?: string | null;
-    supplier?: string | null;
-    unitPrice?: number | null;
-    quantity?: number | null;
-    invoiceNo?: string | null;
-  } | null;
-};
-type StockMoveForm = { type: string; quantity: string; note: string };
-type StockMovement = {
-  id: string;
-  type: string;
-  quantity: number;
-  unitPrice?: number | null;
-  supplier?: string | null;
-  note?: string | null;
-  createdAt: string;
-  user?: { fullName: string } | null;
+const VIEW_KEYS = ["tumu", "kritik", "siparis", "skt-yakin", "skt-gecti", "arsiv"] as const;
+type StockView = typeof VIEW_KEYS[number];
+const PAGE_SIZE = 25;
+
+const VIEW_FILTER: Record<Exclude<StockView, "tumu" | "arsiv">, (item: StockItem, status: StockStatusKey) => boolean> = {
+  kritik: (_item, status) => status === "critical",
+  siparis: (item) => (item.onOrderQuantity || 0) > 0,
+  "skt-yakin": (item) => expiryState(itemExpiry(item)) === "soon",
+  "skt-gecti": (item) => expiryState(itemExpiry(item)) === "expired",
 };
 
-const CATEGORIES = ["Tümü", "Anestezi", "İmplant", "Protez", "Dolgu", "Ortodonti", "Cerrahi", "Sarf", "Diğer"];
-const UNITS = ["adet", "kutu", "şişe", "ampul", "set", "ml", "gr"];
-const CURRENCY = new Intl.NumberFormat("tr-TR", { style: "currency", currency: "TRY", minimumFractionDigits: 0 });
-
-export default function StokPage() {
+function StokContent() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const { can } = usePermissions();
   const canWriteStock = can("stock:write");
   const canDeleteStock = can("stock:delete");
-  const [items,      setItems]      = useState<StockItem[]>([]);
-  const [loading,    setLoading]    = useState(false);
-  const [loadError,  setLoadError]  = useState<string | null>(null);
+  // Satın alma kaydı hem finans hem stok yazma yetkisi ister (sunucu ile aynı kural).
+  const canOrder = canWriteStock && can("finance:write");
+  // Maliyet (alış fiyatı, ortalama maliyet, stok değeri) finans bilgisidir;
+  // sunucu da finance:read olmayan rollere bu alanları göndermez.
+  const canSeeCost = can("finance:read");
+
+  const [view, setView] = useTabParam<StockView>(VIEW_KEYS, "tumu", "durum");
+  const [items, setItems] = useState<StockItem[]>([]);
+  const [archived, setArchived] = useState<StockItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [archiveLoading, setArchiveLoading] = useState(false);
   const loadSequenceRef = useRef(0);
-  const [category,   setCategory]   = useState("Tümü");
-  const [statusFilter, setStatusFilter] = useState<"TUMU" | "KRITIK" | "SKT_YAKIN" | "SKT_GECMIS">("TUMU");
-  const [search,     setSearch]     = useState("");
-  const searchInputRef = useRef<HTMLInputElement>(null);
-  useSlashFocus(searchInputRef);
-  const [showNew,    setShowNew]    = useState(false);
-  const [moveItem,   setMoveItem]   = useState<StockItem | null>(null);
-  // Modal her açıldığında yeni bir anahtar üretilir, ağ hatası sonrası
-  // "Tekrar Dene" AYNI anahtarı kullanır — sunucu bu sayede miktarı ikinci
-  // kez değiştirmez (bkz. src/app/api/stock/[id]/route.ts Idempotency-Key).
-  const moveRequestKeyRef = useRef<string | null>(null);
-  const [editItem,   setEditItem]   = useState<StockItem | null>(null);
-  const [editForm, setEditForm] = useState({ name: "", category: "Sarf", unit: "adet", minQuantity: "5", barcode: "", expiresAt: "", storageLocation: "" });
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("");
+  const [sort, setSort] = useState<ListSort>({ key: "name", dir: "asc" });
+  const [page, setPage] = useState(1);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [firmas, setFirmas] = useState<PurchaseFirmaOption[]>([]);
 
-  // Depoda hızlı çıkış yapan personel önceden önce Detay modalini açmak
-  // zorundaydı (2 modal, 4+ tıklama) — artık tablo satırından doğrudan
-  // buraya gelinebiliyor (bkz. ürün denetimi).
-  function openMoveModal(item: StockItem) {
-    moveRequestKeyRef.current = typeof crypto !== "undefined" && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `stock-move-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    setMoveItem(item);
-    setMove({ type: "CIKIS", quantity: "", note: "" });
-  }
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [formItem, setFormItem] = useState<StockItem | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [moveItem, setMoveItem] = useState<StockItem | null>(null);
 
-  const [saving,     setSaving]     = useState(false);
-
-  const [detailItem, setDetailItem] = useState<StockItem | null>(null);
-  const [historyItem, setHistoryItem] = useState<StockItem | null>(null);
-  const [historyMovements, setHistoryMovements] = useState<StockMovement[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-
-  const [newItem, setNewItem] = useState({ name: "", category: "Sarf", unit: "adet", quantity: "", minQuantity: "5", barcode: "", expiresAt: "", storageLocation: "" });
-  const [move,    setMove]    = useState<StockMoveForm>({ type: "CIKIS", quantity: "", note: "" });
-  const editSnapshotRef = useRef("");
-
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { fetchItems(); }, [category]);
-
-  // Başka bir personel stok girişi/çıkışı yaptığında listeyi tazele.
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    const onRealtime = () => {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => { fetchItems(); }, 400);
-    };
-    window.addEventListener("ks:realtime-sync", onRealtime);
-    return () => {
-      if (timer) clearTimeout(timer);
-      window.removeEventListener("ks:realtime-sync", onRealtime);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category]);
-
-  // Sekmeye geri dönüldüğünde (arka planda kaçırılmış olabilecek olayları) tazele.
-  useEffect(() => {
-    const refreshVisible = () => {
-      if (typeof document !== "undefined" && document.hidden) return;
-      fetchItems();
-    };
-    window.addEventListener("focus", refreshVisible);
-    document.addEventListener("visibilitychange", refreshVisible);
-    return () => {
-      window.removeEventListener("focus", refreshVisible);
-      document.removeEventListener("visibilitychange", refreshVisible);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category]);
-
-  async function fetchItems() {
+  const fetchItems = useCallback(async () => {
     const sequence = ++loadSequenceRef.current;
     setLoading(true);
     setLoadError(null);
-    const qs = category !== "Tümü" ? `?category=${encodeURIComponent(category)}` : "";
     try {
-      const r = await fetch(`/api/stock${qs}`, { cache: "no-store" });
-      const d = await r.json().catch(() => null);
-      if (!r.ok) throw new Error(d?.message || "Stok verileri yüklenemedi.");
+      const response = await fetch("/api/stock", { cache: "no-store" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.message || "Stok listesi yüklenemedi.");
       if (sequence !== loadSequenceRef.current) return;
-      setItems(Array.isArray(d) ? d : []);
+      setItems(Array.isArray(body) ? body : []);
+      setLoaded(true);
+      setRefreshToken((value) => value + 1);
     } catch (error) {
       if (sequence !== loadSequenceRef.current) return;
-      const message = error instanceof Error ? error.message : "Stok verileri yüklenemedi.";
-      setLoadError(message);
-      showToastSafe({ title: "Stok yüklenemedi", message, type: "error" });
+      setLoadError(error instanceof Error ? error.message : "Stok listesi yüklenemedi.");
     } finally {
       if (sequence === loadSequenceRef.current) setLoading(false);
     }
-  }
+  }, []);
 
-  function upsertItem(nextItem: StockItem) {
-    // Başarılı mutasyondan önce başlamış bir liste isteği yeni kaydı geri alamaz.
-    loadSequenceRef.current += 1;
-    setLoading(false);
-    setLoadError(null);
-    setItems((current) => {
-      const exists = current.some((item) => item.id === nextItem.id);
-      if (!exists) return [...current, nextItem].sort((a, b) => a.name.localeCompare(b.name, "tr"));
-      return current.map((item) => (item.id === nextItem.id ? nextItem : item));
-    });
-    window.dispatchEvent(new CustomEvent("ks:realtime-sync", { detail: { scope: "stock" } }));
-  }
-
-  const NEW_ITEM_DEFAULT = { name: "", category: "Sarf", unit: "adet", quantity: "", minQuantity: "5", barcode: "", expiresAt: "", storageLocation: "" };
-  const newItemDirty = JSON.stringify(newItem) !== JSON.stringify(NEW_ITEM_DEFAULT);
-  const editItemDirty = Boolean(editItem) && JSON.stringify(editForm) !== editSnapshotRef.current;
-  const moveDirty = Boolean(move.quantity || move.note.trim());
-
-  function requestCloseNewItem() {
-    setShowNew(false);
-    setNewItem(NEW_ITEM_DEFAULT);
-  }
-
-  function requestCloseEditItem() {
-    setEditItem(null);
-    setEditForm({ name: "", category: "Sarf", unit: "adet", minQuantity: "5", barcode: "", expiresAt: "", storageLocation: "" });
-  }
-
-  function requestCloseMove() {
-    setMoveItem(null);
-    setMove({ type: "CIKIS", quantity: "", note: "" });
-  }
-
-  async function submitNew() {
-    if (!newItem.name) return;
-    setSaving(true);
+  const fetchArchived = useCallback(async () => {
+    setArchiveLoading(true);
     try {
-      const res = await fetch("/api/stock", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...newItem, unitPrice: null, supplier: null }),
-      });
-      const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.message || body?.error || "Lütfen bilgileri kontrol edip tekrar deneyin.");
-      upsertItem(body as StockItem);
-      setShowNew(false);
-      setNewItem({ name: "", category: "Sarf", unit: "adet", quantity: "", minQuantity: "5", barcode: "", expiresAt: "", storageLocation: "" });
-      showToastSafe({ title: "Stok kartı açıldı", message: "Liste güncellendi.", type: "success" });
-      void fetchItems();
+      const response = await fetch("/api/stock?arsiv=1", { cache: "no-store" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.message || "Arşiv yüklenemedi.");
+      setArchived(Array.isArray(body) ? body : []);
     } catch (error) {
-      showToastSafe({ title: "Stok eklenemedi", message: error instanceof Error ? error.message : "Lütfen bilgileri kontrol edip tekrar deneyin.", type: "error" });
+      showToastSafe({ title: "Arşiv yüklenemedi", message: error instanceof Error ? error.message : "Tekrar deneyin.", type: "error" });
     } finally {
-      setSaving(false);
+      setArchiveLoading(false);
     }
-  }
+  }, []);
 
-  async function submitMove() {
-    if (!moveItem || !move.quantity) return;
-    const qty = Number(move.quantity);
-    if (!Number.isFinite(qty) || qty <= 0) {
-      showToastSafe({ title: "Geçerli miktar girin", message: "Stok çıkış miktarı pozitif olmalıdır.", type: "error" });
-      return;
-    }
-    if (move.type === "CIKIS" && qty > moveItem.quantity) {
-      showToastSafe({ title: "Yetersiz stok", message: `En fazla ${moveItem.quantity} ${moveItem.unit} stoktan düşülebilir.`, type: "error" });
-      return;
-    }
-    setSaving(true);
+  const fetchFirmas = useCallback(async () => {
+    if (!canOrder) return;
     try {
-      const requestKey = moveRequestKeyRef.current ||= (typeof crypto !== "undefined" && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `stock-move-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-      const res = await fetch(`/api/stock/${moveItem.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", "Idempotency-Key": requestKey },
-        body: JSON.stringify(move),
-      });
-      const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.message || body?.error || "Lütfen miktar ve işlem bilgilerini kontrol edin.");
-      moveRequestKeyRef.current = null;
-      upsertItem({ ...(body as StockItem), lastPurchase: moveItem.lastPurchase, averageUnitPrice: moveItem.averageUnitPrice });
-      setMoveItem(null);
-      setMove({ type: "CIKIS", quantity: "", note: "" });
-      showToastSafe({ title: "Stok hareketi işlendi", message: "Miktar anlık güncellendi.", type: "success", icon: "box" });
-      void fetchItems();
-    } catch (error) {
-      // requestKey KASITLI olarak temizlenmiyor — kullanıcı "Tekrar Dene"
-      // derse aynı anahtar gönderilir, sunucu miktarı ikinci kez değiştirmez.
-      showToastSafe({ title: "Stok hareketi kaydedilemedi", message: error instanceof Error ? error.message : "Lütfen miktar ve işlem bilgilerini kontrol edin.", type: "error" });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function deleteItem(item: StockItem) {
-    if (!(await confirmDialog({ message: `"${item.name}" stok kartı arşivlensin mi? Listeden kaldırılır, geçmiş hareketler saklanır.`, danger: true, confirmText: "Arşivle" }))) return;
-    try {
-      const res = await fetch(`/api/stock/${item.id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error);
-      showToastSafe({ title: "Stok kartı arşivlendi", message: "Kart listeden kaldırıldı.", type: "success" });
-      void fetchItems();
-    } catch (error) {
-      showToastSafe({ title: "Stok kartı arşivlenemedi", message: error instanceof Error ? error.message : "Lütfen tekrar deneyin.", type: "error" });
-    }
-  }
-
-  function openEdit(item: StockItem) {
-    setEditItem(item);
-    const next = {
-      name: item.name,
-      category: item.category || "Sarf",
-      unit: item.unit || "adet",
-      minQuantity: String(item.minQuantity ?? 5),
-      barcode: item.barcode || "",
-      expiresAt: item.expiresAt ? item.expiresAt.slice(0, 10) : "",
-      storageLocation: item.storageLocation || "",
-    };
-    setEditForm(next);
-    editSnapshotRef.current = JSON.stringify(next);
-  }
-
-  async function submitEdit() {
-    if (!editItem || !editForm.name.trim()) return;
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/stock/${editItem.id}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...editForm,
-          minQuantity: Number(editForm.minQuantity) || 0,
-          unitPrice: null,
-          supplier: null,
-          barcode: editForm.barcode || null,
-          expiresAt: editForm.expiresAt || null,
-          storageLocation: editForm.storageLocation || null,
-        }),
-      });
-      const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.message || body?.error || "Stok kartı güncellenemedi.");
-      upsertItem({ ...(body as StockItem), lastPurchase: editItem.lastPurchase, averageUnitPrice: editItem.averageUnitPrice });
-      setEditItem(null);
-      showToastSafe({ title: "Stok kartı güncellendi", message: "Ürün bilgileri yenilendi.", type: "success" });
-      void fetchItems();
-    } catch (error) {
-      showToastSafe({ title: "Stok kartı güncellenemedi", message: error instanceof Error ? error.message : "Lütfen bilgileri kontrol edin.", type: "error" });
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function openHistory(item: StockItem) {
-    setHistoryItem(item);
-    setHistoryLoading(true);
-    try {
-      const res = await fetch(`/api/stock/${item.id}`, { cache: "no-store" });
-      const body = await res.json().catch(() => null);
-      if (!res.ok) {
-        showToastSafe({ message: body?.message || "Stok hareketleri yüklenemedi", type: "error" });
-      }
-      setHistoryMovements(res.ok && Array.isArray(body?.movements) ? body.movements : []);
+      const response = await fetch("/api/firma", { cache: "no-store" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok || !Array.isArray(body)) return;
+      setFirmas(body
+        .filter((firma: { kategori?: string }) => firma.kategori !== "LAB")
+        .map((firma: { id: string; name: string; bakiye?: number }) => ({ id: firma.id, name: firma.name, bakiye: firma.bakiye })));
     } catch {
-      showToastSafe({ message: "Stok hareketleri yüklenemedi", type: "error" });
-      setHistoryMovements([]);
-    } finally {
-      setHistoryLoading(false);
+      // Firma listesi yalnız "Sipariş ver" için gerekir; yüklenemezse form firma araması boş kalır.
     }
-  }
+  }, [canOrder]);
 
-  // items listesi büyük envanterli kliniklerde binlerce kalem olabilir —
-  // bu 6 türetilmiş değer önceden her render'da (arama kutusuna her tuş
-  // vuruşunda, modal aç/kapa gibi ilgisiz state değişikliklerinde bile)
-  // sıfırdan yeniden hesaplanıyordu (bkz. denetim raporu).
-  const filtered = useMemo(() => items.filter((i) => {
-    const q = search.trim().toLowerCase();
-    const matchesSearch =
-      !q ||
-      i.name.toLowerCase().includes(q) ||
-      (i.lastPurchase?.supplier || i.supplier || "").toLowerCase().includes(q) ||
-      (i.barcode || "").toLowerCase().includes(q) ||
-      (i.storageLocation || "").toLowerCase().includes(q);
-    if (!matchesSearch) return false;
-    if (statusFilter === "KRITIK") return i.quantity < i.minQuantity;
-    if (statusFilter === "SKT_YAKIN") return isExpiringSoon(i.expiresAt);
-    if (statusFilter === "SKT_GECMIS") return isExpired(i.expiresAt);
-    return true;
-  }), [items, search, statusFilter]);
-  const lowStock  = useMemo(() => items.filter(i => i.quantity < i.minQuantity).length, [items]);
-  const averageCost = (item: StockItem) => item.averageUnitPrice ?? null;
-  const stockValue = (item: StockItem) => item.quantity * (averageCost(item) ?? 0);
-  // stockValue her render'da yeniden oluşturulan bir fonksiyon olduğu için
-  // doğrudan dependency yapılırsa memoizasyon anlamsız kalır — aynı hesap
-  // burada bağımsız olarak inline edilir.
-  const totalValue = useMemo(
-    () => items.reduce((s, i) => s + i.quantity * (i.averageUnitPrice ?? 0), 0),
+  useEffect(() => { void fetchItems(); void fetchFirmas(); }, [fetchItems, fetchFirmas]);
+  useEffect(() => { if (view === "arsiv") void fetchArchived(); }, [view, fetchArchived]);
+
+  // Başka bir personel stok hareketi yaptığında ya da sekmeye dönüldüğünde listeyi tazele.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const refresh = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => { void fetchItems(); }, 400);
+    };
+    window.addEventListener("ks:realtime-sync", refresh);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("ks:realtime-sync", refresh);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [fetchItems]);
+
+  // Üst bardaki "+ Yeni" menüsü ya da başka ekran ?yeni=1 ile yeni ürün formunu açar.
+  useEffect(() => {
+    if (searchParams.get("yeni") !== "1" || !canWriteStock) return;
+    setFormItem(null);
+    setFormOpen(true);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("yeni");
+    router.replace(params.toString() ? `${pathname}?${params.toString()}` : pathname, { scroll: false });
+  }, [searchParams, canWriteStock, pathname, router]);
+
+  useEffect(() => { setPage(1); }, [view, search, category, sort]);
+
+  const statusById = useMemo(() => new Map(items.map((item) => [item.id, stockStatus(item)])), [items]);
+  const counts = useMemo(() => {
+    const result = { kritik: 0, siparis: 0, "skt-yakin": 0, "skt-gecti": 0 } as Record<Exclude<StockView, "tumu" | "arsiv">, number>;
+    for (const item of items) {
+      const status = statusById.get(item.id) || "ok";
+      (Object.keys(result) as Array<keyof typeof result>).forEach((key) => {
+        if (VIEW_FILTER[key](item, status)) result[key] += 1;
+      });
+    }
+    return result;
+  }, [items, statusById]);
+
+  const categoryOptions = useMemo(
+    () => optionsWithCurrent(STOCK_CATEGORIES, ...items.map((item) => item.category)),
     [items],
   );
-  const expiringSoon = useMemo(() => items.filter(i => isExpiringSoon(i.expiresAt)).length, [items]);
-  const expiredCount = useMemo(() => items.filter(i => isExpired(i.expiresAt)).length, [items]);
 
-  function isExpiringSoon(value?: string | null) {
-    if (!value) return false;
-    const expiresAt = new Date(value).getTime();
-    const now = Date.now();
-    const ninetyDays = 1000 * 60 * 60 * 24 * 90;
-    return expiresAt >= now && expiresAt <= now + ninetyDays;
-  }
+  const baseRows = view === "arsiv" ? archived : items;
+  const filtered = useMemo(() => {
+    const rows = baseRows.filter((item) => {
+      if (!matchesSearch(search, item.name, item.barcode, item.storageLocation, item.lastPurchase?.supplier, item.category)) return false;
+      if (category && item.category !== category) return false;
+      if (view === "tumu" || view === "arsiv") return true;
+      return VIEW_FILTER[view](item, statusById.get(item.id) || "ok");
+    });
+    const dir = sort.dir === "asc" ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      if (sort.key === "quantity") return (a.quantity - b.quantity) * dir;
+      if (sort.key === "expiry") return ((itemExpiry(a) || "9999").localeCompare(itemExpiry(b) || "9999")) * dir;
+      if (sort.key === "cost") return ((a.averageUnitPrice || 0) - (b.averageUnitPrice || 0)) * dir;
+      return a.name.localeCompare(b.name, "tr") * dir;
+    });
+  }, [baseRows, search, category, view, statusById, sort]);
 
-  function isExpired(value?: string | null) {
-    return Boolean(value && new Date(value).getTime() < Date.now());
-  }
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageRows = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const totalValue = useMemo(() => items.reduce((sum, item) => sum + item.quantity * (item.averageUnitPrice || 0), 0), [items]);
+  const detailItem = detailId ? items.find((item) => item.id === detailId) || null : null;
 
-  function formatDate(value?: string | null) {
-    return value ? new Date(value).toLocaleDateString("tr-TR") : "";
-  }
+  const afterChange = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("ks:realtime-sync", { detail: { scope: "stock" } }));
+    void fetchItems();
+  }, [fetchItems]);
 
-  function printBarcode(item: StockItem) {
-    const code = item.barcode || item.id.slice(-10).toUpperCase();
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    JsBarcode(svg, code, { format: "CODE128", width: 2, height: 56, displayValue: true, fontSize: 13, margin: 8 });
-    const win = window.open("", "_blank", "noopener,noreferrer,width=420,height=520");
-    if (!win) return;
-    win.document.write(`<!doctype html><html lang="tr"><head><meta charset="utf-8" /><title>${item.name}</title><style>body{font-family:Arial,sans-serif;margin:24px;color:#111827}.label{border:1px solid #111827;padding:14px;width:320px}.name{font-weight:700;font-size:14px}.meta{font-size:12px;color:#475569;margin-top:4px}svg{width:100%;height:auto;margin-top:8px}@media print{button{display:none}body{margin:8mm}.label{break-inside:avoid}}</style></head><body><button onclick="window.print()">Yazdır</button><div class="label"><div class="name">${item.name.replace(/</g, "&lt;")}</div><div class="meta">${item.storageLocation ? `Raf: ${item.storageLocation.replace(/</g, "&lt;")} · ` : ""}${item.expiresAt ? `SKT: ${formatDate(item.expiresAt)}` : ""}</div>${svg.outerHTML}</div></body></html>`);
-    win.document.close();
-  }
+  const purchaseManager = usePurchaseModals({
+    stockItems: items,
+    firmas,
+    canWrite: canOrder,
+    onChanged: async () => { afterChange(); },
+  });
 
-  function exportStockCsv() {
-    downloadCsv(`stok-envanter-${new Date().toISOString().slice(0, 10)}.csv`, filtered.map((item) => ({
-      Malzeme: item.name,
+  const openOrder = (item: StockItem) => {
+    const supplierId = item.lastPurchase?.supplierId && firmas.some((firma) => firma.id === item.lastPurchase?.supplierId)
+      ? item.lastPurchase.supplierId
+      : undefined;
+    purchaseManager.openAddPurchase(supplierId, {
+      receiptStatus: "SIPARIS_VERILDI",
+      lines: [{
+        stockItemId: item.id,
+        productQuery: item.name,
+        unit: item.unit,
+        quantity: String(suggestedOrderQuantity(item)),
+        unitPrice: item.lastPurchase?.unitPrice ? String(item.lastPurchase.unitPrice) : "",
+      }],
+    });
+  };
+
+  const archiveItem = async (item: StockItem) => {
+    const hasStock = item.quantity > 0;
+    const confirmed = await confirmDialog({
+      title: "Ürün arşivlensin mi?",
+      message: hasStock
+        ? `"${item.name}" kartında ${formatQuantity(item.quantity, item.unit)} stok görünüyor. Arşivlenince listede ve uyarılarda görünmez; geçmiş hareketler saklanır, "Arşiv" sekmesinden geri alınabilir. Ürün gerçekten bittiyse önce "Stok hareketi" ile çıkış yapın.`
+        : `"${item.name}" listeden kaldırılır; geçmiş hareketler saklanır ve "Arşiv" sekmesinden geri alınabilir.`,
+      danger: true,
+      confirmText: "Arşivle",
+      cancelText: "Vazgeç",
+    });
+    if (!confirmed) return;
+    try {
+      const response = await fetch(`/api/stock/${item.id}`, { method: "DELETE" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error || body?.message || "Ürün arşivlenemedi. Tekrar deneyin.");
+      setDetailId(null);
+      showToastSafe({ title: "Ürün arşivlendi", message: `${item.name} "Arşiv" sekmesine taşındı.`, type: "success" });
+      afterChange();
+    } catch (error) {
+      showToastSafe({ title: "Ürün arşivlenemedi", message: error instanceof Error ? error.message : "Tekrar deneyin.", type: "error" });
+    }
+  };
+
+  const restoreItem = async (item: StockItem) => {
+    try {
+      const response = await fetch(`/api/stock/${item.id}/restore`, { method: "POST" });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error || "Ürün geri alınamadı.");
+      showToastSafe({ title: "Ürün geri alındı", message: `${item.name} yeniden listede.`, type: "success" });
+      setArchived((current) => current.filter((row) => row.id !== item.id));
+      afterChange();
+    } catch (error) {
+      showToastSafe({ title: "Geri alınamadı", message: error instanceof Error ? error.message : "Tekrar deneyin.", type: "error" });
+    }
+  };
+
+  const printBarcode = (item: StockItem) => {
+    const result = printBarcodeLabel({ id: item.id, name: item.name, barcode: item.barcode, storageLocation: item.storageLocation, expiry: itemExpiry(item) });
+    if (result === "popup-blocked") showToastSafe({ title: "Pencere açılamadı", message: "Tarayıcı açılır pencereyi engelledi. Bu site için açılır pencerelere izin verin.", type: "error" });
+    if (result === "invalid-code") showToastSafe({ title: "Barkod basılamadı", message: "Barkod yalnız harf ve rakam içermeli. Ürünü düzenleyip barkodu kontrol edin.", type: "error" });
+  };
+
+  const exportCsv = () => {
+    downloadCsv(`stok-${new Date().toISOString().slice(0, 10)}.csv`, filtered.map((item) => ({
+      Ürün: item.name,
       Kategori: item.category,
-      Stok: item.quantity,
-      "Minimum Stok": item.minQuantity,
+      Mevcut: item.quantity,
+      Minimum: item.minQuantity,
+      Siparişte: item.onOrderQuantity || 0,
       Birim: item.unit,
-      "Ortalama Maliyet": averageCost(item) ?? "",
-      "Son Alış Fiyatı": item.lastPurchase?.unitPrice || "",
-      "Son Tedarikçi": item.lastPurchase?.supplier || "",
-      "Stok Değeri": stockValue(item),
+      Durum: STOCK_STATUS_META[stockStatus(item)].label,
+      "En yakın SKT": itemExpiry(item) ? formatDateText(itemExpiry(item) as string) : "",
+      ...(canSeeCost ? {
+        "Ortalama maliyet": item.averageUnitPrice ?? "",
+        "Stok değeri": item.averageUnitPrice ? Math.round(item.quantity * item.averageUnitPrice * 100) / 100 : "",
+      } : {}),
+      "Son tedarikçi": item.lastPurchase?.supplier || "",
+      "Raf / konum": item.storageLocation || "",
       Barkod: item.barcode || "",
-      "Raf/Konum": item.storageLocation || "",
-      "Son Kullanma": item.expiresAt ? formatDate(item.expiresAt) : "",
-      Durum: item.quantity < item.minQuantity ? "Kritik" : "Normal",
     })));
-    showToastSafe({ title: "CSV hazırlandı", message: `${filtered.length} stok kalemi dışa aktarıldı.`, type: "success" });
-  }
+    showToastSafe({ title: "Dosya indirildi", message: `${filtered.length} ürün Excel'de açılabilir CSV olarak indirildi.`, type: "success" });
+  };
 
-  const stockColumns: ColumnDef<StockItem, unknown>[] = [
+  const columns: ListTableColumn<StockItem>[] = [
     {
-      accessorKey: "name",
-      header: "Malzeme",
-      cell: ({ row }) => {
-        const item = row.original;
-        return (
-          <div className="w-[300px] max-w-[300px]">
-            <p className="truncate font-semibold text-slate-900">{item.name}</p>
-            <div className="mt-1 flex flex-wrap gap-1.5">
-              <Badge tone="neutral">{item.category}</Badge>
-              {item.storageLocation && <Badge tone="info">{item.storageLocation}</Badge>}
-              {item.expiresAt && (
-                <Badge tone={isExpired(item.expiresAt) ? "critical" : isExpiringSoon(item.expiresAt) ? "warning" : "neutral"}>
-                  SKT {formatDate(item.expiresAt)}
-                </Badge>
-              )}
-            </div>
-          </div>
-        );
-      },
-    },
-    {
-      accessorKey: "quantity",
-      header: "Mevcut",
-      cell: ({ row }) => {
-        const item = row.original;
-        const low = item.quantity < item.minQuantity;
-        return (
-          <div className="w-[84px] whitespace-nowrap text-right">
-            <span className={`text-base font-black ${low ? "text-red-600" : "text-slate-800"}`}>{item.quantity}</span>
-            <span className="ml-1 text-xs text-slate-400">{item.unit}</span>
-            <p className={`mt-0.5 text-[11px] font-bold ${low ? "text-red-600" : "text-slate-400"}`}>
-              Min {item.minQuantity}
-            </p>
-          </div>
-        );
-      },
-    },
-    {
-      id: "lastPurchase",
-      accessorFn: (item) => item.lastPurchase?.unitPrice || 0,
-      header: "Son Alış",
-      cell: ({ row }) => {
-        const item = row.original;
-        const last = item.lastPurchase;
-        if (!last) return <span className="text-xs text-slate-400">Satın alma yok</span>;
-        return (
-          <div className="w-[150px] max-w-[150px]">
-            <p className="whitespace-nowrap font-semibold text-slate-700">{CURRENCY.format(Number(last.unitPrice || 0))}/{item.unit}</p>
-            <p className="max-w-[180px] truncate text-[11px] text-slate-400">
-              {last.supplier || "Firma yok"}{last.date ? ` · ${formatDate(last.date)}` : ""}
-            </p>
-          </div>
-        );
-      },
-    },
-    {
-      id: "averageCost",
-      accessorFn: (item) => averageCost(item) || 0,
-      header: "Ort. Maliyet",
-      cell: ({ row }) => {
-        const item = row.original;
-        const cost = averageCost(item);
-        if (cost === null) return <span className="text-xs text-slate-400">Maliyet yok</span>;
-        return (
-          <div className="w-[110px] whitespace-nowrap text-right">
-            <p className="font-semibold text-slate-800">{CURRENCY.format(cost)}</p>
-            <p className="text-[11px] text-slate-400">Değer {CURRENCY.format(stockValue(item))}</p>
-          </div>
-        );
-      },
-    },
-    ...(canWriteStock ? [{
-      id: "quickAction",
-      header: "",
-      cell: ({ row }) => (
-        <div className="w-[84px] text-right">
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); openMoveModal(row.original); }}
-            title="Stok Çıkışı"
-            className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-bold text-slate-600 transition hover:border-primary hover:text-primary"
-          >
-            Çıkış
-          </button>
+      key: "name",
+      header: "Ürün",
+      sortKey: "name",
+      cellClassName: "max-w-[320px]",
+      render: (item) => (
+        <div className="min-w-0">
+          <p className="truncate font-semibold text-slate-900">{item.name}</p>
+          <p className="truncate text-xs text-slate-500">
+            {[item.category, item.storageLocation ? `Raf ${item.storageLocation}` : ""].filter(Boolean).join(" · ")}
+          </p>
         </div>
       ),
-    } as ColumnDef<StockItem, unknown>] : []),
+    },
+    {
+      key: "quantity",
+      header: "Mevcut",
+      align: "right",
+      sortKey: "quantity",
+      render: (item) => {
+        const low = item.quantity < item.minQuantity;
+        return (
+          <div className="whitespace-nowrap">
+            <span className={`font-bold tabular-nums ${low ? "text-red-700" : "text-slate-900"}`}>{formatQuantity(item.quantity, item.unit)}</span>
+            <p className="text-xs text-slate-500">min {item.minQuantity}{item.onOrderQuantity ? ` · siparişte ${item.onOrderQuantity}` : ""}</p>
+          </div>
+        );
+      },
+    },
+    {
+      key: "durum",
+      header: "Durum",
+      render: (item) => {
+        if (view === "arsiv") return <Badge tone="neutral">Arşivde</Badge>;
+        const status = statusById.get(item.id) || "ok";
+        return status === "ok"
+          ? <span className="text-xs text-slate-500">Yeterli</span>
+          : <Badge tone={STOCK_STATUS_META[status].tone}>{STOCK_STATUS_META[status].label}</Badge>;
+      },
+    },
+    {
+      key: "expiry",
+      header: "En yakın SKT",
+      sortKey: "expiry",
+      render: (item) => {
+        const expiry = itemExpiry(item);
+        if (!expiry) return <EmptyValue />;
+        const state = expiryState(expiry);
+        return <DateText value={expiry} className={state === "expired" ? "font-semibold text-red-700" : state === "soon" ? "font-semibold text-amber-700" : "text-slate-600"} />;
+      },
+    },
+    ...(canSeeCost ? [{
+      key: "cost",
+      header: "Ort. maliyet",
+      align: "right" as const,
+      sortKey: "cost",
+      render: (item: StockItem) => <Money value={item.averageUnitPrice ?? null} className="text-slate-700" />,
+    }] : []),
+    {
+      key: "actions",
+      header: "",
+      align: "right",
+      render: (item) => rowActions(item),
+    },
   ];
 
-  const inp = "rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:border-primary focus:bg-white focus:outline-none";
+  function rowActions(item: StockItem) {
+    if (view === "arsiv") {
+      return canDeleteStock ? (
+        <Button size="sm" variant="secondary" icon={RotateCcw} onClick={() => void restoreItem(item)}>Geri al</Button>
+      ) : null;
+    }
+    const status = statusById.get(item.id) || "ok";
+    return (
+      <div className="flex justify-end gap-1.5">
+        {canOrder && status === "critical" && (
+          <IconButton icon={ShoppingCart} title={`${item.name} için sipariş ver`} tone="primary" size="sm" onClick={() => openOrder(item)} />
+        )}
+        {canWriteStock && (
+          <IconButton icon={MinusCircle} title={`${item.name} stok çıkışı`} size="sm" onClick={() => setMoveItem(item)} />
+        )}
+      </div>
+    );
+  }
+
+  const activeFilters = [
+    ...(search.trim() ? [{ key: "search", label: `Arama: ${search.trim()}`, onRemove: () => setSearch("") }] : []),
+    ...(category ? [{ key: "category", label: `Kategori: ${category}`, onRemove: () => setCategory("") }] : []),
+  ];
+
+  const emptyText = view === "arsiv"
+    ? "Arşivde ürün yok"
+    : activeFilters.length > 0 || view !== "tumu"
+      ? "Bu filtreye uyan ürün yok"
+      : "Henüz ürün eklenmemiş";
 
   return (
     <div className="space-y-3">
       <PageHeader
         icon="box"
-        title="Stok Yönetimi"
-        description="Malzeme envanterini, kritik stok ve SKT uyarılarını takip edin."
-        actions={(
-          <>
-            <Button size="sm" variant="secondary" icon={Download} onClick={exportStockCsv} disabled={filtered.length === 0}>
-              CSV
-            </Button>
-            {canWriteStock && <Button size="sm" icon={Plus} onClick={() => setShowNew(true)}>
-              Yeni Stok Kartı
-            </Button>}
-          </>
-        )}
+        title="Stok"
+        description="Ürünlerin miktarı, son kullanma tarihi ve kritik seviyesi."
+        stats={loaded ? [
+          { label: "Ürün", value: items.length.toLocaleString("tr-TR") },
+          ...(canSeeCost ? [{ label: "Stok değeri", value: formatCurrency(totalValue) }] : []),
+        ] : undefined}
+        actions={canWriteStock ? (
+          <Button icon={Plus} onClick={() => { setFormItem(null); setFormOpen(true); }}>Yeni Ürün</Button>
+        ) : undefined}
       />
 
-      <div className="ui-surface p-3">
-        <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-48">
-          <svg className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-          <input aria-label={"Malzeme, barkod, raf veya son tedarikçi ara…"} ref={searchInputRef} value={search} onChange={e => setSearch(e.target.value)} placeholder="Malzeme, barkod, raf veya son tedarikçi ara… ( / )" className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none" />
-        </div>
-        <select aria-label={"Stok kategorisi"} value={category} onChange={(e) => setCategory(e.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-primary/30">
-          {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <select aria-label={"Stok durumu"} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-primary/30">
-          <option value="TUMU">Tüm durumlar</option>
-          <option value="KRITIK">Kritik stok</option>
-          <option value="SKT_YAKIN">SKT yakın</option>
-          <option value="SKT_GECMIS">SKT geçmiş</option>
-        </select>
-      </div>
-      </div>
+      <Tabs<StockView>
+        ariaLabel="Stok durumu"
+        value={view}
+        onChange={setView}
+        items={[
+          { key: "tumu", label: "Tümü" },
+          { key: "kritik", label: "Kritik", count: loaded ? counts.kritik : undefined, countTone: "critical" },
+          { key: "siparis", label: "Siparişte", count: loaded ? counts.siparis : undefined },
+          { key: "skt-yakin", label: "SKT yakın", count: loaded ? counts["skt-yakin"] : undefined, countTone: "warning" },
+          { key: "skt-gecti", label: "SKT geçti", count: loaded ? counts["skt-gecti"] : undefined, countTone: "critical" },
+          { key: "arsiv", label: "Arşiv" },
+        ]}
+      />
 
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <StatsCard icon={Wallet} label={`${filtered.length}/${items.length} kalem`} value={<CountUp value={totalValue} formatter={(n) => CURRENCY.format(n)} />} tone="neutral" />
-        <StatsCard icon={TriangleAlert} label="Kritik Stok" value={<><CountUp value={lowStock} /> kalem</>} tone={lowStock > 0 ? "critical" : "neutral"} badge={lowStock > 0 ? "Aksiyon" : undefined} />
-        <StatsCard icon={CalendarClock} label="SKT Yakın" value={<><CountUp value={expiringSoon} /> kalem</>} tone={expiringSoon > 0 ? "warning" : "neutral"} />
-        <StatsCard icon={PackageX} label="SKT Geçmiş" value={<><CountUp value={expiredCount} /> kalem</>} tone={expiredCount > 0 ? "critical" : "neutral"} badge={expiredCount > 0 ? "Kritik" : undefined} />
-      </div>
-
-      {loadError ? (
-        <LoadErrorState message={loadError} onRetry={() => void fetchItems()} />
-      ) : loading && filtered.length === 0 ? (
-        <div className="ui-surface flex flex-col items-center gap-2 py-12 text-sm text-slate-400">
-          <Spinner className="h-5 w-5 text-primary" />
-          Stok kalemleri yükleniyor...
-        </div>
-      ) : (
-        <ProfessionalDataTable
-          data={filtered}
-          columns={stockColumns}
-          emptyText="Stok kalemi bulunamadı"
-          emptyAccent="orange"
-          emptyIcon={StockEmptyIcon} emptyIllustrative
-          pageSize={15}
-          onRowClick={setDetailItem}
-          getRowAriaLabel={(item) => `${item.name} stok detayını aç`}
+      <Toolbar
+        actions={(
+          <Button size="sm" variant="secondary" icon={Download} onClick={exportCsv} disabled={filtered.length === 0}>
+            CSV indir
+          </Button>
+        )}
+      >
+        <SearchInput
+          value={search}
+          onChange={setSearch}
+          placeholder="Ürün, barkod, raf veya tedarikçi ara"
+          slashShortcut
+          wrapperClassName="flex-1 min-w-[220px]"
         />
+        <div className="sm:w-48">
+          <Select aria-label="Kategori" value={category} onChange={(event) => setCategory(event.target.value)}>
+            <option value="">Tüm kategoriler</option>
+            {categoryOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+          </Select>
+        </div>
+      </Toolbar>
+      <ActiveFilters filters={activeFilters} onClearAll={() => { setSearch(""); setCategory(""); }} />
+
+      {view === "kritik" && counts.kritik > 0 && canOrder && (
+        <p className="text-xs text-slate-500">Satırdaki sepet düğmesi son tedarikçi ve son fiyatla sipariş formunu doldurur.</p>
       )}
 
-      {/* New Item Modal */}
-      <Modal
-        module="box"
-        open={showNew}
-        onClose={() => void requestCloseNewItem()}
-        isDirty={newItemDirty}
-        title="Yeni Stok Kalemi"
-        footer={(
-          <>
-            <Button variant="secondary" onClick={() => void requestCloseNewItem()}>İptal</Button>
-            <Button variant="primary" loading={saving} onClick={submitNew}>
-              {saving ? "Kaydediliyor…" : "Stok Kartını Aç"}
-            </Button>
-          </>
-        )}
-      >
-        <div className="space-y-4">
-          <FormField label="Malzeme Adı" required>
-            <input value={newItem.name} onChange={e => setNewItem(i => ({ ...i, name: e.target.value }))} className={`${inp} w-full`} placeholder="Anestezi kartuşu, implant…" />
-          </FormField>
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label="Kategori">
-              <select value={newItem.category} onChange={e => setNewItem(i => ({ ...i, category: e.target.value }))} className={`${inp} w-full`}>
-                {CATEGORIES.slice(1).map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </FormField>
-            <FormField label="Birim">
-              <select value={newItem.unit} onChange={e => setNewItem(i => ({ ...i, unit: e.target.value }))} className={`${inp} w-full`}>
-                {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-              </select>
-            </FormField>
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label="Başlangıç Stok">
-              <input type="number" value={newItem.quantity} onChange={e => setNewItem(i => ({ ...i, quantity: e.target.value }))} className={`${inp} w-full`} placeholder="0" />
-            </FormField>
-            <FormField label="Min. Stok">
-              <input type="number" value={newItem.minQuantity} onChange={e => setNewItem(i => ({ ...i, minQuantity: e.target.value }))} className={`${inp} w-full`} placeholder="5" />
-            </FormField>
-          </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <FormField label="Barkod">
-              <input value={newItem.barcode} onChange={e => setNewItem(i => ({ ...i, barcode: e.target.value }))} className={`${inp} w-full font-mono`} placeholder="CODE128" />
-            </FormField>
-            <FormField label="Son Kullanma">
-              <input type="date" value={newItem.expiresAt} onChange={e => setNewItem(i => ({ ...i, expiresAt: e.target.value }))} className={`${inp} w-full`} />
-            </FormField>
-            <FormField label="Raf / Konum">
-              <input value={newItem.storageLocation} onChange={e => setNewItem(i => ({ ...i, storageLocation: e.target.value }))} className={`${inp} w-full`} placeholder="A-2, depo" />
-            </FormField>
-          </div>
-          <p className="text-xs text-slate-500">Bu form yalnızca ürün kartı açar. Tedarikçi, fatura, alış miktarı ve fiyatı Satın Alma & Tedarikçiler ekranındaki satın alma kaydında tutulur.</p>
-        </div>
-      </Modal>
-
-      {/* Stock Item Detail Modal */}
-      <Modal
-        module="box"
-        open={Boolean(detailItem)}
-        onClose={() => setDetailItem(null)}
-        title={detailItem?.name || "Stok Kartı"}
-        description={detailItem ? `${detailItem.category} · ${detailItem.quantity} ${detailItem.unit} mevcut (Min ${detailItem.minQuantity})` : undefined}
-      >
-        {detailItem && (
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-3 rounded-xl border border-slate-100 bg-slate-50 p-3 text-sm sm:grid-cols-3">
-              <div>
-                <p className="text-[11px] font-bold uppercase text-slate-400">Son Alış</p>
-                <p className="mt-0.5 font-semibold text-slate-800">
-                  {detailItem.lastPurchase ? `${CURRENCY.format(Number(detailItem.lastPurchase.unitPrice || 0))}/${detailItem.unit}` : "Satın alma yok"}
+      <ListTable<StockItem>
+        columns={columns}
+        rows={pageRows}
+        rowKey={(item) => item.id}
+        loading={view === "arsiv" ? archiveLoading : loading && !loaded}
+        error={view === "arsiv" ? null : loadError}
+        onRetry={() => void fetchItems()}
+        emptyText={emptyText}
+        emptyDescription={view === "tumu" && activeFilters.length === 0 ? "İlk ürünü “Yeni Ürün” ile ekleyin ya da Satın Alma'da faturayı girin; ürünler otomatik eklenir." : undefined}
+        emptyAction={view === "tumu" && activeFilters.length === 0 && canWriteStock ? <Button size="sm" icon={Plus} onClick={() => { setFormItem(null); setFormOpen(true); }}>Yeni Ürün</Button> : undefined}
+        emptyIcon={StockEmptyIcon}
+        emptyIllustrative
+        onRowClick={view === "arsiv" ? undefined : (item) => setDetailId(item.id)}
+        getRowAriaLabel={(item) => `${item.name} ürün detayını aç`}
+        sort={sort}
+        onSortChange={(key) => setSort((current) => ({ key, dir: current.key === key && current.dir === "asc" ? "desc" : "asc" }))}
+        pager={filtered.length > PAGE_SIZE ? { page, pageCount, pageSize: PAGE_SIZE, total: filtered.length, onPageChange: setPage } : undefined}
+        mobileCard={(item) => {
+          const status = statusById.get(item.id) || "ok";
+          return (
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate font-semibold text-slate-900">{item.name}</p>
+                <p className="text-xs text-slate-500">
+                  <span className={item.quantity < item.minQuantity ? "font-bold text-red-700" : "font-semibold text-slate-700"}>{formatQuantity(item.quantity, item.unit)}</span>
+                  {` · min ${item.minQuantity}`}
+                  {item.storageLocation ? ` · Raf ${item.storageLocation}` : ""}
                 </p>
-                {detailItem.lastPurchase?.supplier && <p className="text-[11px] text-slate-400">{detailItem.lastPurchase.supplier}</p>}
+                {view !== "arsiv" && status !== "ok" && (
+                  <Badge tone={STOCK_STATUS_META[status].tone} className="mt-1">{STOCK_STATUS_META[status].label}</Badge>
+                )}
               </div>
-              <div>
-                <p className="text-[11px] font-bold uppercase text-slate-400">Ort. Maliyet</p>
-                <p className="mt-0.5 font-semibold text-slate-800">{averageCost(detailItem) !== null ? CURRENCY.format(averageCost(detailItem)!) : "Maliyet yok"}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-bold uppercase text-slate-400">Stok Değeri</p>
-                <p className="mt-0.5 font-semibold text-slate-800">{CURRENCY.format(stockValue(detailItem))}</p>
-              </div>
+              <div className="shrink-0">{rowActions(item)}</div>
             </div>
-            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {canWriteStock && <Button
-                variant="primary"
-                onClick={() => {
-                  const item = detailItem;
-                  setDetailItem(null);
-                  if (!item) return;
-                  openMoveModal(item);
-                }}
-              >
-                Stok Çıkışı
-              </Button>}
-              <Button variant="secondary" onClick={() => { const item = detailItem; setDetailItem(null); if (item) void openHistory(item); }}>
-                Hareketler
-              </Button>
-              {canWriteStock && <Button variant="secondary" onClick={() => { const item = detailItem; setDetailItem(null); if (item) openEdit(item); }}>
-                Düzenle
-              </Button>}
-              {canDeleteStock && <Button variant="ghost" onClick={() => { const item = detailItem; setDetailItem(null); if (item) void deleteItem(item); }}>
-                Arşivle
-              </Button>}
-            </div>
-          </div>
-        )}
-      </Modal>
+          );
+        }}
+      />
 
-      {/* Edit Item Modal */}
-      <Modal
-        module="box"
-        open={Boolean(editItem)}
-        onClose={() => void requestCloseEditItem()}
-        isDirty={editItemDirty}
-        title="Stok Kartını Düzenle"
-        description="Bu form ürün kimliğini düzenler. Alış fiyatı ve tedarikçi satın alma satırlarında tutulur."
-        footer={(
-          <>
-            <Button variant="secondary" onClick={() => void requestCloseEditItem()}>Vazgeç</Button>
-            <Button variant="primary" loading={saving} disabled={saving || !editForm.name.trim()} onClick={submitEdit}>
-              {saving ? "Kaydediliyor…" : "Kartı Güncelle"}
-            </Button>
-          </>
-        )}
-      >
-        <div className="space-y-4">
-          <FormField label="Malzeme Adı" required>
-            <input value={editForm.name} onChange={e => setEditForm(i => ({ ...i, name: e.target.value }))} className={`${inp} w-full`} />
-          </FormField>
-          <div className="grid grid-cols-2 gap-3">
-            <FormField label="Kategori">
-              <select value={editForm.category} onChange={e => setEditForm(i => ({ ...i, category: e.target.value }))} className={`${inp} w-full`}>
-                {CATEGORIES.slice(1).map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </FormField>
-            <FormField label="Birim">
-              <select value={editForm.unit} onChange={e => setEditForm(i => ({ ...i, unit: e.target.value }))} className={`${inp} w-full`}>
-                {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
-              </select>
-            </FormField>
-          </div>
-          <FormField label="Minimum Stok">
-            <input type="number" value={editForm.minQuantity} onChange={e => setEditForm(i => ({ ...i, minQuantity: e.target.value }))} className={`${inp} w-full`} />
-          </FormField>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <FormField label="Barkod">
-              <input value={editForm.barcode} onChange={e => setEditForm(i => ({ ...i, barcode: e.target.value }))} className={`${inp} w-full font-mono`} />
-            </FormField>
-            <FormField label="Son Kullanma">
-              <input type="date" value={editForm.expiresAt} onChange={e => setEditForm(i => ({ ...i, expiresAt: e.target.value }))} className={`${inp} w-full`} />
-            </FormField>
-            <FormField label="Raf / Konum">
-              <input value={editForm.storageLocation} onChange={e => setEditForm(i => ({ ...i, storageLocation: e.target.value }))} className={`${inp} w-full`} />
-            </FormField>
-          </div>
-        </div>
-      </Modal>
+      <StockItemDetailModal
+        item={detailItem}
+        onClose={() => setDetailId(null)}
+        canWrite={canWriteStock}
+        canDelete={canDeleteStock}
+        canOrder={canOrder}
+        canSeeCost={canSeeCost}
+        refreshToken={refreshToken}
+        onMove={(item) => setMoveItem(item)}
+        onEdit={(item) => { setFormItem(item); setFormOpen(true); }}
+        onArchive={(item) => void archiveItem(item)}
+        onOrder={(item) => { setDetailId(null); openOrder(item); }}
+        onPrintBarcode={printBarcode}
+      />
 
-      {/* Movement Modal */}
-      <Modal
-        module="box"
+      <StockItemFormModal
+        open={formOpen}
+        item={formItem}
+        onClose={() => setFormOpen(false)}
+        onSaved={() => afterChange()}
+      />
+
+      <StockMovementModal
         open={Boolean(moveItem)}
-        onClose={() => void requestCloseMove()}
-        isDirty={moveDirty}
-        title="Stok Çıkışı"
-        footer={(
-          <>
-            <Button variant="secondary" onClick={() => void requestCloseMove()}>İptal</Button>
-            <Button variant="primary" loading={saving} onClick={submitMove}>
-              {saving ? "Kaydediliyor…" : "Çıkışı Kaydet"}
-            </Button>
-          </>
-        )}
-      >
-        <div className="space-y-4">
-          {moveItem && (
-            <div className="rounded-xl bg-slate-50 p-3">
-              <p className="font-semibold text-slate-800">{moveItem.name}</p>
-              <p className="text-xs text-slate-500">Mevcut: {moveItem.quantity} {moveItem.unit}</p>
-            </div>
-          )}
-          <FormField label="Çıkış Miktarı">
-            <input type="number" value={move.quantity} onChange={e => setMove(m => ({ ...m, quantity: e.target.value }))} min="1" className={`${inp} w-full`} placeholder="0" />
-          </FormField>
-          <FormField label="Açıklama">
-            <input value={move.note} onChange={e => setMove(m => ({ ...m, note: e.target.value }))} className={`${inp} w-full`} placeholder="Hangi işlemde kullanıldı?" />
-          </FormField>
-        </div>
-      </Modal>
+        item={moveItem}
+        canSeeCost={canSeeCost}
+        onClose={() => setMoveItem(null)}
+        onSaved={() => afterChange()}
+      />
 
-      {/* History Modal */}
-      <Modal
-        module="box"
-        open={Boolean(historyItem)}
-        onClose={() => setHistoryItem(null)}
-        title={historyItem ? `${historyItem.name} — Hareket Geçmişi` : "Hareket Geçmişi"}
-        description={historyItem ? `Son 50 hareket · Güncel stok: ${historyItem.quantity} ${historyItem.unit}` : undefined}
-        size="lg"
-        footer={historyItem ? (
-          <Button variant="secondary" size="sm" icon={Printer} onClick={() => printBarcode(historyItem)}>
-            Barkod
-          </Button>
-        ) : undefined}
-      >
-        {historyLoading ? (
-          <div className="space-y-2">
-            {[0, 1, 2, 3].map(i => <div key={i} className="h-14 animate-pulse rounded-xl bg-slate-100" />)}
-          </div>
-        ) : historyMovements.length === 0 ? (
-          <p className="py-10 text-center text-sm text-slate-400">Bu kalem için henüz hareket kaydı yok.</p>
-        ) : (
-          <div className="space-y-2">
-            {historyMovements.map(m => (
-              <div key={m.id} className="flex items-start justify-between gap-3 rounded-xl border border-slate-100 bg-slate-50 px-3.5 py-2.5">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge tone={m.type === "GIRIS" ? "success" : "critical"}>
-                      {m.type === "GIRIS" ? "Giriş" : "Çıkış"}
-                    </Badge>
-                    <span className="font-black text-slate-800">{m.type === "GIRIS" ? "+" : "-"}{m.quantity} {historyItem?.unit}</span>
-                    {m.unitPrice ? <span className="text-xs text-slate-500">· {CURRENCY.format(Number(m.unitPrice))}/{historyItem?.unit}</span> : null}
-                    {m.supplier ? <span className="text-xs text-slate-500">· {m.supplier}</span> : null}
-                  </div>
-                  {stripSystemTags(m.note) && <p className="mt-1 text-xs text-slate-500">{stripSystemTags(m.note)}</p>}
-                  <p className="mt-1 text-[11px] text-slate-400">{new Date(m.createdAt).toLocaleString("tr-TR")}{m.user?.fullName ? ` · ${m.user.fullName}` : ""}</p>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Modal>
+      {purchaseManager.modals}
     </div>
+  );
+}
+
+export default function StokPage() {
+  return (
+    <Suspense fallback={null}>
+      <StokContent />
+    </Suspense>
   );
 }

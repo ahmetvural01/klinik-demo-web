@@ -1,13 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Plus } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { useCallback, useEffect, useState } from "react";
+import { Pencil, Plus, Power } from "lucide-react";
+import { Button, IconButton } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { Modal } from "@/components/ui/Modal";
-import { FormField, inputErrorClass } from "@/components/ui/FormField";
+import { Input } from "@/components/ui/Input";
+import { FormErrorBanner, FormField } from "@/components/ui/FormField";
 import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { confirmDialog } from "@/lib/confirm-client";
 import { showToastSafe } from "@/lib/toast-client";
+import { TabIntro } from "@/components/superadmin/TabIntro";
+import { count, money, unitPrice } from "@/components/superadmin/sa-format";
+import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
 type Package = {
   id: string;
@@ -18,149 +23,182 @@ type Package = {
   createdAt: string;
 };
 
+const EMPTY = { name: "", smsCount: "", price: "" };
+
+/**
+ * SMS paketleri kataloğu. Paket burada tanımlanır, kliniğe satışı klinik
+ * dosyası › SMS › "Paket sat" ile yapılır (platform stoğundan düşer, fatura
+ * keser). Önceden paket düzenlenemiyordu ve kırmızı "Pasif Et" onaysızdı.
+ */
 export default function PackagesTab() {
   const [packages, setPackages] = useState<Package[]>([]);
   const [loading, setLoading] = useState(true);
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: "", smsCount: "", price: "" });
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [editing, setEditing] = useState<Package | null>(null);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState(EMPTY);
+  const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [busyId, setBusyId] = useState<string | null>(null);
 
-  const load = async () => {
+  const reload = useCallback(() => setReloadKey((value) => value + 1), []);
+
+  useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
-    try {
-      const response = await fetch("/api/superadmin/sms-packages", { cache: "no-store" });
-      const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.message || "SMS paketleri yüklenemedi.");
-      setPackages(Array.isArray(data) ? data : data?.packages ?? []);
-    } catch (error) {
-      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "SMS paketleri yüklenemedi.", type: "error" });
-    } finally {
-      setLoading(false);
-    }
+    setLoadError(null);
+    saGet<Package[]>("/api/superadmin/sms-packages", "SMS paketleri yüklenemedi.", controller.signal)
+      .then((data) => setPackages(Array.isArray(data) ? data : []))
+      .catch((error) => {
+        if (!isAbort(error)) setLoadError(errorMessage(error, "SMS paketleri yüklenemedi."));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [reloadKey]);
+
+  const openCreate = () => {
+    setEditing(null);
+    setForm(EMPTY);
+    setFormError(null);
+    setOpen(true);
   };
 
-  useEffect(() => { void load(); }, []);
+  const openEdit = (item: Package) => {
+    setEditing(item);
+    setForm({ name: item.name, smsCount: String(item.smsCount), price: String(item.price) });
+    setFormError(null);
+    setOpen(true);
+  };
 
-  const handleSave = async () => {
-    if (!form.name || !form.smsCount || !form.price) {
-      showToastSafe({ title: "Eksik bilgi", message: "Tüm alanları doldurun", type: "error" });
-      return;
-    }
+  const save = async () => {
+    const smsCount = Number(form.smsCount);
+    const price = Number(form.price.replace(",", "."));
+    if (!form.name.trim()) return setFormError("Paket adını yazın.");
+    if (!Number.isInteger(smsCount) || smsCount < 1) return setFormError("SMS adedi 1 veya daha büyük bir tam sayı olmalı.");
+    if (!Number.isFinite(price) || price <= 0) return setFormError("Fiyat sıfırdan büyük olmalı.");
     setSaving(true);
+    setFormError(null);
     try {
-      const res = await fetch("/api/superadmin/sms-packages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: form.name,
-          smsCount: parseInt(form.smsCount),
-          price: parseFloat(form.price),
-        }),
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        showToastSafe({ title: "Hata", message: err.message || "Paket kaydedilemedi", type: "error" });
-        return;
-      }
-      showToastSafe({ title: "Kaydedildi", message: "SMS paketi oluşturuldu", type: "success", icon: "sms" });
-      setShowForm(false);
-      setForm({ name: "", smsCount: "", price: "" });
-      load();
-    } catch {
-      showToastSafe({ title: "Hata", message: "Bağlantı hatası — paket kaydedilemedi. Lütfen tekrar deneyin.", type: "error" });
+      const body = { name: form.name.trim(), smsCount, price };
+      if (editing) await saSend(`/api/superadmin/sms-packages/${editing.id}`, "PATCH", body, "Paket kaydedilemedi.");
+      else await saSend("/api/superadmin/sms-packages", "POST", body, "Paket kaydedilemedi.");
+      showToastSafe({ type: "success", message: `${body.name} kaydedildi.`, icon: "sms" });
+      setOpen(false);
+      reload();
+    } catch (error) {
+      setFormError(errorMessage(error, "Paket kaydedilemedi."));
     } finally {
       setSaving(false);
     }
   };
 
-  const toggleActive = async (id: string, current: boolean) => {
-    try {
-      const res = await fetch(`/api/superadmin/sms-packages/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isActive: !current }),
+  const toggleActive = async (item: Package) => {
+    if (item.isActive) {
+      const ok = await confirmDialog({
+        title: "Paket satıştan kaldırılsın mı?",
+        message: `"${item.name}" artık kliniklere satılamaz. Daha önce satılmış SMS'ler kliniklerin bakiyesinde kalır.`,
+        confirmText: "Pasife al",
+        cancelText: "Vazgeç",
+        danger: true,
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        showToastSafe({ title: "Hata", message: err.message || "Durum güncellenemedi", type: "error" });
-        return;
-      }
-      showToastSafe({ title: current ? "Pasife alındı" : "Aktif edildi", message: "Paket durumu güncellendi", type: "success", icon: "sms" });
-      load();
-    } catch {
-      showToastSafe({ title: "Hata", message: "Bağlantı hatası — durum güncellenemedi. Lütfen tekrar deneyin.", type: "error" });
+      if (!ok) return;
+    }
+    setBusyId(item.id);
+    try {
+      await saSend(`/api/superadmin/sms-packages/${item.id}`, "PATCH", { isActive: !item.isActive }, "Paket durumu değiştirilemedi.");
+      showToastSafe({ type: "success", message: item.isActive ? `${item.name} pasife alındı.` : `${item.name} yeniden satışta.`, icon: "sms" });
+      reload();
+    } catch (error) {
+      showToastSafe({ type: "error", message: errorMessage(error, "Paket durumu değiştirilemedi.") });
+    } finally {
+      setBusyId(null);
     }
   };
 
+  const statusBadge = (item: Package) => <Badge tone={item.isActive ? "success" : "neutral"}>{item.isActive ? "Satışta" : "Pasif"}</Badge>;
+
+  const actions = (item: Package) => (
+    <div className="flex items-center justify-end gap-1.5">
+      <IconButton icon={Pencil} title="Düzenle" size="sm" onClick={() => openEdit(item)} />
+      <IconButton
+        icon={Power}
+        title={item.isActive ? "Pasife al" : "Yeniden satışa aç"}
+        tone={item.isActive ? "danger" : "primary"}
+        size="sm"
+        disabled={busyId === item.id}
+        onClick={() => void toggleActive(item)}
+      />
+    </div>
+  );
+
   const columns: ListTableColumn<Package>[] = [
-    { key: "name", header: "Paket Adı", render: (p) => <span className="font-bold text-slate-900">{p.name}</span> },
-    { key: "smsCount", header: "SMS Adedi", align: "right", render: (p) => <span className="font-semibold text-slate-700">{p.smsCount.toLocaleString("tr-TR")}</span> },
-    { key: "price", header: "Fiyat", align: "right", render: (p) => <span className="font-semibold text-slate-700">₺{p.price.toLocaleString("tr-TR")}</span> },
-    { key: "unitPrice", header: "Birim Fiyat", align: "right", render: (p) => <span className="text-xs text-slate-500">₺{(p.price / p.smsCount).toFixed(3)}/SMS</span> },
-    { key: "status", header: "Durum", render: (p) => <Badge tone={p.isActive ? "success" : "neutral"}>{p.isActive ? "Aktif" : "Pasif"}</Badge> },
-    {
-      key: "actions",
-      header: "İşlem",
-      render: (p) => (
-        <Button variant={p.isActive ? "danger" : "secondary"} size="sm" onClick={() => toggleActive(p.id, p.isActive)}>
-          {p.isActive ? "Pasif Et" : "Aktif Et"}
-        </Button>
-      ),
-    },
+    { key: "name", header: "Paket", render: (item) => <span className="font-semibold text-slate-900">{item.name}</span> },
+    { key: "smsCount", header: "SMS adedi", align: "right", render: (item) => <span className="tabular-nums">{count(item.smsCount)}</span> },
+    { key: "price", header: "Fiyat", align: "right", render: (item) => <span className="font-semibold tabular-nums">{money(item.price)}</span> },
+    { key: "unit", header: "SMS başına", align: "right", render: (item) => <span className="text-sm tabular-nums text-slate-500">{unitPrice(item.price, item.smsCount)}</span> },
+    { key: "status", header: "Durum", render: statusBadge },
+    { key: "actions", header: "", align: "right", render: actions },
   ];
 
-  return (
-    <section className="space-y-4">
-      <div className="flex justify-end">
-        <Button icon={Plus} onClick={() => setShowForm(true)}>Yeni Paket</Button>
-      </div>
+  const previewUnit = Number(form.smsCount) > 0 && Number(form.price.replace(",", ".")) > 0 ? unitPrice(Number(form.price.replace(",", ".")), Number(form.smsCount)) : null;
 
+  return (
+    <section className="space-y-3">
+      <TabIntro
+        text="Kliniklere satılan SMS paketleri. Satış, klinik dosyasındaki SMS sekmesinden “Paket sat” ile yapılır."
+        actions={<Button icon={Plus} onClick={openCreate}>Yeni paket</Button>}
+      />
       <ListTable<Package>
         columns={columns}
         rows={packages}
-        rowKey={(p) => p.id}
+        rowKey={(item) => item.id}
         loading={loading}
-        emptyText="Paket bulunamadı"
+        error={loadError}
+        onRetry={reload}
+        emptyText="Henüz paket yok"
+        emptyDescription="Kliniklere SMS satabilmek için önce bir paket tanımlayın."
+        rowClassName={(item) => (item.isActive ? "" : "opacity-60")}
+        mobileCard={(item) => (
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="truncate font-semibold text-slate-900">{item.name}</p>
+              <p className="text-xs text-slate-500">{count(item.smsCount)} SMS · {money(item.price)} · SMS başına {unitPrice(item.price, item.smsCount)}</p>
+              <div className="mt-1">{statusBadge(item)}</div>
+            </div>
+            {actions(item)}
+          </div>
+        )}
       />
 
       <Modal
-        open={showForm}
-        onClose={() => setShowForm(false)}
-        title="Yeni SMS Paketi"
+        open={open}
+        onClose={() => setOpen(false)}
+        title={editing ? "Paketi düzenle" : "Yeni SMS paketi"}
+        description={editing ? "Değişiklik yalnız bundan sonraki satışları etkiler." : undefined}
+        size="md"
         footer={
           <>
-            <Button variant="secondary" onClick={() => setShowForm(false)}>İptal</Button>
-            <Button onClick={handleSave} loading={saving}>Kaydet</Button>
+            <Button variant="secondary" onClick={() => setOpen(false)}>Vazgeç</Button>
+            <Button loading={saving} onClick={() => void save()}>Kaydet</Button>
           </>
         }
       >
-        <div className="space-y-4">
-          <FormField label="Paket Adı" required>
-            <input
-              className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ${inputErrorClass(false)}`}
-              placeholder="Başlangıç Paketi"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-            />
+        <div className="space-y-3">
+          <FormErrorBanner message={formError} />
+          <FormField label="Paket adı" htmlFor="package-name" required>
+            <Input id="package-name" value={form.name} maxLength={80} placeholder="Ör. Başlangıç paketi" onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
           </FormField>
-          <FormField label="SMS Adedi" required>
-            <input
-              type="number"
-              className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ${inputErrorClass(false)}`}
-              placeholder="500"
-              value={form.smsCount}
-              onChange={(e) => setForm({ ...form, smsCount: e.target.value })}
-            />
-          </FormField>
-          <FormField label="Fiyat (₺)" required>
-            <input
-              type="number"
-              className={`w-full rounded-xl border px-3 py-2.5 text-sm outline-none ${inputErrorClass(false)}`}
-              placeholder="150.00"
-              value={form.price}
-              onChange={(e) => setForm({ ...form, price: e.target.value })}
-            />
-          </FormField>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField label="SMS adedi" htmlFor="package-count" required hint="Aynı adette iki paket olamaz">
+              <Input id="package-count" type="number" inputMode="numeric" min="1" step="1" value={form.smsCount} onChange={(event) => setForm((current) => ({ ...current, smsCount: event.target.value }))} />
+            </FormField>
+            <FormField label="Fiyat (₺)" htmlFor="package-price" required hint={previewUnit ? `SMS başına ${previewUnit}` : undefined}>
+              <Input id="package-price" type="number" inputMode="decimal" min="0" step="0.01" value={form.price} onChange={(event) => setForm((current) => ({ ...current, price: event.target.value }))} />
+            </FormField>
+          </div>
         </div>
       </Modal>
     </section>

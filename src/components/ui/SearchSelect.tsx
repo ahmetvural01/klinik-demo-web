@@ -20,6 +20,7 @@ export function SearchSelect({
   loading = false,
   error,
   id,
+  disabled = false,
   "aria-label": ariaLabel,
   "aria-describedby": ariaDescribedBy,
 }: {
@@ -33,6 +34,7 @@ export function SearchSelect({
   loading?: boolean;
   error?: string;
   id?: string;
+  disabled?: boolean;
   "aria-label"?: string;
   "aria-describedby"?: string;
 }) {
@@ -54,6 +56,7 @@ export function SearchSelect({
         aria-describedby={ariaDescribedBy}
         data-dirty-ignore
         value={query}
+        disabled={disabled}
         onChange={(event) => {
           onQueryChange(event.target.value);
           setOpen(true);
@@ -63,9 +66,13 @@ export function SearchSelect({
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         onKeyDown={(event) => {
           if (event.key === "Escape") {
-            event.stopPropagation();
-            setOpen(false);
-            setActiveIndex(-1);
+            // Yalnız açık listeyi kapatırken olayı durdur; liste kapalıyken
+            // Esc içinde bulunduğu pencereyi kapatabilmeli (Modal sözleşmesi).
+            if (open) {
+              event.stopPropagation();
+              setOpen(false);
+              setActiveIndex(-1);
+            }
           } else if (event.key === "ArrowDown") {
             event.preventDefault();
             setOpen(true);
@@ -88,7 +95,7 @@ export function SearchSelect({
         aria-invalid={Boolean(error)}
         className={className}
       />
-      {open && (
+      {open && !disabled && (
         <div id={listboxId} role="listbox" className="ui-popover absolute left-0 right-0 top-full z-40 mt-1 max-h-56 overflow-y-auto py-1">
           {loading ? (
             <p role="status" className="flex items-center gap-2 px-3 py-2 text-xs text-slate-500">

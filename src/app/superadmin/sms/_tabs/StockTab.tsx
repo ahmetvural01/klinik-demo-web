@@ -1,173 +1,232 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { PlusCircle } from "lucide-react";
-import { ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { PackagePlus } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { FormField } from "@/components/ui/FormField";
-import { Spinner } from "@/components/ui/Spinner";
+import { Modal } from "@/components/ui/Modal";
+import { Input, Select } from "@/components/ui/Input";
+import { FormErrorBanner, FormField } from "@/components/ui/FormField";
+import { StatsCard } from "@/components/ui/Premium";
+import { EmptyValue, ListTable, type ListTableColumn } from "@/components/ui/ListTable";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { showToastSafe } from "@/lib/toast-client";
+import { TabIntro } from "@/components/superadmin/TabIntro";
+import { count, dateTime, money } from "@/components/superadmin/sa-format";
+import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
+
+const LOW_SMS = 50;
 
 type Institution = { id: string; name: string; isActive: boolean; smsBalance: number };
 type Purchase = { id: string; quantity: number; unitCost: number | null; totalCost: number | null; provider: string; note: string; createdAt: string };
 type StockData = {
   wallet: { availableBalance: number };
-  providerSync: { ok: boolean; providerCode?: string; providerBalance?: number; message?: string };
-  totals: { totalAssignedToClinics: number; totalProviderBalance: number; totalSystemSms: number; clinicCountWithSms: number };
+  totals: { totalAssignedToClinics: number; clinicCountWithSms: number };
   institutions: Institution[];
   purchases: Purchase[];
 };
+type Provider = { id: string; code: string; name: string; isActive: boolean };
 
-const inputClass = "w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20";
+const EMPTY = { quantity: "", unitCost: "", provider: "", note: "" };
 
+/**
+ * Platform SMS stoğu: sağlayıcıdan toplu alınan SMS'ler buraya eklenir,
+ * kliniklere paket satıldıkça düşer. Önceden sayfada her açılışta anlamsız
+ * bir "Senkronizasyon GET sırasında yapılmaz" uyarısı, diğer iki kutunun
+ * toplamını tekrar eden "Sistem toplamı" ve nedeni söylenmeden pasif kalan
+ * "Stok Ekle" düğmesi vardı.
+ */
 export default function StockTab() {
+  const router = useRouter();
   const [data, setData] = useState<StockData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [providers, setProviders] = useState<Provider[]>([]);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState(EMPTY);
+  const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState({ quantity: "", unitCost: "", provider: "", note: "" });
 
-  const load = async () => {
+  const reload = useCallback(() => setReloadKey((value) => value + 1), []);
+
+  useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
-    try {
-      const response = await fetch("/api/superadmin/sms-wallet", { cache: "no-store" });
-      const nextData = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(nextData?.message || "SMS bakiyesi yüklenemedi.");
-      setData(nextData);
-    } catch (error) {
-      showToastSafe({ title: "Yükleme hatası", message: error instanceof Error ? error.message : "SMS bakiyesi yüklenemedi.", type: "error" });
-    } finally {
-      setLoading(false);
+    setLoadError(null);
+    saGet<StockData>("/api/superadmin/sms-wallet", "SMS stoğu yüklenemedi.", controller.signal)
+      .then(setData)
+      .catch((error) => {
+        if (!isAbort(error)) setLoadError(errorMessage(error, "SMS stoğu yüklenemedi."));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [reloadKey]);
+
+  const openAdd = () => {
+    setForm(EMPTY);
+    setFormError(null);
+    setOpen(true);
+    if (providers.length === 0) {
+      saGet<{ providers: Provider[] }>("/api/superadmin/sms-provider", "")
+        .then((result) => {
+          const list = Array.isArray(result?.providers) ? result.providers.filter((item) => item.code !== "MOCK") : [];
+          setProviders(list);
+          const active = list.find((item) => item.isActive) || list[0];
+          if (active) setForm((current) => (current.provider ? current : { ...current, provider: active.name }));
+        })
+        .catch(() => undefined);
     }
   };
 
-  useEffect(() => { void load(); }, []);
-
-  const addStock = async () => {
+  const save = async () => {
+    const quantity = Number(form.quantity);
+    if (!Number.isInteger(quantity) || quantity < 1) return setFormError("Eklenecek SMS adedini yazın.");
+    if (!form.provider.trim()) return setFormError("SMS'lerin alındığı sağlayıcıyı seçin.");
+    if (form.note.trim().length < 3) return setFormError("Not yazın (ör. sağlayıcı fatura veya sipariş no).");
+    const unitCost = form.unitCost ? Number(form.unitCost.replace(",", ".")) : null;
+    if (unitCost != null && (!Number.isFinite(unitCost) || unitCost < 0)) return setFormError("Birim maliyet geçersiz.");
     setSaving(true);
+    setFormError(null);
     try {
-      const res = await fetch("/api/superadmin/sms-wallet", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          quantity: Number(form.quantity),
-          unitCost: form.unitCost ? Number(form.unitCost) : null,
-          provider: form.provider,
-          note: form.note,
-        }),
-      });
-      const d = await res.json();
-      if (!res.ok) throw new Error(d.message || "Eklenemedi");
-      showToastSafe({ title: "Eklendi", message: d.message ?? "Stok güncellendi", type: "success", icon: "sms" });
-      setForm({ quantity: "", unitCost: "", provider: "", note: "" });
-      load();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Bilinmeyen hata";
-      showToastSafe({ title: "Hata", message: msg, type: "error" });
+      const result = await saSend<{ message?: string }>("/api/superadmin/sms-wallet", "POST", { quantity, unitCost, provider: form.provider.trim(), note: form.note.trim() }, "Stok eklenemedi.");
+      showToastSafe({ type: "success", message: result?.message || "Stok eklendi.", icon: "sms" });
+      setOpen(false);
+      reload();
+    } catch (error) {
+      setFormError(errorMessage(error, "Stok eklenemedi."));
     } finally {
       setSaving(false);
     }
   };
 
-  const institutionColumns: ListTableColumn<Institution>[] = [
-    { key: "name", header: "Klinik", render: (i) => <span className="font-bold text-slate-900">{i.name}</span> },
-    {
-      key: "smsBalance",
-      header: "Kalan Kredi",
-      align: "right",
-      render: (i) => (
-        <span className={`font-semibold ${i.smsBalance < 50 ? "text-red-600" : "text-emerald-600"}`}>
-          {i.smsBalance.toLocaleString("tr-TR")}
-        </span>
-      ),
-    },
-    {
-      key: "isActive",
-      header: "Durum",
-      render: (i) => <Badge tone={i.isActive ? "success" : "neutral"}>{i.isActive ? "Aktif" : "Pasif"}</Badge>,
-    },
+  const clinics = useMemo(() => {
+    const list = data?.institutions ?? [];
+    return [...list].sort((a, b) => (a.isActive === b.isActive ? a.smsBalance - b.smsBalance : a.isActive ? -1 : 1));
+  }, [data]);
+
+  const balanceBadge = (item: Institution) => {
+    if (!item.isActive) return <Badge tone="neutral">Kapalı klinik</Badge>;
+    if (item.smsBalance < LOW_SMS) return <Badge tone="warning">Az ({`<${LOW_SMS}`})</Badge>;
+    return null;
+  };
+
+  const clinicColumns: ListTableColumn<Institution>[] = [
+    { key: "name", header: "Klinik", render: (item) => <span className="font-semibold text-slate-900">{item.name}</span> },
+    { key: "smsBalance", header: "SMS bakiyesi", align: "right", render: (item) => <span className="font-semibold tabular-nums">{count(item.smsBalance)}</span> },
+    { key: "state", header: "", render: (item) => balanceBadge(item) || <span /> },
   ];
 
   const purchaseColumns: ListTableColumn<Purchase>[] = [
-    { key: "createdAt", header: "Tarih", render: (p) => <span className="text-xs text-slate-500">{new Date(p.createdAt).toLocaleString("tr-TR")}</span> },
-    { key: "provider", header: "Sağlayıcı", render: (p) => <span className="font-semibold text-slate-800">{p.provider}</span> },
-    { key: "quantity", header: "Adet", align: "right", render: (p) => <span className="text-slate-700">{p.quantity.toLocaleString("tr-TR")}</span> },
-    { key: "totalCost", header: "Toplam Maliyet", align: "right", render: (p) => <span className="text-slate-700">{p.totalCost != null ? `₺${p.totalCost.toLocaleString("tr-TR")}` : "—"}</span> },
-    { key: "note", header: "Not", cellClassName: "max-w-xs truncate", render: (p) => <span className="text-slate-500">{p.note}</span> },
+    { key: "createdAt", header: "Tarih", render: (item) => <span className="whitespace-nowrap text-sm text-slate-600">{dateTime(item.createdAt)}</span> },
+    { key: "provider", header: "Sağlayıcı", render: (item) => <span className="font-semibold text-slate-800">{item.provider}</span> },
+    { key: "quantity", header: "Adet", align: "right", render: (item) => <span className="tabular-nums">{count(item.quantity)}</span> },
+    { key: "totalCost", header: "Maliyet", align: "right", render: (item) => (item.totalCost != null ? <span className="tabular-nums">{money(item.totalCost)}</span> : <EmptyValue />) },
+    { key: "note", header: "Not", cellClassName: "max-w-xs truncate", render: (item) => <span className="text-slate-600">{item.note}</span> },
   ];
 
-  if (loading && !data) {
-    return (
-      <div className="flex items-center justify-center rounded-2xl border border-slate-100 bg-white py-16 shadow-sm">
-        <Spinner className="h-8 w-8 text-primary" />
-      </div>
-    );
-  }
+  if (loadError && !data) return <LoadErrorState message={loadError} onRetry={reload} />;
 
-  if (!data) {
-    return <div className="rounded-2xl border border-red-200 bg-red-50 p-6 text-sm font-semibold text-red-700">Veri yüklenemedi</div>;
-  }
+  const stock = data?.wallet.availableBalance ?? 0;
 
   return (
-    <section className="space-y-5">
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Platform Stoğu (Ayrılmamış)</p>
-          <p className="mt-1 text-2xl font-black text-primary">{data.wallet.availableBalance.toLocaleString("tr-TR")}</p>
-        </div>
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Kliniklere Ayrılan</p>
-          <p className="mt-1 text-2xl font-black text-slate-900">{data.totals.totalAssignedToClinics.toLocaleString("tr-TR")}</p>
-        </div>
-        <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">Sistem Toplamı</p>
-          <p className="mt-1 text-2xl font-black text-slate-900">{data.totals.totalSystemSms.toLocaleString("tr-TR")}</p>
-        </div>
-      </div>
+    <section className="space-y-4">
+      <TabIntro
+        text="Sağlayıcıdan aldığınız SMS'leri stoğa ekleyin; kliniklere paket satıldıkça stoktan düşer."
+        actions={<Button icon={PackagePlus} onClick={openAdd}>Stok ekle</Button>}
+      />
 
-      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-        <p className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">Sağlayıcı Senkronizasyonu</p>
-        {data.providerSync.ok ? (
-          <p className="text-sm text-emerald-700">
-            {data.providerSync.providerCode}: sağlayıcı bakiyesi {data.providerSync.providerBalance?.toLocaleString("tr-TR")} — {data.providerSync.message}
-          </p>
-        ) : (
-          <p className="text-sm text-amber-700">{data.providerSync.message}</p>
-        )}
-      </div>
-
-      <div className="rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-        <p className="mb-3 text-sm font-black text-slate-900">Platforma Stok Ekle</p>
-        <div className="grid gap-3 sm:grid-cols-4">
-          <FormField label="Adet">
-            <input type="number" className={inputClass} value={form.quantity} onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
-          </FormField>
-          <FormField label="Birim Maliyet (₺)">
-            <input type="number" step="0.01" className={inputClass} value={form.unitCost} onChange={(e) => setForm({ ...form, unitCost: e.target.value })} />
-          </FormField>
-          <FormField label="Sağlayıcı">
-            <input className={inputClass} value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value })} />
-          </FormField>
-          <FormField label="Not">
-            <input className={inputClass} value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} />
-          </FormField>
-        </div>
-        <div className="mt-3">
-          <Button icon={PlusCircle} loading={saving} onClick={addStock} disabled={!form.quantity || !form.provider || !form.note}>
-            Stok Ekle
-          </Button>
-        </div>
+      <div className="grid grid-cols-2 gap-3">
+        <StatsCard label="Satılabilir stok" value={data ? count(stock) : "—"} description={stock <= 0 && data ? "Stok bitti: klinik satışı yapılamaz" : "Kliniklere satılabilecek SMS"} tone={data && stock <= 0 ? "warning" : "neutral"} />
+        <StatsCard label="Kliniklerdeki toplam" value={data ? count(data.totals.totalAssignedToClinics) : "—"} description={data ? `${count(data.totals.clinicCountWithSms)} klinikte bakiye var` : undefined} />
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-black text-slate-900">Klinik Bakiyeleri</h3>
-        <ListTable columns={institutionColumns} rows={data.institutions} rowKey={(i) => i.id} emptyText="Klinik bulunamadı" />
+        <h2 className="text-sm font-bold text-slate-900">Klinik bakiyeleri</h2>
+        <ListTable<Institution>
+          columns={clinicColumns}
+          rows={clinics}
+          rowKey={(item) => item.id}
+          loading={loading}
+          onRowClick={(item) => router.push(`/superadmin/institutions/${item.id}?tab=sms`)}
+          getRowAriaLabel={(item) => `${item.name} SMS bölümünü aç`}
+          rowClassName={(item) => (item.isActive ? "" : "opacity-60")}
+          emptyText="Klinik yok"
+          mobileCard={(item) => (
+            <div className="flex items-center justify-between gap-2">
+              <span className="min-w-0 truncate font-semibold text-slate-900">{item.name}</span>
+              <span className="flex shrink-0 items-center gap-2">
+                {balanceBadge(item)}
+                <span className="font-semibold tabular-nums">{count(item.smsBalance)}</span>
+              </span>
+            </div>
+          )}
+        />
       </div>
 
       <div className="space-y-2">
-        <h3 className="text-sm font-black text-slate-900">Son Stok Alımları</h3>
-        <ListTable columns={purchaseColumns} rows={data.purchases} rowKey={(p) => p.id} emptyText="Kayıt yok" />
+        <h2 className="text-sm font-bold text-slate-900">Son stok alımları</h2>
+        <ListTable<Purchase>
+          columns={purchaseColumns}
+          rows={data?.purchases ?? []}
+          rowKey={(item) => item.id}
+          loading={loading}
+          emptyText="Henüz stok alımı yok"
+          mobileCard={(item) => (
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <p className="font-semibold text-slate-900">{item.provider}</p>
+                <p className="truncate text-xs text-slate-500">{dateTime(item.createdAt)} · {item.note}</p>
+              </div>
+              <div className="text-right text-sm">
+                <p className="font-semibold tabular-nums">+{count(item.quantity)}</p>
+                {item.totalCost != null && <p className="text-xs text-slate-500">{money(item.totalCost)}</p>}
+              </div>
+            </div>
+          )}
+        />
       </div>
+
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Platform stoğuna SMS ekle"
+        description="Sağlayıcıdan satın aldığınız SMS'leri kaydedin."
+        size="md"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setOpen(false)}>Vazgeç</Button>
+            <Button loading={saving} onClick={() => void save()}>Kaydet</Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <FormErrorBanner message={formError} />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <FormField label="SMS adedi" htmlFor="stock-qty" required>
+              <Input id="stock-qty" type="number" inputMode="numeric" min="1" step="1" value={form.quantity} onChange={(event) => setForm((current) => ({ ...current, quantity: event.target.value }))} />
+            </FormField>
+            <FormField label="SMS başına maliyet (₺)" htmlFor="stock-cost" hint="İsteğe bağlı; kâr hesabı için">
+              <Input id="stock-cost" type="number" inputMode="decimal" min="0" step="0.001" value={form.unitCost} onChange={(event) => setForm((current) => ({ ...current, unitCost: event.target.value }))} />
+            </FormField>
+          </div>
+          <FormField label="Sağlayıcı" htmlFor="stock-provider" required hint={providers.length === 0 ? "Tanımlı sağlayıcı bulunamadı; adını yazın" : undefined}>
+            {providers.length > 0 ? (
+              <Select id="stock-provider" value={form.provider} onChange={(event) => setForm((current) => ({ ...current, provider: event.target.value }))}>
+                {providers.map((item) => <option key={item.id} value={item.name}>{item.name}{item.isActive ? " (aktif)" : ""}</option>)}
+              </Select>
+            ) : (
+              <Input id="stock-provider" value={form.provider} onChange={(event) => setForm((current) => ({ ...current, provider: event.target.value }))} placeholder="Ör. NetGSM" />
+            )}
+          </FormField>
+          <FormField label="Not" htmlFor="stock-note" required hint="Sağlayıcı fatura veya sipariş numarası">
+            <Input id="stock-note" value={form.note} maxLength={500} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} placeholder="Ör. NetGSM fatura 2026-1045" />
+          </FormField>
+        </div>
+      </Modal>
     </section>
   );
 }

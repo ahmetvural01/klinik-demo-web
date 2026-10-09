@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
-import { buildAuditWhere } from "@/lib/audit-query";
+import { buildPlatformAuditWhere } from "./audit-filters";
 
 export async function GET(request: NextRequest) {
   const auth = await requireAuth("superadmin");
@@ -12,7 +12,7 @@ export async function GET(request: NextRequest) {
   const page  = Math.max(1, Number(searchParams.get("page") || "1"));
   const limit = 50;
   const skip  = (page - 1) * limit;
-  const where = buildAuditWhere(searchParams);
+  const where = await buildPlatformAuditWhere(searchParams);
 
   const [total, logs] = await Promise.all([
     prisma.auditLog.count({ where }),
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
         actorRole: true,
         isGhost: true,
         ip: true,
-        user: { select: { fullName: true, role: true, institution: { select: { name: true } } } },
+        user: { select: { fullName: true, role: true, institution: { select: { id: true, name: true } } } },
       },
     }),
   ]);

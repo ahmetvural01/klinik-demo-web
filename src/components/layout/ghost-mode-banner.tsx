@@ -28,7 +28,7 @@ export function GhostModeBanner({ institutionName }: { institutionName: string }
       <div className="flex items-center gap-2.5">
         <Eye className="h-4 w-4 shrink-0" />
         <p>
-          <span className="font-bold">Gizli klinik girişi (ghost mod).</span> {institutionName} kliniğine süperadmin olarak görüntüleyici erişimindesiniz.
+          <span className="font-bold">Destek oturumu:</span> {institutionName} kliniğinin hesabındasınız. Yaptığınız her değişiklik kliniğe yazılır ve işlem kayıtlarına geçer.
         </p>
       </div>
       <button
@@ -37,7 +37,7 @@ export function GhostModeBanner({ institutionName }: { institutionName: string }
         disabled={exiting}
         className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-60"
       >
-        {exiting ? "Çıkılıyor..." : "Ghost modundan çık"}
+        {exiting ? "Çıkılıyor…" : "Destek oturumunu kapat"}
       </button>
     </div>
   );

@@ -309,10 +309,8 @@ body {
   border-color: rgb(var(--dashboard-tone) / 0.48);
   background: linear-gradient(135deg, rgb(var(--dashboard-tone) / 0.19), rgb(255 255 255 / 0.98) 76%);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.92), 0 13px 26px rgb(var(--dashboard-tone) / 0.15);
-  transform: translateY(-3px);
 }
 
-.ui-dashboard-kpi:hover::after { animation: ui-dashboard-kpi-shine 700ms var(--ease-product); }
 .ui-dashboard-kpi-caption { display: flex; align-items: center; gap: 0.2rem; margin-top: 0.65rem; color: rgb(var(--dashboard-tone)); font-size: 0.6875rem; font-weight: 800; opacity: 0.75; }
 .ui-dashboard-panel { position: relative; }
 .ui-dashboard-panel::before { content: ""; position: absolute; inset: 0 18% auto; height: 2px; background: linear-gradient(90deg, rgb(var(--app-primary) / 0.55), transparent); opacity: 0.8; pointer-events: none; }
@@ -329,7 +327,7 @@ body {
   position: relative;
   overflow: hidden;
   border-color: rgb(var(--app-primary) / 0.2);
-  background: linear-gradient(100deg, rgb(var(--app-primary) / 0.08), rgb(255 255 255 / 0.96) 48%, rgb(var(--color-warning) / 0.07));
+  background: rgb(var(--app-surface));
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.82), var(--shadow-surface);
 }
 
@@ -340,7 +338,6 @@ body {
   width: 15%;
   background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.58), transparent);
   transform: skewX(-18deg);
-  animation: ui-toolbar-sweep 8s var(--ease-product) infinite;
   pointer-events: none;
 }
 
@@ -429,7 +426,6 @@ body {
   .ui-surface-interactive:hover {
     border-color: rgb(var(--app-primary) / 0.3);
     box-shadow: var(--shadow-surface);
-    transform: translateY(-1.5px);
   }
 }
 .ui-surface-interactive:active {
@@ -482,7 +478,6 @@ body {
 @media (hover: hover) and (pointer: fine) {
   .ui-tone-card-interactive:hover {
     box-shadow: var(--shadow-surface);
-    transform: translateY(-1.5px);
   }
 }
 .ui-tone-card-interactive:active {
@@ -512,7 +507,6 @@ body {
     border-color: rgb(var(--color-slate-300));
     background-color: rgb(var(--app-surface));
     box-shadow: var(--shadow-surface);
-    transform: translateY(-1px);
   }
 }
 
@@ -521,13 +515,7 @@ body {
 }
 
 .ui-button-premium::after {
-  content: "";
-  position: absolute;
-  inset: 1px;
-  pointer-events: none;
-  border-radius: inherit;
-  background: linear-gradient(180deg, rgb(255 255 255 / 0.22), transparent 46%);
-  opacity: 0.68;
+  content: none;
 }
 
 .ui-button-premium-shine {
@@ -543,7 +531,6 @@ body {
 
 @media (hover: hover) and (pointer: fine) {
   .ui-button-premium:hover .ui-button-premium-shine {
-    animation: ui-control-shine 650ms var(--ease-product);
   }
 }
 
@@ -560,7 +547,6 @@ body {
 @media (hover: hover) and (pointer: fine) {
   .ui-button-premium:hover > svg,
   .ui-button-premium:hover > .ui-icon {
-    transform: translateX(1px) scale(1.04);
   }
 }
 
@@ -592,10 +578,8 @@ body {
 
 @media (hover: hover) and (pointer: fine) {
   .ui-icon-button-premium:hover::before {
-    animation: ui-control-shine 560ms var(--ease-product);
   }
   .ui-icon-button-premium:hover > svg {
-    transform: rotate(-6deg) scale(1.08);
     filter: drop-shadow(0 2px 2px rgb(var(--app-primary) / 0.18));
   }
 }
@@ -612,45 +596,22 @@ body {
 
 .ui-empty-state .ui-empty-illustration,
 .ui-empty-state > svg {
-  animation: ui-empty-illustration-in 320ms var(--ease-product), ui-empty-illustration-float 5.2s ease-in-out 420ms infinite;
+  animation: ui-empty-illustration-in 320ms var(--ease-product);
 }
 
-.ui-empty-state::before {
-  content: "";
-  position: absolute;
-  inset-inline: 18%;
-  top: 10%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgb(var(--app-primary) / 0.22), transparent);
-  opacity: 0.65;
-}
+
 
 /* Her ana modül aynı başlık ritmini paylaşır: küçük kurum etiketi,
    illüstratif modül ikonu, sonra başlık ve işlemler. */
+/* Sayfa başlığı sade: kart/gradyan yok, içerik zemininde durur (bkz.
+   PageHeader.tsx). Ekrandaki iç içe kutu sayısını azaltır. */
 .ui-page-header {
   position: relative;
-  overflow: hidden;
-  isolation: isolate;
-  background: linear-gradient(108deg, rgb(var(--app-primary) / 0.075), rgb(var(--app-surface)) 48%, rgb(var(--color-warning) / 0.045));
 }
 
-.ui-page-header::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto;
-  height: 2px;
-  background: linear-gradient(90deg, rgb(var(--app-primary) / 0.78), rgb(var(--color-warning) / 0.34), transparent 72%);
-  opacity: 0.9;
-}
 
-.ui-page-header::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(115deg, rgb(255 255 255 / 0.28), transparent 32%);
-  z-index: -1;
-}
+
+
 
 .ui-page-header-icon {
   display: inline-flex;
@@ -712,24 +673,16 @@ body {
     border-color: rgb(var(--app-primary) / 0.26);
     background: rgb(var(--app-primary) / 0.1);
     box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.85), 0 6px 14px rgb(var(--app-primary) / 0.13);
-    transform: translateY(-1px) scale(1.035);
   }
   .ui-page-header:hover .ui-page-header-icon .module-icon-img {
-    transform: translateY(-2px) rotate(-3deg) scale(1.1);
   }
   .ui-page-header-stat:hover {
     border-color: rgb(var(--stat-rgb) / 0.24);
     background: rgb(var(--stat-rgb) / 0.065);
     box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.88), 0 5px 12px rgb(var(--stat-rgb) / 0.1);
-    transform: translateY(-2px);
   }
   .ui-page-header-stat:hover::after {
-    animation: ui-control-shine 580ms var(--ease-product);
   }
-}
-
-.ui-page-header-icon .module-icon-img {
-  animation: ui-page-icon-drift 4.8s ease-in-out infinite;
 }
 
 .ui-page-header-icon,
@@ -865,7 +818,6 @@ body {
 
 .ui-confirm-cancel:hover,
 .ui-confirm-submit:hover {
-  transform: translateY(-1px);
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.78), var(--shadow-rest);
 }
 
@@ -918,17 +870,14 @@ body {
 @media (hover: hover) and (pointer: fine) {
   .ui-appointment-history-row:hover {
     box-shadow: inset 3px 0 0 rgb(var(--app-primary) / 0.65);
-    transform: translateX(1px);
   }
 }
 
 @media (hover: hover) and (pointer: fine) {
   .ui-table-sort-button:hover:not(:disabled) {
     color: rgb(var(--app-primary));
-    transform: translateX(1px);
   }
   .ui-table-sort-button:hover:not(:disabled) svg {
-    transform: translateY(-1px) rotate(8deg);
   }
   .ui-data-table tbody tr:hover td,
   .ui-list-table tbody tr:hover td {
@@ -974,7 +923,6 @@ body {
   .ui-premium-card:hover,
   .ui-premium-row:hover {
     box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.8), var(--shadow-surface);
-    transform: translateY(-1px);
   }
 }
 
@@ -1079,7 +1027,6 @@ body {
    küçük ışık hareketi" hissi. */
 @media (hover: hover) and (pointer: fine) {
   .group:hover .ui-icon-frame {
-    transform: translateY(-1px) scale(1.05);
   }
   .group:hover .ui-icon-frame[data-accent]:not([data-active="true"]) {
     background: rgb(var(--tile-rgb) / 0.11);
@@ -1144,13 +1091,11 @@ body {
     background: rgb(var(--app-primary) / 0.16);
   }
   .group:hover .module-icon-img {
-    transform: translateY(-1.5px) scale(1.1);
     filter: saturate(1.32) drop-shadow(0 3px 5px rgb(15 23 42 / 0.2));
   }
   .group:hover .module-icon::after,
   a:hover .module-icon::after,
   button:hover .module-icon::after {
-    animation: ui-icon-glint 520ms var(--ease-product);
   }
 }
 .group:active .module-icon-img {
@@ -1609,7 +1554,6 @@ button:focus-visible .module-icon {
   border-color: rgb(var(--app-primary) / 0.55);
   box-shadow: 0 4px 10px rgb(var(--app-primary) / 0.18);
   opacity: 1;
-  transform: translateY(-1px);
 }
 
 /* İnce fakat fare ve dokunmatik yüzeyle rahat tutulabilen kaydırma çubuğu. */
@@ -1815,9 +1759,9 @@ th {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
+/* Satır satır gecikmeli giriş kaldırıldı: uzun listeler "yavaş" görünüyordu. */
 .ui-row-in {
-  animation: ui-row-in 260ms var(--ease-product) both;
-  animation-delay: var(--row-delay, 0ms);
+  animation: none;
 }
 
 /* KPI/istatistik kartları sayfa açılışında hafifçe yükselerek belirir. */
@@ -1826,8 +1770,7 @@ th {
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 .ui-kpi-in {
-  animation: ui-kpi-in 320ms var(--ease-product) both;
-  animation-delay: var(--row-delay, 0ms);
+  animation: none;
 }
 
 /* Kritik/gecikmiş durumları taşıyan rozetler dikkat çekmek için çok
@@ -1838,8 +1781,10 @@ th {
   0%, 100% { box-shadow: 0 0 0 0 rgb(var(--color-danger, 220 38 38) / 0.28); }
   50% { box-shadow: 0 0 0 4px rgb(var(--color-danger, 220 38 38) / 0); }
 }
+/* Sürekli nabız kaldırıldı: kritik rozet zaten dolu kırmızı; ekranda yanıp
+   sönen öğe dikkat dağıtıyordu. Sınıf geriye dönük uyum için duruyor. */
 .ui-badge-pulse {
-  animation: ui-badge-pulse 2.4s ease-in-out infinite;
+  animation: none;
 }
 @media (prefers-reduced-motion: reduce) {
   .ui-badge-pulse { animation: none; }
@@ -1880,7 +1825,6 @@ th {
     border-color: rgb(245 158 11 / 0.28);
     background: linear-gradient(105deg, rgb(255 251 235 / 0.78), rgb(255 255 255));
     box-shadow: 0 5px 14px rgb(245 158 11 / 0.08);
-    transform: translateY(-1px);
   }
   .ui-announcement-item:hover::after {
     opacity: 0.9;
@@ -1889,7 +1833,6 @@ th {
   .ui-announcement-item:hover .ui-announcement-mark {
     background: rgb(254 243 199);
     box-shadow: 0 3px 8px rgb(245 158 11 / 0.16);
-    transform: translateY(-1px) rotate(-6deg) scale(1.06);
   }
 }
 
@@ -1903,7 +1846,6 @@ th {
 }
 @media (hover: hover) and (pointer: fine) {
   .panel-content .randevu-page .randevu-appt-card:hover {
-    transform: translateY(-1px);
     box-shadow: var(--shadow-surface);
   }
 }
@@ -2052,7 +1994,7 @@ th {
   50% { background-color: rgb(var(--app-primary) / 0.09); }
 }
 .ui-today-breathe {
-  animation: ui-today-breathe 3.6s ease-in-out infinite;
+  background-color: rgb(var(--app-primary) / 0.06);
 }
 @media (prefers-reduced-motion: reduce) {
   .ui-today-breathe { animation: none; background-color: rgb(var(--app-primary) / 0.06); }
@@ -2121,3 +2063,101 @@ th {
     font-size: 16px;
   }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   ORTAK BİLEŞEN TEMELİ (2026-10 sadeleştirme)
+   Tabs, SearchInput, Input/Select/Textarea, PatientPicker bu sınıfları
+   kullanır. Sayfalar kendi sekme/arama/kontrol stilini yazmaz.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* components katmanında: sayfalar pl-9, w-full gibi yardımcı sınıflarla bu
+   temeli ezebilsin (katmansızken büyüteç ikonu arama yazısının üstüne biniyordu). */
+@layer components {
+.ui-control {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  border: 1px solid rgb(var(--color-slate-200));
+  border-radius: var(--radius-control);
+  background-color: rgb(var(--app-surface));
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: rgb(var(--color-slate-900));
+  outline: none;
+  transition: border-color 150ms var(--ease-product), box-shadow 150ms var(--ease-product);
+}
+.ui-control::placeholder { color: rgb(var(--color-slate-400)); }
+.ui-control:hover { border-color: rgb(var(--color-slate-300)); }
+.ui-control:focus {
+  border-color: rgb(var(--app-primary));
+  box-shadow: 0 0 0 3px rgb(var(--app-primary) / 0.12);
+}
+.ui-control:disabled {
+  cursor: not-allowed;
+  background-color: rgb(var(--color-slate-100) / 0.6);
+  color: rgb(var(--color-slate-400));
+}
+.ui-control[aria-invalid="true"] {
+  border-color: rgb(var(--color-danger) / 0.55);
+  background-color: rgb(var(--color-danger) / 0.04);
+}
+.ui-control-sm { font-size: 0.8125rem; }
+.ui-textarea { min-height: 84px; resize: vertical; }
+.ui-select { padding-right: 2rem; cursor: pointer; }
+.ui-search-input::-webkit-search-cancel-button { display: none; }
+
+.ui-tabs {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  gap: 0.25rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  border: 1px solid rgb(var(--color-slate-200) / 0.8);
+  border-radius: 0.625rem;
+  background: rgb(var(--color-slate-100));
+  padding: 0.25rem;
+}
+.ui-tabs::-webkit-scrollbar { display: none; }
+.ui-tab {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 36px;
+  white-space: nowrap;
+  border-radius: 0.5rem;
+  padding: 0.4375rem 0.875rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: rgb(var(--color-slate-600));
+  transition: background-color 150ms var(--ease-product), color 150ms var(--ease-product), box-shadow 150ms var(--ease-product);
+}
+.ui-tab:hover:not(:disabled) { background: rgb(var(--app-surface) / 0.65); color: rgb(var(--color-slate-900)); }
+.ui-tab[aria-selected="true"] {
+  background: rgb(var(--app-surface));
+  color: rgb(var(--app-primary));
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.08), 0 1px 1px rgb(15 23 42 / 0.04);
+}
+.ui-tab:focus-visible { outline: 2px solid rgb(var(--app-primary) / 0.5); outline-offset: 1px; }
+.ui-tab:disabled { cursor: not-allowed; opacity: 0.45; }
+.ui-tab-count {
+  display: inline-flex;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  padding: 0 0.375rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  line-height: 1;
+}
+.ui-tabs-sm .ui-tab { min-height: 32px; padding: 0.3125rem 0.625rem; font-size: 0.8125rem; }
+}
+.panel-content .ui-tabs-sm .ui-tab { min-height: 32px; }
+
+/* Switch: .panel-content button'ın 36px alt yükseklik kuralı anahtarı
+   bozmasın (anahtarın kendi 24px yüksekliği var; etiketi tıklanabilir). */
+.panel-content .ui-switch { min-height: 0; }

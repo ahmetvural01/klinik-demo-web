@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth, writeAudit } from "@/lib/api";
 import { prisma } from "@/lib/prisma";
-import { buildAuditWhere } from "@/lib/audit-query";
+import { buildPlatformAuditWhere } from "../audit-filters";
+import { auditActionLabel } from "@/components/superadmin/sa-labels";
+import { roleLabel } from "@/lib/staff-roles";
 
 const MAX_ROWS = 20000;
 
@@ -19,7 +21,7 @@ export async function GET(request: NextRequest) {
   if (auth.user.role !== "SUPERADMIN") return NextResponse.json({ message: "Yetki yok" }, { status: 403 });
 
   const { searchParams } = new URL(request.url);
-  const where = buildAuditWhere(searchParams);
+  const where = await buildPlatformAuditWhere(searchParams);
 
   const logs = await prisma.auditLog.findMany({
     where,
@@ -36,12 +38,13 @@ export async function GET(request: NextRequest) {
     },
   });
 
-  const header = ["Tarih", "Kullanıcı", "Klinik", "Rol", "İşlem", "Detay", "IP", "Ghost"];
+  const header = ["Tarih", "Kullanıcı", "Klinik", "Rol", "İşlem", "İşlem kodu", "Detay", "IP", "Gizli giriş"];
   const rows = logs.map((l) => [
-    l.createdAt.toLocaleString("tr-TR"),
+    l.createdAt.toLocaleString("tr-TR", { timeZone: "Europe/Istanbul" }),
     l.user?.fullName ?? "",
     l.user?.institution?.name ?? "",
-    l.actorRole ?? l.user?.role ?? "",
+    roleLabel(l.actorRole ?? l.user?.role ?? ""),
+    auditActionLabel(l.action, l.detail),
     l.action,
     l.detail ?? "",
     l.ip ?? "",

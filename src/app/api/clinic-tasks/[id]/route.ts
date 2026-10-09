@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireAuth, writeAudit } from "@/lib/api";
+import { hasEffectivePermission, requireAuth, writeAudit } from "@/lib/api";
 import { clinicTaskUpdateSchema } from "@/lib/validators";
+import { requireActiveBranch } from "@/lib/branch-context";
+
+const TASK_INCLUDE = {
+  patient: { select: { id: true, fullName: true } },
+  assignedTo: { select: { id: true, fullName: true, isActive: true } },
+  assignees: { include: { user: { select: { id: true, fullName: true, role: true, isActive: true } } } },
+  createdBy: { select: { id: true, fullName: true } },
+} as const;
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -9,16 +17,28 @@ export async function PUT(request: NextRequest, props: Params) {
   const params = await props.params;
   const auth = await requireAuth("clinictasks:write");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Kurum bağlantısı bulunamadı." }, { status: 403 });
   }
 
+  // Görev yalnız aktif şubede aranır (liste de yalnız aktif şubeyi gösterir).
   const existing = await prisma.clinicTask.findFirst({
-    where: { id: params.id, institutionId: auth.user.institutionId },
+    where: { id: params.id, institutionId: auth.user.institutionId, branchId: branch.branchId },
+    include: { assignees: { select: { userId: true } } },
   });
   if (!existing) {
     return NextResponse.json({ message: "Görev bulunamadı" }, { status: 404 });
+  }
+  // Tüm görevleri görme yetkisi olmayan kişi yalnız kendisine atanan ya da
+  // kendi açtığı görevi değiştirebilir (listede de yalnız bunları görür).
+  const isInvolved = existing.assignedToId === auth.user.id
+    || existing.createdById === auth.user.id
+    || existing.assignees.some((assignee) => assignee.userId === auth.user.id);
+  if (!isInvolved && !(await hasEffectivePermission(auth.user, "clinictasks:read-all"))) {
+    return NextResponse.json({ message: "Bu görevi değiştirme yetkiniz yok" }, { status: 403 });
   }
 
   const body = await request.json().catch(() => null);
@@ -32,6 +52,17 @@ export async function PUT(request: NextRequest, props: Params) {
 
   const p = parsed.data;
 
+  // Durumu "İptal"e çekmek, DELETE ile aynı kuralları izler: iptal yetkisi
+  // gerekir ve tamamlanmış görev iptal edilemez (işlem geçmişi korunur).
+  if (p.status === "IPTAL" && existing.status !== "IPTAL") {
+    if (!(await hasEffectivePermission(auth.user, "clinictasks:delete"))) {
+      return NextResponse.json({ message: "Görev iptal etme yetkiniz yok" }, { status: 403 });
+    }
+    if (existing.status === "TAMAMLANDI") {
+      return NextResponse.json({ message: "Tamamlanmış görev iptal edilemez; önce yeniden açın." }, { status: 409 });
+    }
+  }
+
   const hasAssigneeUpdate = p.assignedToIds !== undefined || p.assignedToId !== undefined;
   const requestedAssignees = hasAssigneeUpdate
     ? Array.from(new Set([...(p.assignedToIds || []), ...(typeof p.assignedToId === "string" && p.assignedToId ? [p.assignedToId] : [])].filter(Boolean)))
@@ -39,7 +70,7 @@ export async function PUT(request: NextRequest, props: Params) {
 
   if (requestedAssignees && requestedAssignees.length) {
     const assignees = await prisma.user.findMany({
-      where: { id: { in: requestedAssignees }, institutionId: auth.user.institutionId, isActive: true },
+      where: { id: { in: requestedAssignees }, institutionId: auth.user.institutionId, isActive: true, branchMemberships: { some: { branchId: branch.branchId, isActive: true } } },
       select: { id: true },
     });
     if (assignees.length !== requestedAssignees.length) {
@@ -98,12 +129,7 @@ export async function PUT(request: NextRequest, props: Params) {
 
     return tx.clinicTask.findUniqueOrThrow({
       where: { id: updated.id },
-      include: {
-        patient: { select: { id: true, fullName: true, phone: true } },
-        assignedTo: { select: { id: true, fullName: true, isActive: true } },
-        assignees: { include: { user: { select: { id: true, fullName: true, role: true, isActive: true } } } },
-        createdBy: { select: { id: true, fullName: true } },
-      },
+      include: TASK_INCLUDE,
     });
   });
 
@@ -116,17 +142,25 @@ export async function DELETE(_: NextRequest, props: Params) {
   const params = await props.params;
   const auth = await requireAuth("clinictasks:delete");
   if (auth.error) return auth.error;
+  const branch = requireActiveBranch(auth.user.branchContext);
+  if (!branch.ok) return NextResponse.json({ message: branch.message }, { status: 403 });
 
   if (!auth.user.institutionId) {
     return NextResponse.json({ message: "Kurum bağlantısı bulunamadı." }, { status: 403 });
   }
 
   const existing = await prisma.clinicTask.findFirst({
-    where: { id: params.id, institutionId: auth.user.institutionId },
-    select: { id: true, title: true, status: true },
+    where: { id: params.id, institutionId: auth.user.institutionId, branchId: branch.branchId },
+    select: { id: true, title: true, status: true, assignedToId: true, createdById: true, assignees: { select: { userId: true } } },
   });
   if (!existing) {
     return NextResponse.json({ message: "Görev bulunamadı" }, { status: 404 });
+  }
+  const isInvolved = existing.assignedToId === auth.user.id
+    || existing.createdById === auth.user.id
+    || existing.assignees.some((assignee) => assignee.userId === auth.user.id);
+  if (!isInvolved && !(await hasEffectivePermission(auth.user, "clinictasks:read-all"))) {
+    return NextResponse.json({ message: "Bu görevi iptal etme yetkiniz yok" }, { status: 403 });
   }
 
   if (existing.status === "IPTAL") return NextResponse.json({ ok: true, status: "IPTAL" });

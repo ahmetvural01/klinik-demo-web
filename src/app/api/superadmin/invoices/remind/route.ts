@@ -28,6 +28,9 @@ export async function POST(request: NextRequest) {
   if (invoice.status === "PAID") {
     return NextResponse.json({ message: "Ödenmiş faturaya hatırlatma gönderilemez." }, { status: 409 });
   }
+  if (invoice.status === "CANCELLED") {
+    return NextResponse.json({ message: "İptal edilmiş faturaya hatırlatma gönderilemez." }, { status: 409 });
+  }
 
   let results;
   try {

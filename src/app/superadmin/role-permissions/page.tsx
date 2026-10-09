@@ -1,405 +1,363 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Search, Save, RotateCcw, AlertTriangle } from "lucide-react";
-import { confirmDialog } from "@/lib/confirm-client";
-import { showToastSafe } from "@/lib/toast-client";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { RotateCcw } from "lucide-react";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { Tabs, useTabParam } from "@/components/ui/Tabs";
+import { Toolbar } from "@/components/ui/Toolbar";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { Select } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { Badge, type BadgeTone } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { createModuleEmptyIcon } from "@/components/ui/ModuleIcon";
-import { Spinner } from "@/components/ui/Spinner";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
+import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
+import { SaveBar } from "@/components/ui/SaveBar";
+import { confirmDialog } from "@/lib/confirm-client";
+import { showToastSafe } from "@/lib/toast-client";
+import { roleLabel } from "@/lib/staff-roles";
+import { dateTime } from "@/components/superadmin/sa-format";
+import { errorMessage, isAbort, saGet, saSend } from "@/components/superadmin/sa-fetch";
 
-const RolePermissionsEmptyIcon = createModuleEmptyIcon("settings");
+type PermissionGroup = { key: string; label: string; icon: string; category: string; permissions: string[] };
+type PermissionDetail = { code: string; title: string; description: string; risk: "yuksek" | "orta" | "dusuk" };
 
-type Role = "YONETICI" | "DOKTOR" | "ASISTAN" | "BANKO" | "MUHASEBE";
-type Category = "tumu" | "klinik" | "finans" | "yonetim" | "iletisim" | "sistem";
-
-type PermissionGroup = {
-  key: string;
-  label: string;
-  icon: string;
-  category: string;
-  permissions: string[];
-};
-
-type PermissionDetail = {
-  code: string;
-  title: string;
-  description: string;
-  risk: "yuksek" | "orta" | "dusuk";
-};
-
-type RoleMeta = { label: string; color: string; description: string };
-
-type PermissionPayload = {
+type Payload = {
   version: number;
   updatedAt: string;
   updatedBy: string;
-  roles: Role[];
-  roleMeta?: Record<string, RoleMeta>;
+  roles: string[];
   permissionGroups: PermissionGroup[];
   permissionDetails?: Record<string, PermissionDetail>;
   allPermissions: string[];
   map: Record<string, string[]>;
 };
 
-const CATEGORY_LABELS: Record<Category, { label: string; icon: string }> = {
-  tumu:      { label: "Tümü",          icon: "🗂️" },
-  klinik:    { label: "Klinik",        icon: "🏥" },
-  finans:    { label: "Finans",        icon: "💰" },
-  yonetim:   { label: "Yönetim",       icon: "📋" },
-  iletisim:  { label: "İletişim",      icon: "💬" },
-  sistem:    { label: "Sistem",        icon: "⚙️" },
+const CATEGORY_KEYS = ["tumu", "klinik", "finans", "yonetim", "iletisim", "sistem"] as const;
+const CATEGORY_LABELS: Record<(typeof CATEGORY_KEYS)[number], string> = {
+  tumu: "Tümü",
+  klinik: "Klinik",
+  finans: "Finans",
+  yonetim: "Yönetim",
+  iletisim: "İletişim",
+  sistem: "Sistem",
 };
 
-const RISK_CONFIG: Record<PermissionDetail["risk"], { label: string; tone: BadgeTone }> = {
+const RISK: Record<PermissionDetail["risk"], { label: string; tone: BadgeTone }> = {
   yuksek: { label: "Kritik", tone: "critical" },
-  orta:   { label: "Orta",   tone: "warning" },
-  dusuk:  { label: "Düşük",  tone: "success" },
+  orta: { label: "Orta", tone: "warning" },
+  dusuk: { label: "Düşük", tone: "neutral" },
 };
 
+function expand(list: string[] | undefined, all: string[]): string[] {
+  const perms = list || [];
+  return perms.includes("*") ? [...all] : perms.filter((perm) => all.includes(perm));
+}
+
+/**
+ * Rol Yetkileri — klinik rollerinin tüm kliniklerde neye erişebileceği.
+ * Değişiklikler yapışkan alt çubuktan kaydedilir; kaydetmeden önce rol bazında
+ * fark özeti ve kritik yetki uyarısı gösterilir. Rol kartlarındaki "Tümünü
+ * Aç/Kapat" kaldırıldı (kritik yetkiler dahil 80 yetkiyi tek tıkla açıyordu);
+ * toplu seçim yalnız grup düzeyinde. Telefonda tek rol seçilerek düzenlenir.
+ */
 export default function RolePermissionsPage() {
-  const [loading, setLoading]   = useState(true);
-  const [saving, setSaving]     = useState(false);
-  const [search, setSearch]     = useState("");
-  const [category, setCategory] = useState<Category>("tumu");
-  const [payload, setPayload]   = useState<PermissionPayload | null>(null);
-  const [map, setMap]           = useState<Record<string, string[]>>({});
+  const [category, setCategory] = useTabParam(CATEGORY_KEYS, "tumu", "kategori");
+  const [payload, setPayload] = useState<Payload | null>(null);
+  const [map, setMap] = useState<Record<string, string[]>>({});
   const [savedMap, setSavedMap] = useState<Record<string, string[]>>({});
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState("");
+  const [mobileRole, setMobileRole] = useState("DOKTOR");
 
-  const isDirty = useMemo(() => JSON.stringify(map) !== JSON.stringify(savedMap), [map, savedMap]);
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoadError(null);
+    saGet<Payload>("/api/superadmin/role-permissions", "Rol yetkileri yüklenemedi.", controller.signal)
+      .then((data) => {
+        if (!data || !Array.isArray(data.permissionGroups) || !Array.isArray(data.roles)) throw new Error("Rol yetkileri beklenmeyen biçimde geldi.");
+        const normalized = Object.fromEntries(data.roles.map((role) => [role, expand(data.map?.[role], data.allPermissions)]));
+        setPayload(data);
+        setMap(normalized);
+        setSavedMap(normalized);
+      })
+      .catch((error) => {
+        if (!isAbort(error)) setLoadError(errorMessage(error, "Rol yetkileri yüklenemedi."));
+      });
+    return () => controller.abort();
+  }, [reloadKey]);
 
-  const load = async () => {
-    setLoading(true);
-    const res  = await fetch("/api/superadmin/role-permissions");
-    const data = await res.json();
-    setPayload(data);
-    setMap(data?.map || {});
-    setSavedMap(data?.map || {});
-    setLoading(false);
-  };
-
-  useEffect(() => { void load(); }, []);
-
-  const filteredGroups = useMemo(() => {
+  const diff = useMemo(() => {
     if (!payload) return [];
-    const q = search.trim().toLowerCase();
+    return payload.roles.map((role) => {
+      const before = new Set(savedMap[role] || []);
+      const after = new Set(map[role] || []);
+      const added = [...after].filter((perm) => !before.has(perm));
+      const removed = [...before].filter((perm) => !after.has(perm));
+      const critical = [...added, ...removed].filter((perm) => payload.permissionDetails?.[perm]?.risk === "yuksek");
+      return { role, added, removed, critical };
+    }).filter((item) => item.added.length > 0 || item.removed.length > 0);
+  }, [map, savedMap, payload]);
+  const isDirty = diff.length > 0;
+
+  // Kaydedilmemiş değişiklikle sayfadan çıkarken tarayıcı uyarır.
+  useEffect(() => {
+    if (!isDirty) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [isDirty]);
+
+  const groups = useMemo(() => {
+    if (!payload) return [];
+    const q = search.trim().toLocaleLowerCase("tr-TR");
     return payload.permissionGroups
-      .filter(g => category === "tumu" || g.category === category)
-      .map(g => ({
-        ...g,
-        permissions: g.permissions.filter(p => {
-          const d = payload.permissionDetails?.[p];
-          return !q ||
-            p.toLowerCase().includes(q) ||
-            g.label.toLowerCase().includes(q) ||
-            (d?.title || "").toLowerCase().includes(q) ||
-            (d?.description || "").toLowerCase().includes(q);
+      .filter((group) => category === "tumu" || group.category === category)
+      .map((group) => ({
+        ...group,
+        permissions: group.permissions.filter((perm) => {
+          if (!q) return true;
+          const detail = payload.permissionDetails?.[perm];
+          return group.label.toLocaleLowerCase("tr-TR").includes(q)
+            || (detail?.title || perm).toLocaleLowerCase("tr-TR").includes(q)
+            || (detail?.description || "").toLocaleLowerCase("tr-TR").includes(q);
         }),
       }))
-      .filter(g => g.permissions.length > 0);
+      .filter((group) => group.permissions.length > 0);
   }, [payload, search, category]);
 
-  const hasPerm = (role: string, perm: string) => {
-    const perms = map[role] || [];
-    return perms.includes("*") || perms.includes(perm);
-  };
+  const has = (role: string, perm: string) => (map[role] || []).includes(perm);
 
-  const togglePerm = (role: string, perm: string) => {
-    setMap(prev => {
-      const cur = (prev[role] || []).includes("*") && payload
-        ? [...payload.allPermissions]
-        : [...(prev[role] || [])];
-      const next = cur.includes(perm) ? cur.filter(p => p !== perm) : [...cur, perm];
-      return { ...prev, [role]: next };
+  const toggle = (role: string, perm: string) => {
+    setMap((current) => {
+      const list = current[role] || [];
+      return { ...current, [role]: list.includes(perm) ? list.filter((item) => item !== perm) : [...list, perm] };
     });
   };
 
-  const toggleGroup = (role: string, perms: string[], enable: boolean) => {
-    setMap(prev => {
-      const cur = (prev[role] || []).includes("*") && payload
-        ? [...payload.allPermissions]
-        : [...(prev[role] || [])];
-      const next = enable
-        ? Array.from(new Set([...cur, ...perms]))
-        : cur.filter(p => !perms.includes(p));
-      return { ...prev, [role]: next };
+  const setGroup = (role: string, perms: string[], enable: boolean) => {
+    setMap((current) => {
+      const list = current[role] || [];
+      return { ...current, [role]: enable ? Array.from(new Set([...list, ...perms])) : list.filter((item) => !perms.includes(item)) };
     });
   };
 
-  const setRoleAll = (role: string, allPerms: string[], enabled: boolean) => {
-    setMap(prev => ({ ...prev, [role]: enabled ? [...allPerms] : [] }));
-  };
-
-  const activeCount = (role: string) => {
-    if (!payload) return 0;
-    const perms = map[role] || [];
-    if (perms.includes("*")) return payload.allPermissions.length;
-    return payload.allPermissions.filter(p => perms.includes(p)).length;
-  };
+  const detail = useCallback((perm: string): PermissionDetail => payload?.permissionDetails?.[perm] ?? { code: perm, title: perm, description: "", risk: "dusuk" }, [payload]);
 
   const save = async () => {
     if (!payload) return;
-    if (!(await confirmDialog({ message: "Yetki değişiklikleri kaydedilsin mi? Bu değişiklik anında platformdaki TÜM kliniklerin her API/sayfa yetki kontrolüne yansır.", danger: true, confirmText: "Kaydet" }))) return;
+    const lines = diff.map((item) => `• ${roleLabel(item.role)}: ${item.added.length} yetki eklendi, ${item.removed.length} yetki kaldırıldı${item.critical.length ? ` — kritik: ${item.critical.map((perm) => detail(perm).title).slice(0, 3).join(", ")}${item.critical.length > 3 ? "…" : ""}` : ""}`);
+    const managerLoses = diff.find((item) => item.role === "YONETICI" && item.removed.length > 0);
+    const ok = await confirmDialog({
+      title: "Yetki değişiklikleri kaydedilsin mi?",
+      message: [
+        "Bu değişiklik TÜM kliniklerde hemen geçerli olur:",
+        lines.join("\n"),
+        managerLoses ? "Dikkat: Klinik yöneticisinden yetki kaldırıyorsunuz; klinikler bu işleri kendi başına yapamaz hale gelebilir." : "",
+      ].filter(Boolean).join("\n\n"),
+      confirmText: "Kaydet",
+      cancelText: "Vazgeç",
+      danger: Boolean(managerLoses) || diff.some((item) => item.critical.length > 0),
+    });
+    if (!ok) return;
     setSaving(true);
     try {
-      const res = await fetch("/api/superadmin/role-permissions", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ map, version: payload.version }),
-      });
-      if (!res.ok) {
-        showToastSafe({ title: "Hata", message: "Kaydetme sırasında hata oluştu.", type: "error" });
-        return;
-      }
-      const d = await res.json();
-      setPayload(prev => prev ? { ...prev, version: d.version, updatedAt: d.updatedAt, updatedBy: d.updatedBy } : prev);
+      // "Tüm yetkiler" (*) olarak kayıtlı bir rol hâlâ tümüne sahipse yine *
+      // gönderilir; aksi halde ileride eklenecek yeni yetkileri alamazdı.
+      const outgoing = Object.fromEntries(Object.entries(map).map(([role, perms]) => [
+        role,
+        (payload.map?.[role] || []).includes("*") && perms.length >= payload.allPermissions.length ? ["*"] : perms,
+      ]));
+      const result = await saSend<{ version: number; updatedAt: string; updatedBy: string; map?: Record<string, string[]> }>("/api/superadmin/role-permissions", "PUT", { map: outgoing, version: payload.version }, "Yetkiler kaydedilemedi.");
+      setPayload((current) => (current ? { ...current, version: result.version, updatedAt: result.updatedAt, updatedBy: result.updatedBy, map: result.map ?? outgoing } : current));
       setSavedMap(map);
-      showToastSafe({ title: "Kaydedildi", message: `Yetkiler kaydedildi. Sürüm: ${d.version}`, type: "success", icon: "settings" });
-    } catch {
-      showToastSafe({ title: "Hata", message: "Bağlantı hatası — yetkiler kaydedilemedi. Lütfen tekrar deneyin.", type: "error" });
+      showToastSafe({ type: "success", message: "Rol yetkileri kaydedildi; tüm kliniklerde geçerli.", icon: "settings" });
+    } catch (error) {
+      showToastSafe({ type: "error", message: errorMessage(error, "Yetkiler kaydedilemedi.") });
     } finally {
       setSaving(false);
     }
   };
 
   const resetDefaults = async () => {
-    if (!(await confirmDialog({ message: "Tüm rol izinleri varsayılan değerlere dönsün mü?", danger: true, confirmText: "Sıfırla" }))) return;
+    if (!payload) return;
+    const ok = await confirmDialog({
+      title: "Tüm rol yetkileri varsayılana dönsün mü?",
+      message: "Yaptığınız tüm özelleştirmeler silinir ve her rol ilk kurulumdaki yetkilerine döner. Tüm kliniklerde hemen geçerli olur.",
+      confirmText: "Varsayılana döndür",
+      cancelText: "Vazgeç",
+      danger: true,
+    });
+    if (!ok) return;
     setSaving(true);
     try {
-      const res = await fetch("/api/superadmin/role-permissions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reset", version: payload?.version }),
-      });
-      if (!res.ok) {
-        showToastSafe({ title: "Hata", message: "Sıfırlama sırasında hata oluştu.", type: "error" });
-        return;
-      }
-      await load();
-      showToastSafe({ title: "Sıfırlandı", message: "Varsayılan yetkiler yüklendi.", type: "success", icon: "settings" });
-    } catch {
-      showToastSafe({ title: "Hata", message: "Bağlantı hatası — sıfırlanamadı. Lütfen tekrar deneyin.", type: "error" });
+      await saSend("/api/superadmin/role-permissions", "POST", { action: "reset", version: payload.version }, "Varsayılana döndürülemedi.");
+      showToastSafe({ type: "success", message: "Rol yetkileri varsayılana döndü.", icon: "settings" });
+      setReloadKey((value) => value + 1);
+    } catch (error) {
+      showToastSafe({ type: "error", message: errorMessage(error, "Varsayılana döndürülemedi.") });
     } finally {
       setSaving(false);
     }
   };
 
-  if (loading) {
+  const header = (
+    <PageHeader
+      icon="settings"
+      title="Rol Yetkileri"
+      description="Klinik rollerinin neleri görüp yapabileceği. Değişiklik tüm kliniklerde hemen geçerli olur."
+      stats={payload ? [{ label: "Son değişiklik", value: `${dateTime(payload.updatedAt) ?? "—"}${payload.updatedBy && !payload.updatedBy.startsWith("migration") ? ` · ${payload.updatedBy}` : ""}` }] : undefined}
+      actions={payload ? <Button variant="secondary" icon={RotateCcw} disabled={saving} onClick={() => void resetDefaults()}>Varsayılana döndür</Button> : undefined}
+    />
+  );
+
+  if (loadError && !payload) {
     return (
-      <div className="flex min-h-[400px] items-center justify-center rounded-2xl border border-slate-100 bg-white shadow-sm">
-        <div className="flex flex-col items-center gap-3">
-          <Spinner className="h-10 w-10 text-primary" />
-          <p className="text-sm text-slate-500">Yetki haritası yükleniyor…</p>
-        </div>
-      </div>
+      <section className="space-y-4">
+        {header}
+        <LoadErrorState message={loadError} onRetry={() => setReloadKey((value) => value + 1)} />
+      </section>
     );
   }
 
   if (!payload) {
-    return <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-semibold text-red-700">Rol paneli yüklenemedi.</div>;
+    return (
+      <section className="space-y-4">
+        {header}
+        <div className="ui-surface overflow-hidden"><ListRowSkeleton rows={6} /></div>
+      </section>
+    );
   }
 
-  const getDetail = (perm: string): PermissionDetail =>
-    payload.permissionDetails?.[perm] ?? { code: perm, title: perm, description: "Açıklama eklenmemiş.", risk: "dusuk" };
-
-  const totalPerms = payload.allPermissions.length;
+  const total = payload.allPermissions.length;
 
   return (
-    <section className="space-y-6">
+    <section className="space-y-4">
+      {header}
 
-      {/* ── BAŞLIK ─────────────────────────────────────────────────────── */}
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-black text-slate-900">Rol ve Yetki Yönetimi</h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Her rol için erişim izinlerini detaylı düzenleyin. Değişiklikler kaydedildikten sonra tüm API ve sayfa kontrolleri anında güncellenir.
-          </p>
-        </div>
-        <div className="rounded-2xl border border-slate-100 bg-white px-4 py-3 text-right shadow-sm">
-          <p className="text-xs text-slate-400">Sürüm <span className="font-bold text-slate-700">#{payload.version}</span></p>
-          <p className="text-xs text-slate-400">Son güncelleme: <span className="text-slate-600">{new Date(payload.updatedAt).toLocaleString("tr-TR")}</span></p>
-          <p className="text-xs text-slate-400">Güncelleyen: <span className="text-slate-600">{payload.updatedBy}</span></p>
-        </div>
+      <div className="flex flex-wrap gap-2" aria-label="Rollerin yetki sayısı">
+        {payload.roles.map((role) => (
+          <span key={role} className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs text-slate-600">
+            <span className="font-semibold text-slate-800">{roleLabel(role)}</span>
+            <span className="tabular-nums">{(map[role] || []).length}/{total}</span>
+          </span>
+        ))}
       </div>
 
-      {/* ── ROL İSTATİSTİK KARTLARI ────────────────────────────────────── */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {payload.roles.map(role => {
-          const meta  = payload.roleMeta?.[role];
-          const count = activeCount(role);
-          const pct   = Math.round((count / totalPerms) * 100);
-          return (
-            <div key={role} className="relative overflow-hidden rounded-2xl border border-slate-100 bg-white p-4 shadow-sm">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{meta?.label ?? role}</p>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-600">{count}/{totalPerms}</span>
-              </div>
-              <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
-                <div className="h-full rounded-full bg-primary transition-all duration-300" style={{ width: `${pct}%` }} />
-              </div>
-              <p className="mt-2 line-clamp-2 text-[11px] text-slate-400">{meta?.description}</p>
-              <div className="mt-3 flex gap-1.5">
-                <button onClick={() => setRoleAll(role, payload.allPermissions, true)}
-                  className="flex-1 rounded-md bg-emerald-50 py-1 text-[11px] font-semibold text-emerald-700 transition hover:bg-emerald-100">
-                  Tümünü Aç
-                </button>
-                <button onClick={() => setRoleAll(role, payload.allPermissions, false)}
-                  className="flex-1 rounded-md bg-rose-50 py-1 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-100">
-                  Tümünü Kapat
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
+      <Tabs ariaLabel="Yetki kategorisi" size="sm" value={category} onChange={setCategory} items={CATEGORY_KEYS.map((key) => ({ key, label: CATEGORY_LABELS[key] }))} />
 
-      {/* ── KONTROL BANDI ──────────────────────────────────────────────── */}
-      <div className="sticky top-0 z-10 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Kategori Sekmeleri */}
-          <div className="flex flex-wrap gap-1">
-            {(Object.entries(CATEGORY_LABELS) as [Category, { label: string; icon: string }][]).map(([key, val]) => (
-              <button key={key} onClick={() => setCategory(key)}
-                className={`flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                  category === key ? "bg-primary text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
-                }`}>
-                <span>{val.icon}</span>{val.label}
-              </button>
-            ))}
+      <div className="ui-surface overflow-hidden">
+        <Toolbar>
+          <SearchInput value={search} onChange={setSearch} placeholder="Yetki ara (ör. dışa aktarma, randevu)" wrapperClassName="flex-1 min-w-[220px]" />
+          <div className="md:hidden">
+            <Select aria-label="Düzenlenecek rol" value={mobileRole} onChange={(event) => setMobileRole(event.target.value)}>
+              {payload.roles.map((role) => <option key={role} value={role}>{roleLabel(role)}</option>)}
+            </Select>
           </div>
-
-          <div className="ml-auto flex items-center gap-2">
-            {/* Arama */}
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-              <input aria-label={"Yetki ara…"}
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Yetki ara…"
-                className="w-52 rounded-lg border border-slate-200 py-1.5 pl-7 pr-3 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-              />
-            </div>
-
-            {/* Dirty state uyarısı */}
-            {isDirty && (
-              <Badge tone="warning" icon={AlertTriangle} size="md">Kaydedilmemiş değişiklik</Badge>
-            )}
-
-            <Button size="sm" icon={Save} onClick={save} loading={saving}>
-              Kaydet
-            </Button>
-            <Button size="sm" variant="secondary" icon={RotateCcw} onClick={resetDefaults} disabled={saving}>
-              Varsayılanlara Dön
-            </Button>
-          </div>
-        </div>
+        </Toolbar>
       </div>
 
-      {/* ── YETKİ GRUPLARI ─────────────────────────────────────────────── */}
-      {filteredGroups.length === 0 && (
-        <div className="rounded-2xl border border-slate-100 bg-white shadow-sm">
-          <EmptyState icon={RolePermissionsEmptyIcon} illustrative title="Yetki bulunamadı" description="Arama kriterlerine uyan yetki bulunamadı." />
-        </div>
-      )}
-
-      <div className="space-y-4">
-        {filteredGroups.map(group => {
-          const allGroupPerms = group.permissions;
-          return (
-            <div key={group.key} className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm">
-              {/* Grup başlık */}
-              <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50/60 px-4 py-3">
-                <span className="text-lg">{group.icon}</span>
-                <h3 className="text-sm font-bold text-slate-800">{group.label}</h3>
-                <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[10px] font-semibold text-slate-600">
-                  {allGroupPerms.length} yetki
-                </span>
+      {groups.length === 0 ? (
+        <EmptyState title="Bu aramaya uyan yetki yok" description="Aramayı veya kategoriyi değiştirin." />
+      ) : (
+        <div className="space-y-4">
+          {groups.map((group) => (
+            <div key={group.key} className="ui-surface overflow-hidden">
+              <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-2.5">
+                <h2 className="text-sm font-bold text-slate-900">{group.label}</h2>
+                <span className="text-xs text-slate-500">{group.permissions.length} yetki</span>
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="min-w-full text-sm">
-                  <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+              {/* Masaüstü: tüm roller yan yana; başlık satırı kaydırırken görünür kalır. */}
+              <div className="hidden overflow-x-auto md:block">
+                <table className="w-full min-w-[760px] text-sm">
+                  <thead className="sticky top-0 z-[1] bg-slate-50">
                     <tr>
-                      <th className="w-80 px-4 py-2 text-left">Yetki</th>
-                      <th className="w-20 px-3 py-2 text-center">Risk</th>
-                      {payload.roles.map(role => (
-                        <th key={role} className="min-w-[110px] px-3 py-2 text-center">
-                          <div className="normal-case">{payload.roleMeta?.[role]?.label ?? role}</div>
-                          {/* Bu gruptaki tüm yetkileri bu rol için toplu aç/kapat — sütunun
-                              tam altında olduğu için hangi role ait olduğu net, karışmıyor. */}
-                          <div className="mt-1 flex items-center justify-center gap-1 text-[10px] font-normal normal-case tracking-normal text-slate-400">
-                            <button
-                              type="button"
-                              onClick={() => toggleGroup(role, allGroupPerms, true)}
-                              className="rounded px-1 py-0.5 text-emerald-600 transition hover:bg-emerald-50"
-                            >
-                              Tümü
-                            </button>
+                      <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500">Yetki</th>
+                      {payload.roles.map((role) => (
+                        <th key={role} className="w-28 px-2 py-2 text-center">
+                          <p className="text-xs font-semibold text-slate-700">{roleLabel(role)}</p>
+                          <p className="mt-0.5 flex items-center justify-center gap-1 text-xs font-normal">
+                            <button type="button" className="rounded px-1 text-primary hover:bg-primary/10" onClick={() => setGroup(role, group.permissions, true)} aria-label={`${roleLabel(role)} için ${group.label} yetkilerinin tümünü aç`}>Tümü</button>
                             <span className="text-slate-300">/</span>
-                            <button
-                              type="button"
-                              onClick={() => toggleGroup(role, allGroupPerms, false)}
-                              className="rounded px-1 py-0.5 text-rose-500 transition hover:bg-rose-50"
-                            >
-                              Hiçbiri
-                            </button>
-                          </div>
+                            <button type="button" className="rounded px-1 text-slate-500 hover:bg-slate-100" onClick={() => setGroup(role, group.permissions, false)} aria-label={`${roleLabel(role)} için ${group.label} yetkilerinin tümünü kapat`}>Hiçbiri</button>
+                          </p>
                         </th>
                       ))}
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {group.permissions.map(perm => {
-                      const detail = getDetail(perm);
-                      const risk   = RISK_CONFIG[detail.risk];
+                  <tbody className="divide-y divide-slate-100">
+                    {group.permissions.map((perm) => {
+                      const info = detail(perm);
                       return (
-                        <tr key={perm} className="transition hover:bg-slate-50/50">
-                          <td className="px-4 py-3 align-top">
-                            <p className="font-semibold leading-snug text-slate-800">{detail.title}</p>
-                            <p className="mt-0.5 text-[12px] leading-snug text-slate-500">{detail.description}</p>
+                        <tr key={perm} className="hover:bg-slate-50/60">
+                          <td className="px-4 py-2.5 align-top">
+                            <p className="flex flex-wrap items-center gap-1.5 font-semibold text-slate-800">
+                              {info.title}
+                              {info.risk !== "dusuk" && <Badge tone={RISK[info.risk].tone}>{RISK[info.risk].label}</Badge>}
+                            </p>
+                            {info.description && <p className="mt-0.5 text-xs leading-5 text-slate-500">{info.description}</p>}
                           </td>
-                          <td className="px-3 py-3 text-center align-top">
-                            <Badge tone={risk.tone}>{risk.label}</Badge>
-                          </td>
-                          {payload.roles.map(role => {
-                            const active = hasPerm(role, perm);
-                            return (
-                              <td key={role} className="px-3 py-3 text-center align-top">
-                                <label className="inline-flex cursor-pointer items-center justify-center">
-                                  <input
-                                    type="checkbox"
-                                    checked={active}
-                                    onChange={() => togglePerm(role, perm)}
-                                    className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-primary"
-                                  />
-                                </label>
-                              </td>
-                            );
-                          })}
+                          {payload.roles.map((role) => (
+                            <td key={role} className="px-2 py-2.5 text-center align-top">
+                              <input
+                                type="checkbox"
+                                checked={has(role, perm)}
+                                onChange={() => toggle(role, perm)}
+                                aria-label={`${roleLabel(role)} — ${info.title}`}
+                                className="h-[18px] w-[18px] cursor-pointer accent-primary"
+                              />
+                            </td>
+                          ))}
                         </tr>
                       );
                     })}
                   </tbody>
                 </table>
               </div>
-            </div>
-          );
-        })}
-      </div>
 
-      {/* ── ALT KAYDET BUTONU ──────────────────────────────────────────── */}
-      {isDirty && (
-        <div className="sticky bottom-4 flex justify-end">
-          <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 shadow-lg">
-            <span className="text-sm font-semibold text-amber-700">Kaydedilmemiş değişiklikler var.</span>
-            <Button size="sm" icon={Save} onClick={save} loading={saving}>
-              Kaydet
-            </Button>
-          </div>
+              {/* Telefon: seçilen tek rol için liste. */}
+              <ul className="divide-y divide-slate-100 md:hidden">
+                {group.permissions.map((perm) => {
+                  const info = detail(perm);
+                  return (
+                    <li key={perm}>
+                      <label className="flex cursor-pointer items-start gap-3 px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={has(mobileRole, perm)}
+                          onChange={() => toggle(mobileRole, perm)}
+                          className="mt-0.5 h-[18px] w-[18px] shrink-0 accent-primary"
+                        />
+                        <span className="min-w-0">
+                          <span className="flex flex-wrap items-center gap-1.5 text-sm font-semibold text-slate-800">
+                            {info.title}
+                            {info.risk !== "dusuk" && <Badge tone={RISK[info.risk].tone}>{RISK[info.risk].label}</Badge>}
+                          </span>
+                          {info.description && <span className="mt-0.5 block text-xs leading-5 text-slate-500">{info.description}</span>}
+                        </span>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
         </div>
       )}
+
+      <SaveBar
+        dirty={isDirty}
+        saving={saving}
+        onSave={() => void save()}
+        onDiscard={() => setMap(savedMap)}
+        message={`Kaydedilmemiş değişiklik: ${diff.map((item) => roleLabel(item.role)).join(", ")}`}
+      />
     </section>
   );
 }

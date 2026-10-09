@@ -9,6 +9,8 @@ import { PhoneCountrySelect } from "@/components/ui/PhoneCountrySelect";
 import { isValidTurkishIdentityNumber } from "@/lib/tc-kimlik";
 import { getLocalPhoneDigitLimit, getLocalPhoneError, limitLocalPhoneInput, normalizeLocalPhone } from "@/lib/phone-number";
 import { PROFESSIONS } from "@/lib/professions";
+import { canMessageOnWhatsapp } from "@/lib/whatsapp-consent";
+import { Switch } from "@/components/ui/Switch";
 
 type PatientFormState = {
   tcNo: string;
@@ -54,7 +56,7 @@ type HealthFlagKey =
 
 const INITIAL_FORM: PatientFormState = {
   tcNo: "", isForeigner: false, phoneCountryCode: "+90", fullName: "", phone: "",
-  preferredContactChannel: "SMS", whatsappConsent: false, communicationConsentSource: "",
+  preferredContactChannel: "SMS", whatsappConsent: true, communicationConsentSource: "",
   profession: "", gender: "", birthDate: "", insurance: "", referrer: "", discountRate: 0,
   address: "", notes: "", surgeries: "", medications: "", bloodType: "", otherDiseases: "",
   hasAllergy: false, hasHepatitis: false, hasKidney: false, hasDiabetes: false,
@@ -132,7 +134,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
           phoneCountryCode: body.phoneCountryCode || "+90", fullName: body.fullName || "",
           phone: body.phone === "***" ? "" : normalizeLocalPhone(body.phone || "", body.phoneCountryCode || "+90"), profession: body.profession || "",
           preferredContactChannel: body.preferredContactChannel || "SMS",
-          whatsappConsent: Boolean(body.whatsappOptInAt && !body.whatsappOptOutAt),
+          whatsappConsent: canMessageOnWhatsapp(body),
           communicationConsentSource: body.communicationConsentSource || "",
           gender: body.gender || "", birthDate: toDateInput(body.birthDate),
           insurance: body.insurance || "", referrer: body.referrer || "", discountRate: body.discountRate || 0,
@@ -463,6 +465,14 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
               <FormField label="İndirim Oranı (%)">
                 <input type="number" min={0} max={100} step={1} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" value={form.discountRate} onChange={(e) => setField("discountRate", Math.min(100, Math.max(0, Math.round(Number(e.target.value || 0)))))} />
               </FormField>
+              <div className="sm:col-span-2">
+                <Switch
+                  checked={form.whatsappConsent}
+                  onChange={(value) => setField("whatsappConsent", value)}
+                  label="WhatsApp'tan mesaj gönderilsin"
+                  description="Randevu, hatırlatma ve kutlama mesajları kliniğin WhatsApp numarasından gider. Hasta istemezse kapatın."
+                />
+              </div>
               <FormField label="Adres">
                 <textarea rows={2} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Adres" value={form.address} onChange={(e) => setField("address", e.target.value)} />
               </FormField>
