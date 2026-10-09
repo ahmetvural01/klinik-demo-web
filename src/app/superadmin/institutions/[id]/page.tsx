@@ -272,7 +272,7 @@ export default function InstitutionDetailPage() {
         actions={
           <>
             <Badge tone={state.tone} size="md" title={state.detail}>{state.label}</Badge>
-            <Button variant="secondary" icon={LogIn} disabled={!institution.isActive} onClick={() => setGhostOpen(true)}>Gizli giriş</Button>
+            <Button variant="secondary" icon={LogIn} onClick={() => setGhostOpen(true)}>Kliniğe gir</Button>
             <Button icon={Pencil} onClick={() => setEditOpen(true)}>Düzenle</Button>
           </>
         }

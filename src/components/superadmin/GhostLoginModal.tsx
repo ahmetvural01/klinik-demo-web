@@ -63,8 +63,8 @@ export function GhostLoginModal({
     <Modal
       open={Boolean(institution)}
       onClose={onClose}
-      title="Kliniğe gizli giriş"
-      description={institution ? `${institution.name} kliniğinin ekranı yeni sekmede açılır.` : undefined}
+      title="Kliniğe gir"
+      description={institution ? `${institution.name} kliniği yeni sekmede tam yetkiyle açılır.` : undefined}
       size="sm"
       trackFormChanges={false}
       footer={

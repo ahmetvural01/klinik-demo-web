@@ -6,6 +6,7 @@ import { writeAudit } from "@/lib/api";
 import { metricIncrement, metricObserve } from "@/lib/metrics";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 import { clearFailures, isFailureBlocked, recordFailure } from "@/lib/security-store";
+import { findInstitutionByLoginName, isPlatformLoginName, startSuperadminClinicSession } from "@/lib/superadmin-clinic-session";
 import { POST as superadminLogin } from "../superadmin/login/route";
 
 const MAX_ATTEMPT = 5;
@@ -54,11 +55,32 @@ export async function POST(request: NextRequest) {
       select: { id: true },
     });
     if (platformAccount) {
-      return await superadminLogin(new NextRequest(new URL("/api/auth/superadmin/login", request.url), {
+      const platformResponse = await superadminLogin(new NextRequest(new URL("/api/auth/superadmin/login", request.url), {
         method: "POST",
         headers: request.headers,
         body: JSON.stringify({ identityNo: parsed.data.identityNo, password: parsed.data.password }),
       }));
+      if (!platformResponse.ok || isPlatformLoginName(institutionInput)) return platformResponse;
+
+      // Sistem sahibi klinik adı yazdıysa (şifresi doğrulandıktan sonra)
+      // doğrudan o kliniğe tam yetkiyle girer; kısıtlı/boş bir panel görmez.
+      const targetInstitution = await findInstitutionByLoginName(institutionInput);
+      if (!targetInstitution) {
+        return NextResponse.json(
+          { message: `"${parsed.data.institution.trim()}" adında bir klinik bulunamadı. Platform Yönetimi için klinik adı yerine "superadmin" yazın.` },
+          { status: 404 },
+        );
+      }
+      const platformData = (await platformResponse.json()) as { id?: string; fullName?: string; requiresTwoFactor?: boolean };
+      // 2FA açıksa kod adımından sonra aynı kliniğe girilir (bkz. superadmin/verify-2fa).
+      if (platformData.requiresTwoFactor || !platformData.id) return NextResponse.json(platformData);
+      const entry = await startSuperadminClinicSession({
+        superadmin: { id: platformData.id, fullName: platformData.fullName || "" },
+        institutionId: targetInstitution.id,
+        source: "login",
+      });
+      if (!entry.ok) return NextResponse.json({ message: entry.message }, { status: entry.status });
+      return NextResponse.json({ ...platformData, clinic: { id: entry.institutionId, name: entry.institutionName } });
     }
 
     // Platform hesabı bulunmayan kimlikler yalnız gerçek kurum adıyla giriş yapar.

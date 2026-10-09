@@ -196,12 +196,14 @@ export function decodeTokenUserFromToken(token: string): { id: string; role: str
 }
 
 /** JWT'den DB sorgusu yapmadan kullanıcı bilgilerini al (layout için hızlı) */
-export async function getCurrentUserFast(): Promise<{ id: string; role: string; rawRole: string; institution: string; fullName: string; ghost: boolean } | null> {
+export async function getCurrentUserFast(): Promise<{ id: string; role: string; rawRole: string; institution: string; fullName: string; ghost: boolean; previewRole: string | null } | null> {
   const token = await readAuthToken();
   if (!token) return null;
   try {
     const payload = verifyToken(token);
-    const previewRole = payload.role === "SUPERADMIN"
+    // Rol önizlemesi yalnız süperadmin oturumlarında (platform veya kliniğe
+    // girmiş süperadmin = ghost) okunur ve yetkiyi yalnız daraltır.
+    const previewRole = payload.role === "SUPERADMIN" || payload.ghost
       ? parseRolePreview((await cookies()).get(ROLE_PREVIEW_COOKIE)?.value)
       : null;
     return {
@@ -211,6 +213,7 @@ export async function getCurrentUserFast(): Promise<{ id: string; role: string; 
       institution: payload.institutionId ?? "",
       fullName: payload.fullName || "",
       ghost: payload.ghost ?? false,
+      previewRole,
     };
   } catch {
     return null;
@@ -261,6 +264,16 @@ export async function setGhostAuthCookie(token: string) {
     secure: process.env.NODE_ENV === "production",
     path: "/",
     maxAge: 60 * 60 * 24 * 7,
+  });
+}
+
+/** Rol önizlemesini kapatır — süperadmin bir kliniğe girerken/çıkarken tam görünümle başlasın. */
+export async function clearRolePreviewCookie() {
+  (await cookies()).set(ROLE_PREVIEW_COOKIE, "", {
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
   });
 }
 

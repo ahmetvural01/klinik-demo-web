@@ -174,8 +174,15 @@ export function Sidebar({ user, initialBrandName = "" }: { user: { fullName: str
         .split("; ")
         .find((entry) => entry.startsWith(`${ROLE_PREVIEW_COOKIE}=`))
         ?.split("=")[1];
-      const saved = parseRolePreview(cookieValue || sessionStorage.getItem(ROLE_PREVIEW_STORAGE));
-      if (saved) setPreviewRole(saved);
+      // Sunucunun kullandığı çerez tek doğru kaynaktır: kliniğe yeni girişte
+      // çerez sıfırlanır, sekmede kalmış eski önizleme yazısı da silinmeli.
+      const saved = parseRolePreview(cookieValue ? decodeURIComponent(cookieValue) : null);
+      setPreviewRole(saved);
+      try {
+        if (saved) sessionStorage.setItem(ROLE_PREVIEW_STORAGE, saved);
+        else sessionStorage.removeItem(ROLE_PREVIEW_STORAGE);
+      } catch { /* depolama kapalı olabilir */ }
+      window.dispatchEvent(new Event("preview-role-change"));
     }
   }, [isSuperAdmin]);
 
@@ -213,8 +220,9 @@ export function Sidebar({ user, initialBrandName = "" }: { user: { fullName: str
     setPreviewRole(role);
     setRolePickerOpen(false);
     window.dispatchEvent(new Event("preview-role-change"));
-    router.replace("/anasayfa");
-    router.refresh();
+    // Tam yeniden yükleme: açık sayfa eski yetkilerle istek atıp "veri
+    // alınamadı" uyarısı göstermesin; menü ve yetkiler birlikte değişsin.
+    window.location.assign("/anasayfa");
   };
 
   const userRole = user.role;
@@ -300,7 +308,7 @@ export function Sidebar({ user, initialBrandName = "" }: { user: { fullName: str
                     onClick={() => setRolePickerOpen((prev) => !prev)}
                     className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${
                       previewRole
-                        ? "border-violet-400/30 bg-violet-500/15 text-violet-100"
+                        ? "border-violet-300 bg-violet-50 text-violet-800"
                         : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-950"
                     }`}
                     aria-expanded={rolePickerOpen}
@@ -406,7 +414,7 @@ export function Sidebar({ user, initialBrandName = "" }: { user: { fullName: str
                 onClick={() => setRolePickerOpen((prev) => !prev)}
                 className={`flex w-full items-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-semibold transition ${
                   previewRole
-                    ? "border-violet-400/30 bg-violet-500/15 text-violet-100"
+                    ? "border-violet-300 bg-violet-50 text-violet-800"
                     : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:text-slate-950"
                 }`}
                 aria-expanded={rolePickerOpen}

@@ -5,6 +5,7 @@ import { writeAudit } from "@/lib/api";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 import { verifyTwoFactorToken, verifyBackupCode, removeUsedBackupCode, currentTotpStep } from "@/lib/two-factor";
 import { DEFAULT_SUPERADMIN_MODULES } from "@/lib/superadmin-modules";
+import { findInstitutionByLoginName, isPlatformLoginName, startSuperadminClinicSession } from "@/lib/superadmin-clinic-session";
 
 // Genel /api/auth/login/verify-2fa uç noktasından AYRI: süperadmin token'ı
 // superadminModules claim'ini taşımalı (bkz. superadmin-modules.ts), genel
@@ -100,11 +101,26 @@ export async function POST(req: NextRequest) {
   await setAuthCookie(token);
   await writeAudit(user.id, "LOGIN", usedBackupCode ? "Superadmin yedek kod ile giris yapti" : "Superadmin 2FA ile giris yapti");
 
-  return NextResponse.json({
+  const result = {
     id: user.id,
     fullName: user.fullName,
     role: user.role,
     institutionId: null,
     modules,
-  });
+  };
+
+  // Klinik giriş ekranından gelindiyse (klinik adı yazılmışsa) doğrudan o
+  // kliniğe tam yetkiyle girilir — bkz. src/app/api/auth/login/route.ts.
+  const institutionInput = typeof body?.institution === "string" ? body.institution : "";
+  if (!isPlatformLoginName(institutionInput)) {
+    const target = await findInstitutionByLoginName(institutionInput);
+    const entry = target
+      ? await startSuperadminClinicSession({ superadmin: { id: user.id, fullName: user.fullName }, institutionId: target.id, source: "login" })
+      : null;
+    if (entry?.ok) return NextResponse.json({ ...result, clinic: { id: entry.institutionId, name: entry.institutionName } });
+    // Klinik açılamadıysa platform oturumu yine geçerlidir; ekran nedenini gösterir.
+    return NextResponse.json({ ...result, clinicError: entry && !entry.ok ? entry.message : "Klinik bulunamadı." });
+  }
+
+  return NextResponse.json(result);
 }

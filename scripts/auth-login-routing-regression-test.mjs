@@ -16,12 +16,14 @@ const mocks = {
     export const prisma={user:{async findFirst(args){s.queries.push(args.where);
       if(args.where.role==='SUPERADMIN')return s.platform&&(!args.where.isActive||s.active)?{id:'platform',role:'SUPERADMIN',fullName:'Platform',passwordHash:'platform-password',tokenVersion:1,twoFactorEnabled:s.twoFactor}:null;
       return {id:'clinic',role:'YONETICI',institutionId:'institution',fullName:'Clinic',passwordHash:'clinic-password',tokenVersion:1,twoFactorEnabled:false,branchMemberships:[{id:'branch'}]};
-    }},institution:{async findFirst(){return {id:'institution',isActive:true,isDemo:false};}}};`,
+    }},institution:{async findFirst(args){if(args?.where?.name?.equals==='yok')return null;return {id:'institution',name:'whitedental',isActive:true,isDemo:false};},async findUnique(){return {id:'institution',name:'whitedental'};}}};`,
   auth: `const s=globalThis.__authLoginRoutingTest;
     export const verifyPassword=async(password,hash)=>password===hash;
     export const signToken=payload=>{s.tokens.push(payload);return 'synthetic-session';};
     export const setAuthCookie=async token=>{s.cookies.push(token);};
-    export const signPendingTwoFactorToken=async id=>'pending-'+id;`,
+    export const signPendingTwoFactorToken=async id=>'pending-'+id;
+    export const setGhostAuthCookie=async token=>{s.cookies.push('ghost:'+token);};
+    export const clearRolePreviewCookie=async()=>{};`,
   api: `export const writeAudit=async()=>{};`,
   metrics: `export const metricIncrement=()=>{};export const metricObserve=()=>{};`,
   "rate-limit": `export const checkRateLimit=async()=>({ok:true});export const getClientIpFromHeaders=()=> 'test-ip';`,
@@ -42,14 +44,37 @@ try {
     state.queries.length = 0; state.tokens.length = 0; state.cookies.length = 0; state.failures.length = 0;
     return POST(new NextRequest("https://cepklinik.test/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ institution, identityNo: "00000000000", password }) }));
   }
-  let response = await login("platform-password");
+  // "superadmin" yazılırsa yalnız Platform Yönetimi oturumu açılır.
+  let response = await login("platform-password", "superadmin");
   let body = await response.json();
   assert.equal(response.status, 200);
   assert.equal(body.role, "SUPERADMIN");
   assert.equal(body.id, "platform");
+  assert.equal(body.clinic, undefined);
+  assert.equal(state.tokens.length, 1);
   assert.equal(state.tokens[0].institutionId, null);
   assert(state.tokens[0].superadminModules.length > 0);
   assert(!state.queries.some(query => query.institutionId), "Platform kimliği klinik hesabına düşmemeli");
+
+  // Klinik adı yazılırsa: önce platform şifresi doğrulanır, sonra o kliniğe tam yetkili (ghost) oturum açılır.
+  response = await login("platform-password");
+  body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.role, "SUPERADMIN");
+  assert.deepEqual(body.clinic, { id: "institution", name: "whitedental" });
+  assert.equal(state.tokens.length, 2);
+  assert.equal(state.tokens[0].institutionId, null, "Platform oturumu da açık kalmalı");
+  assert.equal(state.tokens[1].ghost, true);
+  assert.equal(state.tokens[1].institutionId, "institution");
+  assert.equal(state.tokens[1].fullName, "Platform", "Klinikte süperadmin kendi adıyla görünmeli");
+  assert(state.cookies.some(cookie => String(cookie).startsWith("ghost:")));
+
+  // Olmayan klinik adı: açık hata, klinik oturumu açılmaz.
+  response = await login("platform-password", "yok");
+  body = await response.json();
+  assert.equal(response.status, 404);
+  assert.match(body.message, /bulunamadı/);
+  assert(!state.tokens.some(token => token.ghost));
 
   response = await login("clinic-password");
   assert.equal(response.status, 401, "Aynı kimlikli klinik hesabının şifresi platform hesabı yerine kabul edilmemeli");
@@ -86,7 +111,7 @@ try {
   assert.equal(body.role, "YONETICI");
   assert.equal(state.tokens[0].institutionId, "institution");
   assert(state.queries.some(query => query.institutionId === "institution"));
-  console.log("PASS: süperadmin önceliği, klinik hesaba düşmeme, yanlış şifre, pasif hesap, 2FA, kilit ve normal kurum girişi.");
+  console.log("PASS: süperadmin önceliği, kliniğe tam yetkili giriş, olmayan klinik, klinik hesaba düşmeme, yanlış şifre, pasif hesap, 2FA, kilit ve normal kurum girişi.");
 } finally {
   delete globalThis.__authLoginRoutingTest;
   if (fs.existsSync(output)) fs.unlinkSync(output);

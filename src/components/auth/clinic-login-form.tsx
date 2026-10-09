@@ -104,7 +104,9 @@ export function ClinicLoginForm() {
         return;
       }
 
-      if (payload.role === "SUPERADMIN") {
+      // Sistem sahibi klinik adı yazdıysa sunucu o kliniğe tam yetkili oturum
+      // açar (payload.clinic); "superadmin" yazdıysa Platform Yönetimi açılır.
+      if (payload.role === "SUPERADMIN" && !payload.clinic) {
         window.location.href = "/superadmin/panel";
         return;
       }
@@ -140,7 +142,7 @@ export function ClinicLoginForm() {
       const res = await fetch(pendingSurface === "superadmin" ? "/api/auth/superadmin/verify-2fa" : "/api/auth/login/verify-2fa", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pendingToken, code: twoFactorCode.trim() }),
+        body: JSON.stringify({ pendingToken, code: twoFactorCode.trim(), institution: institution.trim() }),
       });
 
       const payload = await res.json().catch(() => ({}));
@@ -160,7 +162,10 @@ export function ClinicLoginForm() {
         }
       } catch {}
 
-      window.location.href = payload.role === "SUPERADMIN" ? "/superadmin/panel" : "/anasayfa";
+      // Klinik açılamadıysa (ör. silinmiş) sistem sahibi klinik listesinden seçer.
+      window.location.href = payload.role !== "SUPERADMIN" || payload.clinic
+        ? "/anasayfa"
+        : payload.clinicError ? "/superadmin/institutions" : "/superadmin/panel";
 
     } catch {
       setError("Bağlantı kurulamadı. Bilgilerinizi kontrol edip yeniden deneyin.");

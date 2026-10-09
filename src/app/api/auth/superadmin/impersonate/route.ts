@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { decodeTokenUser, setGhostAuthCookie, signToken, verifyPassword } from "@/lib/auth";
-import { writeAudit } from "@/lib/api";
+import { decodeTokenUser, verifyPassword } from "@/lib/auth";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
+import { startSuperadminClinicSession } from "@/lib/superadmin-clinic-session";
 
 /**
- * Superadmin → Klinik paneline gizli giriş (ghost mode)
+ * Superadmin → Klinik paneline giriş (ghost mode)
  * POST { institutionId, password }
  * - Superadmin kendi şifresiyle doğrulanır
- * - O kliniğin YONETICI rolüyle ghost token üretilir
- * - Ghost oturum klinik/personel işlem kayıtlarına yazılmaz
+ * - Klinikte tam yetkili oturum açılır (bkz. src/lib/superadmin-clinic-session.ts)
  */
 export async function POST(request: NextRequest) {
   // Mevcut oturum superadmin mi?
@@ -49,56 +48,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Şifre hatalı" }, { status: 401 });
   }
 
-  // Hedef kurumu bul
-  const institution = await prisma.institution.findUnique({
-    where: { id: institutionId },
-    select: { id: true, name: true, isActive: true },
-  });
-
-  if (!institution) {
-    return NextResponse.json({ message: "Kurum bulunamadı" }, { status: 404 });
-  }
-
-  // O kliniğin bir YONETICI kullanıcısını bul (token için kimlik gerekiyor)
-  const yonetici = await prisma.user.findFirst({
-    where: { institutionId, role: "YONETICI", isActive: true },
-    select: { id: true, fullName: true, role: true, tokenVersion: true },
-  });
-
-  // YONETICI yoksa DOKTOR al
-  const targetUser = yonetici ?? await prisma.user.findFirst({
-    where: { institutionId, isActive: true },
-    select: { id: true, fullName: true, role: true, tokenVersion: true },
-  });
-
-  if (!targetUser) {
-    return NextResponse.json({ message: "Bu klinikte aktif kullanıcı yok" }, { status: 404 });
-  }
-
-  // Ghost token: kliniğin YONETICI'si gibi davran, ghost=true
-  const token = signToken({
-    userId: targetUser.id,
-    role: "YONETICI",
+  const entry = await startSuperadminClinicSession({
+    superadmin: { id: currentUser.id, fullName: currentUser.fullName },
     institutionId,
-    fullName: `${targetUser.fullName} [SA]`,
-    ghost: true,
-    tokenVersion: targetUser.tokenVersion,
+    source: "panel",
   });
-
-  // Ayrı çerezde tutulur — süperadmin'in kendi klinik_token'ının üzerine
-  // YAZILMAZ, aksi halde başka bir sekmedeki /superadmin oturumu da anında
-  // bu ghost kimliğine dönerdi (bkz. src/lib/auth.ts notu).
-  await setGhostAuthCookie(token);
-
-  await writeAudit(
-    targetUser.id,
-    "IMPERSONATE_START",
-    `${institution.name} kliniğine "${currentUser.fullName}" (superadmin) tarafından ${targetUser.fullName} kimliğiyle gizli giriş yapıldı`
-  );
+  if (!entry.ok) {
+    return NextResponse.json({ message: entry.message }, { status: entry.status });
+  }
 
   return NextResponse.json({
     ok: true,
-    institutionName: institution.name,
-    fullName: targetUser.fullName,
+    institutionName: entry.institutionName,
+    fullName: entry.fullName,
   });
 }

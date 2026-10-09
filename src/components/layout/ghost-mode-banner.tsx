@@ -6,7 +6,7 @@ import { Eye } from "lucide-react";
 import { clientMutation } from "@/lib/client-mutation";
 import { showToastSafe } from "@/lib/toast-client";
 
-export function GhostModeBanner({ institutionName }: { institutionName: string }) {
+export function GhostModeBanner({ institutionName, previewLabel = null }: { institutionName: string; previewLabel?: string | null }) {
   const router = useRouter();
   const [exiting, setExiting] = useState(false);
 
@@ -28,7 +28,7 @@ export function GhostModeBanner({ institutionName }: { institutionName: string }
       <div className="flex items-center gap-2.5">
         <Eye className="h-4 w-4 shrink-0" />
         <p>
-          <span className="font-bold">Destek oturumu:</span> {institutionName} kliniğinin hesabındasınız. Yaptığınız her değişiklik kliniğe yazılır ve işlem kayıtlarına geçer.
+          <span className="font-bold">Sistem sahibi oturumu:</span> {institutionName} kliniğindesiniz, {previewLabel ? <>şu an <strong>{previewLabel}</strong> görünümündesiniz (yalnız bu rolün yetkileri; sol menüden kapatabilirsiniz).</> : "tüm yetkiler açık."} Değişiklikler kliniğe kaydedilir ve Denetim Günlüğü&apos;nde izlenir.
         </p>
       </div>
       <button
@@ -37,7 +37,7 @@ export function GhostModeBanner({ institutionName }: { institutionName: string }
         disabled={exiting}
         className="shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 disabled:opacity-60"
       >
-        {exiting ? "Çıkılıyor…" : "Destek oturumunu kapat"}
+        {exiting ? "Çıkılıyor…" : "Platform paneline dön"}
       </button>
     </div>
   );

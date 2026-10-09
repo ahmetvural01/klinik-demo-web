@@ -136,11 +136,13 @@ export async function requireAuth(permission?: string) {
 
   // Rol önizlemesi yalnız klinik yüzeyini simüle eder. Platform yönetim
   // uçlarında bu cookie sistem sahibinin gerçek yetkisini daraltmamalıdır.
-  const previewRole = tokenUser.role === "SUPERADMIN" && permission !== "superadmin"
+  // Kliniğe girmiş süperadmin (ghost) de rol önizlemesi kullanabilir.
+  const previewRole = (tokenUser.role === "SUPERADMIN" || tokenUser.ghost) && permission !== "superadmin"
     ? parseRolePreview((await cookies()).get(ROLE_PREVIEW_COOKIE)?.value)
     : null;
-  // Önizleme yalnızca doğrulanmış SUPERADMIN oturumunu daraltır. İstemci
-  // cookie'si normal bir kullanıcıya ek yetki kazandıramaz.
+  // Önizleme yalnızca doğrulanmış süperadmin oturumunu (ghost iddiası yalnız
+  // süperadmin girişinde imzalanır) daraltır. İstemci cookie'si normal bir
+  // kullanıcıya ek yetki kazandıramaz.
   const user = previewRole
     ? { ...tokenUser, role: previewRole, ghost: false, actualRole: tokenUser.role }
     : { ...tokenUser, actualRole: tokenUser.role };
@@ -365,8 +367,16 @@ async function getRequestIp(): Promise<string | null> {
   }
 }
 
-export async function writeAudit(userId: string, action: string, detail?: string) {
-  const currentUser = await decodeTokenUser();
+export async function writeAudit(
+  userId: string,
+  action: string,
+  detail?: string,
+  /** Oturum çerezi henüz yazılmamışken (ör. giriş isteğinin içinde) işlemi yapanı açıkça belirtmek için. */
+  actorOverride?: { id: string; role: string; ghost?: boolean },
+) {
+  const currentUser = actorOverride
+    ? { id: actorOverride.id, role: actorOverride.role, institutionId: null as string | null, ghost: actorOverride.ghost ?? false }
+    : await decodeTokenUser();
   const branchContext = currentUser?.institutionId
     ? await resolveBranchContext(currentUser).catch(() => null)
     : null;

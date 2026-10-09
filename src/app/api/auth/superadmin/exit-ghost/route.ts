@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { clearGhostAuthCookie, decodeTokenUserFromToken } from "@/lib/auth";
+import { clearGhostAuthCookie, clearRolePreviewCookie, decodeTokenUserFromToken } from "@/lib/auth";
 import { writeAudit } from "@/lib/api";
 
 /**
@@ -19,5 +19,6 @@ export async function POST() {
     await writeAudit(ghostUser.id, "IMPERSONATE_END", `Ghost oturumu sonlandırıldı (${ghostUser.fullName})`);
   }
   await clearGhostAuthCookie();
+  await clearRolePreviewCookie();
   return NextResponse.json({ ok: true });
 }

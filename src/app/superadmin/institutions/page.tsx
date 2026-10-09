@@ -263,7 +263,7 @@ export default function InstitutionsPage() {
   );
 
   const ghostButton = (item: Institution) => (
-    <IconButton icon={LogIn} title="Kliniğe gizli giriş" size="sm" disabled={!item.isActive} onClick={() => setGhostTarget(item)} />
+    <IconButton icon={LogIn} title="Kliniğe gir (tam yetki)" size="sm" onClick={() => setGhostTarget(item)} />
   );
 
   const columns: ListTableColumn<Institution>[] = [
