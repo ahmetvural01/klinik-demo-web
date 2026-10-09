@@ -1,5 +1,5 @@
 {
-  "name": "klinikcep",
+  "name": "cepklinik",
   "version": "1.0.0",
   "private": true,
   "scripts": {
@@ -51,6 +51,10 @@
     "test:staff-credentials": "tsx scripts/staff-credential-update-test.ts",
     "test:auth-security": "tsx scripts/auth-security-regression-test.ts",
     "test:ui-network-failures": "tsx scripts/ui-network-failure-regression-test.ts",
+    "test:demo-form": "node scripts/demo-form-regression-test.mjs",
+    "test:client-workflows": "tsx scripts/client-workflows-regression-test.ts",
+    "test:forms-browser": "node scripts/forms-browser-regression-test.mjs",
+    "test:auth-login-routing": "node scripts/auth-login-routing-regression-test.mjs",
     "test:ensure-postgres": "node scripts/ensure-postgres-test.mjs",
     "preflight:prod": "tsx scripts/preflight-prod.ts",
     "pilot:smoke": "node scripts/pilot-smoke.mjs",

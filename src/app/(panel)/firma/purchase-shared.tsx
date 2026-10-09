@@ -158,20 +158,20 @@ export function PurchaseLineEditor({ items, setItems, stockItems }: {
           {!line.stockItemId && line.productQuery.trim() && (
             <div className="col-span-6 sm:col-span-2">
               <label className="mb-1 block text-xs font-semibold text-slate-500">Kategori</label>
-              <input value={line.category} onChange={e => updateLine(line.key, { category: e.target.value })} className={formInput} />
+              <input aria-label={"Kategori"} value={line.category} onChange={e => updateLine(line.key, { category: e.target.value })} className={formInput} />
             </div>
           )}
           <div className="col-span-4 sm:col-span-2">
             <label className="mb-1 block text-xs font-semibold text-slate-500">Birim</label>
-            <input value={line.unit} onChange={e => updateLine(line.key, { unit: e.target.value })} disabled={!!line.stockItemId} className={formInput} />
+            <input aria-label={"Birim"} value={line.unit} onChange={e => updateLine(line.key, { unit: e.target.value })} disabled={!!line.stockItemId} className={formInput} />
           </div>
           <div className="col-span-4 sm:col-span-1">
             <label className="mb-1 block text-xs font-semibold text-slate-500">Miktar *</label>
-            <input type="number" min="1" value={line.quantity} onChange={e => updateLine(line.key, { quantity: e.target.value })} className={formInput} />
+            <input aria-label={"Miktar"} type="number" min="1" value={line.quantity} onChange={e => updateLine(line.key, { quantity: e.target.value })} className={formInput} />
           </div>
           <div className="col-span-4 sm:col-span-2">
             <label className="mb-1 block text-xs font-semibold text-slate-500">Birim Fiyat (₺) *</label>
-            <input type="number" min="0" step="0.01" value={line.unitPrice} onChange={e => updateLine(line.key, { unitPrice: e.target.value })} className={formInput} />
+            <input aria-label={"Birim Fiyat (₺)"} type="number" min="0" step="0.01" value={line.unitPrice} onChange={e => updateLine(line.key, { unitPrice: e.target.value })} className={formInput} />
           </div>
           <div className="col-span-8 flex items-end justify-end pb-2 sm:col-span-1">
             <p className="text-sm font-bold text-slate-800">{fmt(lineTotal(line))}</p>
@@ -182,7 +182,7 @@ export function PurchaseLineEditor({ items, setItems, stockItems }: {
           </div>
           <div className="col-span-6 sm:col-span-3">
             <label className="mb-1 block text-xs font-semibold text-slate-500">Parti / Lot No</label>
-            <input
+            <input aria-label={"Parti / Lot No"}
               value={line.lotNo}
               onChange={e => updateLine(line.key, { lotNo: e.target.value })}
               placeholder="Varsa üretici lot numarası"
@@ -191,7 +191,7 @@ export function PurchaseLineEditor({ items, setItems, stockItems }: {
           </div>
           <div className="col-span-6 sm:col-span-3">
             <label className="mb-1 block text-xs font-semibold text-slate-500">Son Kullanma Tarihi</label>
-            <input
+            <input aria-label={"Son Kullanma Tarihi"}
               type="date"
               value={line.expiresAt}
               onChange={e => updateLine(line.key, { expiresAt: e.target.value })}
@@ -630,7 +630,7 @@ export function usePurchaseModals({
               <div className="relative">
                 <label className={formLabel}>Firma *</label>
                 {currentFirmaId && purchaseFirmaId === currentFirmaId ? (
-                  <input value={purchaseFirmaQuery} disabled className={formInput} />
+                  <input aria-label={"Firma"} value={purchaseFirmaQuery} disabled className={formInput} />
                 ) : (
                   <SearchSelect
                     query={purchaseFirmaQuery}
@@ -645,21 +645,21 @@ export function usePurchaseModals({
               </div>
               <div>
                 <label className={formLabel}>Tarih *</label>
-                <input type="date" value={purchaseForm.tarih} onChange={e => setPurchaseForm(f => ({ ...f, tarih: e.target.value }))} className={formInput} />
+                <input aria-label={"Tarih"} type="date" value={purchaseForm.tarih} onChange={e => setPurchaseForm(f => ({ ...f, tarih: e.target.value }))} className={formInput} />
               </div>
               <div>
                 <label className={formLabel}>Fatura No</label>
-                <input value={purchaseForm.faturaNo} onChange={e => setPurchaseForm(f => ({ ...f, faturaNo: e.target.value }))} className={formInput} />
+                <input aria-label={"Fatura No"} value={purchaseForm.faturaNo} onChange={e => setPurchaseForm(f => ({ ...f, faturaNo: e.target.value }))} className={formInput} />
               </div>
               <div>
                 <label className={formLabel}>KDV Oranı (%)</label>
-                <select value={purchaseForm.kdvOrani} onChange={e => setPurchaseForm(f => ({ ...f, kdvOrani: e.target.value }))} className={formInput}>
+                <select aria-label={"KDV Oranı (%)"} value={purchaseForm.kdvOrani} onChange={e => setPurchaseForm(f => ({ ...f, kdvOrani: e.target.value }))} className={formInput}>
                   <option value="0">%0</option><option value="10">%10</option><option value="20">%20</option>
                 </select>
               </div>
               <div className="sm:col-span-2">
                 <label className={formLabel}>Açıklama</label>
-                <input value={purchaseForm.aciklama} onChange={e => setPurchaseForm(f => ({ ...f, aciklama: e.target.value }))} className={formInput} />
+                <input aria-label={"Açıklama"} value={purchaseForm.aciklama} onChange={e => setPurchaseForm(f => ({ ...f, aciklama: e.target.value }))} className={formInput} />
               </div>
             </div>
 
@@ -706,17 +706,17 @@ export function usePurchaseModals({
                 <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div>
                     <label className="mb-1 block text-xs font-semibold text-slate-500">Ödeme Tarihi</label>
-                    <input type="date" value={purchaseForm.paymentDate} onChange={e => setPurchaseForm(f => ({ ...f, paymentDate: e.target.value }))} className={formInput} />
+                    <input aria-label={"Ödeme Tarihi"} type="date" value={purchaseForm.paymentDate} onChange={e => setPurchaseForm(f => ({ ...f, paymentDate: e.target.value }))} className={formInput} />
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-semibold text-slate-500">Ödeme Yöntemi *</label>
-                    <select value={purchaseForm.paymentMethod} onChange={e => setPurchaseForm(f => ({ ...f, paymentMethod: e.target.value }))} className={formInput}>
+                    <select aria-label={"Ödeme Yöntemi"} value={purchaseForm.paymentMethod} onChange={e => setPurchaseForm(f => ({ ...f, paymentMethod: e.target.value }))} className={formInput}>
                       {PAYMENT_METHODS.map(method => <option key={method.value} value={method.value}>{method.label}</option>)}
                     </select>
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-semibold text-slate-500">Ödenen Tutar *</label>
-                    <input
+                    <input aria-label={"Ödenen Tutar"}
                       type="number"
                       min="0"
                       step="0.01"
@@ -876,7 +876,7 @@ export function usePurchaseModals({
 
             <div>
               <label className={formLabel}>Teslim Tarihi *</label>
-              <input
+              <input aria-label={"Teslim Tarihi"}
                 type="date"
                 value={receiveForm.receivedAt}
                 onChange={event => setReceiveForm(form => ({ ...form, receivedAt: event.target.value }))}
@@ -897,7 +897,7 @@ export function usePurchaseModals({
                   className="grid gap-2 rounded-xl border border-slate-200 p-3 sm:grid-cols-[minmax(0,1fr)_150px_150px]"
                 >
                   <p className="self-center truncate text-sm font-bold text-slate-800">{item.productName}</p>
-                  <input
+                  <input aria-label={"Lot no"}
                     value={item.lotNo}
                     onChange={event => setReceiveForm(form => ({
                       ...form,
@@ -951,17 +951,17 @@ export function usePurchaseModals({
                 <div className="mt-4 grid gap-3 sm:grid-cols-3">
                   <div>
                     <label className="mb-1 block text-xs font-semibold text-slate-500">Ödeme Tarihi</label>
-                    <input type="date" value={receiveForm.paymentDate} onChange={event => setReceiveForm(form => ({ ...form, paymentDate: event.target.value }))} className={formInput} />
+                    <input aria-label={"Ödeme Tarihi"} type="date" value={receiveForm.paymentDate} onChange={event => setReceiveForm(form => ({ ...form, paymentDate: event.target.value }))} className={formInput} />
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-semibold text-slate-500">Yöntem *</label>
-                    <select value={receiveForm.paymentMethod} onChange={event => setReceiveForm(form => ({ ...form, paymentMethod: event.target.value }))} className={formInput}>
+                    <select aria-label={"Yöntem"} value={receiveForm.paymentMethod} onChange={event => setReceiveForm(form => ({ ...form, paymentMethod: event.target.value }))} className={formInput}>
                       {PAYMENT_METHODS.map(method => <option key={method.value} value={method.value}>{method.label}</option>)}
                     </select>
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-semibold text-slate-500">Tutar *</label>
-                    <input type="number" min="0" step="0.01" value={receiveForm.paymentAmount} onChange={event => setReceiveForm(form => ({ ...form, paymentAmount: event.target.value }))} className={formInput} />
+                    <input aria-label={"Tutar"} type="number" min="0" step="0.01" value={receiveForm.paymentAmount} onChange={event => setReceiveForm(form => ({ ...form, paymentAmount: event.target.value }))} className={formInput} />
                   </div>
                 </div>
               )}
@@ -991,21 +991,21 @@ export function usePurchaseModals({
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
                 <label className={formLabel}>Tarih *</label>
-                <input type="date" value={editPurchaseForm.tarih} onChange={e => setEditPurchaseForm(f => ({ ...f, tarih: e.target.value }))} className={formInput} />
+                <input aria-label={"Tarih"} type="date" value={editPurchaseForm.tarih} onChange={e => setEditPurchaseForm(f => ({ ...f, tarih: e.target.value }))} className={formInput} />
               </div>
               <div>
                 <label className={formLabel}>Fatura No</label>
-                <input value={editPurchaseForm.faturaNo} onChange={e => setEditPurchaseForm(f => ({ ...f, faturaNo: e.target.value }))} className={formInput} />
+                <input aria-label={"Fatura No"} value={editPurchaseForm.faturaNo} onChange={e => setEditPurchaseForm(f => ({ ...f, faturaNo: e.target.value }))} className={formInput} />
               </div>
               <div>
                 <label className={formLabel}>KDV Oranı (%)</label>
-                <select value={editPurchaseForm.kdvOrani} onChange={e => setEditPurchaseForm(f => ({ ...f, kdvOrani: e.target.value }))} className={formInput}>
+                <select aria-label={"KDV Oranı (%)"} value={editPurchaseForm.kdvOrani} onChange={e => setEditPurchaseForm(f => ({ ...f, kdvOrani: e.target.value }))} className={formInput}>
                   <option value="0">%0</option><option value="10">%10</option><option value="20">%20</option>
                 </select>
               </div>
               <div className="sm:col-span-2">
                 <label className={formLabel}>Açıklama</label>
-                <input value={editPurchaseForm.aciklama} onChange={e => setEditPurchaseForm(f => ({ ...f, aciklama: e.target.value }))} className={formInput} />
+                <input aria-label={"Açıklama"} value={editPurchaseForm.aciklama} onChange={e => setEditPurchaseForm(f => ({ ...f, aciklama: e.target.value }))} className={formInput} />
               </div>
             </div>
 

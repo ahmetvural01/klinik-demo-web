@@ -6,6 +6,7 @@ import { writeAudit } from "@/lib/api";
 import { metricIncrement, metricObserve } from "@/lib/metrics";
 import { checkRateLimit, getClientIpFromHeaders } from "@/lib/rate-limit";
 import { clearFailures, isFailureBlocked, recordFailure } from "@/lib/security-store";
+import { POST as superadminLogin } from "../superadmin/login/route";
 
 const MAX_ATTEMPT = 5;
 const BLOCK_MINUTES = 15;
@@ -46,9 +47,21 @@ export async function POST(request: NextRequest) {
   const attemptKey = getAttemptKey(request, institutionInput, parsed.data.identityNo);
 
   try {
-    // Klinik ve platform yönetimi oturumları ayrı güvenlik yüzeyleridir.
-    // Süperadmin hesabını buradan kabul etmek, ayrı süperadmin girişindeki 2FA
-    // ve modül kapsamı üretimini atlatan ikinci bir giriş yolu oluşturuyordu.
+    // Platform kimliği kurum içindeki aynı kimlikli kayda düşmemeli.
+    // Şifre, 2FA, kilit ve modül kapsamı yalnız mevcut süperadmin akışında doğrulanır.
+    const platformAccount = await prisma.user.findFirst({
+      where: { identityNo: parsed.data.identityNo, role: "SUPERADMIN" },
+      select: { id: true },
+    });
+    if (platformAccount) {
+      return await superadminLogin(new NextRequest(new URL("/api/auth/superadmin/login", request.url), {
+        method: "POST",
+        headers: request.headers,
+        body: JSON.stringify({ identityNo: parsed.data.identityNo, password: parsed.data.password }),
+      }));
+    }
+
+    // Platform hesabı bulunmayan kimlikler yalnız gerçek kurum adıyla giriş yapar.
     if (institutionInput === "superadmin" || institutionInput === "admin") {
       return NextResponse.json({ message: "Bu hesapla klinik giriş ekranı kullanılamaz." }, { status: 400 });
     }

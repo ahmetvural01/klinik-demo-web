@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { confirmDialog } from "@/lib/confirm-client";
+import { clientMutation } from "@/lib/client-mutation";
 import { showToastSafe } from "@/lib/toast-client";
 import { cachedGet } from "@/lib/client-cache";
 import { canMarkNoShow, getDisplayAppointmentStatus, isStaleWaitingAppointment } from "@/lib/appointment-status";
@@ -500,15 +501,18 @@ export default function RandevuPage() {
 
   const respondBookingRequest = async (requestId: string, status: "ONAYLANDI" | "REDDEDILDI") => {
     if (status === "REDDEDILDI") {
-      if (!(await confirmDialog({ message: "Bu online randevu talebi reddedilsin mi? Hasta tekrar talep göndermeniz gerekir.", danger: true, confirmText: "Reddet" }))) return;
-      const res = await fetch(`/api/booking-requests/${requestId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status }),
-      });
-      if (!res.ok) { showToastSafe({ title: "Hata", message: "Güncellenemedi", type: "error" }); return; }
-      setBookingRequests((prev) => prev.filter((r) => r.id !== requestId));
-      showToastSafe({ title: "Reddedildi", message: "Talep güncellendi.", type: "success" });
+      if (!(await confirmDialog({ message: "Bu online randevu talebi reddedilsin mi? Hastanın yeniden talep göndermesi gerekir.", danger: true, confirmText: "Reddet" }))) return;
+      try {
+        await clientMutation(`/api/booking-requests/${requestId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status }),
+        }, "Randevu talebi güncellenemedi.");
+        setBookingRequests((prev) => prev.filter((r) => r.id !== requestId));
+        showToastSafe({ title: "Reddedildi", message: "Talep güncellendi.", type: "success" });
+      } catch (error) {
+        showToastSafe({ message: error instanceof Error ? error.message : "Randevu talebi güncellenemedi.", type: "error" });
+      }
       return;
     }
 
@@ -1189,50 +1193,70 @@ export default function RandevuPage() {
   };
 
   const updateStatus = async (id: string, status: string) => {
-    if (status === "IPTAL" && !(await confirmDialog({ message: "Randevu iptal edilsin mi?", danger: true, confirmText: "İptal Et" }))) return;
 
-    const res = await fetch("/api/appointments/" + id, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ message: "Durum güncellenemedi" }));
-      setError(body.message || "Durum güncellenemedi");
-      return;
+    try {
+      if (status === "IPTAL" && !(await confirmDialog({ message: "Randevu iptal edilsin mi?", danger: true, confirmText: "İptal Et" }))) return;
+
+      const res = await fetch("/api/appointments/" + id, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ message: "Durum güncellenemedi" }));
+        setError(body.message || "Durum güncellenemedi");
+        return;
+      }
+      setSelectedAppt(null);
+      await load();
+
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Bağlantı hatası. Bilgileriniz korundu; yeniden deneyin.");
     }
-    setSelectedAppt(null);
-    await load();
   };
 
   const saveAppointmentFollowUp = async () => {
-    if (!selectedAppt) return;
-    setDetailSaving(true);
-    const parsed = parseAppointmentNote(selectedAppt.note);
-    const nextNote = buildAppointmentNote(followUpStatus, followUpNote, parsed.treatment);
-    const res = await fetch("/api/appointments/" + selectedAppt.id, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ note: nextNote })
-    });
-    setDetailSaving(false);
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ message: "Randevu notu kaydedilemedi" }));
-      setError(body.message || "Randevu notu kaydedilemedi");
-      return;
+    if (detailSaving) return;
+    try {
+      if (!selectedAppt) return;
+      setDetailSaving(true);
+      const parsed = parseAppointmentNote(selectedAppt.note);
+      const nextNote = buildAppointmentNote(followUpStatus, followUpNote, parsed.treatment);
+      const res = await fetch("/api/appointments/" + selectedAppt.id, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ note: nextNote })
+      });
+      setDetailSaving(false);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ message: "Randevu notu kaydedilemedi" }));
+        setError(body.message || "Randevu notu kaydedilemedi");
+        return;
+      }
+      setSelectedAppt(prev => prev ? { ...prev, note: nextNote } : prev);
+      await load();
+
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Bağlantı hatası. Bilgileriniz korundu; yeniden deneyin.");
+    } finally {
+      setDetailSaving(false);
     }
-    setSelectedAppt(prev => prev ? { ...prev, note: nextNote } : prev);
-    await load();
   };
 
   const remove = async (id: string) => {
-    // DELETE uç noktası veriyi silmez, durumu İPTAL yapar (bkz. api/appointments/[id]/route.ts) —
-    // diyalog metni de bunu yansıtır, aksi halde "Sil" gerçekten kalıcı silme sanılırdı.
-    if (!(await confirmDialog({ message: "Randevu iptal edilsin mi? Kayıt silinmez, geçmişte görünmeye devam eder.", danger: true, confirmText: "İptal Et" }))) return;
-    const res = await fetch("/api/appointments/" + id, { method: "DELETE" });
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ message: "Randevu iptal edilemedi" }));
-      setError(body.message || "Randevu iptal edilemedi");
-      return;
+
+    try {
+      // DELETE uç noktası veriyi silmez, durumu İPTAL yapar (bkz. api/appointments/[id]/route.ts) —
+      // diyalog metni de bunu yansıtır, aksi halde "Sil" gerçekten kalıcı silme sanılırdı.
+      if (!(await confirmDialog({ message: "Randevu iptal edilsin mi? Kayıt silinmez, geçmişte görünmeye devam eder.", danger: true, confirmText: "İptal Et" }))) return;
+      const res = await fetch("/api/appointments/" + id, { method: "DELETE" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ message: "Randevu iptal edilemedi" }));
+        setError(body.message || "Randevu iptal edilemedi");
+        return;
+      }
+      setSelectedAppt(null);
+      await load();
+
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Bağlantı hatası. Bilgileriniz korundu; yeniden deneyin.");
     }
-    setSelectedAppt(null);
-    await load();
   };
 
   const openEditMode = () => {
@@ -2049,12 +2073,12 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
 
   const deleteBlock = async (id: string) => {
     if (!(await confirmDialog({ message: "Bu kapalı zaman kaydı silinsin mi?", danger: true, confirmText: "Sil" }))) return;
-    const res = await fetch("/api/doctor-blocks?id=" + id, { method: "DELETE" });
-    if (!res.ok) {
-      setError("Kapalı zaman kaydı silinemedi.");
-      return;
+    try {
+      await clientMutation("/api/doctor-blocks?id=" + id, { method: "DELETE" }, "Kapalı zaman kaydı silinemedi.");
+      await load();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Kapalı zaman kaydı silinemedi.");
     }
-    await load();
   };
 
   // Kapalı zaman aralığından tek bir slotu (örn. sadece 13:30) açar; kalan
@@ -2063,12 +2087,12 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
     if (!(await confirmDialog({ message: `${slotTime} saati açılsın mı?`, danger: true, confirmText: "Aç" }))) return;
     const slotStart = slotTime;
     const slotEnd = toSlotLabel(parseTimeToMinutes(slotTime, 0) + slotInterval);
-    const res = await fetch(`/api/doctor-blocks?id=${id}&slotStart=${slotStart}&slotEnd=${slotEnd}`, { method: "DELETE" });
-    if (!res.ok) {
-      setError("Kapalı zaman kaydı silinemedi.");
-      return;
+    try {
+      await clientMutation(`/api/doctor-blocks?id=${id}&slotStart=${slotStart}&slotEnd=${slotEnd}`, { method: "DELETE" }, "Kapalı zaman kaydı silinemedi.");
+      await load();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Kapalı zaman kaydı silinemedi.");
     }
-    await load();
   };
 
   const resetBlockForm = () => {
@@ -2101,25 +2125,33 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
   }
 
   const saveBlock = async () => {
-    if (!blockDoctorId || !blockDate || !blockStartTime || !blockEndTime) return;
-    if (blockValidationError) {
-      setBlockSubmitError(blockValidationError);
-      return;
-    }
-    setBlockSubmitError(null);
-    setBlockSaving(true);
-    const res = await fetch("/api/doctor-blocks", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ doctorId: blockDoctorId, date: blockDate, startTime: blockStartTime, endTime: blockEndTime, reason: blockReason || null }),
-    });
-    setBlockSaving(false);
-    if (res.ok) {
-      requestCloseBlockModal();
-      await load();
-    } else {
-      const body = await res.json().catch(() => ({ message: "Zaman kapatma kaydı eklenemedi." }));
-      setBlockSubmitError(body.message || "Zaman kapatma kaydı eklenemedi.");
+    if (blockSaving) return;
+    try {
+      if (!blockDoctorId || !blockDate || !blockStartTime || !blockEndTime) return;
+      if (blockValidationError) {
+        setBlockSubmitError(blockValidationError);
+        return;
+      }
+      setBlockSubmitError(null);
+      setBlockSaving(true);
+      const res = await fetch("/api/doctor-blocks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ doctorId: blockDoctorId, date: blockDate, startTime: blockStartTime, endTime: blockEndTime, reason: blockReason || null }),
+      });
+      setBlockSaving(false);
+      if (res.ok) {
+        requestCloseBlockModal();
+        await load();
+      } else {
+        const body = await res.json().catch(() => ({ message: "Zaman kapatma kaydı eklenemedi." }));
+        setBlockSubmitError(body.message || "Zaman kapatma kaydı eklenemedi.");
+      }
+
+    } catch (error) {
+      setBlockSubmitError(error instanceof Error ? error.message : "Bağlantı hatası. Bilgileriniz korundu; yeniden deneyin.");
+    } finally {
+      setBlockSaving(false);
     }
   };
 
@@ -2217,7 +2249,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
           ))}
         </div>
 
-        <select className="h-9 min-w-[170px] rounded-lg border border-slate-200 bg-white px-2 text-sm shadow-[var(--shadow-rest)] focus:border-primary focus:outline-none" value={doctorId} onChange={e => setDoctorId(e.target.value)}>
+        <select aria-label={"Doktor filtresi"} className="h-9 min-w-[170px] rounded-lg border border-slate-200 bg-white px-2 text-sm shadow-[var(--shadow-rest)] focus:border-primary focus:outline-none" value={doctorId} onChange={e => setDoctorId(e.target.value)}>
           <option value="">Tüm Doktorlar</option>
           {staff.map(s => <option key={s.id} value={s.id}>{s.fullName}</option>)}
         </select>
@@ -2397,7 +2429,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
             </div>
             <div className="relative">
               <p className="mb-1.5 text-xs font-bold text-slate-600">Hekim <span className="text-red-500">*</span></p>
-              <input
+              <input aria-label={"Doktor ara veya seç"}
                 type="text"
                 placeholder="Doktor ara veya seç"
                 value={doctorQuery}
@@ -2439,7 +2471,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
 
             <div className="relative">
               <p className="mb-1.5 text-xs font-bold text-slate-600">Tedavi</p>
-              <input
+              <input aria-label={"Tedavi ara veya seç"}
                 type="text"
                 className="w-full rounded-lg border px-3 py-2 text-sm"
                 placeholder="Tedavi ara veya seç"
@@ -3050,7 +3082,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                     </div>
                   ) : (
                     <>
-                      <input
+                      <input aria-label={"Hasta adı, TC veya telefon…"}
                         value={wlPatientSearch}
                         onChange={(e) => setWlPatientSearch(e.target.value)}
                         placeholder="Hasta adı, TC veya telefon…"
@@ -3204,7 +3236,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                   <div className="relative">
                     <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-3 py-2 focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/20">
                       <span className="text-slate-400 text-sm">🔍</span>
-                      <input type="text" placeholder="Hasta adı, TC veya telefon..."
+                      <input aria-label={"Hasta adı, TC veya telefon..."} type="text" placeholder="Hasta adı, TC veya telefon..."
                         value={editPatientSearch}
                         onChange={e => { setEditPatientSearch(e.target.value); setEditPatientDropdownOpen(true); if (!e.target.value) setEditPatientId(""); }}
                         onFocus={() => editPatientSearch.trim().length >= 2 && setEditPatientDropdownOpen(true)}
@@ -3234,7 +3266,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                 <div>
                   <span className="text-xs font-semibold text-slate-600 mb-1 block">Doktor</span>
                   <div className="relative">
-                    <input type="text" placeholder="Doktor ara veya seç" value={editDoctorQuery}
+                    <input aria-label={"Doktor ara veya seç"} type="text" placeholder="Doktor ara veya seç" value={editDoctorQuery}
                       onChange={e => { setEditDoctorQuery(e.target.value); setEditDoctorId(""); setEditDoctorDropdownOpen(true); }}
                       onFocus={() => setEditDoctorDropdownOpen(true)}
                       onBlur={() => setTimeout(() => setEditDoctorDropdownOpen(false), 120)}
@@ -3356,7 +3388,7 @@ ${sections || `<div class="doctor-section"><p>Kayıt bulunamadı.</p></div>`}
                   <select value={followUpStatus} onChange={(e) => setFollowUpStatus(e.target.value as FollowUpKey)} className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm">
                     {FOLLOW_UP_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                   </select>
-                  <textarea value={followUpNote} onChange={(e) => setFollowUpNote(e.target.value)} rows={3}
+                  <textarea aria-label={"Örn: Hasta gelmedi, 2 kez arandı ulaşılmadı. Yarın tekrar aranacak."} value={followUpNote} onChange={(e) => setFollowUpNote(e.target.value)} rows={3}
                     placeholder="Örn: Hasta gelmedi, 2 kez arandı ulaşılmadı. Yarın tekrar aranacak."
                     className="mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
                   <div className="mt-2 flex justify-end">

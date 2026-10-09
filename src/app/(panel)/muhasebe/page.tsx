@@ -1,4 +1,6 @@
 "use client";
+import { clientMutation } from "@/lib/client-mutation";
+import { isValidDateKey } from "@/lib/tz";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
@@ -776,6 +778,8 @@ export default function MuhasebePage() {
   }, [taksitSearch]);
   const [selectedPlan,  setSelectedPlan]  = useState<TaksitPlan | null>(null);
   const [planDetail,    setPlanDetail]    = useState<TaksitPlan | null>(null);
+  const [planSubmitting, setPlanSubmitting] = useState(false);
+  const planSubmittingRef = useRef(false);
   const [showOdeModal,  setShowOdeModal]  = useState<TaksitItem | null>(null);
   const [odeForm,       setOdeForm]       = useState({ tutar: "", yontem: "NAKIT", posId: "", note: "" });
   const [odeRequestKey, setOdeRequestKey] = useState("");
@@ -874,37 +878,46 @@ export default function MuhasebePage() {
   };
 
   const handleCreatePlan = async () => {
+    if (planSubmittingRef.current) return;
     if (!newPlanForm.patientId || !newPlanForm.doctorId) {
       showToast("error", "Hasta ve doktor seçimi zorunlu"); return;
     }
-    if (!newPlanForm.toplamBorc || Number(newPlanForm.toplamBorc) <= 0) {
+    if (!Number.isFinite(Number(newPlanForm.toplamBorc)) || Number(newPlanForm.toplamBorc) <= 0 || Number(newPlanForm.toplamBorc) > 99_999_999.99) {
       showToast("error", "Geçerli bir toplam borç tutarı giriniz"); return;
     }
-    if (!newPlanForm.taksitSayisi || Number(newPlanForm.taksitSayisi) <= 0 || Number(newPlanForm.taksitSayisi) > 120) {
-      showToast("error", "Taksit sayısı 1–120 arasında olmalı"); return;
+    if (!Number.isInteger(Number(newPlanForm.taksitSayisi)) || Number(newPlanForm.taksitSayisi) < 1 || Number(newPlanForm.taksitSayisi) > 100) {
+      showToast("error", "Taksit sayısı 1–100 arasında bir tam sayı olmalı"); return;
     }
-    if (Number(newPlanForm.pesnat) < 0) {
-      showToast("error", "Peşinat negatif olamaz"); return;
+    if (!Number.isFinite(Number(newPlanForm.pesnat)) || Number(newPlanForm.pesnat) < 0) {
+      showToast("error", "Geçerli, negatif olmayan bir peşinat giriniz"); return;
     }
     if (Number(newPlanForm.pesnat) >= Number(newPlanForm.toplamBorc)) {
       showToast("error", "Peşinat toplam borçtan küçük olmalı"); return;
     }
-    const r = await fetch("/api/taksit-plani", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        patientId: newPlanForm.patientId, doctorId: newPlanForm.doctorId,
-        baslik: newPlanForm.baslik || null,
-        toplamBorc: Number(newPlanForm.toplamBorc), pesnat: Number(newPlanForm.pesnat || 0),
-        taksitSayisi: Number(newPlanForm.taksitSayisi), period: newPlanForm.period,
-        startDate: newPlanForm.startDate, notes: newPlanForm.notes || null,
-      }),
-    });
-    if (r.ok) {
-      showToast("success", "Taksit planı oluşturuldu", "finance");
-      setNewPlanForm({ patientId: "", doctorId: "", baslik: "", toplamBorc: "", pesnat: "0", taksitSayisi: "6", period: "AYLIK", startDate: todayIso(), notes: "" });
-      setTaksitSubTab("liste"); loadTaksitPlans(); refreshSummary();
-    } else {
-      const e = await r.json(); showToast("error", e.error || "Hata");
+    if (!isValidDateKey(newPlanForm.startDate)) {
+      showToast("error", "Geçerli bir ilk taksit tarihi seçiniz"); return;
+    }
+    planSubmittingRef.current = true;
+    setPlanSubmitting(true);
+    try {
+      await clientMutation("/api/taksit-plani", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patientId: newPlanForm.patientId, doctorId: newPlanForm.doctorId,
+          baslik: newPlanForm.baslik || null,
+          toplamBorc: Number(newPlanForm.toplamBorc), pesnat: Number(newPlanForm.pesnat || 0),
+          taksitSayisi: Number(newPlanForm.taksitSayisi), period: newPlanForm.period,
+          startDate: newPlanForm.startDate, notes: newPlanForm.notes || null,
+        }),
+      }, "Taksit planı oluşturulamadı.");
+        showToast("success", "Taksit planı oluşturuldu", "finance");
+        setNewPlanForm({ patientId: "", doctorId: "", baslik: "", toplamBorc: "", pesnat: "0", taksitSayisi: "6", period: "AYLIK", startDate: todayIso(), notes: "" });
+        setTaksitSubTab("liste"); loadTaksitPlans(); refreshSummary();
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Taksit planı oluşturulamadı.");
+    } finally {
+      planSubmittingRef.current = false;
+      setPlanSubmitting(false);
     }
   };
 
@@ -1278,6 +1291,7 @@ export default function MuhasebePage() {
   type HakedisOzetRow = { doctor: { id: string; fullName: string }; ciro: number; hakedilen: number; odenen: number; kalan: number };
   const [hakedisOzet, setHakedisOzet] = useState<HakedisOzetRow[]>([]);
   const [hakedisOzetLoading, setHakedisOzetLoading] = useState(false);
+  const [hakedisOzetError, setHakedisOzetError] = useState("");
   const lastVisibleRefreshAtRef = useRef(0);
   const doctorFinanceSequenceRef = useRef(0);
   const hakedisOzetSequenceRef = useRef(0);
@@ -1342,13 +1356,17 @@ export default function MuhasebePage() {
   const loadHakedisOzet = useCallback(async () => {
     const sequence = ++hakedisOzetSequenceRef.current;
     setHakedisOzetLoading(true);
-    const r = await fetch("/api/hakedis/ozet", { cache: "no-store" }).catch(() => null);
-    if (sequence !== hakedisOzetSequenceRef.current) return;
-    if (r?.ok) {
-      const d = await r.json();
-      if (sequence === hakedisOzetSequenceRef.current) setHakedisOzet(Array.isArray(d.doctors) ? d.doctors : []);
-    } else setHakedisOzet([]);
-    if (sequence === hakedisOzetSequenceRef.current) setHakedisOzetLoading(false);
+    setHakedisOzetError("");
+    try {
+      const response = await fetch("/api/hakedis/ozet", { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok || !Array.isArray(data.doctors)) throw new Error("Hakediş özeti yüklenemedi.");
+      if (sequence === hakedisOzetSequenceRef.current) setHakedisOzet(data.doctors);
+    } catch {
+      if (sequence === hakedisOzetSequenceRef.current) setHakedisOzetError("Hakediş özeti yüklenemedi. Bağlantınızı kontrol edip yeniden deneyin.");
+    } finally {
+      if (sequence === hakedisOzetSequenceRef.current) setHakedisOzetLoading(false);
+    }
   }, []);
 
   useEffect(() => {
@@ -1557,7 +1575,7 @@ export default function MuhasebePage() {
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar <span className="text-red-500">*</span></label>
-                <input type="number" value={tahForm.amount} onChange={e => { setTahForm(f => ({ ...f, amount: e.target.value })); setTahFormErrors(er => ({ ...er, amount: undefined })); }} placeholder="0,00" className={`${INP} ${tahFormErrors.amount ? " border-red-400" : ""}`} />
+                <input aria-label={"Tutar (₺)"} type="number" value={tahForm.amount} onChange={e => { setTahForm(f => ({ ...f, amount: e.target.value })); setTahFormErrors(er => ({ ...er, amount: undefined })); }} placeholder="0,00" className={`${INP} ${tahFormErrors.amount ? " border-red-400" : ""}`} />
                 {tahFormErrors.amount && <p className="mt-1 text-xs font-medium text-red-600">{tahFormErrors.amount}</p>}
               </div>
               <div>
@@ -1586,7 +1604,7 @@ export default function MuhasebePage() {
               )}
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
-                <input value={tahForm.description} onChange={e => setTahForm(f => ({ ...f, description: e.target.value }))} placeholder="Tedavi, protokol veya kasa notu" className={INP} />
+                <input aria-label={"Açıklama"} value={tahForm.description} onChange={e => setTahForm(f => ({ ...f, description: e.target.value }))} placeholder="Tedavi, protokol veya kasa notu" className={INP} />
               </div>
               <div className="flex justify-end gap-2 sm:col-span-2">
                 <Button variant="secondary" onClick={() => void requestCloseTransaction()}>İptal</Button>
@@ -1673,14 +1691,14 @@ export default function MuhasebePage() {
               )}
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar <span className="text-red-500">*</span></label>
-                <input type="number" value={giderForm.tutar} onChange={e => { setGiderForm(f => ({ ...f, tutar: e.target.value })); setGiderFormErrors(er => ({ ...er, tutar: undefined })); }} placeholder="0,00" max={isDoctorPayoutCategory ? selectedPayoutPeriod?.kalan : undefined} className={`${INP} ${giderFormErrors.tutar ? " border-red-400" : ""}`} />
+                <input aria-label={"Tutar (₺)"} type="number" value={giderForm.tutar} onChange={e => { setGiderForm(f => ({ ...f, tutar: e.target.value })); setGiderFormErrors(er => ({ ...er, tutar: undefined })); }} placeholder="0,00" max={isDoctorPayoutCategory ? selectedPayoutPeriod?.kalan : undefined} className={`${INP} ${giderFormErrors.tutar ? " border-red-400" : ""}`} />
                 {isDoctorPayoutCategory && selectedPayoutPeriod && (
                   <p className="mt-1 text-[11px] text-slate-500">En fazla {fmt(selectedPayoutPeriod.kalan)} ödenebilir.</p>
                 )}
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Yöntem</label>
-                <select value={giderForm.yontem} onChange={e => setGiderForm(f => ({ ...f, yontem: e.target.value }))} className={INP}>
+                <select aria-label={"Yöntem"} value={giderForm.yontem} onChange={e => setGiderForm(f => ({ ...f, yontem: e.target.value }))} className={INP}>
                   {Object.entries(isDoctorPayoutCategory ? DOCTOR_PAYOUT_METHOD_LABELS : METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select>
                 {isDoctorPayoutCategory && (
@@ -1691,19 +1709,19 @@ export default function MuhasebePage() {
                 <>
                   <div>
                     <label className="mb-1 block text-xs font-semibold text-slate-600">KDV</label>
-                    <select value={giderForm.kdvOrani} onChange={e => setGiderForm(f => ({ ...f, kdvOrani: e.target.value }))} className={INP}>
+                    <select aria-label={"KDV"} value={giderForm.kdvOrani} onChange={e => setGiderForm(f => ({ ...f, kdvOrani: e.target.value }))} className={INP}>
                       {KDV_OPTIONS.map(o => <option key={o.value} value={o.value}>%{o.value}</option>)}
                     </select>
                   </div>
                   <div>
                     <label className="mb-1 block text-xs font-semibold text-slate-600">Fatura No</label>
-                    <input value={giderForm.faturaNo} onChange={e => setGiderForm(f => ({ ...f, faturaNo: e.target.value }))} className={INP} />
+                    <input aria-label={"Fatura No"} value={giderForm.faturaNo} onChange={e => setGiderForm(f => ({ ...f, faturaNo: e.target.value }))} className={INP} />
                   </div>
                 </>
               )}
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
-                <input value={giderForm.description} onChange={e => setGiderForm(f => ({ ...f, description: e.target.value }))} placeholder="Gider detayı" className={INP} />
+                <input aria-label={"Açıklama"} value={giderForm.description} onChange={e => setGiderForm(f => ({ ...f, description: e.target.value }))} placeholder="Gider detayı" className={INP} />
               </div>
               <div className="flex justify-end gap-2 sm:col-span-2">
                 <Button variant="secondary" onClick={() => void requestCloseTransaction()}>İptal</Button>
@@ -1739,29 +1757,29 @@ export default function MuhasebePage() {
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar <span className="text-red-500">*</span></label>
-                <input type="number" value={firmaPayForm.tutar} onChange={e => { setFirmaPayForm(f => ({ ...f, tutar: e.target.value })); setFirmaPayErrors(er => ({ ...er, tutar: undefined })); }} placeholder="0,00" className={`${INP} ${firmaPayErrors.tutar ? " border-red-400" : ""}`} />
+                <input aria-label={"Tutar (₺)"} type="number" value={firmaPayForm.tutar} onChange={e => { setFirmaPayForm(f => ({ ...f, tutar: e.target.value })); setFirmaPayErrors(er => ({ ...er, tutar: undefined })); }} placeholder="0,00" className={`${INP} ${firmaPayErrors.tutar ? " border-red-400" : ""}`} />
                 {firmaPayErrors.tutar && <p className="mt-1 text-xs font-medium text-red-600">{firmaPayErrors.tutar}</p>}
                 <p className="mt-1 text-[11px] text-slate-500">Ödeme, firmanın en eski açık borçlarından başlayarak otomatik mahsup edilir.</p>
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Yöntem</label>
-                <select value={firmaPayForm.yontem} onChange={e => setFirmaPayForm(f => ({ ...f, yontem: e.target.value }))} className={INP}>
+                <select aria-label={"Yöntem"} value={firmaPayForm.yontem} onChange={e => setFirmaPayForm(f => ({ ...f, yontem: e.target.value }))} className={INP}>
                   {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                 </select>
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Fatura No</label>
-                <input value={firmaPayForm.faturaNo} onChange={e => setFirmaPayForm(f => ({ ...f, faturaNo: e.target.value }))} className={INP} />
+                <input aria-label={"Fatura No"} value={firmaPayForm.faturaNo} onChange={e => setFirmaPayForm(f => ({ ...f, faturaNo: e.target.value }))} className={INP} />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-semibold text-slate-600">KDV</label>
-                <select value={firmaPayForm.kdvOrani} onChange={e => setFirmaPayForm(f => ({ ...f, kdvOrani: e.target.value }))} className={INP}>
+                <select aria-label={"KDV"} value={firmaPayForm.kdvOrani} onChange={e => setFirmaPayForm(f => ({ ...f, kdvOrani: e.target.value }))} className={INP}>
                   {KDV_OPTIONS.map(o => <option key={o.value} value={o.value}>%{o.value}</option>)}
                 </select>
               </div>
               <div className="sm:col-span-2">
                 <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
-                <input value={firmaPayForm.aciklama} onChange={e => setFirmaPayForm(f => ({ ...f, aciklama: e.target.value }))} placeholder="Ödeme açıklaması" className={INP} />
+                <input aria-label={"Açıklama"} value={firmaPayForm.aciklama} onChange={e => setFirmaPayForm(f => ({ ...f, aciklama: e.target.value }))} placeholder="Ödeme açıklaması" className={INP} />
               </div>
               <div className="flex justify-end gap-2 sm:col-span-2">
                 <Button variant="secondary" onClick={() => void requestCloseTransaction()}>İptal</Button>
@@ -1778,11 +1796,11 @@ export default function MuhasebePage() {
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih</label>
-                  <input type="date" value={editPaymentForm.tarih} onChange={e => setEditPaymentForm(f => ({ ...f, tarih: e.target.value }))} className={INP} />
+                  <input aria-label={"Tarih"} type="date" value={editPaymentForm.tarih} onChange={e => setEditPaymentForm(f => ({ ...f, tarih: e.target.value }))} className={INP} />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar</label>
-                  <input type="number" value={editPaymentForm.amount} onChange={e => setEditPaymentForm(f => ({ ...f, amount: e.target.value }))} className={INP} />
+                  <input aria-label={"Tutar"} type="number" value={editPaymentForm.amount} onChange={e => setEditPaymentForm(f => ({ ...f, amount: e.target.value }))} className={INP} />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor</label>
@@ -1804,14 +1822,14 @@ export default function MuhasebePage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
-                  <select value={editPaymentForm.method} onChange={e => setEditPaymentForm(f => ({ ...f, method: e.target.value, posId: "" }))} className={INP}>
+                  <select aria-label={"Ödeme Yöntemi"} value={editPaymentForm.method} onChange={e => setEditPaymentForm(f => ({ ...f, method: e.target.value, posId: "" }))} className={INP}>
                     {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </div>
                 {requiresPos(editPaymentForm.method) && (
                   <div>
                     <label className="mb-1 block text-xs font-semibold text-slate-600">POS</label>
-                    <select value={editPaymentForm.posId} onChange={e => setEditPaymentForm(f => ({ ...f, posId: e.target.value }))} className={INP}>
+                    <select aria-label={"POS"} value={editPaymentForm.posId} onChange={e => setEditPaymentForm(f => ({ ...f, posId: e.target.value }))} className={INP}>
                     <option value="">Yok</option>
                     {posDevices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                     </select>
@@ -1819,7 +1837,7 @@ export default function MuhasebePage() {
                 )}
                 <div className="sm:col-span-2">
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
-                  <input value={editPaymentForm.description} onChange={e => setEditPaymentForm(f => ({ ...f, description: e.target.value }))} className={INP} />
+                  <input aria-label={"Açıklama"} value={editPaymentForm.description} onChange={e => setEditPaymentForm(f => ({ ...f, description: e.target.value }))} className={INP} />
                 </div>
                 <div className="flex justify-end gap-2 sm:col-span-2">
                   <Button variant="secondary" onClick={() => void requestCloseEditModal()}>İptal</Button>
@@ -1832,7 +1850,7 @@ export default function MuhasebePage() {
               <div className="mt-4 grid gap-3 sm:grid-cols-2">
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih</label>
-                  <input type="date" value={editExpenseForm.tarih} onChange={e => setEditExpenseForm(f => ({ ...f, tarih: e.target.value }))} className={INP} />
+                  <input aria-label={"Tarih"} type="date" value={editExpenseForm.tarih} onChange={e => setEditExpenseForm(f => ({ ...f, tarih: e.target.value }))} className={INP} />
                 </div>
                 <div className="sm:col-span-2">
                   <div className="mb-1 flex items-center justify-between gap-2">
@@ -1853,11 +1871,11 @@ export default function MuhasebePage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Tutar</label>
-                  <input type="number" value={editExpenseForm.tutar} onChange={e => setEditExpenseForm(f => ({ ...f, tutar: e.target.value }))} className={INP} />
+                  <input aria-label={"Tutar"} type="number" value={editExpenseForm.tutar} onChange={e => setEditExpenseForm(f => ({ ...f, tutar: e.target.value }))} className={INP} />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Yöntem</label>
-                  <select value={editExpenseForm.yontem} onChange={e => setEditExpenseForm(f => ({ ...f, yontem: e.target.value }))} className={INP}>
+                  <select aria-label={"Yöntem"} value={editExpenseForm.yontem} onChange={e => setEditExpenseForm(f => ({ ...f, yontem: e.target.value }))} className={INP}>
                     {Object.entries(editExpenseForm.doctorId ? DOCTOR_PAYOUT_METHOD_LABELS : METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                   {editExpenseForm.doctorId && (
@@ -1868,19 +1886,19 @@ export default function MuhasebePage() {
                   <>
                     <div>
                       <label className="mb-1 block text-xs font-semibold text-slate-600">KDV</label>
-                      <select value={editExpenseForm.kdvOrani} onChange={e => setEditExpenseForm(f => ({ ...f, kdvOrani: e.target.value }))} className={INP}>
+                      <select aria-label={"KDV"} value={editExpenseForm.kdvOrani} onChange={e => setEditExpenseForm(f => ({ ...f, kdvOrani: e.target.value }))} className={INP}>
                         {KDV_OPTIONS.map(o => <option key={o.value} value={o.value}>%{o.value}</option>)}
                       </select>
                     </div>
                     <div>
                       <label className="mb-1 block text-xs font-semibold text-slate-600">Fatura No</label>
-                      <input value={editExpenseForm.faturaNo} onChange={e => setEditExpenseForm(f => ({ ...f, faturaNo: e.target.value }))} className={INP} />
+                      <input aria-label={"Fatura No"} value={editExpenseForm.faturaNo} onChange={e => setEditExpenseForm(f => ({ ...f, faturaNo: e.target.value }))} className={INP} />
                     </div>
                   </>
                 )}
                 <div className="sm:col-span-2">
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Açıklama</label>
-                  <input value={editExpenseForm.description} onChange={e => setEditExpenseForm(f => ({ ...f, description: e.target.value }))} className={INP} />
+                  <input aria-label={"Açıklama"} value={editExpenseForm.description} onChange={e => setEditExpenseForm(f => ({ ...f, description: e.target.value }))} className={INP} />
                 </div>
                 <div className="flex justify-end gap-2 sm:col-span-2">
                   <Button variant="secondary" onClick={() => void requestCloseEditModal()}>İptal</Button>
@@ -1892,7 +1910,7 @@ export default function MuhasebePage() {
 
       <Modal open={showCatMgr} onClose={() => setShowCatMgr(false)} title="Gider Türleri" size="sm" module="finance">
             <div className="flex gap-2">
-              <input value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddCategory()} placeholder="Yeni gider türü" className={INP} />
+              <input aria-label="Yeni gider türü" value={newCatName} onChange={e => setNewCatName(e.target.value)} onKeyDown={e => e.key === "Enter" && handleAddCategory()} placeholder="Yeni gider türü" className={INP} />
               <Button onClick={handleAddCategory} variant="primary">Ekle</Button>
             </div>
             <div className="mt-4 max-h-72 space-y-2 overflow-y-auto">
@@ -1901,6 +1919,7 @@ export default function MuhasebePage() {
               ) : giderKats.map((item) => (
                 <div key={item.id} className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 rounded-lg border border-slate-100 p-2">
                   <input
+                    aria-label={`${item.name} gider türünün adı`}
                     value={editingCatNames[item.id] ?? item.name}
                     onChange={e => setEditingCatNames(prev => ({ ...prev, [item.id]: e.target.value }))}
                     onBlur={() => updateExpenseTypeName(item.id, item.name)}
@@ -1911,8 +1930,12 @@ export default function MuhasebePage() {
                   <button
                     onClick={async () => {
                       if (item.isActive && !(await confirmDialog({ message: `"${item.name}" gider türü kaldırılsın mı? Yeni giderlerde seçilemez.`, danger: true, confirmText: "Kaldır" }))) return;
-                      await fetch(`/api/gider-kategorileri/${item.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: !item.isActive }) });
-                      loadGiderKats();
+                      try {
+                        await clientMutation(`/api/gider-kategorileri/${item.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ isActive: !item.isActive }) }, "Gider türü güncellenemedi.");
+                        void loadGiderKats();
+                      } catch (error) {
+                        showToast("error", error instanceof Error ? error.message : "Gider türü güncellenemedi.");
+                      }
                     }}
                     className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-bold text-slate-600 hover:bg-slate-50"
                   >
@@ -1938,10 +1961,10 @@ export default function MuhasebePage() {
                 </button>
               ))}
             </div>
-            <input value={ledgerSearch} onChange={e => setLedgerSearch(e.target.value)} placeholder="Hasta, doktor, gider türü, açıklama veya yöntem ara..." className="h-8 min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none focus:border-primary focus:bg-white" />
-            <input type="date" value={ledgerFrom} onChange={e => setLedgerFrom(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-primary" />
-            <input type="date" value={ledgerTo} onChange={e => setLedgerTo(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-primary" />
-            <select value={ledgerMethod} onChange={e => setLedgerMethod(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 outline-none focus:border-primary">
+            <input aria-label={"Hasta, doktor, gider türü, açıklama veya yöntem ara..."} value={ledgerSearch} onChange={e => setLedgerSearch(e.target.value)} placeholder="Hasta, doktor, gider türü, açıklama veya yöntem ara..." className="h-8 min-w-[220px] flex-1 rounded-lg border border-slate-200 bg-slate-50 px-3 text-xs outline-none focus:border-primary focus:bg-white" />
+            <input aria-label={"Defter başlangıç tarihi"} type="date" value={ledgerFrom} onChange={e => setLedgerFrom(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-primary" />
+            <input aria-label={"Defter bitiş tarihi"} type="date" value={ledgerTo} onChange={e => setLedgerTo(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs text-slate-600 outline-none focus:border-primary" />
+            <select aria-label={"Ödeme yöntemi filtresi"} value={ledgerMethod} onChange={e => setLedgerMethod(e.target.value)} className="h-8 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-600 outline-none focus:border-primary">
               <option value="HEPSI">Tüm yöntemler</option>
               {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
@@ -2126,9 +2149,9 @@ export default function MuhasebePage() {
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
               <div className="min-w-0 flex-1">
                 <div className="mb-3 flex flex-wrap gap-2">
-                  <input value={taksitSearch} onChange={e => setTaksitSearch(e.target.value)}
+                  <input aria-label={"Hasta, doktor veya plan ara"} value={taksitSearch} onChange={e => setTaksitSearch(e.target.value)}
                     placeholder="Hasta, doktor veya plan ara" className="min-h-11 w-full rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30 sm:w-64" />
-                  <select value={taksitStatus} onChange={e => setTaksitStatus(e.target.value)}
+                  <select aria-label={"Taksit planı durumu"} value={taksitStatus} onChange={e => setTaksitStatus(e.target.value)}
                     className="min-h-11 rounded-xl border border-slate-200 px-3 py-2.5 text-sm outline-none focus:ring-2 focus:ring-primary/30">
                     <option value="HEPSI">Tüm Durumlar</option>
                     <option value="AKTIF">Aktif</option>
@@ -2245,43 +2268,43 @@ export default function MuhasebePage() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="col-span-2">
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta *</label>
-                  <select value={newPlanForm.patientId} onChange={e => setNewPlanForm(f => ({ ...f, patientId: e.target.value }))} className={INP}>
+                  <select aria-label={"Hasta"} value={newPlanForm.patientId} onChange={e => setNewPlanForm(f => ({ ...f, patientId: e.target.value }))} className={INP}>
                     <option value="">— Hasta seçin —</option>
                     {patients.map(p => <option key={p.id} value={p.id}>{p.fullName}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor *</label>
-                  <select value={newPlanForm.doctorId} onChange={e => setNewPlanForm(f => ({ ...f, doctorId: e.target.value }))} className={INP}>
+                  <select aria-label={"Doktor"} value={newPlanForm.doctorId} onChange={e => setNewPlanForm(f => ({ ...f, doctorId: e.target.value }))} className={INP}>
                     <option value="">— Doktor seçin —</option>
                     {taksitDoctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Başlık</label>
-                  <input value={newPlanForm.baslik} onChange={e => setNewPlanForm(f => ({ ...f, baslik: e.target.value }))} placeholder="örn: İmplant" className={INP} />
+                  <input aria-label={"Başlık"} value={newPlanForm.baslik} onChange={e => setNewPlanForm(f => ({ ...f, baslik: e.target.value }))} placeholder="örn: İmplant" className={INP} />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Toplam Borç (₺) *</label>
-                  <input type="number" value={newPlanForm.toplamBorc} onChange={e => setNewPlanForm(f => ({ ...f, toplamBorc: e.target.value }))} placeholder="0.00" className={INP} />
+                  <input aria-label={"Toplam Borç (₺)"} type="number" value={newPlanForm.toplamBorc} onChange={e => setNewPlanForm(f => ({ ...f, toplamBorc: e.target.value }))} placeholder="0.00" className={INP} />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Peşinat (₺)</label>
-                  <input type="number" value={newPlanForm.pesnat} onChange={e => setNewPlanForm(f => ({ ...f, pesnat: e.target.value }))} placeholder="0.00" className={INP} />
+                  <input aria-label={"Peşinat (₺)"} type="number" value={newPlanForm.pesnat} onChange={e => setNewPlanForm(f => ({ ...f, pesnat: e.target.value }))} placeholder="0.00" className={INP} />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Taksit Sayısı *</label>
-                  <input type="number" min="1" max="60" value={newPlanForm.taksitSayisi} onChange={e => setNewPlanForm(f => ({ ...f, taksitSayisi: e.target.value }))} className={INP} />
+                  <input aria-label={"Taksit Sayısı"} type="number" min="1" max="100" step="1" value={newPlanForm.taksitSayisi} onChange={e => setNewPlanForm(f => ({ ...f, taksitSayisi: e.target.value }))} className={INP} />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Periyot</label>
-                  <select value={newPlanForm.period} onChange={e => setNewPlanForm(f => ({ ...f, period: e.target.value }))} className={INP}>
+                  <select aria-label={"Periyot"} value={newPlanForm.period} onChange={e => setNewPlanForm(f => ({ ...f, period: e.target.value }))} className={INP}>
                     {Object.entries(PERIODS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">İlk Taksit Tarihi</label>
-                  <input type="date" value={newPlanForm.startDate} onChange={e => setNewPlanForm(f => ({ ...f, startDate: e.target.value }))} className={INP} />
+                  <input aria-label={"İlk Taksit Tarihi"} type="date" value={newPlanForm.startDate} onChange={e => setNewPlanForm(f => ({ ...f, startDate: e.target.value }))} className={INP} />
                 </div>
               </div>
               {newPlanForm.toplamBorc && Number(newPlanForm.toplamBorc) > 0 && Number(newPlanForm.taksitSayisi) > 0 && Number(newPlanForm.toplamBorc) > Number(newPlanForm.pesnat || 0) && (
@@ -2293,8 +2316,8 @@ export default function MuhasebePage() {
                 </div>
               )}
               <div className="flex gap-2">
-                <button onClick={() => setTaksitSubTab("liste")} className="flex-1 rounded-xl border border-slate-200 py-2.5 text-sm font-semibold text-slate-600 hover:bg-slate-50">İptal</button>
-                <button onClick={handleCreatePlan} className="flex-1 rounded-xl bg-primary py-2.5 text-sm font-bold text-white hover:bg-primary/90">Plan Oluştur</button>
+                <Button variant="secondary" disabled={planSubmitting} onClick={() => setTaksitSubTab("liste")} className="flex-1">İptal</Button>
+                <Button loading={planSubmitting} onClick={handleCreatePlan} className="flex-1">Plan oluştur</Button>
               </div>
             </div>
           )}
@@ -2353,18 +2376,18 @@ export default function MuhasebePage() {
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Tahsilat Tutarı (₺) *</label>
-                  <input type="number" value={odeForm.tutar} onChange={e => setOdeForm(f => ({ ...f, tutar: e.target.value }))} className={`${INP} text-lg font-bold`} />
+                  <input aria-label={"Tahsilat Tutarı (₺)"} type="number" value={odeForm.tutar} onChange={e => setOdeForm(f => ({ ...f, tutar: e.target.value }))} className={`${INP} text-lg font-bold`} />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Ödeme Yöntemi</label>
-                  <select value={odeForm.yontem} onChange={e => setOdeForm(f => ({ ...f, yontem: e.target.value, posId: requiresPos(e.target.value) ? f.posId : "" }))} className={INP}>
+                  <select aria-label={"Ödeme Yöntemi"} value={odeForm.yontem} onChange={e => setOdeForm(f => ({ ...f, yontem: e.target.value, posId: requiresPos(e.target.value) ? f.posId : "" }))} className={INP}>
                     {Object.entries(METHOD_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
                 </div>
                 {requiresPos(odeForm.yontem) && (
                   <div>
                     <label className="mb-1 block text-xs font-semibold text-slate-600">POS Cihazı *</label>
-                    <select value={odeForm.posId} onChange={e => setOdeForm(f => ({ ...f, posId: e.target.value }))} className={INP}>
+                    <select aria-label={"POS Cihazı"} value={odeForm.posId} onChange={e => setOdeForm(f => ({ ...f, posId: e.target.value }))} className={INP}>
                       <option value="">POS seçin</option>
                       {posDevices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                     </select>
@@ -2372,7 +2395,7 @@ export default function MuhasebePage() {
                 )}
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Not</label>
-                  <input value={odeForm.note} onChange={e => setOdeForm(f => ({ ...f, note: e.target.value }))} placeholder="Opsiyonel…" className={INP} />
+                  <input aria-label={"Not"} value={odeForm.note} onChange={e => setOdeForm(f => ({ ...f, note: e.target.value }))} placeholder="Opsiyonel…" className={INP} />
                 </div>
                 <div className="flex gap-2">
                   <Button variant="secondary" fullWidth onClick={() => void requestCloseOdeModal()}>Vazgeç</Button>
@@ -2394,18 +2417,18 @@ export default function MuhasebePage() {
                 <div className="space-y-4">
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Hasta *</label>
-                  <select value={remForm.patientId} onChange={e => setRemForm(f => ({ ...f, patientId: e.target.value }))} className={INP}>
+                  <select aria-label={"Hasta"} value={remForm.patientId} onChange={e => setRemForm(f => ({ ...f, patientId: e.target.value }))} className={INP}>
                     <option value="">— Hasta Seçin —</option>
                     {patients.map(p => <option key={p.id} value={p.id}>{p.fullName}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Not *</label>
-                  <textarea value={remForm.note} onChange={e => setRemForm(f => ({ ...f, note: e.target.value }))} rows={3} className={INP} />
+                  <textarea aria-label={"Not"} value={remForm.note} onChange={e => setRemForm(f => ({ ...f, note: e.target.value }))} rows={3} className={INP} />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-semibold text-slate-600">Tarih *</label>
-                  <input type="date" value={remForm.reminderDate} onChange={e => setRemForm(f => ({ ...f, reminderDate: e.target.value }))} className={INP} />
+                  <input aria-label={"Tarih"} type="date" value={remForm.reminderDate} onChange={e => setRemForm(f => ({ ...f, reminderDate: e.target.value }))} className={INP} />
                 </div>
                 <div className="flex gap-2">
                   <Button variant="secondary" fullWidth onClick={() => void requestCloseRemModal()}>Vazgeç</Button>
@@ -2424,7 +2447,7 @@ export default function MuhasebePage() {
               <p className="mt-0.5 text-xs text-slate-500">Tedavi tutarı eksi ödemelerden kalan hasta borçları</p>
             </div>
             <div className="flex gap-2">
-              <input placeholder="Hasta, telefon veya doktor ara…" value={alacakSearch} onChange={e => setAlacakSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-violet-400" />
+              <input aria-label={"Hasta, telefon veya doktor ara…"} placeholder="Hasta, telefon veya doktor ara…" value={alacakSearch} onChange={e => setAlacakSearch(e.target.value)} className="w-44 rounded-xl border border-slate-200 px-3 py-2 text-xs outline-none focus:ring-2 focus:ring-violet-400" />
               <button onClick={loadAlacaklar} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50">↻ Yenile</button>
               <button onClick={() => {
                 const rows = [["Hasta","Tel","Hekimler","Ödenen","Kalan","Son Hareket"], ...filteredAlacaklar.map(a => [a.fullName, a.phone, (a.doctorNames || []).join(" / "), String(a.odenen), String(a.bakiye), a.lastPaymentAt ? fmtDate(a.lastPaymentAt) : (a.lastTreatmentAt ? fmtDate(a.lastTreatmentAt) : "-")])];
@@ -2605,7 +2628,9 @@ export default function MuhasebePage() {
                     <h3 className="text-sm font-black text-slate-900">Genel Bakış — Bu Ay</h3>
                     <p className="mt-0.5 text-xs text-slate-500">Tüm doktorların içinde bulunulan aya ait hakedilen/ödenen/kalan özeti. Detay için bir doktora tıklayın.</p>
                   </div>
-                  {hakedisOzetLoading ? (
+                  {hakedisOzetError ? (
+                    <LoadErrorState compact message={hakedisOzetError} onRetry={() => void loadHakedisOzet()} />
+                  ) : hakedisOzetLoading ? (
                     <div className="p-8 text-center text-sm text-slate-400">Yükleniyor…</div>
                   ) : hakedisOzet.length === 0 ? (
                     <EmptyState title="Kayıtlı doktor bulunamadı" accent="amber" icon={StaffEmptyIcon} illustrative compact />

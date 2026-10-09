@@ -285,13 +285,13 @@ export default function RandevuAlPage() {
             )}
             <div className="sm:col-span-2">
               <label htmlFor="booking-name" className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-700"><UserRound className="h-3.5 w-3.5 text-teal-600" /> Ad Soyad <span className="text-rose-500">*</span></label>
-              <input id="booking-name" name="name" autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Adınız ve soyadınız" className={fieldClass} />
+              <input aria-label={"Adınız ve soyadınız"} id="booking-name" name="name" autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Adınız ve soyadınız" className={fieldClass} />
             </div>
 
             <div className="sm:col-span-2">
               <label htmlFor="booking-phone" className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-700"><Phone className="h-3.5 w-3.5 text-teal-600" /> Cep Telefonu <span className="text-rose-500">*</span></label>
               <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                <input id="booking-phone" name="tel" autoComplete="tel" value={phone} onChange={(e) => { setPhone(e.target.value.replace(/\D/g, "").slice(0, 11)); setCodeError(""); }} placeholder="05XX XXX XX XX" inputMode="numeric" className={fieldClass} />
+                <input aria-label={"Telefon numarası"} id="booking-phone" name="tel" autoComplete="tel" value={phone} onChange={(e) => { setPhone(e.target.value.replace(/\D/g, "").slice(0, 11)); setCodeError(""); }} placeholder="05XX XXX XX XX" inputMode="numeric" className={fieldClass} />
                 <button type="button" onClick={() => void sendCode()} disabled={!phoneValid || sendingCode} className="h-11 rounded-lg border border-teal-700 px-4 text-xs font-bold text-teal-800 transition hover:bg-teal-50 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-400">
                   {sendingCode ? "Gönderiliyor..." : codeSent ? "Kodu Yenile" : "Doğrulama Kodu Gönder"}
                 </button>
@@ -302,13 +302,13 @@ export default function RandevuAlPage() {
             {codeSent && (
               <div className="sm:col-span-2">
                 <label htmlFor="booking-code" className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-700"><LockKeyhole className="h-3.5 w-3.5 text-emerald-600" /> SMS Doğrulama Kodu <span className="text-rose-500">*</span></label>
-                <input id="booking-code" name="one-time-code" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6 haneli kod" inputMode="numeric" className={`${fieldClass} border-emerald-200 bg-emerald-50/40 font-semibold tracking-[0.22em]`} />
+                <input aria-label={"6 haneli kod"} id="booking-code" name="one-time-code" autoComplete="one-time-code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="6 haneli kod" inputMode="numeric" className={`${fieldClass} border-emerald-200 bg-emerald-50/40 font-semibold tracking-[0.22em]`} />
               </div>
             )}
 
             <div>
               <label htmlFor="booking-tc" className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-700"><ShieldCheck className="h-3.5 w-3.5 text-teal-600" /> TC Kimlik No <span className="font-normal text-slate-400">(isteğe bağlı)</span></label>
-              <input id="booking-tc" name="national-id" value={tcNo} onChange={(e) => setTcNo(e.target.value.replace(/\D/g, "").slice(0, 11))} placeholder="11 haneli" inputMode="numeric" className={fieldClass} />
+              <input aria-label={"TC kimlik numarası"} id="booking-tc" name="national-id" value={tcNo} onChange={(e) => setTcNo(e.target.value.replace(/\D/g, "").slice(0, 11))} placeholder="11 haneli" inputMode="numeric" className={fieldClass} />
             </div>
 
             <div>
@@ -327,7 +327,7 @@ export default function RandevuAlPage() {
 
             <div className="sm:col-span-2">
               <label htmlFor="booking-note" className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold text-slate-700"><FileText className="h-3.5 w-3.5 text-teal-600" /> Kısa Not <span className="font-normal text-slate-400">(isteğe bağlı)</span></label>
-              <textarea id="booking-note" name="note" value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Şikayetiniz veya tercih ettiğiniz saat aralığı" className={`${fieldClass} h-auto min-h-24 resize-y py-3`} />
+              <textarea aria-label={"Şikayetiniz veya tercih ettiğiniz saat aralığı"} id="booking-note" name="note" value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Şikayetiniz veya tercih ettiğiniz saat aralığı" className={`${fieldClass} h-auto min-h-24 resize-y py-3`} />
             </div>
 
             {error && <p role="alert" aria-live="polite" className="sm:col-span-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm font-semibold text-rose-700">{error}</p>}

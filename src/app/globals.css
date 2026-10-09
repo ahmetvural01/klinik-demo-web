@@ -241,7 +241,6 @@ body {
   pointer-events: none;
   background: linear-gradient(115deg, transparent 18%, rgb(255 255 255 / 0.18) 42%, transparent 58%);
   transform: translateX(-125%);
-  animation: ui-dashboard-hero-sweep 7s var(--ease-product) infinite;
 }
 
 .ui-dashboard-hero::after {
@@ -272,7 +271,6 @@ body {
   border-radius: 999px;
   background: rgb(167 243 208);
   box-shadow: 0 0 0 4px rgb(167 243 208 / 0.16);
-  animation: ui-dashboard-live-pulse 2.2s ease-in-out infinite;
 }
 
 .ui-dashboard-kpi {
@@ -316,10 +314,6 @@ body {
 
 .ui-dashboard-kpi:hover::after { animation: ui-dashboard-kpi-shine 700ms var(--ease-product); }
 .ui-dashboard-kpi-caption { display: flex; align-items: center; gap: 0.2rem; margin-top: 0.65rem; color: rgb(var(--dashboard-tone)); font-size: 0.6875rem; font-weight: 800; opacity: 0.75; }
-.ui-dashboard-kpi .module-icon-img { animation: ui-dashboard-icon-float 3.8s ease-in-out infinite; }
-.ui-dashboard-kpi:nth-child(2) .module-icon-img { animation-delay: 420ms; }
-.ui-dashboard-kpi:nth-child(3) .module-icon-img { animation-delay: 840ms; }
-.ui-dashboard-kpi:nth-child(4) .module-icon-img { animation-delay: 1260ms; }
 .ui-dashboard-panel { position: relative; }
 .ui-dashboard-panel::before { content: ""; position: absolute; inset: 0 18% auto; height: 2px; background: linear-gradient(90deg, rgb(var(--app-primary) / 0.55), transparent); opacity: 0.8; pointer-events: none; }
 

@@ -197,7 +197,7 @@ export default function DestekPage() {
               </button>
             )}
           </div>
-          <input value={query} onChange={e => setQuery(e.target.value)}
+          <input aria-label={"Destek taleplerinde ara"} value={query} onChange={e => setQuery(e.target.value)}
             placeholder="Ara…"
             className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs focus:border-primary focus:bg-white focus:outline-none" />
         </div>

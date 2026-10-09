@@ -271,7 +271,7 @@ export default function InvoicesPage() {
           <h2 className="text-2xl font-bold text-gray-900">Faturalar</h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <input
+          <input aria-label={"Klinik / açıklama ara…"}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Klinik / açıklama ara…"

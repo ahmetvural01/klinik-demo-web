@@ -183,7 +183,7 @@ export default function SupportPage() {
         }
       >
         <p className="mb-3 rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">{replyTicket?.message}</p>
-        <textarea
+        <textarea aria-label={"Yanıtınızı yazın..."}
           value={replyText}
           onChange={(e) => setReplyText(e.target.value)}
           rows={5}

@@ -17,6 +17,7 @@ import { cachedGet } from "@/lib/client-cache";
 import { showToastSafe } from "@/lib/toast-client";
 import { getDisplayAppointmentStatus } from "@/lib/appointment-status";
 import { ListRowSkeleton } from "@/components/ui/ListSkeleton";
+import { LoadErrorState } from "@/components/ui/LoadErrorState";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { scopedStorageKey } from "@/lib/scoped-client-storage";
 
@@ -89,7 +90,6 @@ function readHomeCache(scopeKey: string) {
     const cached = JSON.parse(raw) as {
       crossStats?: CrossStats;
       installmentAgenda?: { overdue?: InstallmentAgendaItem[]; upcoming?: InstallmentAgendaItem[] };
-      todayCiro?: number;
       appts?: Appt[];
       messages?: Msg[];
       announcements?: Ann[];
@@ -107,7 +107,6 @@ function readHomeCache(scopeKey: string) {
         overdue: Array.isArray(cached.installmentAgenda?.overdue) ? cached.installmentAgenda!.overdue! : [],
         upcoming: Array.isArray(cached.installmentAgenda?.upcoming) ? cached.installmentAgenda!.upcoming! : [],
       },
-      todayCiro: Number(cached.todayCiro || 0),
       appts: Array.isArray(cached.appts) ? cached.appts : [],
       messages: Array.isArray(cached.messages) ? cached.messages : [],
       announcements: Array.isArray(cached.announcements) ? cached.announcements : [],
@@ -127,7 +126,6 @@ export default function AnasayfaPage() {
   const { can, scopeKey } = usePermissions();
   const [crossStats, setCrossStats] = useState<CrossStats>({ pendingLabOrders: 0, overdueInstallments: 0, todayInstallments: 0 });
   const [installmentAgenda, setInstallmentAgenda] = useState<{ overdue: InstallmentAgendaItem[]; upcoming: InstallmentAgendaItem[] }>({ overdue: [], upcoming: [] });
-  const [todayCiro, setTodayCiro] = useState(0);
   const [appts, setAppts] = useState<Appt[]>([]);
   const [dateOffset, setDateOffset] = useState(0);
   const [apptLoading, setApptLoading] = useState(true);
@@ -161,7 +159,6 @@ export default function AnasayfaPage() {
     if (!cachedHome) return;
     setCrossStats(cachedHome.crossStats);
     setInstallmentAgenda(cachedHome.installmentAgenda);
-    setTodayCiro(cachedHome.todayCiro);
     setAppts(cachedHome.appts);
     setApptLoading(false);
     setDateOffset(cachedHome.dateOffset);
@@ -184,7 +181,6 @@ export default function AnasayfaPage() {
         sessionStorage.setItem(getHomeCacheKey(scopeKey), JSON.stringify({
           crossStats,
           installmentAgenda,
-          todayCiro,
           appts,
           dateOffset,
           messages,
@@ -201,7 +197,7 @@ export default function AnasayfaPage() {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [scopeKey, crossStats, installmentAgenda, todayCiro, appts, dateOffset, messages, currentUserId, announcements, annRole, criticalStockCount, failedSmsCount, lastSyncAt]);
+  }, [scopeKey, crossStats, installmentAgenda, appts, dateOffset, messages, currentUserId, announcements, annRole, criticalStockCount, failedSmsCount, lastSyncAt]);
 
   const markMessagesSeen = (list: Msg[]) => {
     if (!Array.isArray(list) || list.length === 0) return;
@@ -258,7 +254,6 @@ export default function AnasayfaPage() {
       const canSeeStockDash = can("stock:read");
       const canSeeAuditDash = can("audit:read");
 
-      setTodayCiro(0);
 
       // toISOString() (UTC) yerine yerel tarih bileşenleri kullanılır — aksi
       // halde gece 00:00-03:00 Türkiye saatinde "bugünün taksiti" dünün
@@ -442,14 +437,17 @@ export default function AnasayfaPage() {
         return payload;
       })
       .then(d => {
+        if (controller.signal.aborted) return;
         setAppts(Array.isArray(d) ? d : (d.appointments || []));
         setAppointmentError("");
       })
       .catch((e: unknown) => {
-        if (e instanceof Error && e.name === "AbortError") return;
+        if (controller.signal.aborted || (e instanceof Error && e.name === "AbortError")) return;
         setAppointmentError(e instanceof Error ? e.message : "Randevular yüklenemedi");
       })
-      .finally(() => setApptLoading(false));
+      .finally(() => {
+        if (!controller.signal.aborted) setApptLoading(false);
+      });
     return () => {
       controller.abort();
     };
@@ -596,7 +594,6 @@ export default function AnasayfaPage() {
 
   // Rol bazlı içerik kontrolü
   const canSeeAppointments = can("appointments:read");
-  const canSeeCiro   = can("finance:read");
   const canModerateAllMessages = can("messages:write");
   const canSeeInternalChat = can("messages:read");
   const canWriteInternalChat = can("messages:write");
@@ -705,11 +702,9 @@ export default function AnasayfaPage() {
   // üçüncü bir tekrar gereksizdi.
   const summaryItems: SummaryItem[] = [
     ...(canSeeAppointments ? [
-      { id: "s-appt-total", label: "Bugünkü Randevu", value: String(todayTotal), tone: "blue" as const, href: "/randevu", module: "calendar" as ModuleKey, countValue: todayTotal },
-      { id: "s-appt-pending", label: "İşlem Bekleyen", value: String(todayWaiting), tone: "amber" as const, href: "/randevu", module: "calendar" as ModuleKey, countValue: todayWaiting, accentOverride: "amber" as const },
+      { id: "s-appt-total", label: dateOffset === 0 ? "Bugünkü Randevu" : "Seçili Günün Randevuları", value: String(todayTotal), tone: "blue" as const, href: `/randevu?date=${dateStr}`, module: "calendar" as ModuleKey, countValue: todayTotal },
+      { id: "s-appt-pending", label: "İşlem Bekleyen", value: String(todayWaiting), tone: "amber" as const, href: `/randevu?date=${dateStr}`, module: "calendar" as ModuleKey, countValue: todayWaiting, accentOverride: "amber" as const },
     ] : []),
-    ...(canSeeCiro ? [{ id: "s-today-revenue", label: "Bugün Ciro", value: `₺${todayCiro.toLocaleString("tr-TR")}`, tone: "emerald" as const, href: "/muhasebe", module: "finance" as ModuleKey }] : []),
-    { id: "s-open-alerts", label: "Açık Uyarılar", value: String(homeTasks.length), tone: "red", href: "#dikkat-gerekenler", module: "clipboard", countValue: homeTasks.length },
   ];
 
   return (
@@ -727,13 +722,12 @@ export default function AnasayfaPage() {
         </div>
       </div>
 
-      {(rolePanelError || appointmentError) && (
+      {rolePanelError && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-sm text-amber-800">
-          <span>{appointmentError || rolePanelError}</span>
+          <span>{rolePanelError}</span>
           <button
             type="button"
             onClick={() => {
-              if (appointmentError) setAppointmentReloadKey((value) => value + 1);
               if (annRole) void loadRolePanels(annRole);
             }}
             className="font-bold text-amber-900 underline underline-offset-2"
@@ -743,7 +737,7 @@ export default function AnasayfaPage() {
         </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2">
         {summaryItems.map((item, idx) => (
           <Link
             key={item.id}
@@ -757,7 +751,9 @@ export default function AnasayfaPage() {
               <ModuleIcon module={item.module} accentOverride={item.accentOverride} size="sm" />
             </div>
             <p className={`relative mt-1 text-[2.25rem] font-extrabold leading-none ${summaryValueClass[item.tone]}`}>
-              {item.countValue === undefined ? item.value : <CountUp value={item.countValue} />}
+              {(item.id.startsWith("s-appt-") && (apptLoading || appointmentError))
+                ? <span className="text-slate-400" aria-label={appointmentError ? "Veri alınamadı" : "Yükleniyor"}>—</span>
+                : item.countValue === undefined ? item.value : <CountUp value={item.countValue} />}
             </p>
             <span className="ui-dashboard-kpi-caption">Detayları görüntüle <ArrowUpRight className="h-3 w-3" /></span>
           </Link>
@@ -867,14 +863,18 @@ export default function AnasayfaPage() {
                 <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-red-400" />İptal: {todayCancel}</span>
               </div>
             </div>
-            {apptLoading && appts.length === 0 ? (
+            {apptLoading ? (
               <ListRowSkeleton rows={4} />
+            ) : appointmentError ? (
+              <div className="p-4">
+                <LoadErrorState message={appointmentError} onRetry={() => setAppointmentReloadKey((value) => value + 1)} />
+              </div>
             ) : appts.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center">
                 <CalendarEmptyIcon className="ui-empty-illustration mb-3" />
                 <p className="text-sm font-bold text-slate-800">Bu gün için randevu yok</p>
-                <p className="mt-1 max-w-xs text-xs leading-5 text-slate-500">Takvim boş — yeni bir randevu ekleyerek günü planlamaya başlayın.</p>
-                <Button href="/randevu" size="sm" icon={CalendarClock} className="mt-4">Randevu Ekle</Button>
+                <p className="mt-1 max-w-xs text-xs leading-5 text-slate-500">Seçili günün programını randevu takviminden yönetebilirsiniz.</p>
+                <Button href={`/randevu?date=${dateStr}`} size="sm" icon={CalendarClock} className="mt-4">Takvimi aç</Button>
               </div>
             ) : (
               <div className="divide-y divide-slate-50">
@@ -904,7 +904,7 @@ export default function AnasayfaPage() {
               </div>
             )}
             <div className="border-t border-slate-50 px-5 py-3 text-right">
-              <Link href="/randevu" className="text-xs font-semibold text-primary hover:underline">Tüm Randevulara Git →</Link>
+              <Link href={`/randevu?date=${dateStr}`} className="text-xs font-semibold text-primary hover:underline">Takvimde görüntüle →</Link>
             </div>
           </div>
         </div>}
@@ -1023,7 +1023,7 @@ export default function AnasayfaPage() {
           </div>
           {canWriteAnnouncements && (
             <div className="flex gap-2 border-t border-slate-50 p-3">
-              <input value={annText} onChange={e => setAnnText(e.target.value)} onKeyDown={e => e.key === "Enter" && addAnn()} placeholder="Duyuru metni…" className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none" />
+              <input aria-label={"Duyuru metni…"} value={annText} onChange={e => setAnnText(e.target.value)} onKeyDown={e => e.key === "Enter" && addAnn()} placeholder="Duyuru metni…" className="flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none" />
               <Button size="sm" icon={Megaphone} onClick={addAnn} loading={annSaving} disabled={!annText.trim()}>Ekle</Button>
             </div>
           )}</>}

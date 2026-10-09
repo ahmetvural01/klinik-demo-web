@@ -85,6 +85,7 @@ function SidebarNav({ visibleGroups, pathname, onNavigate }: { visibleGroups: Na
     <nav className="flex-1 overflow-y-auto p-3">
       {visibleGroups.map((group, gi) => (
         <div key={group.label} className={gi > 0 ? "mt-1.5 border-t border-slate-100 pt-1.5" : ""}>
+          <p className="px-3 pb-1 pt-2 text-[11px] font-bold uppercase tracking-wide text-slate-500">{group.label}</p>
           <div className="flex flex-col gap-0.5">
             {group.items.map((item) => {
               const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
@@ -138,8 +139,8 @@ export default function Sidebar() {
       {/* Masaüstü — her zaman görünür sabit sidebar */}
       <aside className="hidden h-full w-64 flex-col overflow-hidden border-r border-slate-200/80 bg-gradient-to-b from-white via-white to-slate-50/60 shadow-[4px_0_24px_rgb(15_23_42/0.05)] md:flex">
         <div className="border-b border-slate-100 p-5">
-          <h1 className="font-display text-lg font-black tracking-tight text-slate-900">Sistem Yönetimi</h1>
-          <p className="mt-0.5 text-xs font-semibold text-slate-500">Yetkili yönetim paneli</p>
+          <h1 className="font-display text-lg font-black tracking-tight text-slate-900">Platform Yönetimi</h1>
+          <p className="mt-0.5 text-xs font-semibold text-slate-500">Süperadmin paneli</p>
         </div>
         <SidebarNav visibleGroups={visibleGroups} pathname={pathname} />
         <div className="border-t border-slate-100 p-3">
@@ -159,8 +160,8 @@ export default function Sidebar() {
           <div className="flex h-dvh max-h-dvh w-[min(86vw,288px)] flex-col overflow-hidden border-r border-slate-200 bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-100 p-4">
               <div>
-                <h1 className="font-display text-base font-black tracking-tight text-slate-900">Sistem Yönetimi</h1>
-                <p className="mt-0.5 text-xs font-semibold text-slate-500">Yetkili yönetim paneli</p>
+                <h1 className="font-display text-base font-black tracking-tight text-slate-900">Platform Yönetimi</h1>
+                <p className="mt-0.5 text-xs font-semibold text-slate-500">Süperadmin paneli</p>
               </div>
               <button onClick={() => setMobileOpen(false)} aria-label="Kapat" className="rounded-lg p-1.5 text-slate-500 transition hover:bg-slate-100 hover:text-slate-900">
                 <X className="h-4 w-4" />

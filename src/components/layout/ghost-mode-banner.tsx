@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Eye } from "lucide-react";
+import { clientMutation } from "@/lib/client-mutation";
+import { showToastSafe } from "@/lib/toast-client";
 
 export function GhostModeBanner({ institutionName }: { institutionName: string }) {
   const router = useRouter();
@@ -12,9 +14,12 @@ export function GhostModeBanner({ institutionName }: { institutionName: string }
     if (exiting) return;
     setExiting(true);
     try {
-      await fetch("/api/auth/superadmin/exit-ghost", { method: "POST" });
-    } finally {
+      await clientMutation("/api/auth/superadmin/exit-ghost", { method: "POST" }, "Klinik oturumundan çıkılamadı.");
       router.replace("/superadmin");
+      router.refresh();
+    } catch (error) {
+      showToastSafe({ type: "error", message: error instanceof Error ? error.message : "Klinik oturumundan çıkılamadı." });
+      setExiting(false);
     }
   }
 

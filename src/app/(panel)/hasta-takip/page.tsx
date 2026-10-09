@@ -1334,7 +1334,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
       <>
           <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
             <div className="flex flex-wrap items-center gap-2">
-              <input
+              <input aria-label={"Hasta, doktor, not veya takip tipi ara..."}
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Hasta, doktor, not veya takip tipi ara..."
@@ -1356,7 +1356,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                   <option value="DONUS_BEKLENIYOR">Dönüş Beklenenler</option>
                   <option value="DIGER">Diğer</option>
                 </select>
-                <input value={followTypeQuery} onChange={(e) => setFollowTypeQuery(e.target.value)} placeholder="Takip tipi icinde metin ara..." className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
+                <input aria-label={"Takip tipi icinde metin ara..."} value={followTypeQuery} onChange={(e) => setFollowTypeQuery(e.target.value)} placeholder="Takip tipi icinde metin ara..." className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
                 <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                   <option value="ACIK">Açık Takipler</option>
                   <option value="KAPALI">Kapalı Takipler</option>
@@ -1594,7 +1594,7 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                     <Button variant="secondary" size="sm" disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { type: "ULASILAMADI", note: buildManualNote("", detailItem.note), lastContactAt: new Date().toISOString(), nextActionAt: new Date(Date.now() + 2 * 86400000).toISOString() })}>Ulaşılamadı</Button>
                     <Button variant="secondary" size="sm" disabled={busyId === detailItem.followUpId} onClick={() => void updateManual(detailItem.followUpId!, { type: "DONUS_BEKLENIYOR", note: buildManualNote("", detailItem.note), nextActionAt: new Date(Date.now() + 3 * 86400000).toISOString() })}>Dönüş Bekleniyor</Button>
                     <div className="mt-1 w-full space-y-1.5">
-                      <textarea
+                      <textarea aria-label={"Takibi kapatmadan önce sonucu yazın (örn. hasta ile görüşüldü, randevu planlandı)…"}
                         value={closeNote}
                         onChange={(e) => setCloseNote(e.target.value)}
                         rows={2}
@@ -1641,10 +1641,10 @@ th,td{border:1px solid #E2E8F0;padding:7px 8px;text-align:left;vertical-align:to
                       <option key={opt} value={opt}>{opt}</option>
                     ))}
                   </select>
-                  <input value={eventForm.summary} onChange={(e) => setEventForm((prev) => ({ ...prev, summary: e.target.value }))} placeholder="Kısa sonuç, örnek: Arandı, açmadı" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm md:col-span-1" />
-                  <textarea value={eventForm.patientResponse} onChange={(e) => setEventForm((prev) => ({ ...prev, patientResponse: e.target.value }))} rows={2} placeholder="Hasta ne söyledi?" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
-                  <textarea value={eventForm.nextStep} onChange={(e) => setEventForm((prev) => ({ ...prev, nextStep: e.target.value }))} rows={2} placeholder="Bu hastada sonraki adım ne olacak?" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
-                  <textarea value={eventForm.detail} onChange={(e) => setEventForm((prev) => ({ ...prev, detail: e.target.value }))} rows={2} placeholder="Detaylı görüşme notu" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
+                  <input aria-label={"Kısa sonuç, örnek: Arandı, açmadı"} value={eventForm.summary} onChange={(e) => setEventForm((prev) => ({ ...prev, summary: e.target.value }))} placeholder="Kısa sonuç, örnek: Arandı, açmadı" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm md:col-span-1" />
+                  <textarea aria-label={"Hasta ne söyledi?"} value={eventForm.patientResponse} onChange={(e) => setEventForm((prev) => ({ ...prev, patientResponse: e.target.value }))} rows={2} placeholder="Hasta ne söyledi?" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
+                  <textarea aria-label={"Bu hastada sonraki adım ne olacak?"} value={eventForm.nextStep} onChange={(e) => setEventForm((prev) => ({ ...prev, nextStep: e.target.value }))} rows={2} placeholder="Bu hastada sonraki adım ne olacak?" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
+                  <textarea aria-label={"Detaylı görüşme notu"} value={eventForm.detail} onChange={(e) => setEventForm((prev) => ({ ...prev, detail: e.target.value }))} rows={2} placeholder="Detaylı görüşme notu" className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
                 </div>}
 
                 {canWriteFollowUps && <div className="mt-2 flex flex-wrap gap-2">

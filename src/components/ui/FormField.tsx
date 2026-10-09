@@ -1,4 +1,4 @@
-import { cloneElement, isValidElement, type ComponentType, type ReactElement, type ReactNode } from "react";
+import { cloneElement, isValidElement, useId, type ComponentType, type ReactElement, type ReactNode } from "react";
 import { Check } from "lucide-react";
 import { IconFrame } from "@/components/ui/IconFrame";
 
@@ -21,10 +21,12 @@ export interface FormFieldProps {
 export function FormField({ label, htmlFor, required, error, hint, success, children }: FormFieldProps) {
   // Hata/ipucu metni önceden yalnızca görsel (kırmızı border + ayrı bir <p>)
   // olarak bağlıydı — screen reader input'a odaklanınca bunu hiç duymuyordu
-  // (bkz. denetim raporu). `htmlFor` verilmişse ve tek bir input elemanı
-  // sarmalanıyorsa aria-invalid/aria-describedby otomatik bağlanır.
-  const errorId = htmlFor && error ? `${htmlFor}-error` : undefined;
-  const hintId = htmlFor && hint && !error ? `${htmlFor}-hint` : undefined;
+  // Tek bir alan sarmalanıyorsa aria-invalid/aria-describedby otomatik
+  // bağlanır; htmlFor yoksa hata ve ipucu için benzersiz kimlik üretilir.
+  const generatedId = useId();
+  const fieldId = htmlFor || generatedId;
+  const errorId = error ? `${fieldId}-error` : undefined;
+  const hintId = hint && !error ? `${fieldId}-hint` : undefined;
   const describedBy = errorId || hintId;
   const showSuccess = success && !error;
 
@@ -89,7 +91,7 @@ export function FormSection({ icon: Icon, title, description, children }: FormSe
 export function FormErrorBanner({ message }: { message?: string | null }) {
   if (!message) return null;
   return (
-    <div className="ui-error-banner rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+    <div role="alert" className="ui-error-banner rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
       {message}
     </div>
   );

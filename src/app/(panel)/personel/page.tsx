@@ -154,9 +154,9 @@ export default function PersonelPage() {
       <div className="ui-toolbar flex flex-wrap items-center gap-2 p-2.5">
         <div className="relative flex-1 min-w-48">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Ad veya TC kimlik ara" className="w-full rounded-md border border-slate-200 bg-white py-2.5 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
+          <input aria-label={"Ad veya TC kimlik ara"} value={search} onChange={e => setSearch(e.target.value)} placeholder="Ad veya TC kimlik ara" className="w-full rounded-md border border-slate-200 bg-white py-2.5 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
         </div>
-        <select value={filterRole} onChange={e => setFilterRole(e.target.value)} className="rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20">
+        <select aria-label={"Personel rolü"} value={filterRole} onChange={e => setFilterRole(e.target.value)} className="rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20">
           <option value="">Tüm Unvanlar</option>
           <option value="YONETICI">Yönetici</option>
           <option value="DOKTOR">Diş Hekimi</option>
@@ -164,7 +164,7 @@ export default function PersonelPage() {
           <option value="BANKO">Banko Personeli</option>
           <option value="MUHASEBE">Muhasebe</option>
         </select>
-        <select value={filterStatus} onChange={e => setFilterStatus(e.target.value as "" | "aktif" | "pasif")} className="rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20">
+        <select aria-label={"Personel durumu"} value={filterStatus} onChange={e => setFilterStatus(e.target.value as "" | "aktif" | "pasif")} className="rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20">
           <option value="">Tüm Durumlar</option>
           <option value="aktif">Aktif</option>
           <option value="pasif">Pasif</option>

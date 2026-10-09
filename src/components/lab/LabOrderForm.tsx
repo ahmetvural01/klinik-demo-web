@@ -1,16 +1,15 @@
 "use client";
 
 import { SearchSelect } from "@/components/ui/SearchSelect";
+import { FormField } from "@/components/ui/FormField";
 
 type Option = { id: string; label: string; meta?: string };
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
-    <div>
-      <label className="mb-1 block text-xs font-semibold text-slate-600">{label}</label>
+    <FormField label={label} hint={hint}>
       {children}
-      {hint && <p className="mt-1 text-[11px] text-slate-500">{hint}</p>}
-    </div>
+    </FormField>
   );
 }
 

@@ -61,20 +61,23 @@ export function DemoRequestForm() {
       notes: noteLines.join("\n"),
     };
 
-    const res = await fetch("/api/demo-requests", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const body = await res.json().catch(() => ({} as DemoResponse));
-    setLoading(false);
-
-    if (!res.ok || !body.demo) {
-      setError(body.message || "Demo erişimi oluşturulamadı.");
-      return;
+    try {
+      const res = await fetch("/api/demo-requests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body: DemoResponse = await res.json().catch(() => ({}));
+      if (!res.ok || !body.demo) {
+        setError(body.message || "Demo erişimi oluşturulamadı.");
+        return;
+      }
+      setDemo(body.demo);
+    } catch {
+      setError("Bağlantı kurulamadı. Bilgileriniz formda korundu; lütfen yeniden deneyin.");
+    } finally {
+      setLoading(false);
     }
-
-    setDemo(body.demo);
   };
 
   if (demo) {
@@ -125,11 +128,17 @@ export function DemoRequestForm() {
         <Field label="Klinik / Kurum Adı" required className="sm:col-span-2"><input required name="organization" autoComplete="organization" className={inputClass} placeholder="Örn. Modern Ağız ve Diş Sağlığı" value={form.institutionName} onChange={(e) => setForm({ ...form, institutionName: e.target.value })} /></Field>
         <Field label="Telefon"><input name="tel" type="tel" inputMode="tel" autoComplete="tel" className={inputClass} placeholder="05xx xxx xx xx" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} /></Field>
         <Field label="E-posta" required><input required name="email" type="email" autoComplete="email" className={inputClass} placeholder="ornek@klinik.com" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
-        <Field label="Şehir"><input name="city" autoComplete="address-level2" className={inputClass} placeholder="Örn. İstanbul" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></Field>
-        <Field label="Klinik Yapısı"><select name="clinicType" className={inputClass} value={form.clinicType} onChange={(e) => setForm({ ...form, clinicType: e.target.value })}><option value="">Seçiniz</option><option value="tek-sube">Tek şube</option><option value="coklu-sube">Çoklu şube</option><option value="ozel">Özel / Hastane</option></select></Field>
-        <Field label="Tahmini Kullanıcı Sayısı" className="sm:col-span-2"><select name="userCount" className={inputClass} value={form.userCount} onChange={(e) => setForm({ ...form, userCount: e.target.value })}><option value="">Seçiniz</option><option value="1-5">1–5</option><option value="6-15">6–15</option><option value="16-30">16–30</option><option value="30+">30+</option></select></Field>
-        <Field label="İncelemek İstediğiniz Konular" className="sm:col-span-2"><textarea name="note" className={`${inputClass} min-h-24 resize-y`} placeholder="Örn. randevu, hasta takibi ve muhasebe akışı" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></Field>
       </div>
+      <details className="mt-5 rounded-lg border border-slate-200 px-4 py-3">
+        <summary className="cursor-pointer text-sm font-semibold text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#087f73]">Ek bilgiler (isteğe bağlı)</summary>
+        <p className="mt-2 text-xs leading-5 text-slate-500">Demoyu açmak için bu alanları doldurmanız gerekmez.</p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <Field label="Şehir"><input name="city" autoComplete="address-level2" className={inputClass} placeholder="Örn. İstanbul" value={form.city} onChange={(e) => setForm({ ...form, city: e.target.value })} /></Field>
+          <Field label="Klinik Yapısı"><select name="clinicType" className={inputClass} value={form.clinicType} onChange={(e) => setForm({ ...form, clinicType: e.target.value })}><option value="">Seçiniz</option><option value="tek-sube">Tek şube</option><option value="coklu-sube">Çoklu şube</option><option value="ozel">Özel / Hastane</option></select></Field>
+          <Field label="Tahmini Kullanıcı Sayısı" className="sm:col-span-2"><select name="userCount" className={inputClass} value={form.userCount} onChange={(e) => setForm({ ...form, userCount: e.target.value })}><option value="">Seçiniz</option><option value="1-5">1–5</option><option value="6-15">6–15</option><option value="16-30">16–30</option><option value="30+">30+</option></select></Field>
+          <Field label="İncelemek İstediğiniz Konular" className="sm:col-span-2"><textarea name="note" className={`${inputClass} min-h-24 resize-y`} placeholder="Örn. randevu, hasta takibi ve muhasebe akışı" value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></Field>
+        </div>
+      </details>
       {error && <p role="alert" aria-live="polite" className="mt-4 rounded-lg border border-red-100 bg-red-50 px-3 py-2.5 text-sm font-semibold text-red-700">{error}</p>}
       <button
         type="submit"

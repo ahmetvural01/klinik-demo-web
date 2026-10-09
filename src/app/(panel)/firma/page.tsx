@@ -6,6 +6,7 @@ import { Plus, Download } from "lucide-react";
 import { downloadCsv } from "@/lib/csv-export";
 import { useSlashFocus } from "@/lib/use-slash-focus";
 import { showToastSafe } from "@/lib/toast-client";
+import { clientMutation } from "@/lib/client-mutation";
 import { Button } from "@/components/ui/Button";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Modal } from "@/components/ui/Modal";
@@ -53,6 +54,7 @@ export default function FirmaPage() {
   const firmaLoadSequenceRef = useRef(0);
   const stockLoadSequenceRef = useRef(0);
   const [isSubmittingFirma, setIsSubmittingFirma] = useState(false);
+  const firmaSubmittingRef = useRef(false);
 
   const showToast = useCallback((type: "success" | "error" | "info", text: string) => {
     showToastSafe({ message: text, type });
@@ -185,6 +187,7 @@ export default function FirmaPage() {
   );
 
   function requestCloseAddFirma() {
+    if (firmaSubmittingRef.current) return;
     setShowAddFirma(false);
     setFirmaForm({
       name: "", phone: "", iban: "", ibanName: "", notes: "",
@@ -193,27 +196,29 @@ export default function FirmaPage() {
   }
 
   const handleAddFirma = async () => {
-    if (!firmaForm.name) { showToast("error", "Firma adı zorunludur"); return; }
-    if (isSubmittingFirma) return;
+    if (!firmaForm.name.trim()) { showToast("error", "Firma adı zorunludur"); return; }
+    if (firmaSubmittingRef.current) return;
+    firmaSubmittingRef.current = true;
     setIsSubmittingFirma(true);
-    const r = await fetch("/api/firma", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(firmaForm)
-    });
-    if (r.ok) {
-      setShowAddFirma(false);
-      setFirmaForm({
-        name: "", phone: "", iban: "", ibanName: "", notes: "",
-        kategori: "TEDARICI", paymentTerms: "NET_30"
-      });
-      showToast("success", "Firma eklendi");
-      await loadFirmas();
-    } else {
-      const e = await r.json();
-      showToast("error", e.error || "Hata oluştu");
+    try {
+      await clientMutation("/api/firma", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...firmaForm, name: firmaForm.name.trim() })
+      }, "Tedarikçi eklenemedi.");
+        setShowAddFirma(false);
+        setFirmaForm({
+          name: "", phone: "", iban: "", ibanName: "", notes: "",
+          kategori: "TEDARICI", paymentTerms: "NET_30"
+        });
+        showToast("success", "Firma eklendi");
+        await loadFirmas();
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Tedarikçi eklenemedi.");
+    } finally {
+      firmaSubmittingRef.current = false;
+      setIsSubmittingFirma(false);
     }
-    setIsSubmittingFirma(false);
   };
 
   const firmaColumns: ListTableColumn<Firma>[] = [
@@ -277,7 +282,7 @@ export default function FirmaPage() {
 
       <div className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
-          <input ref={searchInputRef} value={search} onChange={e => setSearch(e.target.value)}
+          <input aria-label={"Firma, telefon, IBAN veya kontakt ara"} ref={searchInputRef} value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Firma, telefon, IBAN veya kontakt ara ( / )" className="min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
           {canWriteFinance && <Button icon={Plus} onClick={() => setShowAddFirma(true)}>
             Yeni Firma
@@ -315,7 +320,7 @@ export default function FirmaPage() {
         title="Yeni Firma Ekle"
         footer={
           <>
-            <Button variant="secondary" onClick={() => void requestCloseAddFirma()}>Vazgeç</Button>
+            <Button variant="secondary" disabled={isSubmittingFirma} onClick={() => void requestCloseAddFirma()}>Vazgeç</Button>
             <Button onClick={handleAddFirma} loading={isSubmittingFirma}>Kaydet</Button>
           </>
         }

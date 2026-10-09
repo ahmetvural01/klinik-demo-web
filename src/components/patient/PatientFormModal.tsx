@@ -519,7 +519,7 @@ export function PatientFormModal({ open, onClose, patientId, hidePhoneField = fa
 
           <div id="patient-form-not">
             <FormSection icon={FileText} title="Hasta Notu" description="Banko ve klinik ekip tarafından görülecek genel notlar.">
-            <textarea rows={3} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Hasta notu" value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
+            <textarea aria-label={"Hasta notu"} rows={3} className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20" placeholder="Hasta notu" value={form.notes} onChange={(e) => setField("notes", e.target.value)} />
             </FormSection>
           </div>
 

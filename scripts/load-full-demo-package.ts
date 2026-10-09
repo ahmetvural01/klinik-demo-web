@@ -452,7 +452,7 @@ async function main() {
     data: {
       phone: createdPatients[0].phone,
       message: `${MARKER} Randevu hatirlatma demo mesaji`,
-      sender: "KlinikCep",
+      sender: "CepKlinik",
       status: "SENT",
       responseData: `${MARKER}-MOCK-SMS`,
     },
@@ -1444,7 +1444,7 @@ async function upsertAdvertisementByMarker(marker: string) {
         content: "Implant paketi kampanyasi detaylari",
         ctaText: "Detaylari Gor",
         ctaUrl: "https://demo.klinik.local/kampanya",
-        sponsorName: "KlinikCep Demo",
+        sponsorName: "CepKlinik Demo",
         isActive: true,
       },
     });
@@ -1456,7 +1456,7 @@ async function upsertAdvertisementByMarker(marker: string) {
       content: "Implant paketi kampanyasi detaylari",
       ctaText: "Detaylari Gor",
       ctaUrl: "https://demo.klinik.local/kampanya",
-      sponsorName: "KlinikCep Demo",
+      sponsorName: "CepKlinik Demo",
       isActive: true,
       priority: 50,
     },

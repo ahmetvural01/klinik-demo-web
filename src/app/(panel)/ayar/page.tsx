@@ -607,7 +607,7 @@ export default function AyarPage() {
                     <tr key={ds.day} className={`border-t border-slate-100 ${ds.isHoliday ? "bg-red-50/50" : ""}`}>
                       <td className="p-2 pl-3 font-semibold text-slate-700">{ds.day}</td>
                       <td className="p-2">
-                        <input type="checkbox" className="h-4 w-4 accent-red-500"
+                        <input aria-label={`${ds.day} kapalı`} type="checkbox" className="h-4 w-4 accent-red-500"
                           disabled={!canWriteSettings}
                           checked={ds.isHoliday}
                           onChange={e => {
@@ -617,7 +617,7 @@ export default function AyarPage() {
                           }} />
                       </td>
                       <td className="p-2">
-                        <input type="time" value={ds.open} disabled={ds.isHoliday || !canWriteSettings}
+                        <input aria-label={`${ds.day} açılış saati`} type="time" value={ds.open} disabled={ds.isHoliday || !canWriteSettings}
                           onChange={e => {
                             const updated = [...settings.dailySchedules];
                             updated[idx] = { ...ds, open: e.target.value };
@@ -626,7 +626,7 @@ export default function AyarPage() {
                           className="rounded border border-slate-200 px-2 py-1 text-xs focus:border-primary focus:outline-none disabled:opacity-40 disabled:bg-slate-100" />
                       </td>
                       <td className="p-2">
-                        <input type="time" value={ds.close} disabled={ds.isHoliday || !canWriteSettings}
+                        <input aria-label={`${ds.day} kapanış saati`} type="time" value={ds.close} disabled={ds.isHoliday || !canWriteSettings}
                           onChange={e => {
                             const updated = [...settings.dailySchedules];
                             updated[idx] = { ...ds, close: e.target.value };
@@ -635,7 +635,7 @@ export default function AyarPage() {
                           className="rounded border border-slate-200 px-2 py-1 text-xs focus:border-primary focus:outline-none disabled:opacity-40 disabled:bg-slate-100" />
                       </td>
                       <td className="p-2">
-                        <input type="time" value={ds.lunchStart} disabled={ds.isHoliday || !canWriteSettings}
+                        <input aria-label={`${ds.day} öğle arası başlangıcı`} type="time" value={ds.lunchStart} disabled={ds.isHoliday || !canWriteSettings}
                           onChange={e => {
                             const updated = [...settings.dailySchedules];
                             updated[idx] = { ...ds, lunchStart: e.target.value };
@@ -644,7 +644,7 @@ export default function AyarPage() {
                           className="rounded border border-slate-200 px-2 py-1 text-xs focus:border-primary focus:outline-none disabled:opacity-40 disabled:bg-slate-100" />
                       </td>
                       <td className="p-2">
-                        <input type="time" value={ds.lunchEnd} disabled={ds.isHoliday || !canWriteSettings}
+                        <input aria-label={`${ds.day} öğle arası bitişi`} type="time" value={ds.lunchEnd} disabled={ds.isHoliday || !canWriteSettings}
                           onChange={e => {
                             const updated = [...settings.dailySchedules];
                             updated[idx] = { ...ds, lunchEnd: e.target.value };
@@ -693,7 +693,7 @@ export default function AyarPage() {
             <h3 className="mb-1 text-base font-black text-slate-900">Yeni POS Cihazı Ekle</h3>
             <p className="mb-4 text-xs text-slate-500">Kliniğinizde kullandığınız POS cihazlarını tanımlayın. Bu cihazlar ödeme ve taksit kayıtlarında seçilebilir.</p>
             <div className="flex gap-2">
-              <input value={newPosName} onChange={e => setNewPosName(e.target.value)}
+              <input aria-label={"Cihaz adı (örn: İşbankası POS, Vakıfbank POS…)"} value={newPosName} onChange={e => setNewPosName(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && void addPos()}
                 placeholder="Cihaz adı (örn: İşbankası POS, Vakıfbank POS…)"
                 className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />
@@ -769,7 +769,7 @@ export default function AyarPage() {
             <h3 className="mb-1 text-base font-black text-slate-900">Yeni Tedavi Türü Ekle</h3>
             <p className="mb-4 text-xs text-slate-500">Randevu ekleme ekranında seçilebilecek tedavi türlerini ve takvimde görünecek renklerini burada yönetin.</p>
             <div className="flex flex-wrap gap-2">
-              <input value={newTreatmentLabel} onChange={e => setNewTreatmentLabel(e.target.value)}
+              <input aria-label={"Tedavi adı (örn: Diş Beyazlatma)"} value={newTreatmentLabel} onChange={e => setNewTreatmentLabel(e.target.value)}
                 onKeyDown={e => e.key === "Enter" && void addTreatmentType()}
                 placeholder="Tedavi adı (örn: Diş Beyazlatma)"
                 className="flex-1 min-w-[200px] rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" />

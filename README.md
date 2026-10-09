@@ -1,6 +1,8 @@
-# KlinikCep
+# CepKlinik
 
 Klinik operasyonlarının ana modüllerini tek üründe birleştiren modern, çok kiracılı yönetim platformu.
+
+Ürün yaklaşımı ve ekran bazlı kabul ölçütleri: [CepKlinik kullanım planı](docs/CEPKLINIK-KULLANIM-PLANI.md).
 
 ## Icerik
 
@@ -19,7 +21,7 @@ Klinik operasyonlarının ana modüllerini tek üründe birleştiren modern, ço
 
 ## Teknoloji
 
-- Next.js 14 (App Router)
+- Next.js 15 (App Router)
 - TypeScript
 - Tailwind CSS
 - Prisma ORM

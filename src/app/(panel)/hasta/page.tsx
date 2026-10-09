@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { confirmDialog } from "@/lib/confirm-client";
+import { clientMutation } from "@/lib/client-mutation";
 import { useSlashFocus } from "@/lib/use-slash-focus";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { ListRowSkeleton, TableRowsSkeleton } from "@/components/ui/ListSkeleton";
@@ -261,12 +262,12 @@ function HastaContent() {
     ) {
       return;
     }
-    const res = await fetch(`/api/patients/${id}`, { method: "DELETE" });
-    if (!res.ok) {
-      setError("Silme işlemi başarısız");
-      return;
+    try {
+      await clientMutation(`/api/patients/${id}`, { method: "DELETE" }, "Hasta arşivlenemedi.");
+      void load(true);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Hasta arşivlenemedi.");
     }
-    void load(true);
   };
 
   const toggleSort = (key: SortKey) => {
@@ -473,7 +474,7 @@ function HastaContent() {
                     </button>
                     {(canWritePatients || canDeletePatients) && <div className={`grid gap-2 ${canWritePatients && canDeletePatients ? "grid-cols-2" : "grid-cols-1"}`}>
                       {canWritePatients && <button type="button" onClick={() => setEditPatientId(patient.id)} className="ui-interactive rounded-lg border border-slate-200 px-3 py-2.5 text-center text-sm font-semibold text-slate-700">Düzenle</button>}
-                      {canDeletePatients && <button type="button" onClick={() => remove(patient.id)} className="ui-interactive rounded-lg border border-red-200 px-3 py-2.5 text-sm font-semibold text-red-600">Sil</button>}
+                      {canDeletePatients && <button type="button" onClick={() => remove(patient.id)} className="ui-interactive rounded-lg border border-red-200 px-3 py-2.5 text-sm font-semibold text-red-600">Arşivle</button>}
                     </div>}
                   </div>
                 </div>
@@ -604,8 +605,8 @@ function HastaContent() {
                           </button>
                         </Tooltip>}
                         {canDeletePatients && (
-                          <Tooltip label="Sil">
-                            <button type="button" onClick={() => remove(patient.id)} aria-label="Sil" className="ui-interactive rounded-lg bg-red-50 p-2 text-red-600 hover:bg-red-100">
+                          <Tooltip label="Arşivle">
+                            <button type="button" onClick={() => remove(patient.id)} aria-label={`${patient.fullName} hastasını arşivle`} className="ui-interactive rounded-lg bg-red-50 p-2 text-red-600 hover:bg-red-100">
                               <Trash2 className="h-4 w-4" />
                             </button>
                           </Tooltip>

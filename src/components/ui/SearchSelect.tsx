@@ -19,6 +19,9 @@ export function SearchSelect({
   emptyText,
   loading = false,
   error,
+  id,
+  "aria-label": ariaLabel,
+  "aria-describedby": ariaDescribedBy,
 }: {
   query: string;
   onQueryChange: (value: string) => void;
@@ -29,6 +32,9 @@ export function SearchSelect({
   emptyText?: string;
   loading?: boolean;
   error?: string;
+  id?: string;
+  "aria-label"?: string;
+  "aria-describedby"?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(-1);
@@ -43,6 +49,9 @@ export function SearchSelect({
   return (
     <div className="relative">
       <input
+        id={id}
+        aria-label={ariaLabel || placeholder}
+        aria-describedby={ariaDescribedBy}
         data-dirty-ignore
         value={query}
         onChange={(event) => {

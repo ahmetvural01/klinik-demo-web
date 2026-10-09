@@ -16,6 +16,8 @@ import { parseRolePreview, ROLE_PREVIEW_COOKIE, ROLE_PREVIEW_STORAGE } from "@/l
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { scopedStorageKey } from "@/lib/scoped-client-storage";
 import { hasAnyPanelPermission, hasPanelPermission } from "@/lib/panel-permissions";
+import { clientMutation } from "@/lib/client-mutation";
+import { showToastSafe } from "@/lib/toast-client";
 
 const NAV_LABEL_BASE =
   "min-w-0 overflow-hidden whitespace-nowrap text-left tracking-normal transition-all duration-150 ease-out";
@@ -27,12 +29,12 @@ const NAV_ITEM_OPEN = "grid grid-cols-[36px_minmax(0,1fr)_auto] items-center gap
 const NAV_ITEM_CLOSED = "grid grid-cols-[36px] items-center justify-items-center";
 
 const ROLE_LABELS: Record<string, string> = {
-  YONETICI:  "Yönetici",
+  YONETICI:  "Klinik yöneticisi",
   DOKTOR:    "Doktor",
   ASISTAN:   "Asistan",
   BANKO:     "Banko",
   MUHASEBE:  "Muhasebe",
-  SUPERADMIN:"Yönetici",
+  SUPERADMIN:"Platform yöneticisi",
 };
 
 type NavItem = { href: string; label: string; icon: string; badge?: string };
@@ -57,7 +59,7 @@ function buildNavGroups(permissions: string[]): NavGroup[] {
     },
     { label: "Tedavi", items: can("lab:read") ? [{ href: "/lab", label: "Laboratuvar", icon: "flask" }] : [] },
     {
-      label: "Finans & Rapor",
+      label: "Finans ve raporlar",
       items: [
         ...(can("finance:center") ? [{ href: "/muhasebe", label: "Muhasebe Merkezi", icon: "finance" }] : []),
         ...(can("earnings:read") ? [{ href: "/finans", label: "Doktor Hakedişim", icon: "hakediş" }] : []),
@@ -65,7 +67,7 @@ function buildNavGroups(permissions: string[]): NavGroup[] {
       ],
     },
     {
-      label: "Stok & Tedarik",
+      label: "Stok ve tedarik",
       items: [
         ...(can("stock:read") ? [{ href: "/stok", label: "Stok", icon: "box" }] : []),
         ...(can("finance:read") ? [{ href: "/firma", label: "Satın Alma & Tedarikçiler", icon: "firma" }] : []),
@@ -74,7 +76,7 @@ function buildNavGroups(permissions: string[]): NavGroup[] {
     {
       label: "Yönetim",
       items: [
-        ...(can("staff:read") ? [{ href: "/personel", label: "Personeller", icon: "person" }] : []),
+        ...(can("staff:read") ? [{ href: "/personel", label: "Personel", icon: "person" }] : []),
         ...(can("audit:read") ? [{ href: "/sistem-izleme", label: "Sistem İzleme", icon: "chart" }] : []),
         ...(can("settings:read") ? [{ href: "/ayar", label: "Sistem Ayarları", icon: "settings" }] : []),
       ],
@@ -107,6 +109,8 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
   const router = useRouter();
   const [messageUnread, setMessageUnread] = useState(0);
   const [desktopHovered, setDesktopHovered] = useState(false);
+  const [desktopPinned, setDesktopPinned] = useState(true);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   useEscapeClose(() => setMobileOpen(false), mobileOpen);
   const [previewRole, setPreviewRole] = useState<string | null>(null);
@@ -234,8 +238,20 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
     return 0;
   };
 
-  const collapsed = !desktopHovered && !rolePickerOpen;
+  const collapsed = !desktopPinned && !desktopHovered && !rolePickerOpen;
   const w = collapsed ? "w-[72px]" : "w-[264px]";
+
+  const handleLogout = async () => {
+    if (loggingOut) return;
+    setLoggingOut(true);
+    try {
+      await clientMutation("/api/auth/logout", { method: "POST" }, "Oturum kapatılamadı.");
+      window.location.href = "/giris";
+    } catch (error) {
+      showToastSafe({ type: "error", message: error instanceof Error ? error.message : "Oturum kapatılamadı." });
+      setLoggingOut(false);
+    }
+  };
 
   useEffect(() => {
     setMobileOpen(false);
@@ -336,9 +352,10 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
               )}
               </div>
 
-              <nav className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 pb-3 [-webkit-overflow-scrolling:touch]">
+              <nav aria-label="Klinik menüsü" className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 pb-3 [-webkit-overflow-scrolling:touch]">
                 {navGroups.map((group) => (
                   <div key={group.label} className="border-t border-slate-100 pt-2 first:border-t-0 first:pt-0">
+                    <p className="px-3 pb-1.5 text-[11px] font-semibold text-slate-500">{group.label}</p>
                     <div className="flex flex-col gap-1">
                       {group.items.map((it) => {
                         const active = isActive(it.href);
@@ -356,10 +373,9 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
 
               <div className="shrink-0 border-t border-slate-100 p-3">
                 <button
-                  onClick={async () => {
-                    await fetch("/api/auth/logout", { method: "POST" });
-                    window.location.href = "/giris";
-                  }}
+                  type="button"
+                  disabled={loggingOut}
+                  onClick={handleLogout}
                   className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-slate-500 transition hover:bg-red-50 hover:text-red-600"
                 >
                   <ModuleIcon module="logout" size="sm" />
@@ -386,12 +402,15 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDesktopHovered(false);
         }}
       >
-      {/* Dar ikon şeridi; imleç veya klavye odağıyla çalışma menüsüne açılır. */}
-      <div className="flex h-16 items-center pl-5">
+      {/* Menü adları başlangıçta görünür; kullanıcı isterse dar görünümü seçer. */}
+      <div className="flex h-16 items-center justify-between gap-2 px-4">
         <div className="flex items-center gap-3">
           <BrandMark />
           {!collapsed && <p className="max-w-[165px] truncate text-[13px] font-black tracking-tight text-slate-900">{brand.name}</p>}
         </div>
+        {!collapsed && <button type="button" aria-label={desktopPinned ? "Menüyü daralt" : "Menüyü açık tut"} aria-pressed={desktopPinned} onClick={() => { setDesktopPinned(prev => !prev); setDesktopHovered(false); }} className="shrink-0 rounded-lg p-2 text-slate-500 hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-primary">
+          <ChevronDown className={`h-4 w-4 ${desktopPinned ? "rotate-90" : "-rotate-90"}`} />
+        </button>}
       </div>
 
       {/* Kullanıcı kartı — ikon tile'larıyla aynı "porselen" yüzey dili
@@ -525,10 +544,11 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
       )}
 
       {/* Nav */}
-      <nav className="flex-1 overflow-y-auto px-2 pb-2">
+      <nav aria-label="Klinik menüsü" className="flex-1 overflow-y-auto px-2 pb-2">
         {navGroups.map((group, gi) => {
           return (
           <div key={group.label} className={gi > 0 ? "mt-1.5 border-t border-slate-100 pt-1.5" : ""}>
+            {!collapsed && <p className="px-3 pb-1.5 pt-1 text-[11px] font-semibold text-slate-500">{group.label}</p>}
             {group.items.map((item) => {
               const active = isActive(item.href);
               const badge = dynamicBadge(item.href) || (item.badge ? parseInt(item.badge) : 0);
@@ -585,10 +605,9 @@ export function Sidebar({ user }: { user: { fullName: string; role: string; phot
       <div className="border-t border-slate-100 p-2">
         <div className="relative group">
           <button
-            onClick={async () => {
-              await fetch("/api/auth/logout", { method: "POST" });
-              window.location.href = "/giris";
-            }}
+              type="button"
+              disabled={loggingOut}
+              onClick={handleLogout}
             aria-label={collapsed ? "Oturumu Kapat" : undefined}
             className={`grid h-11 w-full rounded-lg px-3 text-slate-500 transition active:scale-[0.98] active:duration-75 hover:bg-red-50 hover:text-red-600 ${collapsed ? "grid-cols-[36px] justify-items-center" : "grid-cols-[36px_minmax(0,1fr)] gap-x-3 text-sm font-bold"}`}
           >

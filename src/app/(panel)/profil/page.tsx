@@ -417,7 +417,7 @@ export default function ProfilPage() {
             <p className="mt-2 text-center text-[11px] text-slate-400">QR kodu okutamıyorsanız manuel girin: <span className="font-mono font-semibold text-slate-600">{twoFactorSetup.secret}</span></p>
             <p className="mb-2 mt-4 text-sm text-slate-600">2. Uygulamada görünen 6 haneli kodu girin.</p>
             <div className="flex gap-2">
-              <input
+              <input aria-label={"Doğrulama kodu"}
                 value={twoFactorCode}
                 onChange={(e) => setTwoFactorCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
                 placeholder="000000"
@@ -453,7 +453,7 @@ export default function ProfilPage() {
           <div className="rounded-xl border border-red-200 bg-red-50 p-4">
             <label className="mb-1 block text-xs font-semibold text-red-700">Devam etmek için şifrenizi girin</label>
             <div className="flex gap-2">
-              <input type="password" value={disablePassword} onChange={(e) => setDisablePassword(e.target.value)} className="flex-1 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm focus:border-red-400 focus:outline-none" />
+              <input aria-label={"Devam etmek için şifrenizi girin"} type="password" value={disablePassword} onChange={(e) => setDisablePassword(e.target.value)} className="flex-1 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm focus:border-red-400 focus:outline-none" />
               <Button variant="danger" onClick={() => void disableTwoFactor()} loading={twoFactorSaving}>
                 Onayla
               </Button>

@@ -1,9 +1,10 @@
+import { parseReportDateInput } from "@/lib/report-date-range";
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth, withApiTiming } from "@/lib/api";
 import { effectiveDoctorWhere } from "@/lib/hakedis";
 import { buildDataConsistencyReport } from "@/lib/data-consistency";
-import { turkeyDayRangeUtc, turkeyDateKey, turkeyLocalDateTimeToUtc, turkeyTodayStartUtc } from "@/lib/tz";
+import { turkeyDayRangeUtc, turkeyDateKey, turkeyTodayStartUtc } from "@/lib/tz";
 import { requireActiveBranch } from "@/lib/branch-context";
 
 // Rapor ekranındaki <input type="datetime-local"> zaman dilimi belirtmeden
@@ -12,13 +13,6 @@ import { requireActiveBranch } from "@/lib/branch-context";
 // dilimiyle (üretimde genelde UTC) yorumlar, bu da 3 saatlik bir kaymaya
 // ve yıl/gün sınırlarında hatalı dahil/hariç tutmaya yol açıyordu (bkz.
 // denetim raporu).
-function parseTurkeyLocalInput(value: string | null): Date | undefined {
-  if (!value) return undefined;
-  const [datePart, timePart] = value.split("T");
-  if (!datePart) return undefined;
-  return turkeyLocalDateTimeToUtc(datePart, (timePart || "00:00").slice(0, 5));
-}
-
 // 2026 gelir vergisi dilimleri
 function gelirVergisiHesapla(matrah: number): number {
   if (matrah <= 0) return 0;
@@ -51,10 +45,13 @@ export const GET = withApiTiming("reports", async function GET(request: NextRequ
   const yearEnd   = turkeyDayRangeUtc(`${pivotYear}-12-31`).end;
 
   // from/to hiç verilmezse tüm geçmiş taranmasın diye içinde bulunulan yıl varsayılır.
-  const dateFilter = (from || to) ? {
-    gte: parseTurkeyLocalInput(from),
-    lte: parseTurkeyLocalInput(to),
-  } : { gte: yearStart, lte: yearEnd };
+  let dateFilter: { gte?: Date; lte?: Date };
+  try {
+    dateFilter = (from || to) ? { gte: parseReportDateInput(from), lte: parseReportDateInput(to, true) } : { gte: yearStart, lte: yearEnd };
+    if (dateFilter.gte && dateFilter.lte && dateFilter.gte > dateFilter.lte) throw new Error("Başlangıç tarihi bitiş tarihinden sonra olamaz.");
+  } catch (error) {
+    return NextResponse.json({ message: error instanceof Error ? error.message : "Rapor tarihleri geçersiz." }, { status: 400 });
+  }
 
   const treatmentOnlyWhere = {
     NOT: [

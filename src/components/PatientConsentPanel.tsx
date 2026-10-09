@@ -415,11 +415,11 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo }: Pro
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <label className="mb-1 block text-xs text-gray-600">İmzalayan</label>
-                <input value={signerName} onChange={(event) => setSignerName(event.target.value)} className="w-full rounded border px-3 py-2 text-sm" />
+                <input aria-label={"İmzalayan"} value={signerName} onChange={(event) => setSignerName(event.target.value)} className="w-full rounded border px-3 py-2 text-sm" />
               </div>
               <div>
                 <label className="mb-1 block text-xs text-gray-600">TC / Kimlik No</label>
-                <input value={signerIdentityNo} onChange={(event) => setSignerIdentityNo(event.target.value.replace(/\D/g, "").slice(0, 11))} className="w-full rounded border px-3 py-2 text-sm font-mono" />
+                <input aria-label={"TC / Kimlik No"} value={signerIdentityNo} onChange={(event) => setSignerIdentityNo(event.target.value.replace(/\D/g, "").slice(0, 11))} className="w-full rounded border px-3 py-2 text-sm font-mono" />
               </div>
             </div>
           </div>
@@ -485,7 +485,7 @@ export function PatientConsentPanel({ patientId, patientName, patientTcNo }: Pro
             <p className="mt-1 text-sm text-slate-500">İmzalı belge değiştirilmeyecek; denetim için iptal sebebiyle arşivlenecek. Ardından yeni imza alabilirsiniz.</p>
             <div className="mt-4 rounded-lg bg-slate-50 p-3 text-sm font-semibold text-slate-700">{voidingConsent.title}</div>
             <label className="mt-4 block text-xs font-semibold text-slate-600">İptal Sebebi</label>
-            <textarea value={voidReason} onChange={(event) => setVoidReason(event.target.value)} rows={3} className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400" placeholder="Örn. Hasta imzayı yanlış attı, yeniden imza alınacak." />
+            <textarea aria-label={"İptal Sebebi"} value={voidReason} onChange={(event) => setVoidReason(event.target.value)} rows={3} className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-400" placeholder="Örn. Hasta imzayı yanlış attı, yeniden imza alınacak." />
             <div className="mt-4 flex gap-2">
               <button onClick={() => setVoidingConsent(null)} className="flex-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50">Vazgeç</button>
               <button onClick={() => void voidConsent()} disabled={voiding || voidReason.trim().length < 3} className="flex-1 rounded-lg bg-red-600 px-3 py-2 text-sm font-bold text-white hover:bg-red-700 disabled:opacity-50">{voiding ? "İptal ediliyor..." : "İptal Et"}</button>

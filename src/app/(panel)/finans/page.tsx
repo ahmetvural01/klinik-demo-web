@@ -80,7 +80,7 @@ export default function FinansPage() {
       {!loadError && !isDoctorView && (
         <div className="max-w-md">
           <label className="mb-1 block text-xs font-bold text-slate-600">Doktor</label>
-          <select
+          <select aria-label={"Doktor"}
             value={selectedDoctorId}
             onChange={(event) => setSelectedDoctorId(event.target.value)}
             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"

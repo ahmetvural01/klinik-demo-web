@@ -27,7 +27,7 @@ import {
   X,
 } from "lucide-react";
 import { DemoRequestForm } from "@/components/marketing/DemoRequestForm";
-import { KlinikCepMark } from "@/components/brand/KlinikCepMark";
+import { CepKlinikMark } from "@/components/brand/CepKlinikMark";
 import { BRAND_NAME, BRAND_PRODUCT_LABEL } from "@/lib/brand";
 import { LaptopFrame, PhoneFrame } from "@/components/marketing/DeviceFrames";
 import {
@@ -42,10 +42,10 @@ import styles from "./marketing.module.css";
 
 const NAV_ITEMS = [
   { id: "urun", label: "Ürün" },
-  { id: "moduller", label: "Modüller" },
+  { id: "moduller", label: "Özellikler" },
   { id: "isleyis", label: "İşleyiş" },
   { id: "fiyatlandirma", label: "Fiyatlandırma" },
-  { id: "sss", label: "SSS" },
+  { id: "sss", label: "Sık sorulanlar" },
   { id: "demo", label: "Demo" },
 ] as const;
 
@@ -224,7 +224,7 @@ function Brand() {
   return (
     <span className="flex items-center gap-3">
       <span className="relative flex h-10 w-10 items-center justify-center rounded-lg bg-[#087f73] text-white shadow-[0_8px_24px_rgba(8,127,115,.24)]">
-        <KlinikCepMark className="h-6 w-6" />
+        <CepKlinikMark className="h-6 w-6" />
         <Sparkles className="absolute -right-1 -top-1 h-3.5 w-3.5 text-[#ff8f70]" fill="currentColor" />
       </span>
       <span>
@@ -319,7 +319,7 @@ export default function RootPage() {
           <Link href="/" onClick={(event) => { event.preventDefault(); go("urun"); }} aria-label={`${BRAND_NAME} ana sayfa`} className="rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#087f73] focus-visible:ring-offset-2">
             <Brand />
           </Link>
-          <nav className="hidden h-full items-center gap-7 lg:flex" aria-label="Tanıtım menüsü">
+          <nav className="hidden h-full items-center gap-5 xl:flex" aria-label="Tanıtım menüsü">
             {NAV_ITEMS.map((item) => (
               <button key={item.id} type="button" onClick={() => go(item.id)} aria-current={activeTab === item.id ? "page" : undefined} className={`${styles.navItem} relative h-full text-sm font-bold transition-colors ${activeTab === item.id ? "text-[#087f73]" : "text-slate-600 hover:text-slate-950"}`}>
                 {item.label}
@@ -329,13 +329,13 @@ export default function RootPage() {
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => go("demo")} className="hidden rounded-lg px-3 py-2 text-sm font-black text-[#087f73] transition-colors hover:bg-emerald-50 sm:inline-flex">Ücretsiz Demo</button>
             <Link href="/klinik/giris" className="hidden rounded-lg bg-slate-950 px-4 py-2.5 text-sm font-black text-white transition-colors hover:bg-[#087f73] sm:inline-flex">Klinik Girişi</Link>
-            <button type="button" aria-label={mobileNavOpen ? "Menüyü kapat" : "Menüyü aç"} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((open) => !open)} className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-700 transition-colors hover:bg-slate-100 lg:hidden">
+            <button type="button" aria-label={mobileNavOpen ? "Menüyü kapat" : "Menüyü aç"} aria-expanded={mobileNavOpen} onClick={() => setMobileNavOpen((open) => !open)} className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-slate-700 transition-colors hover:bg-slate-100 xl:hidden">
               {mobileNavOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </button>
           </div>
         </div>
         {mobileNavOpen && (
-          <div className="border-t border-slate-100 bg-white px-5 py-4 shadow-xl lg:hidden">
+          <div className="border-t border-slate-100 bg-white px-5 py-4 shadow-xl xl:hidden">
             <div className="mx-auto grid max-w-3xl gap-1">
               {NAV_ITEMS.map((item) => <button key={item.id} type="button" onClick={() => go(item.id)} className={`rounded-lg px-3 py-3 text-left text-sm font-bold ${activeTab === item.id ? "bg-emerald-50 text-[#087f73]" : "text-slate-700"}`}>{item.label}</button>)}
               <Link href="/klinik/giris" className="mt-2 rounded-lg bg-slate-950 px-3 py-3 text-center text-sm font-black text-white">Klinik Girişi</Link>
@@ -347,7 +347,7 @@ export default function RootPage() {
       {activeTab === "urun" && (
         <>
           <section className={`${styles.hero} relative isolate flex min-h-[620px] items-end overflow-hidden`}>
-            <Image src="/klinikcep-hero.webp" alt={`${BRAND_NAME} kullanılan modern bir diş kliniği`} fill priority sizes="100vw" className="object-cover object-[62%_center]" />
+            <Image src="/cepklinik-hero.webp" alt={`${BRAND_NAME} kullanılan modern bir diş kliniği`} fill priority sizes="100vw" className="object-cover object-[62%_center]" />
             <div className={styles.heroShade} />
             <div className="relative mx-auto w-full max-w-7xl px-5 pb-14 pt-24 sm:pb-16 lg:pb-20">
               <div className="max-w-2xl text-white">
@@ -355,11 +355,11 @@ export default function RootPage() {
                   <Sparkles className={`${styles.sparkle} h-4 w-4 text-[#ffb39e]`} />
                   Diş klinikleri için bütünleşik yönetim
                 </span>
-                <h1 className="mt-5 text-5xl font-black leading-none sm:text-6xl">{BRAND_NAME}</h1>
-                <p className="mt-4 max-w-xl text-xl font-bold leading-8 text-white sm:text-2xl">Kliniğinizin her günü, tek bir güvenilir akışta.</p>
+                <h1 className="mt-5 text-4xl font-black leading-tight sm:text-5xl">Kliniğinizin günlük işleri, tek yerde.</h1>
+                <p className="mt-4 max-w-xl text-xl font-bold leading-8 text-white sm:text-2xl">Randevu, hasta ve ödeme takibini kolaylaştırın.</p>
                 <p className="mt-4 max-w-xl text-sm leading-7 text-white/85 sm:text-base">Randevudan hasta takibine, tedaviden tahsilata kadar ekibinizin ihtiyaç duyduğu kayıtlar aynı sistemde birlikte çalışır.</p>
                 <div className="mt-7 flex flex-wrap gap-3">
-                  <PrimaryButton onClick={() => go("demo")}>Ücretsiz demo oluştur</PrimaryButton>
+                  <PrimaryButton onClick={() => go("demo")}>Demo hesabı oluştur</PrimaryButton>
                   <button type="button" onClick={() => go("moduller")} className="inline-flex items-center gap-2 rounded-lg border border-white/35 bg-white/10 px-5 py-3 text-sm font-black text-white backdrop-blur-md transition-colors hover:bg-white/20">Ürünü keşfet <ChevronDown className="h-4 w-4" /></button>
                 </div>
               </div>

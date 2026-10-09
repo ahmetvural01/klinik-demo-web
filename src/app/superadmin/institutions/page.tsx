@@ -238,7 +238,7 @@ export default function InstitutionsPage() {
         </div>
 
         <div className="mt-4">
-          <input
+          <input aria-label={"Klinik, sahip veya e-posta ara"}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Klinik, sahip veya e-posta ara"

@@ -706,7 +706,7 @@ export default function InstitutionDetailPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-sm font-black text-slate-900">SMS İşlemleri — Bakiye: {institution.smsBalance}</h2>
             <div className="flex items-center gap-2">
-              <input
+              <input aria-label={"SMS bakiyesi değişimi"}
                 type="number"
                 value={smsCreditAmount}
                 onChange={(e) => setSmsCreditAmount(e.target.value)}

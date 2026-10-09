@@ -511,12 +511,12 @@ export default function StokPage() {
         <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-48">
           <svg className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-          <input ref={searchInputRef} value={search} onChange={e => setSearch(e.target.value)} placeholder="Malzeme, barkod, raf veya son tedarikçi ara… ( / )" className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none" />
+          <input aria-label={"Malzeme, barkod, raf veya son tedarikçi ara…"} ref={searchInputRef} value={search} onChange={e => setSearch(e.target.value)} placeholder="Malzeme, barkod, raf veya son tedarikçi ara… ( / )" className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none" />
         </div>
-        <select value={category} onChange={(e) => setCategory(e.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-primary/30">
+        <select aria-label={"Stok kategorisi"} value={category} onChange={(e) => setCategory(e.target.value)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-primary/30">
           {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
-        <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-primary/30">
+        <select aria-label={"Stok durumu"} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as typeof statusFilter)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 outline-none focus:ring-2 focus:ring-primary/30">
           <option value="TUMU">Tüm durumlar</option>
           <option value="KRITIK">Kritik stok</option>
           <option value="SKT_YAKIN">SKT yakın</option>

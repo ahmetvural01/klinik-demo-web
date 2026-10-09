@@ -177,7 +177,7 @@ export default function AuditPage() {
       <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
         <div className="relative min-w-[220px] flex-1">
           <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-          <input
+          <input aria-label={"İşlem veya detay ara..."}
             type="text"
             placeholder="İşlem veya detay ara..."
             value={search}

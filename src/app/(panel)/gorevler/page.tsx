@@ -430,12 +430,12 @@ export default function GorevlerPage() {
       />
       <div className="ui-toolbar flex flex-wrap items-center gap-2 p-2.5">
           {canSeeAll && (
-            <select value={scope} onChange={(e) => setScope(e.target.value as "mine" | "all")} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm">
+            <select aria-label={"Görev kapsamı"} value={scope} onChange={(e) => setScope(e.target.value as "mine" | "all")} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm">
               <option value="mine">Bana Atananlar</option>
               <option value="all">Tüm Görevler</option>
             </select>
           )}
-          <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm">
+          <select aria-label={"Görev durumu"} value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className="h-9 rounded-lg border border-slate-200 bg-white px-3 text-sm">
             <option value="TUMU">Tüm Görevler</option>
             <option value="ACIK">Yapılmadı</option>
             <option value="TAMAMLANDI">Tamamlandı</option>
@@ -514,7 +514,7 @@ export default function GorevlerPage() {
             />
           </FormField>
           <FormField label="Öncelik" required>
-            <select value={taskPriority} onChange={(e) => setTaskPriority(Number(e.target.value) as 1 | 2 | 3)} className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
+            <select aria-label={"Görev önceliği"} value={taskPriority} onChange={(e) => setTaskPriority(Number(e.target.value) as 1 | 2 | 3)} className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20">
               <option value={1}>Düşük</option>
               <option value={2}>Orta</option>
               <option value={3}>Yüksek</option>
@@ -539,7 +539,7 @@ export default function GorevlerPage() {
           </FormField>
         </div>
 
-        <textarea maxLength={3000} value={taskDetails} onChange={(e) => setTaskDetails(e.target.value)} rows={2} placeholder="Görev detayı (opsiyonel)" className="mt-3 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
+        <textarea aria-label={"Görev detayı (opsiyonel)"} maxLength={3000} value={taskDetails} onChange={(e) => setTaskDetails(e.target.value)} rows={2} placeholder="Görev detayı (opsiyonel)" className="mt-3 w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm" />
       </Modal>
     </section>
   );

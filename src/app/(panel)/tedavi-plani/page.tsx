@@ -298,7 +298,7 @@ export default function TedaviPlaniPage() {
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-white px-4 py-3 shadow-sm">
         <div className="relative flex-1 min-w-48">
           <svg className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Hasta veya tedavi planı ara" className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none" />
+          <input aria-label={"Hasta veya tedavi planı ara"} value={search} onChange={e => setSearch(e.target.value)} placeholder="Hasta veya tedavi planı ara" className="w-full rounded-lg border border-slate-200 bg-slate-50 py-2.5 pl-8 pr-3 text-sm placeholder-slate-400 focus:border-primary focus:bg-white focus:outline-none" />
         </div>
         {(["", "PLANLANDI", "DEVAM_EDIYOR", "TAMAMLANDI", "IPTAL"] as const).map(s => (
           <button key={s} onClick={() => setFilter(s)} className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${filter === s ? "bg-primary text-white" : "border border-slate-200 text-slate-600 hover:bg-slate-50"}`}>
@@ -484,7 +484,7 @@ export default function TedaviPlaniPage() {
             </div>
             <div>
               <label className="mb-1 block text-xs font-semibold text-slate-600">Doktor</label>
-              <select value={newPlan.doctorId} onChange={e => setNewPlan(p => ({ ...p, doctorId: e.target.value }))} className={`${inp} w-full`}>
+              <select aria-label={"Doktor"} value={newPlan.doctorId} onChange={e => setNewPlan(p => ({ ...p, doctorId: e.target.value }))} className={`${inp} w-full`}>
                 <option value="">Seçiniz…</option>
                 {doctors.map(d => <option key={d.id} value={d.id}>{d.fullName}</option>)}
               </select>
@@ -492,7 +492,7 @@ export default function TedaviPlaniPage() {
           </div>
           <div>
             <label className="mb-1 block text-xs font-semibold text-slate-600">Plan Başlığı</label>
-            <input value={newPlan.title} onChange={e => setNewPlan(p => ({ ...p, title: e.target.value }))} maxLength={200} placeholder="Örn: İmplant + Kuron Tedavisi" className={`${inp} w-full`} />
+            <input aria-label={"Plan Başlığı"} value={newPlan.title} onChange={e => setNewPlan(p => ({ ...p, title: e.target.value }))} maxLength={200} placeholder="Örn: İmplant + Kuron Tedavisi" className={`${inp} w-full`} />
           </div>
           <div>
             <div className="mb-2 flex items-center justify-between">
@@ -503,9 +503,9 @@ export default function TedaviPlaniPage() {
               {newSteps.map((step, i) => (
                 <div key={i} className="grid gap-2 rounded-xl border border-slate-100 bg-slate-50 p-3 sm:grid-cols-[auto_minmax(0,1fr)_90px_110px_auto] sm:items-center">
                   <span className="shrink-0 flex h-6 w-6 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-500">{i + 1}</span>
-                  <input value={step.treatmentName} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, treatmentName: e.target.value } : x))} maxLength={200} placeholder="Tedavi adı" className={`${inp} flex-1`} />
-                  <input value={step.toothNo} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, toothNo: e.target.value } : x))} maxLength={50} placeholder="Diş no" className={`${inp} w-full`} />
-                  <input type="number" min="0" max="100000000" step="0.01" value={step.amount} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} placeholder="Tutar" className={`${inp} w-full`} />
+                  <input aria-label={"Tedavi adı"} value={step.treatmentName} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, treatmentName: e.target.value } : x))} maxLength={200} placeholder="Tedavi adı" className={`${inp} flex-1`} />
+                  <input aria-label={"Diş no"} value={step.toothNo} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, toothNo: e.target.value } : x))} maxLength={50} placeholder="Diş no" className={`${inp} w-full`} />
+                  <input aria-label={"Tutar"} type="number" min="0" max="100000000" step="0.01" value={step.amount} onChange={e => setNewSteps(s => s.map((x, j) => j === i ? { ...x, amount: e.target.value } : x))} placeholder="Tutar" className={`${inp} w-full`} />
                   {newSteps.length > 1 && <Button variant="danger" size="sm" onClick={() => setNewSteps(s => s.filter((_, j) => j !== i))}>Sil</Button>}
                 </div>
               ))}
@@ -513,7 +513,7 @@ export default function TedaviPlaniPage() {
           </div>
           <div>
             <label className="mb-1 block text-xs font-semibold text-slate-600">Notlar</label>
-            <textarea value={newPlan.notes} onChange={e => setNewPlan(p => ({ ...p, notes: e.target.value }))} maxLength={5000} rows={2} className={`${inp} w-full resize-none`} placeholder="İsteğe bağlı not…" />
+            <textarea aria-label={"Notlar"} value={newPlan.notes} onChange={e => setNewPlan(p => ({ ...p, notes: e.target.value }))} maxLength={5000} rows={2} className={`${inp} w-full resize-none`} placeholder="İsteğe bağlı not…" />
           </div>
           <div className="flex gap-3 pt-2">
             <Button variant="secondary" onClick={() => void requestCloseNewPlan()} fullWidth>İptal</Button>

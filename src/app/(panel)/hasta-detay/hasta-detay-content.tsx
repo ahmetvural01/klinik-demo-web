@@ -21,6 +21,8 @@ import {
 import { MEDICATION_TEMPLATES } from "@/lib/medications";
 import { activePriceListStorageKey, readStoredActivePriceList, TDB_2026_CORE_PRICE_CATALOG } from "@/lib/dental-treatment-catalog";
 import { confirmDialog } from "@/lib/confirm-client";
+import { clientMutation, runRecordBatch } from "@/lib/client-mutation";
+import { isValidDateKey } from "@/lib/tz";
 import { usePermissions } from "@/components/auth/PermissionProvider";
 import { addPdfSection, createPdfDoc, pdfSafeText } from "@/lib/pdf-export";
 import { cachedGet } from "@/lib/client-cache";
@@ -715,6 +717,7 @@ export default function HastaDetayContent() {
   const [bulkConverting, setBulkConverting] = useState(false);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [examSavingId, setExamSavingId] = useState<string | null>(null);
+  const examMutationRef = useRef(false);
   // Tedavi formu - muayene tarzı
   const [priceList, setPriceList] = useState<{id:string;code?:string;treatment:string;amount:number;isTemplate?:boolean}[]>([]);
   const [treatDropdownId, setTreatDropdownId] = useState("");
@@ -1717,40 +1720,48 @@ export default function HastaDetayContent() {
   };
 
   const addDirectToExaminationList = async (toothNo?: string) => {
-    if (!treatDropdownId) return showToast("error", "Önce tedavi seçin");
-    if (!treatDoctorId && !currentUserId) return showToast("error", "Önce doktor seçin");
+    if (treatmentSaving) return;
+    try {
+      if (!treatDropdownId) return showToast("error", "Önce tedavi seçin");
+      if (!treatDoctorId && !currentUserId) return showToast("error", "Önce doktor seçin");
 
-    const fallbackTreatmentPool = TDB_2026_CORE_PRICE_CATALOG;
-    const selected = [...priceList, ...fallbackTreatmentPool].find(p => p.id === treatDropdownId);
-    if (!selected) return showToast("error", "Geçerli bir tedavi seçin");
+      const fallbackTreatmentPool = TDB_2026_CORE_PRICE_CATALOG;
+      const selected = [...priceList, ...fallbackTreatmentPool].find(p => p.id === treatDropdownId);
+      if (!selected) return showToast("error", "Geçerli bir tedavi seçin");
 
-    const payload = {
-      patientId: id,
-      doctorId: treatDoctorId || currentUserId,
-      treatmentName: selected.treatment,
-      toothNo: toothNo || undefined,
-      amount: treatCustomAmount ? Number(treatCustomAmount) : Number(selected.amount || 0),
-      status: "Diagnoz (Ön Teşhis)",
-      diagnosedAt: new Date().toISOString(),
-      note: newTreatmentNote || undefined
-    };
+      const payload = {
+        patientId: id,
+        doctorId: treatDoctorId || currentUserId,
+        treatmentName: selected.treatment,
+        toothNo: toothNo || undefined,
+        amount: treatCustomAmount ? Number(treatCustomAmount) : Number(selected.amount || 0),
+        status: "Diagnoz (Ön Teşhis)",
+        diagnosedAt: new Date().toISOString(),
+        note: newTreatmentNote || undefined
+      };
 
-    setTreatmentSaving(true);
-    const res = await fetch("/api/examinations", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-    setTreatmentSaving(false);
+      setTreatmentSaving(true);
+      const res = await fetch("/api/examinations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      setTreatmentSaving(false);
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      return showToast("error", err.message || "Muayene kaydı oluşturulamadı");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return showToast("error", err.message || "Muayene kaydı oluşturulamadı");
+      }
+
+      if (toothNo) setTreatSelectedTeeth(prev => prev.includes(toothNo) ? prev : [...prev, toothNo]);
+      showToast("success", toothNo ? `${toothNo} no'lu diş muayene listesine eklendi` : "Genel muayene listesine eklendi");
+      void load();
+
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Bağlantı hatası. Bilgileriniz korundu; yeniden deneyin.");
+    } finally {
+      setTreatmentSaving(false);
     }
-
-    if (toothNo) setTreatSelectedTeeth(prev => prev.includes(toothNo) ? prev : [...prev, toothNo]);
-    showToast("success", toothNo ? `${toothNo} no'lu diş muayene listesine eklendi` : "Genel muayene listesine eklendi");
-    void load();
   };
 
   const addTeethToExaminationList = async (_teeth: string[], label: string) => {
@@ -1959,84 +1970,22 @@ export default function HastaDetayContent() {
   };
 
   const convertExamDirect = async (exam: Exam) => {
-    const editVals = examInlineEdits[exam.id];
-    const amount = editVals ? (Number(editVals.amount) || 0) : Number(exam.amount || 0);
-    const doctorId = editVals?.doctorId || exam.doctorId || currentUserId;
-    const toothNo = editVals?.toothNo ?? exam.toothNo ?? undefined;
-    const treatmentName = (editVals?.treatmentName ?? exam.treatmentName).trim() || exam.treatmentName;
-    const diagnosedAt = editVals?.diagnosedAt ? new Date(`${editVals.diagnosedAt}T12:00:00.000Z`).toISOString() : exam.diagnosedAt;
-    if (!doctorId) return showToast("error", "Doktor seçilmedi");
-
+    if (examMutationRef.current) return;
+    examMutationRef.current = true;
     setExamSavingId(exam.id);
-    const res = await fetch("/api/examinations/" + exam.id, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status: "Tedavi (Ücretli)",
-        treatmentName,
-        toothNo,
-        amount,
-        diagnosedAt,
-        doctorId,
-      })
-    });
-    setExamSavingId(null);
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      return showToast("error", err.message || "Tedaviye aktarma başarısız");
-    }
-
-    showToast("success", `"${treatmentName}" tedaviye aktarıldı`);
-    setExamInlineEdits(prev => { const n = {...prev}; delete n[exam.id]; return n; });
-    setSelectedDiagnozIds(prev => prev.filter(x => x !== exam.id));
-    void load();
-  };
-
-  const saveExamInlineEdit = async (exam: Exam) => {
-    const editVals = examInlineEdits[exam.id];
-    if (!editVals) return;
-    const toothNo = editVals.toothNo ?? exam.toothNo ?? undefined;
-    const treatmentName = (editVals.treatmentName ?? exam.treatmentName).trim();
-    if (!treatmentName) return showToast("error", "Tedavi adı boş olamaz");
-    const diagnosedAt = editVals.diagnosedAt ? new Date(`${editVals.diagnosedAt}T12:00:00.000Z`).toISOString() : exam.diagnosedAt;
-    setExamSavingId(exam.id);
-    const res = await fetch("/api/examinations/" + exam.id, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        status: exam.status,
-        treatmentName,
-        toothNo,
-        amount: Number(editVals.amount) || 0,
-        diagnosedAt,
-        doctorId: editVals.doctorId || exam.doctorId || currentUserId,
-      })
-    });
-    setExamSavingId(null);
-    if (!res.ok) return showToast("error", "Güncelleme başarısız");
-    showToast("success", "Muayene kaydı güncellendi");
-    setExamInlineEdits(prev => { const n = {...prev}; delete n[exam.id]; return n; });
-    void load();
-  };
-
-  const bulkConvertDiagnozlar = async () => {
-    if (selectedDiagnozIds.length === 0) return;
-    if (!(await confirmDialog(`${selectedDiagnozIds.length} muayene kaydı tedaviye aktarılsın mı?`))) return;
-    setBulkConverting(true);
-    const examList = (data?.examinations || []).filter(e => isDiagnosisStatus(e.status));
-    let errCount = 0;
-    for (const eId of selectedDiagnozIds) {
-      const exam = examList.find(e => e.id === eId);
-      if (!exam) { errCount++; continue; }
-      const editVals = examInlineEdits[eId];
-      const amount = editVals ? (Number(editVals.amount) || 0) : Number(exam.amount || 0);
+    try {
+      const editVals = examInlineEdits[exam.id];
+      const amount = editVals ? Number(editVals.amount) : Number(exam.amount || 0);
+      if (!Number.isFinite(amount) || amount < 0) throw new Error("Geçerli, negatif olmayan bir tutar giriniz.");
       const doctorId = editVals?.doctorId || exam.doctorId || currentUserId;
       const toothNo = editVals?.toothNo ?? exam.toothNo ?? undefined;
       const treatmentName = (editVals?.treatmentName ?? exam.treatmentName).trim() || exam.treatmentName;
+      if (editVals?.diagnosedAt && !isValidDateKey(editVals.diagnosedAt)) throw new Error("Geçerli bir muayene tarihi seçiniz.");
       const diagnosedAt = editVals?.diagnosedAt ? new Date(`${editVals.diagnosedAt}T12:00:00.000Z`).toISOString() : exam.diagnosedAt;
-      if (!doctorId) { errCount++; continue; }
-      const res = await fetch("/api/examinations/" + eId, {
+      if (!doctorId) return showToast("error", "Doktor seçilmedi");
+
+      setExamSavingId(exam.id);
+      await clientMutation("/api/examinations/" + exam.id, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -2047,58 +1996,139 @@ export default function HastaDetayContent() {
           diagnosedAt,
           doctorId,
         })
-      });
-      if (!res.ok) errCount++;
+      }, "Tedaviye aktarma başarısız.");
+
+      showToast("success", `"${treatmentName}" tedaviye aktarıldı`);
+      setExamInlineEdits(prev => { const n = {...prev}; delete n[exam.id]; return n; });
+      setSelectedDiagnozIds(prev => prev.filter(x => x !== exam.id));
+      void load();
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Tedaviye aktarma başarısız.");
+    } finally {
+      examMutationRef.current = false;
+      setExamSavingId(null);
     }
-    setBulkConverting(false);
-    if (errCount > 0) showToast("error", `${errCount} kayıt tedaviye aktarılamadı`);
-    else showToast("success", `${selectedDiagnozIds.length} kayıt tedaviye aktarıldı`);
-    const convertedIds = [...selectedDiagnozIds];
-    setSelectedDiagnozIds([]);
-    setExamInlineEdits(prev => { const n = {...prev}; convertedIds.forEach(id => delete n[id]); return n; });
-    void load();
+  };
+
+  const saveExamInlineEdit = async (exam: Exam) => {
+    if (examMutationRef.current) return;
+    const editVals = examInlineEdits[exam.id];
+    if (!editVals) return;
+    examMutationRef.current = true;
+    setExamSavingId(exam.id);
+    try {
+      const amount = Number(editVals.amount);
+      if (!Number.isFinite(amount) || amount < 0) throw new Error("Geçerli, negatif olmayan bir tutar giriniz.");
+      const toothNo = editVals.toothNo ?? exam.toothNo ?? undefined;
+      const treatmentName = (editVals.treatmentName ?? exam.treatmentName).trim();
+      if (!treatmentName) return showToast("error", "Tedavi adı boş olamaz");
+      if (editVals.diagnosedAt && !isValidDateKey(editVals.diagnosedAt)) throw new Error("Geçerli bir muayene tarihi seçiniz.");
+      const diagnosedAt = editVals.diagnosedAt ? new Date(`${editVals.diagnosedAt}T12:00:00.000Z`).toISOString() : exam.diagnosedAt;
+      setExamSavingId(exam.id);
+      await clientMutation("/api/examinations/" + exam.id, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: exam.status,
+          treatmentName,
+          toothNo,
+          amount,
+          diagnosedAt,
+          doctorId: editVals.doctorId || exam.doctorId || currentUserId,
+        })
+      }, "Muayene kaydı güncellenemedi.");
+      showToast("success", "Muayene kaydı güncellendi");
+      setExamInlineEdits(prev => { const n = {...prev}; delete n[exam.id]; return n; });
+      void load();
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Muayene kaydı güncellenemedi.");
+    } finally {
+      examMutationRef.current = false;
+      setExamSavingId(null);
+    }
+  };
+
+  const clearSuccessfulExamEdits = (ids: string[]) => {
+    const succeeded = new Set(ids);
+    setSelectedDiagnozIds(prev => prev.filter(id => !succeeded.has(id)));
+    setExamInlineEdits(prev => {
+      const next = { ...prev };
+      ids.forEach(id => delete next[id]);
+      return next;
+    });
+  };
+
+  const bulkConvertDiagnozlar = async () => {
+    if (!selectedDiagnozIds.length || examMutationRef.current) return;
+    if (!(await confirmDialog(`${selectedDiagnozIds.length} muayene kaydı tedaviye aktarılsın mı?`))) return;
+    if (examMutationRef.current) return;
+    examMutationRef.current = true;
+    setBulkConverting(true);
+    try {
+      const exams = (data?.examinations || []).filter(exam => isDiagnosisStatus(exam.status));
+      const result = await runRecordBatch([...selectedDiagnozIds], async id => {
+        const exam = exams.find(item => item.id === id);
+        if (!exam) throw new Error("Muayene kaydı bulunamadı.");
+        const edit = examInlineEdits[id];
+        const amount = Number(edit?.amount ?? exam.amount ?? 0);
+        const doctorId = edit?.doctorId || exam.doctorId || currentUserId;
+        const treatmentName = (edit?.treatmentName ?? exam.treatmentName).trim();
+        if (!doctorId || !treatmentName || !Number.isFinite(amount) || amount < 0) throw new Error("Muayene bilgileri geçersiz.");
+        if (edit?.diagnosedAt && !isValidDateKey(edit.diagnosedAt)) throw new Error("Muayene tarihi geçersiz.");
+        await clientMutation("/api/examinations/" + id, {
+          method: "PUT", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "Tedavi (Ücretli)", treatmentName,
+            toothNo: edit?.toothNo ?? exam.toothNo ?? undefined, amount, doctorId,
+            diagnosedAt: edit?.diagnosedAt ? new Date(edit.diagnosedAt + "T12:00:00.000Z").toISOString() : exam.diagnosedAt }),
+        }, "Tedaviye aktarma başarısız.");
+      });
+      clearSuccessfulExamEdits(result.succeeded);
+      if (result.failed.length) showToast("error", `${result.succeeded.length} kayıt aktarıldı; ${result.failed.length} kayıt aktarılamadı. Başarısız kayıtlar seçili kaldı.`);
+      else showToast("success", `${result.succeeded.length} kayıt tedaviye aktarıldı`);
+      if (result.succeeded.length) void load();
+    } finally {
+      examMutationRef.current = false;
+      setBulkConverting(false);
+    }
   };
 
   const bulkDeleteDiagnozlar = async () => {
-    if (selectedDiagnozIds.length === 0) return;
-    const selectedCount = selectedDiagnozIds.length;
-    if (!(await confirmDialog({
-      message: `${selectedCount} bekleyen tedavi kaydı silinsin mi? Bu işlem geri alınamaz.`,
-      danger: true,
-      confirmText: "Sil",
-    }))) return;
-
+    if (!selectedDiagnozIds.length || examMutationRef.current) return;
+    if (!(await confirmDialog({ message: `${selectedDiagnozIds.length} bekleyen tedavi kaydı silinsin mi? Bu işlem geri alınamaz.`, danger: true, confirmText: "Sil" }))) return;
+    if (examMutationRef.current) return;
+    examMutationRef.current = true;
     setBulkDeleting(true);
-    let errCount = 0;
-    for (const eId of selectedDiagnozIds) {
-      const res = await fetch("/api/examinations/" + eId, { method: "DELETE" });
-      if (!res.ok) errCount++;
+    try {
+      const result = await runRecordBatch([...selectedDiagnozIds], async id => {
+        await clientMutation("/api/examinations/" + id, { method: "DELETE" }, "Kayıt silinemedi.");
+      });
+      clearSuccessfulExamEdits(result.succeeded);
+      if (result.failed.length) showToast("error", `${result.succeeded.length} kayıt silindi; ${result.failed.length} kayıt silinemedi. Başarısız kayıtlar seçili kaldı.`);
+      else showToast("success", `${result.succeeded.length} kayıt silindi`);
+      if (result.succeeded.length) void load();
+    } finally {
+      examMutationRef.current = false;
+      setBulkDeleting(false);
     }
-    setBulkDeleting(false);
-    if (errCount > 0) showToast("error", `${errCount} kayıt silinemedi`);
-    else showToast("success", `${selectedCount} kayıt silindi`);
-    const deletedIds = [...selectedDiagnozIds];
-    setSelectedDiagnozIds([]);
-    setExamInlineEdits(prev => { const n = {...prev}; deletedIds.forEach(id => delete n[id]); return n; });
-    void load();
   };
 
   const deleteExamRecord = async (examId: string, asTreatment = false) => {
-    const ok = await confirmDialog({
-      message: asTreatment ? "Tedavi kaydı silinsin mi?" : "Muayene kaydı silinsin mi?",
-      danger: true,
-      confirmText: "Sil",
-    });
-    if (!ok) return;
-
-    const res = await fetch("/api/examinations/" + examId, { method: "DELETE" });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      return showToast("error", err.message || "Kayıt silinemedi");
+    if (examMutationRef.current) return;
+    if (!(await confirmDialog({ message: asTreatment ? "Tedavi kaydı silinsin mi?" : "Muayene kaydı silinsin mi?", danger: true, confirmText: "Sil" }))) return;
+    if (examMutationRef.current) return;
+    examMutationRef.current = true;
+    setExamSavingId(examId);
+    try {
+      await clientMutation("/api/examinations/" + examId, { method: "DELETE" }, "Kayıt silinemedi.");
+      clearSuccessfulExamEdits([examId]);
+      showToast("success", asTreatment ? "Tedavi kaydı silindi" : "Muayene kaydı silindi");
+      void load();
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Kayıt silinemedi.");
+    } finally {
+      examMutationRef.current = false;
+      setExamSavingId(null);
     }
-
-    showToast("success", asTreatment ? "Tedavi kaydı silindi" : "Muayene kaydı silindi");
-    void load();
   };
 
   const doPrintPayments = () => {
@@ -2414,15 +2444,32 @@ export default function HastaDetayContent() {
     }
   };
 
-  const deleteRecete = async (rxId: string) => {
-    if (!(await confirmDialog({ message: "Reçete iptal edilsin mi? Kayıt geçmişte korunacaktır.", danger: true, confirmText: "İptal Et" }))) return;
-    const res = await fetch("/api/prescriptions/" + rxId, { method: "DELETE" });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      return showToast("error", err.message || "Reçete iptal edilemedi");
+  const cancelPatientPayment = async (paymentId: string) => {
+    if (!(await confirmDialog({ message: "Bu tahsilat iptal edilsin mi? Kayıt geçmişi korunacaktır.", danger: true, confirmText: "İptal Et" }))) return;
+    try {
+      await clientMutation("/api/payments/" + paymentId, { method: "DELETE" }, "Tahsilat iptal edilemedi.");
+      showToast("success", "Tahsilat iptal edildi");
+      void load();
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Tahsilat iptal edilemedi.");
     }
-    showToast("success", "Reçete iptal edildi");
-    void load();
+  };
+
+  const deleteRecete = async (rxId: string) => {
+
+    try {
+      if (!(await confirmDialog({ message: "Reçete iptal edilsin mi? Kayıt geçmişte korunacaktır.", danger: true, confirmText: "İptal Et" }))) return;
+      const res = await fetch("/api/prescriptions/" + rxId, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        return showToast("error", err.message || "Reçete iptal edilemedi");
+      }
+      showToast("success", "Reçete iptal edildi");
+      void load();
+
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Bağlantı hatası. Bilgileriniz korundu; yeniden deneyin.");
+    }
   };
 
   const loadDocuments = async () => {
@@ -2562,15 +2609,21 @@ export default function HastaDetayContent() {
   };
 
   const deleteDocument = async (docId: string) => {
-    if (!(await confirmDialog({ message: "Bu belge silinsin mi? Bu işlem geri alınamaz.", danger: true, confirmText: "Sil" }))) return;
-    const res = await fetch(`/api/documents/${docId}`, { method: "DELETE" });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      showToast("error", err?.error || "Belge silinemedi");
-      return;
+
+    try {
+      if (!(await confirmDialog({ message: "Bu belge silinsin mi? Bu işlem geri alınamaz.", danger: true, confirmText: "Sil" }))) return;
+      const res = await fetch(`/api/documents/${docId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast("error", err?.error || "Belge silinemedi");
+        return;
+      }
+      setDocuments((prev) => prev.filter((d) => d.id !== docId));
+      showToast("success", "Belge silindi");
+
+    } catch (error) {
+      showToast("error", error instanceof Error ? error.message : "Bağlantı hatası. Bilgileriniz korundu; yeniden deneyin.");
     }
-    setDocuments((prev) => prev.filter((d) => d.id !== docId));
-    showToast("success", "Belge silindi");
   };
 
   useEffect(() => {
@@ -3091,7 +3144,6 @@ export default function HastaDetayContent() {
                 <Badge tone="critical" solid icon={ShieldAlert} title={data.contagiousDiseaseNote || "Bulaşıcı hastalık"}>Bulaşıcı Hastalık</Badge>
               )}
               {healthFlags.length > 0 && <Badge tone="critical" icon={ShieldAlert}>Sağlık uyarısı</Badge>}
-              {totalDebt > 0 && <Badge tone="warning">Kalan {totalDebt.toLocaleString("tr-TR", { maximumFractionDigits: 0 })} TL</Badge>}
             </div>
             <p className="mt-0.5 text-xs text-slate-500">TC: {data.tcNo}{!hidePatientPhone ? ` · ${data.phone}` : ""}</p>
           </div>
@@ -3310,7 +3362,7 @@ export default function HastaDetayContent() {
                   {data.notes}
                 </div>
               )}
-              <textarea
+              <textarea aria-label={"Hasta için kısa not yazın..."}
                 value={noteText}
                 onChange={(e) => setNoteText(e.target.value)}
                 rows={3}
@@ -3342,7 +3394,7 @@ export default function HastaDetayContent() {
                 {[
                   ...(!hidePatientPhone ? [["Telefon", data.phone]] : []),
                   ["Cinsiyet", data.gender === "ERKEK" || data.gender === "Erkek" ? "Erkek" : "Kadın"],
-                  ["Kurum", data.insurance || "-"],
+                  ["Sigorta", data.insurance || "-"],
                   ["Meslek", data.profession || "-"],
                   ["Referans", data.referrer || "-"],
                 ].map(([label, value]) => (
@@ -3361,25 +3413,24 @@ export default function HastaDetayContent() {
                     <span className="text-xs font-semibold text-slate-400">Aktif uyarı yok</span>
                   )}
                 </div>
-                {(data.medications || data.surgeries || data.otherDiseases || data.notes) && (
+                {(data.medications || data.surgeries || data.otherDiseases) && (
                   <div className="mt-3 space-y-1.5 rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
                     {data.medications && <p><span className="font-bold text-slate-700">İlaç:</span> {data.medications}</p>}
                     {data.surgeries && <p><span className="font-bold text-slate-700">Ameliyat:</span> {data.surgeries}</p>}
                     {data.otherDiseases && <p><span className="font-bold text-slate-700">Diğer:</span> {data.otherDiseases}</p>}
-                    {data.notes && <p><span className="font-bold text-slate-700">Not:</span> {data.notes}</p>}
                   </div>
                 )}
               </div>
               {/* Finans özeti kaldırıldı — sayfa üstündeki sabit başlık şeridi
                   (Ödenen/Kalan) her sekmede zaten görünür durumda, burada
                   tekrarlamak yerine "Ödeme" sekmesine yönlendirmek yeterli. */}
-              <button
+              {canOpenTab("odeme") && <button
                 type="button"
-                onClick={() => canOpenTab("odeme") && selectTab("odeme")}
-                className="mt-4 block w-full rounded-xl border-t border-slate-100 pt-4 text-left text-xs font-bold uppercase text-primary hover:underline"
+                onClick={() => selectTab("odeme")}
+                className="mt-4 block w-full rounded-xl border-t border-slate-100 pt-4 text-left text-sm font-semibold text-primary hover:underline"
               >
-                Finans detayı için Ödeme sekmesine git →
-              </button>
+                Finans ayrıntılarını görüntüle →
+              </button>}
             </div>
 
             {(() => {
@@ -3556,7 +3607,7 @@ export default function HastaDetayContent() {
                 <input type="datetime-local" min={turkeyDateTimeLocalValue()} value={taskDueAt} onChange={e => setTaskDueAt(e.target.value)} className="h-10 w-full rounded-lg border border-slate-200 px-3 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20" />
               </FormField>
             </div>
-            <textarea
+            <textarea aria-label={"Detay/hatırlatma notu"}
               maxLength={3000}
               value={taskDetails}
               onChange={e => setTaskDetails(e.target.value)}
@@ -3737,7 +3788,7 @@ export default function HastaDetayContent() {
               </div>
               <div className="relative flex items-center overflow-visible rounded-lg border border-slate-200 bg-white">
                 <span className="shrink-0 bg-primary px-3 py-2 text-sm font-semibold text-white">Tedavi</span>
-                <input
+                <input aria-label={"Tedavi adı veya kod yazarak ara..."}
                   value={treatmentQuery}
                   onChange={(e) => {
                     const value = e.target.value;
@@ -3947,7 +3998,7 @@ export default function HastaDetayContent() {
                       <td className="px-3 py-2">{e.treatmentName}</td>
                       <td className="px-3 py-2 font-mono text-xs">{e.toothNo || "—"}</td>
                       <td className="px-2 py-1.5">
-                        <input
+                        <input aria-label={"Tedavi tutarı"}
                           type="number" min="0" step="0.01"
                           value={currentAmount}
                           disabled={!canWriteExam}
@@ -3963,7 +4014,7 @@ export default function HastaDetayContent() {
                         />
                       </td>
                       <td className="px-2 py-1.5">
-                        <select
+                        <select aria-label={"Tedaviyi yapan doktor"}
                           value={currentDoctorId}
                           disabled={!canWriteExam}
                           onChange={ev => setExamInlineEdits(prev => ({
@@ -4044,7 +4095,7 @@ export default function HastaDetayContent() {
                   return (
                     <tr key={e.id} className="border-b hover:bg-gray-50">
                       <td className="px-2 py-1.5">
-                        <input
+                        <input aria-label={"Muayene tarihi"}
                           type="date"
                           value={currentDiagnosedAt}
                           disabled={!canWriteExam}
@@ -4063,7 +4114,7 @@ export default function HastaDetayContent() {
                         />
                       </td>
                       <td className="px-2 py-1.5">
-                        <input
+                        <input aria-label={"Tedavi adı"}
                           value={currentTreatmentName}
                           disabled={!canWriteExam}
                           onChange={ev => setExamInlineEdits(prev => ({
@@ -4081,7 +4132,7 @@ export default function HastaDetayContent() {
                         />
                       </td>
                       <td className="px-2 py-1.5">
-                        <input
+                        <input aria-label={"Diş numarası"}
                           value={currentToothNo}
                           disabled={!canWriteExam}
                           onChange={ev => setExamInlineEdits(prev => ({
@@ -4100,7 +4151,7 @@ export default function HastaDetayContent() {
                         />
                       </td>
                       <td className="px-2 py-1.5">
-                        <input
+                        <input aria-label={"Tedavi tutarı"}
                           type="number"
                           min="0"
                           step="0.01"
@@ -4121,7 +4172,7 @@ export default function HastaDetayContent() {
                         />
                       </td>
                       <td className="px-2 py-1.5">
-                        <select
+                        <select aria-label={"Tedaviyi yapan doktor"}
                           value={currentDoctorId}
                           disabled={!canWriteExam}
                           onChange={ev => setExamInlineEdits(prev => ({
@@ -4224,7 +4275,7 @@ export default function HastaDetayContent() {
                       <td className="px-3 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
                           <button onClick={() => startEditPayment(p)} className="rounded-lg bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-600 hover:bg-slate-200">Düzenle</button>
-                          <button onClick={async()=>{if(!(await confirmDialog({ message: "Bu tahsilat iptal edilsin mi? Kayıt geçmişi korunacaktır.", danger: true, confirmText: "İptal Et" })))return;const res=await fetch("/api/payments/"+p.id,{method:"DELETE"});if(!res.ok){const err=await res.json().catch(()=>({}));showToast("error",err.message||"Tahsilat iptal edilemedi");return;}showToast("success","Tahsilat iptal edildi");void load();}} className="rounded-lg bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600 hover:bg-red-200">İptal Et</button>
+                          <button onClick={() => void cancelPatientPayment(p.id)} className="rounded-lg bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-600 hover:bg-red-200">İptal Et</button>
                         </div>
                       </td>
                     </tr>
@@ -4413,9 +4464,13 @@ export default function HastaDetayContent() {
                           <button
                             onClick={async () => {
                               if (!(await confirmDialog({ message: "Bu taksit planı ve tüm taksitleri silinsin mi?", danger: true, confirmText: "Sil" }))) return;
-                              const res = await fetch(`/api/taksit-plani/${plan.id}`, { method: "DELETE" });
-                              if (res.ok) { showToast("success", "Taksit planı silindi"); void load(); }
-                              else showToast("error", "Taksit planı silinemedi");
+                              try {
+                                await clientMutation(`/api/taksit-plani/${plan.id}`, { method: "DELETE" }, "Taksit planı silinemedi.");
+                                showToast("success", "Taksit planı silindi");
+                                void load();
+                              } catch (error) {
+                                showToast("error", error instanceof Error ? error.message : "Taksit planı silinemedi.");
+                              }
                             }}
                             className="rounded border border-red-200 px-2 py-1 text-xs font-semibold text-red-500 hover:bg-red-50">
                             Sil
@@ -4470,7 +4525,7 @@ export default function HastaDetayContent() {
               <div className="grid gap-3 md:grid-cols-2">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">İlaç Seçimi</label>
-                  <select
+                  <select aria-label={"İlaç Seçimi"}
                     value={selectedMedicationId}
                     onChange={e => setSelectedMedicationId(e.target.value)}
                     className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
@@ -4483,7 +4538,7 @@ export default function HastaDetayContent() {
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 mb-1">Ek Not (isteğe bağlı)</label>
-                  <input
+                  <input aria-label={"Ek Not (isteğe bağlı)"}
                     value={newDrugNote}
                     onChange={e => setNewDrugNote(e.target.value)}
                     placeholder="Yemekten sonra vb."
@@ -4540,7 +4595,7 @@ export default function HastaDetayContent() {
 
             <div className="mb-4">
               <label className="block text-xs font-semibold text-slate-700 mb-1">Reçeteyi Yazan Doktor</label>
-              <select
+              <select aria-label={"Reçeteyi Yazan Doktor"}
                 value={rxDoctorId}
                 onChange={e => setRxDoctorId(e.target.value)}
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
@@ -4555,7 +4610,7 @@ export default function HastaDetayContent() {
 
             <div className="mb-4">
               <label className="block text-xs font-semibold text-slate-700 mb-1">Doktor Notları (isteğe bağlı)</label>
-              <textarea
+              <textarea aria-label={"Doktor Notları (isteğe bağlı)"}
                 value={rxNote}
                 onChange={e => setRxNote(e.target.value)}
                 placeholder="Kullanım talimatı, uyarılar vb."
@@ -4617,7 +4672,7 @@ export default function HastaDetayContent() {
           </div>
           <div className="flex flex-col gap-2">
             <label className="text-xs text-gray-600 font-medium">Yeni Not Ekle</label>
-            <textarea value={noteText} onChange={e=>setNoteText(e.target.value)} rows={3} placeholder="Not yazın..." className="rounded border px-3 py-2 text-sm w-full" />
+            <textarea aria-label={"Yeni Not Ekle"} value={noteText} onChange={e=>setNoteText(e.target.value)} rows={3} placeholder="Not yazın..." className="rounded border px-3 py-2 text-sm w-full" />
             <button onClick={saveNote} disabled={noteSaving||!noteText.trim()} className="self-start rounded bg-primary px-4 py-2 text-sm text-white disabled:opacity-50">
               {noteSaving?"Kaydediliyor...":"Not Ekle"}
             </button>
@@ -4754,7 +4809,7 @@ export default function HastaDetayContent() {
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[220px_minmax(220px,1fr)_260px]">
               <div>
                 <label className="mb-1 block text-xs text-gray-600">Kategori</label>
-                <select value={docCategory} onChange={(e) => setDocCategory(e.target.value as typeof docCategory)} className="w-full rounded border px-3 py-2 text-sm">
+                <select aria-label={"Kategori"} value={docCategory} onChange={(e) => setDocCategory(e.target.value as typeof docCategory)} className="w-full rounded border px-3 py-2 text-sm">
                   <option value="BELGE">Belge (kimlik, sigorta, rıza formu…)</option>
                   <option value="RONTGEN">Röntgen</option>
                   <option value="FOTOGRAF">Ağız İçi Fotoğraf</option>
@@ -4763,16 +4818,16 @@ export default function HastaDetayContent() {
               {docCategory !== "BELGE" && (
                 <div>
                   <label className="mb-1 block text-xs text-gray-600">Diş No (opsiyonel)</label>
-                  <input value={docToothNo} onChange={(e) => setDocToothNo(e.target.value)} placeholder="örn. 26" className="w-full rounded border px-3 py-2 text-sm" />
+                  <input aria-label={"Diş No (opsiyonel)"} value={docToothNo} onChange={(e) => setDocToothNo(e.target.value)} placeholder="örn. 26" className="w-full rounded border px-3 py-2 text-sm" />
                 </div>
               )}
               <div className={docCategory === "BELGE" ? "" : ""}>
                 <label className="mb-1 block text-xs text-gray-600">Not (opsiyonel)</label>
-                <input value={docNote} onChange={(e) => setDocNote(e.target.value)} placeholder="Açıklama" className="w-full rounded border px-3 py-2 text-sm" />
+                <input aria-label={"Not (opsiyonel)"} value={docNote} onChange={(e) => setDocNote(e.target.value)} placeholder="Açıklama" className="w-full rounded border px-3 py-2 text-sm" />
               </div>
               <div>
                 <label className="mb-1 block text-xs text-gray-600">Dosya (JPG, PNG, WEBP, PDF — en fazla 15MB, birden fazla seçilebilir)</label>
-                <input
+                <input aria-label={"Dosya (JPG, PNG, WEBP, PDF — en fazla 15MB, birden fazla seçilebilir)"}
                   type="file"
                   multiple
                   accept="image/jpeg,image/png,image/webp,application/pdf"
@@ -5578,7 +5633,7 @@ export default function HastaDetayContent() {
                   ))}
                 </div>
                 {(payMethod === "KREDI_KARTI" || payMethod === "MAIL_ORDER") && (
-                  <select className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" value={payPosId} onChange={e=>setPayPosId(e.target.value)}>
+                  <select aria-label={"Ödeme Yöntemi"} className="mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" value={payPosId} onChange={e=>setPayPosId(e.target.value)}>
                     <option value="">— POS Cihazı Seçin —</option>
                     {posDevices.length === 0
                       ? <option disabled>Kayıtlı POS cihazı yok</option>

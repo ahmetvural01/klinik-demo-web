@@ -15,25 +15,36 @@ export function LoginForm() {
   const { showToast } = useToast();
 
   const onSubmit = async (event?: FormEvent) => {
-    if (event) event.preventDefault();
-    setLoading(true);
-    setError(null);
+    if (loading) { event?.preventDefault(); return; }
+    try {
+      if (event) event.preventDefault();
+      setLoading(true);
+      setError(null);
 
-    const res = await fetch("/api/auth/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ institution, identityNo, password, rememberMe: remember })
-    });
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ institution, identityNo, password, rememberMe: remember })
+      });
 
-    setLoading(false);
+      if (!res.ok) {
+        const message = await res.json().catch(() => ({ message: "Giriş başarısız" }));
+        setError(message.message || "Giriş başarısız");
+        return;
+      }
+      const payload = await res.json();
+      if (payload.requiresTwoFactor || payload.requires2FA) {
+        window.location.href = payload.requiresTwoFactor ? "/superadmin" : "/klinik/giris";
+        return;
+      }
+      try { showToast({ title: 'Giriş Başarılı', message: 'Panele yönlendiriliyorsunuz', duration: 2500, type: 'success' }); } catch {}
+      window.location.href = payload.role === "SUPERADMIN" ? "/superadmin/panel" : "/anasayfa";
 
-    if (!res.ok) {
-      const message = await res.json().catch(() => ({ message: "Giriş başarısız" }));
-      setError(message.message || "Giriş başarısız");
-      return;
+    } catch {
+      setError("Bağlantı kurulamadı. Bilgilerinizi kontrol edip yeniden deneyin.");
+    } finally {
+      setLoading(false);
     }
-    try { showToast({ title: 'Giriş Başarılı', message: 'Panele yönlendiriliyorsunuz', duration: 2500, type: 'success' }); } catch {}
-    window.location.href = "/anasayfa";
   };
 
   return (
@@ -86,19 +97,19 @@ export function LoginForm() {
             Demo erişiminiz yoksa önce <Link href="/#demo" className="font-semibold text-primary underline">demo talep formunu</Link> doldurun. Size özel süreli demo kurumu oluşturulur.
           </div>
 
-          <form onSubmit={onSubmit} className="mt-8 space-y-4">
+          <form method="post" onSubmit={onSubmit} className="mt-8 space-y-4">
             <div>
               <label className="mb-1.5 block text-sm font-semibold text-slate-700">Kurum Kimliği</label>
-              <input required autoComplete="organization" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm placeholder-slate-400 shadow-sm transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="Kurumun sisteme kayıtlı adı" value={institution} onChange={(e) => setInstitution(e.target.value)} />
+              <input aria-label={"Kurum Kimliği"} required autoComplete="organization" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm placeholder-slate-400 shadow-sm transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="Kurumun sisteme kayıtlı adı" value={institution} onChange={(e) => setInstitution(e.target.value)} />
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-semibold text-slate-700">TC Kimlik / Personel No</label>
-              <input required autoComplete="username" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm placeholder-slate-400 shadow-sm transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="TC Kimlik veya personel numarası" value={identityNo} onChange={(e) => setIdentityNo(e.target.value)} />
+              <input aria-label={"TC Kimlik / Personel No"} required autoComplete="username" className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm placeholder-slate-400 shadow-sm transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="TC Kimlik veya personel numarası" value={identityNo} onChange={(e) => setIdentityNo(e.target.value)} />
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-semibold text-slate-700">Şifre</label>
               <div className="relative">
-                <input required type={showPass ? "text" : "password"} autoComplete="current-password" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-3 pr-10 text-sm placeholder-slate-400 shadow-sm transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} />
+                <input aria-label={"Şifre"} required type={showPass ? "text" : "password"} autoComplete="current-password" className="w-full rounded-lg border border-slate-200 bg-white py-2.5 pl-3 pr-10 text-sm placeholder-slate-400 shadow-sm transition focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20" placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} />
                 <button type="button" onClick={() => setShowPass((s) => !s)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 transition hover:text-slate-600" tabIndex={-1}>
                   {showPass
                     ? <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>

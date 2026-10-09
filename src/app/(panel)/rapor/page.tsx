@@ -1,5 +1,7 @@
 ﻿"use client";
 
+import { reportQuickRange } from "@/lib/report-date-range";
+import { turkeyDateTimeLocalValue } from "@/lib/tz";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { RefreshCw } from "lucide-react";
@@ -88,32 +90,20 @@ export default function RaporPage() {
   const [tab,      setTab]      = useState<Tab>("genel");
 
   const setQuickRange = (period: "bugun" | "hafta" | "ay" | "yil") => {
-    const now = new Date();
-    let from: Date;
-    if (period === "bugun") {
-      from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-    } else if (period === "hafta") {
-      const day = now.getDay(); // 0=Sun
-      const diff = day === 0 ? -6 : 1 - day;
-      from = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diff, 0, 0, 0);
-    } else if (period === "ay") {
-      from = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0);
-    } else {
-      from = new Date(now.getFullYear(), 0, 1, 0, 0, 0);
-    }
-    setFromDate(from.toISOString().slice(0, 16));
-    setToDate(new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59).toISOString().slice(0, 16));
+    const range = reportQuickRange(period);
+    setFromDate(range.from);
+    setToDate(range.to);
   };
 
   useEffect(() => {
-    const now  = new Date();
-    const from = new Date(now.getFullYear(), now.getMonth(), 1);
-    setFromDate(from.toISOString().slice(0, 16));
-    setToDate(now.toISOString().slice(0, 16));
+    const now = new Date();
+    setFromDate(reportQuickRange("ay", now).from);
+    setToDate(turkeyDateTimeLocalValue(now));
   }, []);
 
   const load = useCallback(async () => {
     if (!fromDate || !toDate) return;
+    if (fromDate > toDate) { setLoadError("Başlangıç tarihi bitiş tarihinden sonra olamaz."); return; }
     const request = startReportRequest();
     setLoading(true);
     setLoadError("");
@@ -186,10 +176,10 @@ export default function RaporPage() {
             </Button>
           ))}
           <div className="hidden h-6 w-px bg-slate-200 lg:block" />
-          <input type="datetime-local" value={fromDate} onChange={e => setFromDate(e.target.value)}
+          <input aria-label="Rapor başlangıç tarihi" type="datetime-local" value={fromDate} onChange={e => setFromDate(e.target.value)}
             className="min-w-[190px] flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 lg:flex-none" />
           <span className="text-slate-400 text-sm">—</span>
-          <input type="datetime-local" value={toDate} onChange={e => setToDate(e.target.value)}
+          <input aria-label="Rapor bitiş tarihi" type="datetime-local" value={toDate} onChange={e => setToDate(e.target.value)}
             className="min-w-[190px] flex-1 rounded-xl border border-slate-200 px-3 py-2.5 text-sm focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20 lg:flex-none" />
           <Button onClick={load} loading={loading} icon={RefreshCw}>
             Yenile

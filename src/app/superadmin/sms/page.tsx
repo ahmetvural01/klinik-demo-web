@@ -34,10 +34,12 @@ export default function SmsPage() {
         <h1 className="text-lg font-black text-slate-900">SMS Yönetimi</h1>
       </div>
 
-      <div className="flex flex-wrap gap-2">
+      <div role="group" aria-label="İletişim yönetimi bölümleri" className="flex flex-wrap gap-2">
         {TABS.map((tab) => (
           <button
             key={tab.id}
+            type="button"
+            aria-pressed={activeTab === tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={`rounded-xl px-4 py-2 text-sm font-black transition ${
               activeTab === tab.id

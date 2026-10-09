@@ -185,17 +185,17 @@ export default function LogPage() {
       </div>
 
       <div className="flex flex-wrap gap-3 items-center rounded-2xl bg-white border border-slate-100 shadow-sm px-4 py-3">
-        <input type="date" value={fromDate} onChange={(e) => { setFromDate(e.target.value); setPage(1); }} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm focus:border-primary focus:outline-none" />
+        <input aria-label={"Başlangıç tarihi"} type="date" value={fromDate} onChange={(e) => { setFromDate(e.target.value); setPage(1); }} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm focus:border-primary focus:outline-none" />
         <span className="text-slate-400">—</span>
-        <input type="date" value={toDate} onChange={(e) => { setToDate(e.target.value); setPage(1); }} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm focus:border-primary focus:outline-none" />
-        <select value={category} onChange={e=>{ setCategory(e.target.value); setPage(1); }} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm focus:border-primary focus:outline-none">
+        <input aria-label={"Bitiş tarihi"} type="date" value={toDate} onChange={(e) => { setToDate(e.target.value); setPage(1); }} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm focus:border-primary focus:outline-none" />
+        <select aria-label={"İşlem türü"} value={category} onChange={e=>{ setCategory(e.target.value); setPage(1); }} className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm focus:border-primary focus:outline-none">
           {CATEGORY_OPTIONS.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
         </select>
-        <input value={search} onChange={e=>setSearch(e.target.value)} onKeyDown={e=>{ if (e.key === "Enter") { setPage(1); void fetchLogs(); } }} placeholder="Personel, işlem veya detay ara…" className="flex-1 min-w-48 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm focus:border-primary focus:outline-none" />
+        <input aria-label={"Personel, işlem veya detay ara…"} value={search} onChange={e=>setSearch(e.target.value)} onKeyDown={e=>{ if (e.key === "Enter") { setPage(1); void fetchLogs(); } }} placeholder="Personel, işlem veya detay ara…" className="flex-1 min-w-48 rounded-lg border border-slate-200 bg-slate-50 px-3 py-1.5 text-sm focus:border-primary focus:outline-none" />
         <Button size="sm" onClick={() => { setPage(1); void fetchLogs(); }}>Kayıtları Göster</Button>
         <div className="flex items-center gap-1.5 text-sm text-slate-600">
           Göster:
-          <select value={pageSize} onChange={e=>{setPageSize(Number(e.target.value));setPage(1);}} className="ml-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-sm focus:outline-none">
+          <select aria-label={"Sayfa başına kayıt sayısı"} value={pageSize} onChange={e=>{setPageSize(Number(e.target.value));setPage(1);}} className="ml-1 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-sm focus:outline-none">
             {[10,25,50,100].map(n=><option key={n} value={n}>{n}</option>)}
           </select>
         </div>

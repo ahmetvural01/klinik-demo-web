@@ -75,15 +75,15 @@ function PriceTable({ title, prices, isCustom, favorites, toggleFav, onEdit, onD
 				<span className="rounded-full bg-white px-3 py-1 text-xs font-bold text-slate-600">{filtered.length} kayıt</span>
 			</div>
 			<div className="border-b border-slate-100 px-4 py-3">
-				<input value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Tedavi adı veya kod ile ara" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/20" />
+				<input aria-label={"Tedavi adı veya kod ile ara"} value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="Tedavi adı veya kod ile ara" className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm outline-none focus:border-primary focus:bg-white focus:ring-2 focus:ring-primary/20" />
 			</div>
 			{isCustom && onAdd && (
 				<div className="space-y-3 border-b border-amber-100 bg-amber-50/70 px-4 py-3">
 					<p className="text-sm font-bold text-amber-900">Yeni özel fiyat ekle</p>
 					<div className="grid gap-2 sm:grid-cols-[90px_minmax(180px,1fr)_130px_auto]">
-						<input placeholder="Kod" value={newCode} onChange={(e) => setNewCode(e.target.value)} className="rounded-lg border border-amber-200 px-3 py-2 text-sm outline-none focus:border-amber-500" />
-						<input placeholder="Tedavi adı" value={newTreatment} onChange={(e) => setNewTreatment(e.target.value)} className="rounded-lg border border-amber-200 px-3 py-2 text-sm outline-none focus:border-amber-500" />
-						<input placeholder="Fiyat (TL)" type="number" value={newAmount} onChange={(e) => setNewAmount(e.target.value)} className="rounded-lg border border-amber-200 px-3 py-2 text-sm outline-none focus:border-amber-500" />
+						<input aria-label={"Kod"} placeholder="Kod" value={newCode} onChange={(e) => setNewCode(e.target.value)} className="rounded-lg border border-amber-200 px-3 py-2 text-sm outline-none focus:border-amber-500" />
+						<input aria-label={"Tedavi adı"} placeholder="Tedavi adı" value={newTreatment} onChange={(e) => setNewTreatment(e.target.value)} className="rounded-lg border border-amber-200 px-3 py-2 text-sm outline-none focus:border-amber-500" />
+						<input aria-label={"Fiyat (TL)"} placeholder="Fiyat (TL)" type="number" value={newAmount} onChange={(e) => setNewAmount(e.target.value)} className="rounded-lg border border-amber-200 px-3 py-2 text-sm outline-none focus:border-amber-500" />
 						<Button variant="primary" onClick={() => { if (!newCode || !newTreatment || !newAmount) { setAddErr("Tüm alanları doldurun"); return; } setAddErr(""); onAdd(newCode, newTreatment, newAmount); setNewCode(""); setNewTreatment(""); setNewAmount(""); }}>Fiyat Ekle</Button>
 					</div>
 					{addErr && <p className="text-xs text-red-600">{addErr}</p>}

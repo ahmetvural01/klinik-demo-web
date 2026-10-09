@@ -134,7 +134,7 @@ export default function OnamTab() {
             <div className="mb-4 grid gap-4 md:grid-cols-[minmax(0,1fr)_220px_220px]">
               <div>
                 <label className="mb-1 block text-sm font-bold text-slate-700">Belge Başlığı</label>
-                <input
+                <input aria-label={"Belge Başlığı"}
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
                   className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
@@ -151,7 +151,7 @@ export default function OnamTab() {
             </div>
 
             <label className="mb-1 block text-sm font-bold text-slate-700">Onam Metni</label>
-            <textarea
+            <textarea aria-label={"Onam Metni"}
               value={body}
               onChange={(event) => setBody(event.target.value)}
               rows={30}

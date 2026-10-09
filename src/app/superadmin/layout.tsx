@@ -19,7 +19,7 @@ export default async function SuperadminLayout({ children }: { children: React.R
         <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-slate-200 bg-[rgb(var(--app-surface))]/95 px-3 shadow-[0_1px_0_rgb(15_23_42/0.025),0_6px_20px_rgb(15_23_42/0.025)] backdrop-blur sm:px-6">
           <div className="flex min-w-0 items-center gap-2">
             <MobileSidebarToggle />
-            <h2 className="truncate font-display text-sm font-bold text-slate-800">Sistem Yönetimi</h2>
+            <h2 className="truncate font-display text-sm font-bold text-slate-800">Platform Yönetimi</h2>
           </div>
           <div className="flex shrink-0 items-center gap-2.5">
             <span className="hidden text-sm font-semibold text-slate-700 sm:inline">{user.fullName}</span>

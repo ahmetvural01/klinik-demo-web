@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createSceneIllustration } from "@/components/ui/SceneIllustration";
 import { CountUp } from "@/components/ui/CountUp";
 import { CheckCircle2, XCircle, TriangleAlert, CircleDashed, MessageCircle, Smartphone, CalendarClock } from "lucide-react";
@@ -362,7 +362,7 @@ function SmsManagement({ onGoToSettings, canManage }: { onGoToSettings: () => vo
 
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
-          <input
+          <input aria-label={"Hasta, telefon, SMS türü veya detay ara..."}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="Hasta, telefon, SMS türü veya detay ara..."
@@ -595,6 +595,7 @@ function SmsSettingsPanel({
 }
 
 export default function SmsPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const { can, hasFeature, role } = usePermissions();
   const [tab, setTab] = useState<SmsTab>("kayitlar");
@@ -623,7 +624,11 @@ export default function SmsPage() {
     const requestedTab = searchParams.get("tab");
     if (requestedTab === "baglanti" && canManageWhatsappConnection) activateTab("baglanti");
     else if (requestedTab === "whatsapp" && canReadWhatsapp) activateTab("whatsapp");
-  }, [activateTab, canManageWhatsappConnection, canReadWhatsapp, searchParams]);
+    else if (requestedTab === "kayitlar" && canReadSms) activateTab("kayitlar");
+    else if (requestedTab === "ayarlar" && canManageAutomations) activateTab("ayarlar");
+    else if (requestedTab === "toplu" && canBulkSend) activateTab("toplu");
+    else if (requestedTab === "sablonlar" || requestedTab === "kutlama-gunleri") activateTab(requestedTab);
+  }, [activateTab, canBulkSend, canManageAutomations, canManageWhatsappConnection, canReadSms, canReadWhatsapp, searchParams]);
 
   useEffect(() => {
     const unavailable = (tab === "kayitlar" && !canReadSms)
@@ -654,7 +659,12 @@ export default function SmsPage() {
             type="button"
             role="tab"
             aria-selected={tab === t.key}
-            onClick={() => activateTab(t.key)}
+            onClick={() => {
+              activateTab(t.key);
+              const params = new URLSearchParams(searchParams.toString());
+              params.set("tab", t.key);
+              router.replace(`/sms?${params.toString()}`, { scroll: false });
+            }}
             className={`ui-view-tab shrink-0 whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-semibold transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 ${
               tab === t.key ? "is-active bg-white text-primary shadow-[0_1px_3px_rgb(15_23_42/0.12)]" : "text-slate-600 hover:text-slate-900"
             }`}
